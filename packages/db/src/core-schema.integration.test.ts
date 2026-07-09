@@ -128,11 +128,11 @@ afterAll(async () => {
 });
 
 describe("core PostgreSQL foundation", () => {
-  it("replays both migrations once and forces RLS on every tenant-owned table", async () => {
+  it("replays every migration once and forces RLS on every tenant-owned table", async () => {
     const migrations = await migrationPool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations`,
     );
-    expect(migrations.rows[0]?.count).toBe("2");
+    expect(migrations.rows[0]?.count).toBe("3");
 
     const rowSecurity = await pool.query<{
       force_row_security: boolean;
@@ -226,9 +226,9 @@ describe("core PostgreSQL foundation", () => {
     await tenantQuery(
       ids.tenantA,
       `INSERT INTO evidence_events
-         (evidence_event_id, tenant_id, event_type, subject_id, actor_principal_id,
+         (evidence_event_id, tenant_id, event_type, subject_type, subject_id, actor_principal_id,
           correlation_id, prior_state, new_state)
-       VALUES ($1, $2, 'evidence.hr.test', $3, $4, $5, NULL, 'created')`,
+       VALUES ($1, $2, 'evidence.hr.test', 'hr.test', $3, $4, $5, NULL, 'created')`,
       [ids.evidence, ids.tenantA, ids.subject, ids.managerA, ids.correlation],
     );
 
@@ -236,9 +236,9 @@ describe("core PostgreSQL foundation", () => {
       tenantQuery(
         ids.tenantA,
         `INSERT INTO evidence_events
-           (tenant_id, event_type, subject_id, actor_principal_id,
+           (tenant_id, event_type, subject_type, subject_id, actor_principal_id,
             correlation_id, prior_state, new_state)
-         VALUES ($1, 'evidence.hr.test', $2, $3, $4, NULL, 'created')`,
+         VALUES ($1, 'evidence.hr.test', 'hr.test', $2, $3, $4, NULL, 'created')`,
         [ids.tenantA, ids.subject, ids.managerA, ids.correlation],
       ),
     ).rejects.toMatchObject({ code: "23505" });
@@ -281,25 +281,28 @@ describe("core PostgreSQL foundation", () => {
     await tenantQuery(
       ids.tenantA,
       `INSERT INTO outbox_events
-         (event_id, tenant_id, event_type, aggregate_id, aggregate_version, payload)
-       VALUES ($1, $2, 'hr.test.created', $3, 1, '{"status":"created"}'::jsonb)`,
-      [ids.outbox, ids.tenantA, ids.subject],
+         (event_id, tenant_id, event_type, aggregate_type, aggregate_id,
+          aggregate_version, correlation_id, payload)
+       VALUES ($1, $2, 'hr.test.created', 'hr.test', $3, 1, $4,
+               '{"status":"created"}'::jsonb)`,
+      [ids.outbox, ids.tenantA, ids.subject, ids.correlation],
     );
     await expect(
       tenantQuery(
         ids.tenantA,
         `INSERT INTO outbox_events
-           (tenant_id, event_type, aggregate_id, aggregate_version, payload)
-         VALUES ($1, 'hr.test.created', $2, 1, '{}'::jsonb)`,
-        [ids.tenantA, ids.subject],
+           (tenant_id, event_type, aggregate_type, aggregate_id, aggregate_version,
+            correlation_id, payload)
+         VALUES ($1, 'hr.test.created', 'hr.test', $2, 1, $3, '{}'::jsonb)`,
+        [ids.tenantA, ids.subject, ids.correlation],
       ),
     ).rejects.toMatchObject({ code: "23505" });
 
     await tenantQuery(
       ids.tenantA,
       `INSERT INTO work_items
-         (work_item_id, tenant_id, assignee_principal_id, subject_id)
-       VALUES ($1, $2, $3, $4)`,
+         (work_item_id, tenant_id, assignee_principal_id, work_type, subject_type, subject_id)
+       VALUES ($1, $2, $3, 'hr.test.approval', 'hr.test', $4)`,
       [ids.workItem, ids.tenantA, ids.managerA, ids.subject],
     );
     await expect(

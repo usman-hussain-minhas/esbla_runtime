@@ -57,6 +57,7 @@ export const memberships = pgTable(
       .notNull()
       .references(() => principals.principalId, { onDelete: "restrict" }),
     roleKey: text("role_key").notNull(),
+    status: text("status").default("active").notNull(),
     managerPrincipalId: uuid("manager_principal_id").references(() => principals.principalId, {
       onDelete: "restrict",
     }),
@@ -70,6 +71,7 @@ export const memberships = pgTable(
     }).onDelete("restrict"),
     index("memberships_tenant_manager_idx").on(table.tenantId, table.managerPrincipalId),
     check("memberships_role_key_not_blank", sql`char_length(trim(${table.roleKey})) > 0`),
+    check("memberships_status_valid", sql`${table.status} IN ('active', 'suspended')`),
   ],
 ).enableRLS();
 
@@ -117,6 +119,8 @@ export const workItems = pgTable(
       .notNull()
       .references(() => tenants.tenantId, { onDelete: "restrict" }),
     assigneePrincipalId: uuid("assignee_principal_id").notNull(),
+    workType: text("work_type").notNull(),
+    subjectType: text("subject_type").notNull(),
     subjectId: uuid("subject_id").notNull(),
     status: workItemStatus("status").default("open").notNull(),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
@@ -128,7 +132,12 @@ export const workItems = pgTable(
       foreignColumns: [memberships.tenantId, memberships.principalId],
       name: "work_items_assignee_same_tenant_fk",
     }).onDelete("restrict"),
-    unique("work_items_tenant_subject_uq").on(table.tenantId, table.subjectId),
+    unique("work_items_tenant_work_subject_uq").on(
+      table.tenantId,
+      table.workType,
+      table.subjectType,
+      table.subjectId,
+    ),
     index("work_items_tenant_assignee_status_created_idx").on(
       table.tenantId,
       table.assigneePrincipalId,
@@ -139,6 +148,8 @@ export const workItems = pgTable(
       "work_items_completion_consistent",
       sql`(${table.status} = 'completed' AND ${table.completedAt} IS NOT NULL) OR (${table.status} <> 'completed' AND ${table.completedAt} IS NULL)`,
     ),
+    check("work_items_work_type_not_blank", sql`char_length(trim(${table.workType})) > 0`),
+    check("work_items_subject_type_not_blank", sql`char_length(trim(${table.subjectType})) > 0`),
   ],
 ).enableRLS();
 
@@ -150,6 +161,7 @@ export const evidenceEvents = pgTable(
       .notNull()
       .references(() => tenants.tenantId, { onDelete: "restrict" }),
     eventType: text("event_type").notNull(),
+    subjectType: text("subject_type").notNull(),
     subjectId: uuid("subject_id").notNull(),
     actorPrincipalId: uuid("actor_principal_id").notNull(),
     correlationId: uuid("correlation_id").notNull(),
@@ -165,10 +177,12 @@ export const evidenceEvents = pgTable(
       foreignColumns: [memberships.tenantId, memberships.principalId],
       name: "evidence_events_actor_same_tenant_fk",
     }).onDelete("restrict"),
-    unique("evidence_events_tenant_subject_type_uq").on(
+    unique("evidence_events_idempotency_uq").on(
       table.tenantId,
+      table.subjectType,
       table.subjectId,
       table.eventType,
+      table.correlationId,
     ),
     index("evidence_events_tenant_subject_occurred_idx").on(
       table.tenantId,
@@ -177,6 +191,10 @@ export const evidenceEvents = pgTable(
       table.evidenceEventId,
     ),
     check("evidence_events_type_not_blank", sql`char_length(trim(${table.eventType})) > 0`),
+    check(
+      "evidence_events_subject_type_not_blank",
+      sql`char_length(trim(${table.subjectType})) > 0`,
+    ),
     check("evidence_events_new_state_not_blank", sql`char_length(trim(${table.newState})) > 0`),
   ],
 ).enableRLS();
@@ -189,8 +207,10 @@ export const outboxEvents = pgTable(
       .notNull()
       .references(() => tenants.tenantId, { onDelete: "restrict" }),
     eventType: text("event_type").notNull(),
+    aggregateType: text("aggregate_type").notNull(),
     aggregateId: uuid("aggregate_id").notNull(),
     aggregateVersion: integer("aggregate_version").notNull(),
+    correlationId: uuid("correlation_id").notNull(),
     payload: jsonb("payload").notNull(),
     occurredAt: timestamp("occurred_at", { mode: "date", withTimezone: true })
       .defaultNow()
@@ -201,13 +221,19 @@ export const outboxEvents = pgTable(
     unique("outbox_events_idempotency_uq").on(
       table.tenantId,
       table.eventType,
+      table.aggregateType,
       table.aggregateId,
       table.aggregateVersion,
     ),
     index("outbox_events_unpublished_idx")
       .on(table.occurredAt, table.eventId)
       .where(sql`${table.publishedAt} IS NULL`),
+    index("outbox_events_tenant_correlation_idx").on(table.tenantId, table.correlationId),
     check("outbox_events_type_not_blank", sql`char_length(trim(${table.eventType})) > 0`),
+    check(
+      "outbox_events_aggregate_type_not_blank",
+      sql`char_length(trim(${table.aggregateType})) > 0`,
+    ),
     check("outbox_events_aggregate_version_positive", sql`${table.aggregateVersion} > 0`),
   ],
 ).enableRLS();
