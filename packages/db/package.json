@@ -11,8 +11,10 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "vitest run --passWithNoTests",
+    "build": "node ../../scripts/build/clean-typescript-output.mjs && tsc -p tsconfig.build.json",
+    "db:check": "drizzle-kit check --config drizzle.config.ts",
+    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
+    "test": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -20,6 +22,7 @@
     "pg": "8.22.0"
   },
   "devDependencies": {
+    "@types/node": "26.1.1",
     "@types/pg": "8.20.0",
     "drizzle-kit": "0.31.10",
     "typescript": "5.9.3",
