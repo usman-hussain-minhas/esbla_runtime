@@ -15,6 +15,13 @@
       "when": 1783638694169,
       "tag": "0001_tenant_enforcement",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783641088151,
+      "tag": "0002_flat_queen_noir",
+      "breakpoints": true
     }
   ]
 }
