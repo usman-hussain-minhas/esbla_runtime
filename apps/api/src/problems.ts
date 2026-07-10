@@ -1,5 +1,6 @@
 import { HrLeaveError } from "@esbla/hr";
 import { PlatformError } from "@esbla/platform-core";
+import { WorkspaceTaskError } from "@esbla/workspace";
 import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
 import { AuthError } from "./auth.js";
 
@@ -24,6 +25,13 @@ function statusForError(error: Error): number {
     if (error.code === "LEAVE_SERVICE_INACTIVE") return 503;
     return 409;
   }
+  if (error instanceof WorkspaceTaskError) {
+    if (error.code === "WORKSPACE_TASK_INPUT_INVALID") return 400;
+    if (error.code === "WORKSPACE_TASK_NOT_FOUND") return 404;
+    if (error.code === "WORKSPACE_TASK_SERVICE_INACTIVE") return 503;
+    if (error.code === "WORKSPACE_TASK_VERSION_CONFLICT") return 409;
+    return 409;
+  }
   if (error instanceof PlatformError) {
     if (error.code === "POLICY_DENIED" || error.code === "ACTOR_NOT_ACTIVE_MEMBER") return 403;
     if (error.code === "INVALID_OPERATION_CONTEXT") return 400;
@@ -40,6 +48,7 @@ function codeForError(error: Error): string {
   if (
     error instanceof AuthError ||
     error instanceof HrLeaveError ||
+    error instanceof WorkspaceTaskError ||
     error instanceof PlatformError
   ) {
     return error.code;

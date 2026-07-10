@@ -67,9 +67,10 @@ describe("assigned leave-request list boundary", () => {
       new URL("../app/workspace/my-work/page.tsx", import.meta.url),
       "utf8",
     );
-    expect(pageSource).toContain("Assigned approvals");
+    expect(pageSource).toContain("Assigned work");
     expect(pageSource).toContain("LeaveApprovalAction");
     expect(pageSource).toContain("LeaveRejectionAction");
+    expect(pageSource).toContain("TaskCompleteAction");
     expect(pageSource).not.toContain("fetch(");
     expect(pageSource).not.toContain("/approve");
     expect(pageSource).not.toContain("/reject");

@@ -18,11 +18,16 @@ describe("Esbla Theme v1 host contract", () => {
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
   });
 
-  it("routes to My Work and hosts separate high-risk approval and rejection interactions", async () => {
+  it("routes to My Work and hosts HR plus Workspace task interactions", async () => {
     const entry = await readFile(new URL("./page.tsx", import.meta.url), "utf8");
     const surfaces = await readFile(new URL("./workspace-surfaces.ts", import.meta.url), "utf8");
     const shell = await readFile(new URL("./workspace-shell.tsx", import.meta.url), "utf8");
     const myWork = await readFile(new URL("./workspace/my-work/page.tsx", import.meta.url), "utf8");
+    const taskComplete = await readFile(
+      new URL("./workspace/my-work/task-complete-action.tsx", import.meta.url),
+      "utf8",
+    );
+    const tasks = await readFile(new URL("./workspace/tasks/page.tsx", import.meta.url), "utf8");
     const approval = await readFile(
       new URL("./workspace/my-work/leave-approval-action.tsx", import.meta.url),
       "utf8",
@@ -32,17 +37,23 @@ describe("Esbla Theme v1 host contract", () => {
       "utf8",
     );
     expect(entry).toContain('redirect("/workspace/my-work")');
-    expect(myWork).toContain("Assigned approvals");
+    expect(myWork).toContain("Assigned work");
     expect(myWork).toContain("LeaveApprovalAction");
     expect(myWork).toContain("LeaveRejectionAction");
+    expect(myWork).toContain("TaskCompleteAction");
     expect(approval).toContain("Confirm approval");
     expect(approval).toContain("records approval evidence");
     expect(approval).not.toContain("Reject request");
     expect(rejection).toContain("Confirm rejection");
     expect(rejection).toContain("records rejection evidence");
     expect(rejection).toContain("Tenant policy may require a note");
+    expect(taskComplete).toContain("Complete this task?");
+    expect(taskComplete).toContain("records completion evidence");
+    expect(tasks).toContain("Workspace Tasks");
+    expect(tasks).toContain("New task");
     expect(surfaces).toContain("WORKSPACE_SURFACES");
     expect(surfaces).toContain('href: "/workspace/my-work"');
+    expect(surfaces).toContain('href: "/workspace/tasks"');
     expect(surfaces).toContain('href: "/workspace/hr/leave"');
     expect(shell).toContain("WORKSPACE_SURFACES.map");
     expect(shell).not.toContain("statusLabel: string");
@@ -59,10 +70,16 @@ describe("Esbla Theme v1 host contract", () => {
       new URL("./workspace/my-work/leave-rejection-action.tsx", import.meta.url),
       "utf8",
     );
+    const taskComplete = await readFile(
+      new URL("./workspace/my-work/task-complete-action.tsx", import.meta.url),
+      "utf8",
+    );
     expect(myWork).toContain('aria-label="Assigned leave approvals"');
+    expect(myWork).toContain('aria-label="Assigned workspace tasks"');
     expect(myWork).toContain('aria-label="Assigned approval pages"');
     expect(approval).toContain('aria-label="Approve leave request"');
     expect(rejection).toContain('aria-label="Reject leave request"');
+    expect(taskComplete).toContain('aria-label="Complete workspace task"');
     expect(rejection).toContain("htmlFor={`rejection-note-");
     expect(rejection).toContain('aria-invalid={noteError ? "true" : undefined}');
     expect(rejection).toContain("decisionNote");

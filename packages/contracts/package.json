@@ -18,6 +18,11 @@
       "types": "./src/hr-leave-api.ts",
       "development": "./src/hr-leave-api.ts",
       "import": "./dist/hr-leave-api.js"
+    },
+    "./workspace-task-api": {
+      "types": "./src/workspace-task-api.ts",
+      "development": "./src/workspace-task-api.ts",
+      "import": "./dist/workspace-task-api.js"
     }
   },
   "scripts": {

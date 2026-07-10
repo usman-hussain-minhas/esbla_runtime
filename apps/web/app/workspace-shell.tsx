@@ -1,4 +1,4 @@
-import { BriefcaseBusiness, Home, Inbox, ShieldAlert, ShieldCheck } from "lucide-react";
+import { BriefcaseBusiness, Home, Inbox, ListTodo, ShieldAlert, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import { getServerDevelopmentSessionSummary } from "../lib/development-session";
 import { ThemeModeControl } from "./theme-mode-control";
@@ -17,6 +17,7 @@ interface WorkspaceShellProps {
 const surfaceIcons = {
   briefcase: BriefcaseBusiness,
   inbox: Inbox,
+  tasks: ListTodo,
 } satisfies Record<WorkspaceSurfaceIcon, typeof BriefcaseBusiness>;
 
 export function WorkspaceShell({ children, currentSurface }: WorkspaceShellProps) {
