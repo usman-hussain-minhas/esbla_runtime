@@ -6,6 +6,7 @@ import type {
 import { ArrowRight, ClipboardCheck, Clock3 } from "lucide-react";
 import { getAssignedLeaveRequests } from "../../../lib/hr-leave-assigned-list";
 import { LeaveApprovalAction } from "./leave-approval-action";
+import { LeaveRejectionAction } from "./leave-rejection-action";
 
 export const dynamic = "force-dynamic";
 
@@ -125,6 +126,11 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
                   <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
                 </a>
                 <LeaveApprovalAction
+                  expectedVersion={item.version}
+                  idempotencyKey={randomUUID()}
+                  leaveRequestId={item.leaveRequestId}
+                />
+                <LeaveRejectionAction
                   expectedVersion={item.version}
                   idempotencyKey={randomUUID()}
                   leaveRequestId={item.leaveRequestId}
