@@ -494,41 +494,59 @@ h1 {
   margin-top: 20px;
 }
 
-.approval-action {
+.approval-action,
+.rejection-action {
   display: grid;
   gap: 10px;
   justify-items: end;
   max-width: 560px;
 }
 
-.approval-confirmation {
+.approval-confirmation,
+.rejection-confirmation {
   border-left: 3px solid var(--accent);
   display: grid;
   gap: 12px;
   padding-left: 16px;
 }
 
+.rejection-confirmation {
+  border-left-color: var(--danger);
+}
+
 .approval-confirmation > p,
-.approval-error p {
+.approval-error p,
+.rejection-confirmation > p,
+.rejection-error p {
   color: var(--text-main);
   font-size: 13px;
   line-height: 1.5;
   margin: 0;
 }
 
-.approval-confirmation-actions {
+.approval-confirmation-actions,
+.rejection-confirmation-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
 }
 
-.approval-error {
+.approval-error,
+.rejection-error {
   align-items: center;
   color: var(--danger);
   display: flex;
   gap: 8px;
   max-width: 480px;
+}
+
+.rejection-field {
+  min-width: min(440px, 100%);
+}
+
+.rejection-field textarea {
+  min-height: 92px;
 }
 
 .leave-detail-surface {
@@ -849,6 +867,16 @@ h1 {
   border-color: var(--accent);
 }
 
+.command-button-danger {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--line-soft));
+  color: var(--danger);
+}
+
+.command-button-danger:hover {
+  background: color-mix(in srgb, var(--danger) 9%, var(--surface-widget));
+  border-color: var(--danger);
+}
+
 .command-button:disabled {
   cursor: wait;
   opacity: 0.68;
@@ -952,6 +980,13 @@ h1 {
 
 .field-error {
   color: var(--danger);
+  font-size: 12px;
+  line-height: 1.45;
+  margin-bottom: 0;
+}
+
+.field-hint {
+  color: var(--text-soft);
   font-size: 12px;
   line-height: 1.45;
   margin-bottom: 0;
@@ -1192,7 +1227,8 @@ textarea:focus-visible,
   }
 
   .work-queue-actions,
-  .approval-action {
+  .approval-action,
+  .rejection-action {
     align-items: stretch;
     display: grid;
     justify-items: stretch;
@@ -1203,7 +1239,8 @@ textarea:focus-visible,
     justify-content: center;
   }
 
-  .approval-confirmation-actions {
+  .approval-confirmation-actions,
+  .rejection-confirmation-actions {
     display: grid;
     grid-template-columns: 1fr;
   }

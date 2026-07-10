@@ -62,14 +62,17 @@ describe("assigned leave-request list boundary", () => {
     ).rejects.toThrow("unavailable");
   });
 
-  it("keeps the My Work surface read-only and canonical", async () => {
+  it("keeps the My Work list privacy-minimized and delegates decisions to bounded actions", async () => {
     const pageSource = await readFile(
       new URL("../app/workspace/my-work/page.tsx", import.meta.url),
       "utf8",
     );
     expect(pageSource).toContain("Assigned approvals");
-    expect(pageSource).not.toContain("Approve");
-    expect(pageSource).not.toContain("Reject");
+    expect(pageSource).toContain("LeaveApprovalAction");
+    expect(pageSource).toContain("LeaveRejectionAction");
+    expect(pageSource).not.toContain("fetch(");
+    expect(pageSource).not.toContain("/approve");
+    expect(pageSource).not.toContain("/reject");
     expect(pageSource).not.toContain("tenantId");
     expect(pageSource).not.toContain("employeePrincipalId");
   });
