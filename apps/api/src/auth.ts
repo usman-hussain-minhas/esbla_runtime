@@ -1,4 +1,5 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
+import { type DevelopmentSignatureInput, signDevelopmentPrincipal } from "@esbla/contracts";
 import type { OperationContext } from "@esbla/platform-core";
 import type { FastifyRequest } from "fastify";
 
@@ -30,56 +31,8 @@ export type RequestAuthenticator = (
   request: FastifyRequest,
 ) => Promise<AuthenticatedPrincipal> | AuthenticatedPrincipal;
 
-export interface DevelopmentSignatureInput {
-  readonly body?: unknown;
-  readonly idempotencyKey?: string;
-  readonly method: string;
-  readonly principalId: string;
-  readonly requestId: string;
-  readonly tenantId: string;
-  readonly timestamp: string;
-  readonly url: string;
-}
-
-function canonicalJson(value: unknown): string {
-  if (value === null) return "null";
-  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) throw new TypeError("Signed JSON numbers must be finite");
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    const entries = Object.keys(record)
-      .sort()
-      .filter((key) => record[key] !== undefined)
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`);
-    return `{${entries.join(",")}}`;
-  }
-  throw new TypeError("Signed request bodies must contain JSON values only");
-}
-
-function signaturePayload(input: DevelopmentSignatureInput): string {
-  const bodyHash = createHash("sha256")
-    .update(canonicalJson(input.body ?? null))
-    .digest("hex");
-  return [
-    "esbla-development-principal-v1",
-    input.method.toUpperCase(),
-    input.url,
-    input.tenantId,
-    input.principalId,
-    input.requestId,
-    input.idempotencyKey ?? "",
-    input.timestamp,
-    bodyHash,
-  ].join("\n");
-}
-
-export function signDevelopmentPrincipal(secret: string, input: DevelopmentSignatureInput): string {
-  return createHmac("sha256", secret).update(signaturePayload(input)).digest("hex");
-}
+export type { DevelopmentSignatureInput };
+export { signDevelopmentPrincipal };
 
 function header(request: FastifyRequest, name: string): string | undefined {
   const value = request.headers[name];
