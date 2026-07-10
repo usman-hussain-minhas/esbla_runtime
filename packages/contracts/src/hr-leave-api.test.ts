@@ -9,8 +9,29 @@ import {
   hrLeaveRequestPathSchema,
   hrLeaveRequestSchema,
   hrSubmitLeaveRequestBodySchema,
+  parseHrLeaveRequestPage,
   problemDetailsSchema,
 } from "./hr-leave-api.js";
+
+const leaveRequest = {
+  approverPrincipalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  categoryCode: "annual",
+  correlationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  createdAt: "2026-07-10T00:00:00.000Z",
+  decidedAt: null,
+  decisionNote: null,
+  employeePrincipalId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  endDate: "2026-07-12",
+  idempotencyKey: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  leaveRequestId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  reason: "Rest",
+  startDate: "2026-07-11",
+  status: "submitted",
+  submittedAt: "2026-07-10T00:00:00.000Z",
+  tenantId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  updatedAt: "2026-07-10T00:00:00.000Z",
+  version: 1,
+} as const;
 
 describe("HR Leave Request API schemas", () => {
   it("uses the exact ratified contract keys without duplicate schema identities", () => {
@@ -54,5 +75,47 @@ describe("HR Leave Request API schemas", () => {
       history: { items: { $ref: "LeaveEvidenceEvent#" }, maxItems: 100 },
       request: { $ref: "LeaveRequest#" },
     });
+  });
+
+  it("strictly decodes a bounded leave-request page", () => {
+    const page = {
+      items: [leaveRequest],
+      nextCursor: {
+        leaveRequestId: leaveRequest.leaveRequestId,
+        submittedAt: leaveRequest.submittedAt,
+      },
+    };
+    expect(parseHrLeaveRequestPage(page)).toBe(page);
+    expect(hrLeaveRequestPageSchema.properties.items.maxItems).toBe(50);
+  });
+
+  it("rejects malformed, over-broad, or calendar-invalid page payloads", () => {
+    expect(() => parseHrLeaveRequestPage({ items: [], nextCursor: null, surprise: true })).toThrow(
+      "unexpected or missing fields",
+    );
+    expect(() =>
+      parseHrLeaveRequestPage({
+        items: [{ ...leaveRequest, startDate: "2026-02-31" }],
+        nextCursor: null,
+      }),
+    ).toThrow("valid calendar date");
+    expect(() =>
+      parseHrLeaveRequestPage({
+        items: [{ ...leaveRequest, submittedAt: "July 10, 2026" }],
+        nextCursor: null,
+      }),
+    ).toThrow("ISO date-time");
+    expect(() =>
+      parseHrLeaveRequestPage({
+        items: [{ ...leaveRequest, reason: "x".repeat(2001) }],
+        nextCursor: null,
+      }),
+    ).toThrow("at most 2000 characters");
+    expect(() =>
+      parseHrLeaveRequestPage({
+        items: Array.from({ length: 51 }, () => leaveRequest),
+        nextCursor: null,
+      }),
+    ).toThrow("at most 50");
   });
 });

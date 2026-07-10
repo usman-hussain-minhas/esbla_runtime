@@ -13,6 +13,11 @@
       "types": "./src/development-principal.ts",
       "development": "./src/development-principal.ts",
       "import": "./dist/development-principal.js"
+    },
+    "./hr-leave-api": {
+      "types": "./src/hr-leave-api.ts",
+      "development": "./src/hr-leave-api.ts",
+      "import": "./dist/hr-leave-api.js"
     }
   },
   "scripts": {

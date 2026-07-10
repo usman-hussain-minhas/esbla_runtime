@@ -6,8 +6,13 @@ export {
 } from "./development-principal.js";
 export {
   type HrDecideLeaveRequestBody,
+  type HrLeaveCategoryCode,
   type HrLeaveListQuery,
+  type HrLeaveRequest,
+  type HrLeaveRequestCursor,
+  type HrLeaveRequestPage,
   type HrLeaveRequestPath,
+  type HrLeaveRequestStatus,
   type HrSubmitLeaveRequestBody,
   hrAssignedLeaveListQuerySchema,
   hrDecideLeaveRequestBodySchema,
@@ -18,6 +23,7 @@ export {
   hrLeaveRequestPathSchema,
   hrLeaveRequestSchema,
   hrSubmitLeaveRequestBodySchema,
+  parseHrLeaveRequestPage,
   problemDetailsSchema,
 } from "./hr-leave-api.js";
 export {
