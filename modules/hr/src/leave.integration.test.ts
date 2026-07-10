@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   approveLeaveRequest,
   getLeaveRequest,
+  getLeaveRequestDetail,
   HR_LEAVE_BILLING_STATE,
   listAssignedLeaveRequests,
   listLeaveEvidence,
@@ -370,6 +371,44 @@ describe("HR Leave Request domain", () => {
         "version",
         "workItemId",
       ].sort(),
+    );
+
+    const detail = await getLeaveRequestDetail(
+      pool,
+      context(ids.tenantA, ids.managerA, ids.correlationSubmit1),
+      ids.request1,
+    );
+    expect(detail?.request).toMatchObject({
+      categoryCode: "sick",
+      employeeDisplayName: "Employee A",
+      leaveRequestId: ids.request1,
+      status: "submitted",
+      version: 1,
+    });
+    expect(Object.keys(detail?.request ?? {}).sort()).toEqual(
+      [
+        "categoryCode",
+        "decidedAt",
+        "decisionNote",
+        "employeeDisplayName",
+        "endDate",
+        "leaveRequestId",
+        "reason",
+        "startDate",
+        "status",
+        "submittedAt",
+        "version",
+      ].sort(),
+    );
+    expect(detail?.history).toEqual([
+      expect.objectContaining({
+        eventType: "evidence.hr.leave_request.submitted",
+        newState: "submitted",
+        priorState: null,
+      }),
+    ]);
+    expect(Object.keys(detail?.history[0] ?? {}).sort()).toEqual(
+      ["eventType", "newState", "occurredAt", "priorState"].sort(),
     );
 
     await withTenantTransaction(
@@ -780,13 +819,22 @@ describe("HR Leave Request domain", () => {
            ORDER BY occurred_at ASC, evidence_event_id ASC LIMIT 100`,
           [ids.tenantA, ids.request1],
         );
-        const plans = [...assigned.rows, ...own.rows, ...evidence.rows]
+        const employeeName = await client.query<{ "QUERY PLAN": string }>(
+          `EXPLAIN (COSTS OFF)
+           SELECT principal.display_name
+           FROM memberships membership
+           JOIN principals principal ON principal.principal_id = membership.principal_id
+           WHERE membership.tenant_id = $1 AND membership.principal_id = $2`,
+          [ids.tenantA, ids.employeeA],
+        );
+        const plans = [...assigned.rows, ...own.rows, ...evidence.rows, ...employeeName.rows]
           .map((row) => row["QUERY PLAN"])
           .join("\n");
         expect(plans).toContain("hr_leave_requests_assigned_open_idx");
         expect(plans).toContain("work_items_tenant_work_subject_uq");
         expect(plans).toContain("hr_leave_requests_employee_history_idx");
         expect(plans).toContain("evidence_events_tenant_subject_occurred_idx");
+        expect(plans).toContain("memberships_tenant_principal_uq");
       },
     );
 

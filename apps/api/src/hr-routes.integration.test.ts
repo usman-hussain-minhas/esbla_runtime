@@ -63,6 +63,28 @@ interface AssignedLeaveResponse {
   readonly workItemId: string;
 }
 
+interface LeaveDetailResponse {
+  readonly history: Array<{
+    readonly eventType: string;
+    readonly newState: string;
+    readonly occurredAt: string;
+    readonly priorState: string | null;
+  }>;
+  readonly request: {
+    readonly categoryCode: string;
+    readonly decidedAt: string | null;
+    readonly decisionNote: string | null;
+    readonly employeeDisplayName: string;
+    readonly endDate: string;
+    readonly leaveRequestId: string;
+    readonly reason: string | null;
+    readonly startDate: string;
+    readonly status: string;
+    readonly submittedAt: string;
+    readonly version: number;
+  };
+}
+
 let migrationPool: Pool;
 let pool: Pool;
 let server: FastifyInstance;
@@ -474,7 +496,8 @@ describe("HR Leave Request API boundary", () => {
       url: `/v1/hr/leave-requests/${request.leaveRequestId}`,
     });
     expect(detail.response.statusCode).toBe(200);
-    expect(detail.response.json()).toMatchObject({
+    const detailBody = detail.response.json<LeaveDetailResponse>();
+    expect(detailBody).toMatchObject({
       history: [
         {
           eventType: "evidence.hr.leave_request.submitted",
@@ -482,8 +505,30 @@ describe("HR Leave Request API boundary", () => {
           priorState: null,
         },
       ],
-      request: { leaveRequestId: request.leaveRequestId, status: "submitted" },
+      request: {
+        employeeDisplayName: "Employee A",
+        leaveRequestId: request.leaveRequestId,
+        status: "submitted",
+      },
     });
+    expect(Object.keys(detailBody.request).sort()).toEqual(
+      [
+        "categoryCode",
+        "decidedAt",
+        "decisionNote",
+        "employeeDisplayName",
+        "endDate",
+        "leaveRequestId",
+        "reason",
+        "startDate",
+        "status",
+        "submittedAt",
+        "version",
+      ].sort(),
+    );
+    expect(Object.keys(detailBody.history[0] ?? {}).sort()).toEqual(
+      ["eventType", "newState", "occurredAt", "priorState"].sort(),
+    );
   });
 
   it("enforces assigned-manager and tenant boundaries without leaking records", async () => {

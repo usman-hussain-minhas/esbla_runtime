@@ -79,7 +79,28 @@ export interface LeaveEvidenceEvent {
   readonly priorState: string | null;
 }
 
+export interface LeaveEvidenceSummary {
+  readonly eventType: string;
+  readonly newState: string;
+  readonly occurredAt: string;
+  readonly priorState: string | null;
+}
+
+export interface LeaveRequestDetailRequest {
+  readonly categoryCode: LeaveCategory;
+  readonly decidedAt: string | null;
+  readonly decisionNote: string | null;
+  readonly employeeDisplayName: string;
+  readonly endDate: string;
+  readonly leaveRequestId: string;
+  readonly reason: string | null;
+  readonly startDate: string;
+  readonly status: LeaveRequestStatus;
+  readonly submittedAt: string;
+  readonly version: number;
+}
+
 export interface LeaveRequestDetail {
-  readonly history: readonly LeaveEvidenceEvent[];
-  readonly request: LeaveRequest;
+  readonly history: readonly LeaveEvidenceSummary[];
+  readonly request: LeaveRequestDetailRequest;
 }

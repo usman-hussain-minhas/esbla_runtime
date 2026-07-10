@@ -75,6 +75,35 @@ export interface HrAssignedLeaveRequestPage {
   readonly nextCursor: HrLeaveRequestCursor | null;
 }
 
+export interface HrLeaveEvidenceEvent {
+  readonly eventType:
+    | "evidence.hr.leave_request.approved"
+    | "evidence.hr.leave_request.rejected"
+    | "evidence.hr.leave_request.submitted";
+  readonly newState: HrLeaveRequestStatus;
+  readonly occurredAt: string;
+  readonly priorState: "submitted" | null;
+}
+
+export interface HrLeaveRequestDetailRequest {
+  readonly categoryCode: HrLeaveCategoryCode;
+  readonly decidedAt: string | null;
+  readonly decisionNote: string | null;
+  readonly employeeDisplayName: string;
+  readonly endDate: string;
+  readonly leaveRequestId: string;
+  readonly reason: string | null;
+  readonly startDate: string;
+  readonly status: HrLeaveRequestStatus;
+  readonly submittedAt: string;
+  readonly version: number;
+}
+
+export interface HrLeaveRequestDetail {
+  readonly history: readonly HrLeaveEvidenceEvent[];
+  readonly request: HrLeaveRequestDetailRequest;
+}
+
 export interface ApiProblemDetails {
   readonly code: string;
   readonly detail: string;
@@ -185,12 +214,42 @@ export const hrLeaveRequestSchema = {
   type: "object",
 } as const;
 
+export const hrLeaveRequestDetailRequestSchema = {
+  $id: "LeaveRequestDetailRequest",
+  additionalProperties: false,
+  properties: {
+    categoryCode: { enum: ["annual", "sick", "unpaid", "other"] },
+    decidedAt: { anyOf: [{ format: "date-time", type: "string" }, { type: "null" }] },
+    decisionNote: { anyOf: [{ maxLength: 2000, type: "string" }, { type: "null" }] },
+    employeeDisplayName: { maxLength: 160, minLength: 1, type: "string" },
+    endDate: { pattern: datePattern, type: "string" },
+    leaveRequestId: { pattern: uuidPattern, type: "string" },
+    reason: { anyOf: [{ maxLength: 2000, type: "string" }, { type: "null" }] },
+    startDate: { pattern: datePattern, type: "string" },
+    status: { enum: ["submitted", "approved", "rejected"] },
+    submittedAt: { format: "date-time", type: "string" },
+    version: { minimum: 1, type: "integer" },
+  },
+  required: [
+    "leaveRequestId",
+    "employeeDisplayName",
+    "categoryCode",
+    "startDate",
+    "endDate",
+    "reason",
+    "status",
+    "submittedAt",
+    "decidedAt",
+    "decisionNote",
+    "version",
+  ],
+  type: "object",
+} as const;
+
 export const hrLeaveEvidenceEventSchema = {
   $id: "LeaveEvidenceEvent",
   additionalProperties: false,
   properties: {
-    actorPrincipalId: { pattern: uuidPattern, type: "string" },
-    correlationId: { pattern: uuidPattern, type: "string" },
     eventType: {
       enum: [
         "evidence.hr.leave_request.submitted",
@@ -198,20 +257,11 @@ export const hrLeaveEvidenceEventSchema = {
         "evidence.hr.leave_request.rejected",
       ],
     },
-    evidenceEventId: { pattern: uuidPattern, type: "string" },
     newState: { enum: ["submitted", "approved", "rejected"] },
     occurredAt: { format: "date-time", type: "string" },
     priorState: { anyOf: [{ enum: ["submitted"] }, { type: "null" }] },
   },
-  required: [
-    "actorPrincipalId",
-    "correlationId",
-    "eventType",
-    "evidenceEventId",
-    "newState",
-    "occurredAt",
-    "priorState",
-  ],
+  required: ["eventType", "newState", "occurredAt", "priorState"],
   type: "object",
 } as const;
 
@@ -282,8 +332,13 @@ export const hrLeaveRequestDetailSchema = {
   $id: "LeaveRequestDetail",
   additionalProperties: false,
   properties: {
-    history: { items: { $ref: "LeaveEvidenceEvent#" }, maxItems: 100, type: "array" },
-    request: { $ref: "LeaveRequest#" },
+    history: {
+      items: { $ref: "LeaveEvidenceEvent#" },
+      maxItems: 100,
+      minItems: 1,
+      type: "array",
+    },
+    request: { $ref: "LeaveRequestDetailRequest#" },
   },
   required: ["request", "history"],
   type: "object",
@@ -335,6 +390,22 @@ const assignedLeaveRequestKeys = [
   "submittedAt",
   "version",
   "workItemId",
+] as const;
+
+const leaveEvidenceEventKeys = ["eventType", "newState", "occurredAt", "priorState"] as const;
+
+const leaveRequestDetailRequestKeys = [
+  "categoryCode",
+  "decidedAt",
+  "decisionNote",
+  "employeeDisplayName",
+  "endDate",
+  "leaveRequestId",
+  "reason",
+  "startDate",
+  "status",
+  "submittedAt",
+  "version",
 ] as const;
 
 const problemDetailsKeys = [
@@ -506,6 +577,111 @@ export function parseHrAssignedLeaveRequestPage(value: unknown): HrAssignedLeave
     assertCursor(value.nextCursor, "AssignedLeaveRequestPage.nextCursor");
   }
   return value as unknown as HrAssignedLeaveRequestPage;
+}
+
+function assertLeaveRequestDetailRequest(
+  value: unknown,
+  label: string,
+): asserts value is HrLeaveRequestDetailRequest {
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(value, leaveRequestDetailRequestKeys, label);
+  assertUuid(value.leaveRequestId, `${label}.leaveRequestId`);
+  assertNonEmptyString(value.employeeDisplayName, `${label}.employeeDisplayName`);
+  if (value.employeeDisplayName.length > 160) {
+    throw new TypeError(`${label}.employeeDisplayName must be at most 160 characters`);
+  }
+  if (
+    !(["annual", "other", "sick", "unpaid"] as const).includes(
+      value.categoryCode as HrLeaveCategoryCode,
+    )
+  ) {
+    throw new TypeError(`${label}.categoryCode is invalid`);
+  }
+  assertDate(value.startDate, `${label}.startDate`);
+  assertDate(value.endDate, `${label}.endDate`);
+  if (value.endDate < value.startDate) {
+    throw new TypeError(`${label}.endDate must be on or after startDate`);
+  }
+  assertNullableString(value.reason, `${label}.reason`);
+  assertNullableString(value.decisionNote, `${label}.decisionNote`);
+  assertDateTime(value.submittedAt, `${label}.submittedAt`);
+  if (value.decidedAt !== null) assertDateTime(value.decidedAt, `${label}.decidedAt`);
+  if (
+    !(["approved", "rejected", "submitted"] as const).includes(value.status as HrLeaveRequestStatus)
+  ) {
+    throw new TypeError(`${label}.status is invalid`);
+  }
+  if (value.status === "submitted" && value.decidedAt !== null) {
+    throw new TypeError(`${label}.submitted request cannot have decidedAt`);
+  }
+  if (value.status === "submitted" && value.decisionNote !== null) {
+    throw new TypeError(`${label}.submitted request cannot have decisionNote`);
+  }
+  if (value.status !== "submitted" && value.decidedAt === null) {
+    throw new TypeError(`${label}.terminal request must have decidedAt`);
+  }
+  if (!Number.isSafeInteger(value.version) || (value.version as number) < 1) {
+    throw new TypeError(`${label}.version must be a positive integer`);
+  }
+}
+
+function assertLeaveEvidenceEvent(
+  value: unknown,
+  label: string,
+): asserts value is HrLeaveEvidenceEvent {
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(value, leaveEvidenceEventKeys, label);
+  assertDateTime(value.occurredAt, `${label}.occurredAt`);
+  if (
+    !(["approved", "rejected", "submitted"] as const).includes(
+      value.newState as HrLeaveRequestStatus,
+    )
+  ) {
+    throw new TypeError(`${label}.newState is invalid`);
+  }
+  if (value.priorState !== null && value.priorState !== "submitted") {
+    throw new TypeError(`${label}.priorState is invalid`);
+  }
+  if (value.eventType !== `evidence.hr.leave_request.${value.newState}`) {
+    throw new TypeError(`${label}.eventType does not match newState`);
+  }
+}
+
+export function parseHrLeaveRequestDetail(value: unknown): HrLeaveRequestDetail {
+  if (!isRecord(value)) throw new TypeError("LeaveRequestDetail must be an object");
+  assertExactKeys(value, ["history", "request"], "LeaveRequestDetail");
+  assertLeaveRequestDetailRequest(value.request, "LeaveRequestDetail.request");
+  if (!Array.isArray(value.history) || value.history.length < 1 || value.history.length > 100) {
+    throw new TypeError("LeaveRequestDetail.history must contain between 1 and 100 events");
+  }
+
+  let priorState: HrLeaveRequestStatus | null = null;
+  let priorOccurredAt = Number.NEGATIVE_INFINITY;
+  value.history.forEach((event, index) => {
+    const label = `LeaveRequestDetail.history[${index}]`;
+    assertLeaveEvidenceEvent(event, label);
+    if (index === 0 && (event.priorState !== null || event.newState !== "submitted")) {
+      throw new TypeError("LeaveRequestDetail.history must begin with submission");
+    }
+    if (index > 0) {
+      if (priorState !== "submitted" || event.priorState !== priorState) {
+        throw new TypeError(`${label} does not continue the prior state`);
+      }
+      if (event.newState === "submitted") {
+        throw new TypeError(`${label} cannot repeat submission`);
+      }
+    }
+    const occurredAt = Date.parse(event.occurredAt);
+    if (occurredAt < priorOccurredAt) {
+      throw new TypeError("LeaveRequestDetail.history must be chronological");
+    }
+    priorOccurredAt = occurredAt;
+    priorState = event.newState;
+  });
+  if (priorState !== value.request.status) {
+    throw new TypeError("LeaveRequestDetail.history does not prove the current request status");
+  }
+  return value as unknown as HrLeaveRequestDetail;
 }
 
 export function parseHrLeaveRequest(value: unknown): HrLeaveRequest {

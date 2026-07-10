@@ -21,9 +21,11 @@ import {
   HR_LEAVE_SUBJECT_TYPE,
   type LeaveEvidenceCursor,
   type LeaveEvidenceEvent,
+  type LeaveEvidenceSummary,
   type LeaveListCursor,
   type LeaveRequest,
   type LeaveRequestDetail,
+  type LeaveRequestDetailRequest,
 } from "./types.js";
 
 type AssignedLeaveRow = LeaveRow & {
@@ -78,6 +80,50 @@ function mapEvidenceRow(row: EvidenceRow): LeaveEvidenceEvent {
     occurredAt: row.occurred_at,
     priorState: row.prior_state,
   };
+}
+
+function mapEvidenceSummary(event: LeaveEvidenceEvent): LeaveEvidenceSummary {
+  return {
+    eventType: event.eventType,
+    newState: event.newState,
+    occurredAt: event.occurredAt,
+    priorState: event.priorState,
+  };
+}
+
+function mapLeaveDetailRequest(
+  row: LeaveRow,
+  employeeDisplayName: string,
+): LeaveRequestDetailRequest {
+  return {
+    categoryCode: row.category_code,
+    decidedAt: row.decided_at,
+    decisionNote: row.decision_note,
+    employeeDisplayName,
+    endDate: row.end_date,
+    leaveRequestId: row.leave_request_id,
+    reason: row.reason,
+    startDate: row.start_date,
+    status: row.status,
+    submittedAt: row.submitted_at,
+    version: row.version,
+  };
+}
+
+async function selectEmployeeDisplayName(
+  transaction: TenantTransaction,
+  employeePrincipalId: string,
+): Promise<string> {
+  const result = await transaction.client.query<{ display_name: string }>(
+    `SELECT principal.display_name
+     FROM memberships membership
+     JOIN principals principal ON principal.principal_id = membership.principal_id
+     WHERE membership.tenant_id = $1 AND membership.principal_id = $2`,
+    [transaction.context.tenantId, employeePrincipalId],
+  );
+  const displayName = result.rows[0]?.display_name;
+  if (!displayName) throw new Error("Leave request employee display name is unavailable");
+  return displayName;
 }
 
 async function selectEvidence(
@@ -144,9 +190,13 @@ export async function getLeaveRequestDetail(
     const row = await selectLeave(transaction, leaveRequestId);
     if (!row) return null;
     authorizeView(transaction, row);
+    const history = await selectEvidence(transaction, leaveRequestId, 100);
     return {
-      history: await selectEvidence(transaction, leaveRequestId, 100),
-      request: mapLeaveRow(row),
+      history: history.map(mapEvidenceSummary),
+      request: mapLeaveDetailRequest(
+        row,
+        await selectEmployeeDisplayName(transaction, row.employee_principal_id),
+      ),
     };
   });
 }

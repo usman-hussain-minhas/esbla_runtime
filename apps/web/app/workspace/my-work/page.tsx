@@ -2,7 +2,7 @@ import type {
   HrAssignedLeaveRequestSummary,
   HrLeaveRequestCursor,
 } from "@esbla/contracts/hr-leave-api";
-import { ClipboardCheck, Clock3 } from "lucide-react";
+import { ArrowRight, ClipboardCheck, Clock3 } from "lucide-react";
 import { getAssignedLeaveRequests } from "../../../lib/hr-leave-assigned-list";
 
 interface MyWorkPageProps {
@@ -112,6 +112,13 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
                   <dd>Open</dd>
                 </div>
               </dl>
+              <a
+                className="text-command work-detail-link"
+                href={`/workspace/hr/leave/${item.leaveRequestId}`}
+              >
+                Review details
+                <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
+              </a>
             </li>
           ))}
         </ol>
