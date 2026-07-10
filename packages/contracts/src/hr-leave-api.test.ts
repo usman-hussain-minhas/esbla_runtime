@@ -6,6 +6,7 @@ import {
   hrDecideLeaveRequestBodySchema,
   hrLeaveEvidenceEventSchema,
   hrLeaveListQuerySchema,
+  hrLeaveRequestDetailRequestSchema,
   hrLeaveRequestDetailSchema,
   hrLeaveRequestPageSchema,
   hrLeaveRequestPathSchema,
@@ -14,6 +15,7 @@ import {
   parseApiProblemDetails,
   parseHrAssignedLeaveRequestPage,
   parseHrLeaveRequest,
+  parseHrLeaveRequestDetail,
   parseHrLeaveRequestPage,
   problemDetailsSchema,
 } from "./hr-leave-api.js";
@@ -49,6 +51,7 @@ describe("HR Leave Request API schemas", () => {
       hrAssignedLeaveRequestSchema.$id,
       hrAssignedLeaveRequestPageSchema.$id,
       hrLeaveRequestSchema.$id,
+      hrLeaveRequestDetailRequestSchema.$id,
       hrLeaveEvidenceEventSchema.$id,
       hrLeaveRequestPageSchema.$id,
       hrLeaveRequestDetailSchema.$id,
@@ -64,6 +67,7 @@ describe("HR Leave Request API schemas", () => {
       "AssignedLeaveRequest",
       "AssignedLeaveRequestPage",
       "LeaveRequest",
+      "LeaveRequestDetailRequest",
       "LeaveEvidenceEvent",
       "LeaveRequestPage",
       "LeaveRequestDetail",
@@ -81,9 +85,65 @@ describe("HR Leave Request API schemas", () => {
       hrLeaveListQuerySchema.dependencies,
     );
     expect(hrLeaveRequestDetailSchema.properties).toMatchObject({
-      history: { items: { $ref: "LeaveEvidenceEvent#" }, maxItems: 100 },
-      request: { $ref: "LeaveRequest#" },
+      history: { items: { $ref: "LeaveEvidenceEvent#" }, maxItems: 100, minItems: 1 },
+      request: { $ref: "LeaveRequestDetailRequest#" },
     });
+  });
+
+  it("strictly decodes evidence-backed detail and rejects broken history", () => {
+    const detailRequest = {
+      categoryCode: leaveRequest.categoryCode,
+      decidedAt: leaveRequest.decidedAt,
+      decisionNote: leaveRequest.decisionNote,
+      employeeDisplayName: "Employee A",
+      endDate: leaveRequest.endDate,
+      leaveRequestId: leaveRequest.leaveRequestId,
+      reason: leaveRequest.reason,
+      startDate: leaveRequest.startDate,
+      status: leaveRequest.status,
+      submittedAt: leaveRequest.submittedAt,
+      version: leaveRequest.version,
+    } as const;
+    const submitted = {
+      eventType: "evidence.hr.leave_request.submitted",
+      newState: "submitted",
+      occurredAt: leaveRequest.submittedAt,
+      priorState: null,
+    } as const;
+    const detail = { history: [submitted], request: detailRequest };
+
+    expect(parseHrLeaveRequestDetail(detail)).toBe(detail);
+    expect(() => parseHrLeaveRequestDetail({ history: [], request: detailRequest })).toThrow(
+      "between 1 and 100",
+    );
+    expect(() =>
+      parseHrLeaveRequestDetail({
+        history: [{ ...submitted, eventType: "evidence.hr.leave_request.approved" }],
+        request: detailRequest,
+      }),
+    ).toThrow("does not match newState");
+    expect(() =>
+      parseHrLeaveRequestDetail({
+        history: [{ ...submitted, privateDetail: "secret" }],
+        request: detailRequest,
+      }),
+    ).toThrow("unexpected or missing fields");
+    expect(() =>
+      parseHrLeaveRequestDetail({
+        history: [submitted],
+        request: { ...detailRequest, decisionNote: "Not decided" },
+      }),
+    ).toThrow("submitted request cannot have decisionNote");
+    expect(() =>
+      parseHrLeaveRequestDetail({
+        history: [submitted],
+        request: {
+          ...detailRequest,
+          decidedAt: "2026-07-10T01:00:00.000Z",
+          status: "approved",
+        },
+      }),
+    ).toThrow("does not prove the current request status");
   });
 
   it("strictly decodes a bounded leave-request page", () => {

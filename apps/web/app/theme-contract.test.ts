@@ -26,4 +26,22 @@ describe("Esbla Theme v1 host contract", () => {
     expect(myWork).not.toContain("Approve");
     expect(myWork).not.toContain("Reject");
   });
+
+  it("hosts read-only leave detail, evidence, loading, error, and not-found states", async () => {
+    const detailRoot = new URL("./workspace/hr/leave/[leaveRequestId]/", import.meta.url);
+    const [page, loading, error, notFound] = await Promise.all(
+      ["page.tsx", "loading.tsx", "error.tsx", "not-found.tsx"].map(
+        async (file) => await readFile(new URL(file, detailRoot), "utf8"),
+      ),
+    );
+    expect(page).toContain("Evidence history");
+    expect(page).toContain("Request details");
+    expect(page).not.toContain("<form");
+    expect(page).not.toContain("<button");
+    expect(page).not.toContain("/approve");
+    expect(page).not.toContain("/reject");
+    expect(loading).toContain('aria-busy="true"');
+    expect(error).toContain('role="alert"');
+    expect(notFound).toContain("Leave request not found");
+  });
 });
