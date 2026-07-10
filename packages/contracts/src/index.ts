@@ -5,6 +5,7 @@ export {
   signDevelopmentPrincipal,
 } from "./development-principal.js";
 export {
+  type ApiProblemDetails,
   type HrDecideLeaveRequestBody,
   type HrLeaveCategoryCode,
   type HrLeaveListQuery,
@@ -23,6 +24,8 @@ export {
   hrLeaveRequestPathSchema,
   hrLeaveRequestSchema,
   hrSubmitLeaveRequestBodySchema,
+  parseApiProblemDetails,
+  parseHrLeaveRequest,
   parseHrLeaveRequestPage,
   problemDetailsSchema,
 } from "./hr-leave-api.js";

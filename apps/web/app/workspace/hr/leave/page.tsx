@@ -1,5 +1,5 @@
 import type { HrLeaveRequest, HrLeaveRequestCursor } from "@esbla/contracts/hr-leave-api";
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, CheckCircle2, Plus } from "lucide-react";
 import { getOwnLeaveRequests } from "../../../../lib/hr-leave-list";
 
 interface LeaveListPageProps {
@@ -61,6 +61,7 @@ function nextPageHref(cursor: HrLeaveRequestCursor) {
 export default async function HrLeaveListPage({ searchParams }: LeaveListPageProps) {
   const parameters = await searchParams;
   const cursor = cursorFrom(parameters);
+  const submitted = single(parameters.submitted) === "1";
   const page = await getOwnLeaveRequests(cursor);
 
   return (
@@ -71,8 +72,24 @@ export default async function HrLeaveListPage({ searchParams }: LeaveListPagePro
           <h1 id="leave-list-heading">My Leave Requests</h1>
           <p className="surface-summary">Current and historical whole-day requests.</p>
         </div>
-        <span className="work-count">{page.items.length} shown</span>
+        <div className="surface-heading-actions">
+          <span className="work-count">{page.items.length} shown</span>
+          <a className="command-button command-button-primary" href="/workspace/hr/leave/new">
+            <Plus aria-hidden="true" size={17} strokeWidth={1.8} />
+            New request
+          </a>
+        </div>
       </header>
+
+      {submitted ? (
+        <div className="success-banner" role="status">
+          <CheckCircle2 aria-hidden="true" size={20} strokeWidth={1.8} />
+          <div>
+            <strong>Leave request submitted</strong>
+            <span>Your request is now waiting for a manager decision.</span>
+          </div>
+        </div>
+      ) : null}
 
       {page.items.length === 0 ? (
         <div className="empty-worklist leave-list-empty">

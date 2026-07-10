@@ -58,6 +58,16 @@ export interface HrLeaveRequestPage {
   readonly nextCursor: HrLeaveRequestCursor | null;
 }
 
+export interface ApiProblemDetails {
+  readonly code: string;
+  readonly detail: string;
+  readonly instance: string;
+  readonly requestId: string;
+  readonly status: number;
+  readonly title: string;
+  readonly type: string;
+}
+
 export const hrSubmitLeaveRequestBodySchema = {
   $id: "SubmitLeaveRequest",
   additionalProperties: false,
@@ -259,6 +269,16 @@ const leaveRequestKeys = [
   "version",
 ] as const;
 
+const problemDetailsKeys = [
+  "code",
+  "detail",
+  "instance",
+  "requestId",
+  "status",
+  "title",
+  "type",
+] as const;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -311,9 +331,14 @@ function assertNullableString(value: unknown, label: string): asserts value is s
   }
 }
 
-function assertLeaveRequest(value: unknown, index: number): asserts value is HrLeaveRequest {
-  if (!isRecord(value)) throw new TypeError(`LeaveRequestPage.items[${index}] must be an object`);
-  assertExactKeys(value, leaveRequestKeys, `LeaveRequestPage.items[${index}]`);
+function assertNonEmptyString(value: unknown, label: string): asserts value is string {
+  assertString(value, label);
+  if (value.length === 0) throw new TypeError(`${label} must not be empty`);
+}
+
+function assertLeaveRequest(value: unknown, label: string): asserts value is HrLeaveRequest {
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(value, leaveRequestKeys, label);
   for (const key of [
     "approverPrincipalId",
     "correlationId",
@@ -322,33 +347,33 @@ function assertLeaveRequest(value: unknown, index: number): asserts value is HrL
     "leaveRequestId",
     "tenantId",
   ] as const) {
-    assertUuid(value[key], `LeaveRequestPage.items[${index}].${key}`);
+    assertUuid(value[key], `${label}.${key}`);
   }
   for (const key of ["createdAt", "submittedAt", "updatedAt"] as const) {
-    assertDateTime(value[key], `LeaveRequestPage.items[${index}].${key}`);
+    assertDateTime(value[key], `${label}.${key}`);
   }
   if (value.decidedAt !== null) {
-    assertDateTime(value.decidedAt, `LeaveRequestPage.items[${index}].decidedAt`);
+    assertDateTime(value.decidedAt, `${label}.decidedAt`);
   }
   for (const key of ["startDate", "endDate"] as const) {
-    assertDate(value[key], `LeaveRequestPage.items[${index}].${key}`);
+    assertDate(value[key], `${label}.${key}`);
   }
-  assertNullableString(value.decisionNote, `LeaveRequestPage.items[${index}].decisionNote`);
-  assertNullableString(value.reason, `LeaveRequestPage.items[${index}].reason`);
+  assertNullableString(value.decisionNote, `${label}.decisionNote`);
+  assertNullableString(value.reason, `${label}.reason`);
   if (
     !(["annual", "other", "sick", "unpaid"] as const).includes(
       value.categoryCode as HrLeaveCategoryCode,
     )
   ) {
-    throw new TypeError(`LeaveRequestPage.items[${index}].categoryCode is invalid`);
+    throw new TypeError(`${label}.categoryCode is invalid`);
   }
   if (
     !(["approved", "rejected", "submitted"] as const).includes(value.status as HrLeaveRequestStatus)
   ) {
-    throw new TypeError(`LeaveRequestPage.items[${index}].status is invalid`);
+    throw new TypeError(`${label}.status is invalid`);
   }
   if (!Number.isSafeInteger(value.version) || (value.version as number) < 1) {
-    throw new TypeError(`LeaveRequestPage.items[${index}].version must be a positive integer`);
+    throw new TypeError(`${label}.version must be a positive integer`);
   }
 }
 
@@ -366,7 +391,30 @@ export function parseHrLeaveRequestPage(value: unknown): HrLeaveRequestPage {
   if (!Array.isArray(value.items) || value.items.length > 50) {
     throw new TypeError("LeaveRequestPage.items must be an array of at most 50 requests");
   }
-  value.items.forEach(assertLeaveRequest);
+  value.items.forEach((item, index) => {
+    assertLeaveRequest(item, `LeaveRequestPage.items[${index}]`);
+  });
   if (value.nextCursor !== null) assertCursor(value.nextCursor);
   return value as unknown as HrLeaveRequestPage;
+}
+
+export function parseHrLeaveRequest(value: unknown): HrLeaveRequest {
+  assertLeaveRequest(value, "LeaveRequest");
+  return value;
+}
+
+export function parseApiProblemDetails(value: unknown): ApiProblemDetails {
+  if (!isRecord(value)) throw new TypeError("ProblemDetails must be an object");
+  assertExactKeys(value, problemDetailsKeys, "ProblemDetails");
+  for (const key of ["code", "detail", "instance", "requestId", "title", "type"] as const) {
+    assertNonEmptyString(value[key], `ProblemDetails.${key}`);
+  }
+  if (
+    !Number.isSafeInteger(value.status) ||
+    (value.status as number) < 400 ||
+    (value.status as number) > 599
+  ) {
+    throw new TypeError("ProblemDetails.status must be an HTTP error status");
+  }
+  return value as unknown as ApiProblemDetails;
 }
