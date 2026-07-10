@@ -20,6 +20,8 @@ describe("Esbla Theme v1 host contract", () => {
 
   it("routes to My Work and hosts separate high-risk approval and rejection interactions", async () => {
     const entry = await readFile(new URL("./page.tsx", import.meta.url), "utf8");
+    const surfaces = await readFile(new URL("./workspace-surfaces.ts", import.meta.url), "utf8");
+    const shell = await readFile(new URL("./workspace-shell.tsx", import.meta.url), "utf8");
     const myWork = await readFile(new URL("./workspace/my-work/page.tsx", import.meta.url), "utf8");
     const approval = await readFile(
       new URL("./workspace/my-work/leave-approval-action.tsx", import.meta.url),
@@ -39,6 +41,12 @@ describe("Esbla Theme v1 host contract", () => {
     expect(rejection).toContain("Confirm rejection");
     expect(rejection).toContain("records rejection evidence");
     expect(rejection).toContain("Tenant policy may require a note");
+    expect(surfaces).toContain("WORKSPACE_SURFACES");
+    expect(surfaces).toContain('href: "/workspace/my-work"');
+    expect(surfaces).toContain('href: "/workspace/hr/leave"');
+    expect(shell).toContain("WORKSPACE_SURFACES.map");
+    expect(shell).not.toContain("statusLabel: string");
+    expect(shell).not.toContain('currentSurface === "HR"');
   });
 
   it("keeps My Work decision controls accessible and policy-bound", async () => {
