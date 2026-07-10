@@ -41,6 +41,27 @@ describe("Esbla Theme v1 host contract", () => {
     expect(rejection).toContain("Tenant policy may require a note");
   });
 
+  it("keeps My Work decision controls accessible and policy-bound", async () => {
+    const myWork = await readFile(new URL("./workspace/my-work/page.tsx", import.meta.url), "utf8");
+    const approval = await readFile(
+      new URL("./workspace/my-work/leave-approval-action.tsx", import.meta.url),
+      "utf8",
+    );
+    const rejection = await readFile(
+      new URL("./workspace/my-work/leave-rejection-action.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(myWork).toContain('aria-label="Assigned leave approvals"');
+    expect(myWork).toContain('aria-label="Assigned approval pages"');
+    expect(approval).toContain('aria-label="Approve leave request"');
+    expect(rejection).toContain('aria-label="Reject leave request"');
+    expect(rejection).toContain("htmlFor={`rejection-note-");
+    expect(rejection).toContain('aria-invalid={noteError ? "true" : undefined}');
+    expect(rejection).toContain("decisionNote");
+    expect(rejection).not.toContain("employeePrincipalId");
+    expect(rejection).not.toContain("tenantId");
+  });
+
   it("hosts read-only leave detail, evidence, loading, error, and not-found states", async () => {
     const detailRoot = new URL("./workspace/hr/leave/[leaveRequestId]/", import.meta.url);
     const [page, loading, error, notFound] = await Promise.all(
