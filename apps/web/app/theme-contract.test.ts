@@ -18,13 +18,18 @@ describe("Esbla Theme v1 host contract", () => {
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
   });
 
-  it("routes to the canonical My Work host and keeps the assigned queue read-only", async () => {
+  it("routes to My Work and keeps its high-risk interaction approval-only", async () => {
     const entry = await readFile(new URL("./page.tsx", import.meta.url), "utf8");
     const myWork = await readFile(new URL("./workspace/my-work/page.tsx", import.meta.url), "utf8");
+    const approval = await readFile(
+      new URL("./workspace/my-work/leave-approval-action.tsx", import.meta.url),
+      "utf8",
+    );
     expect(entry).toContain('redirect("/workspace/my-work")');
     expect(myWork).toContain("Assigned approvals");
-    expect(myWork).not.toContain("Approve");
-    expect(myWork).not.toContain("Reject");
+    expect(approval).toContain("Confirm approval");
+    expect(approval).toContain("records approval evidence");
+    expect(approval).not.toContain("Reject request");
   });
 
   it("hosts read-only leave detail, evidence, loading, error, and not-found states", async () => {

@@ -485,8 +485,50 @@ h1 {
   gap: 7px;
 }
 
-.work-detail-link {
+.work-queue-actions {
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: space-between;
   margin-top: 20px;
+}
+
+.approval-action {
+  display: grid;
+  gap: 10px;
+  justify-items: end;
+  max-width: 560px;
+}
+
+.approval-confirmation {
+  border-left: 3px solid var(--accent);
+  display: grid;
+  gap: 12px;
+  padding-left: 16px;
+}
+
+.approval-confirmation > p,
+.approval-error p {
+  color: var(--text-main);
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.approval-confirmation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.approval-error {
+  align-items: center;
+  color: var(--danger);
+  display: flex;
+  gap: 8px;
+  max-width: 480px;
 }
 
 .leave-detail-surface {
@@ -740,6 +782,10 @@ h1 {
   background: var(--surface-widget);
   cursor: pointer;
   margin-top: 22px;
+}
+
+.work-queue-actions .command-button {
+  margin-top: 0;
 }
 
 .leave-list-skeleton {
@@ -1143,6 +1189,23 @@ textarea:focus-visible,
 
   .work-queue-meta {
     gap: 24px;
+  }
+
+  .work-queue-actions,
+  .approval-action {
+    align-items: stretch;
+    display: grid;
+    justify-items: stretch;
+  }
+
+  .work-queue-actions .command-button,
+  .work-queue-actions .text-command {
+    justify-content: center;
+  }
+
+  .approval-confirmation-actions {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .leave-detail-heading > .leave-status {
