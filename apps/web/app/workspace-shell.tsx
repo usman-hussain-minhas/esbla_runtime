@@ -2,22 +2,28 @@ import { BriefcaseBusiness, Home, Inbox, ShieldAlert, ShieldCheck } from "lucide
 import type { ReactNode } from "react";
 import { getServerDevelopmentSessionSummary } from "../lib/development-session";
 import { ThemeModeControl } from "./theme-mode-control";
+import {
+  getWorkspaceSurface,
+  WORKSPACE_SURFACES,
+  type WorkspaceSurfaceIcon,
+  type WorkspaceSurfaceKey,
+} from "./workspace-surfaces";
 
 interface WorkspaceShellProps {
   readonly children: ReactNode;
-  readonly currentSurface: "HR" | "My Work";
-  readonly statusLabel: string;
+  readonly currentSurface: WorkspaceSurfaceKey;
 }
 
-const navigation = [
-  { href: "/workspace/my-work", label: "My Work" },
-  { href: "/workspace/hr/leave", label: "HR" },
-] as const;
+const surfaceIcons = {
+  briefcase: BriefcaseBusiness,
+  inbox: Inbox,
+} satisfies Record<WorkspaceSurfaceIcon, typeof BriefcaseBusiness>;
 
-export function WorkspaceShell({ children, currentSurface, statusLabel }: WorkspaceShellProps) {
+export function WorkspaceShell({ children, currentSurface }: WorkspaceShellProps) {
   const session = getServerDevelopmentSessionSummary();
+  const surface = getWorkspaceSurface(currentSurface);
   const SessionIcon = session.state === "configured" ? ShieldCheck : ShieldAlert;
-  const StatusIcon = currentSurface === "HR" ? BriefcaseBusiness : Inbox;
+  const StatusIcon = surfaceIcons[surface.icon];
 
   return (
     <div className="esbla-shell">
@@ -30,9 +36,9 @@ export function WorkspaceShell({ children, currentSurface, statusLabel }: Worksp
           Esbla
         </a>
         <span aria-hidden="true" className="page-menu-divider" />
-        {navigation.map((item) => (
+        {WORKSPACE_SURFACES.map((item) => (
           <a
-            aria-current={currentSurface === item.label ? "page" : undefined}
+            aria-current={currentSurface === item.key ? "page" : undefined}
             className="page-menu-item"
             href={item.href}
             key={item.href}
@@ -63,7 +69,7 @@ export function WorkspaceShell({ children, currentSurface, statusLabel }: Worksp
 
       <div aria-label={`${currentSurface} status`} className="queue-status" role="status">
         <StatusIcon aria-hidden="true" size={17} strokeWidth={1.8} />
-        <span>{statusLabel}</span>
+        <span>{surface.statusLabel}</span>
       </div>
     </div>
   );
