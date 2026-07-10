@@ -344,6 +344,34 @@ describe("HR Leave Request domain", () => {
       }),
     ).rejects.toMatchObject({ code: "LEAVE_IDEMPOTENCY_CONFLICT" });
 
+    const assigned = await listAssignedLeaveRequests(
+      pool,
+      context(ids.tenantA, ids.managerA, ids.correlationSubmit1),
+    );
+    const assignedItem = assigned.find((item) => item.leaveRequestId === ids.request1);
+    expect(assignedItem).toMatchObject({
+      categoryCode: "sick",
+      employeeDisplayName: "Employee A",
+      leaveRequestId: ids.request1,
+      version: 1,
+      workItemId: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      ),
+    });
+    expect(Object.keys(assignedItem ?? {}).sort()).toEqual(
+      [
+        "categoryCode",
+        "employeeDisplayName",
+        "endDate",
+        "leaveRequestId",
+        "reason",
+        "startDate",
+        "submittedAt",
+        "version",
+        "workItemId",
+      ].sort(),
+    );
+
     await withTenantTransaction(
       pool,
       context(ids.tenantA, ids.employeeA, ids.correlationSubmit1),
@@ -720,9 +748,22 @@ describe("HR Leave Request domain", () => {
         await client.query("SET LOCAL enable_seqscan = off");
         const assigned = await client.query<{ "QUERY PLAN": string }>(
           `EXPLAIN (COSTS OFF)
-           SELECT leave_request_id FROM hr_leave_requests
-           WHERE tenant_id = $1 AND approver_principal_id = $2 AND status = 'submitted'
-           ORDER BY submitted_at ASC, leave_request_id ASC LIMIT 50`,
+           SELECT request.leave_request_id
+           FROM hr_leave_requests request
+           JOIN work_items work
+             ON work.tenant_id = request.tenant_id
+            AND work.subject_id = request.leave_request_id
+           JOIN principals principal
+             ON principal.principal_id = request.employee_principal_id
+           WHERE request.tenant_id = $1
+             AND request.approver_principal_id = $2
+             AND request.status = 'submitted'
+             AND work.assignee_principal_id = $2
+             AND work.work_type = 'hr.leave_request.approval'
+             AND work.subject_type = 'hr.leave_request'
+             AND work.status = 'open'
+           ORDER BY request.submitted_at ASC, request.leave_request_id ASC
+           LIMIT 50`,
           [ids.tenantA, ids.managerA],
         );
         const own = await client.query<{ "QUERY PLAN": string }>(
@@ -743,6 +784,7 @@ describe("HR Leave Request domain", () => {
           .map((row) => row["QUERY PLAN"])
           .join("\n");
         expect(plans).toContain("hr_leave_requests_assigned_open_idx");
+        expect(plans).toContain("work_items_tenant_work_subject_uq");
         expect(plans).toContain("hr_leave_requests_employee_history_idx");
         expect(plans).toContain("evidence_events_tenant_subject_occurred_idx");
       },

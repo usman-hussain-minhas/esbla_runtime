@@ -18,11 +18,12 @@ describe("Esbla Theme v1 host contract", () => {
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
   });
 
-  it("renders an honest My Work host without an HR business surface", async () => {
-    const page = await readFile(new URL("./page.tsx", import.meta.url), "utf8");
-    expect(page).toContain("My Work");
-    expect(page).toContain("Nothing needs your attention");
-    expect(page).not.toContain("Leave request");
-    expect(page).not.toContain("Approve leave");
+  it("routes to the canonical My Work host and keeps the assigned queue read-only", async () => {
+    const entry = await readFile(new URL("./page.tsx", import.meta.url), "utf8");
+    const myWork = await readFile(new URL("./workspace/my-work/page.tsx", import.meta.url), "utf8");
+    expect(entry).toContain('redirect("/workspace/my-work")');
+    expect(myWork).toContain("Assigned approvals");
+    expect(myWork).not.toContain("Approve");
+    expect(myWork).not.toContain("Reject");
   });
 });

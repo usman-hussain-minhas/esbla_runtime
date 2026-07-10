@@ -4,6 +4,8 @@ import {
   type HrLeaveRequestPath,
   type HrSubmitLeaveRequestBody,
   hrAssignedLeaveListQuerySchema,
+  hrAssignedLeaveRequestPageSchema,
+  hrAssignedLeaveRequestSchema,
   hrDecideLeaveRequestBodySchema,
   hrLeaveEvidenceEventSchema,
   hrLeaveListQuerySchema,
@@ -85,6 +87,8 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     hrLeaveRequestPathSchema,
     hrLeaveListQuerySchema,
     hrAssignedLeaveListQuerySchema,
+    hrAssignedLeaveRequestSchema,
+    hrAssignedLeaveRequestPageSchema,
     hrLeaveRequestSchema,
     hrLeaveEvidenceEventSchema,
     hrLeaveRequestPageSchema,
@@ -178,7 +182,7 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
       schema: {
         querystring: { $ref: "AssignedLeaveRequestsQuery#" },
         response: {
-          200: { $ref: "LeaveRequestPage#" },
+          200: { $ref: "AssignedLeaveRequestPage#" },
           default: { $ref: "ProblemDetails#" },
         },
       },

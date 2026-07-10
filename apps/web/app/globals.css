@@ -370,6 +370,114 @@ h1 {
   margin-bottom: 0;
 }
 
+.my-work-surface {
+  max-width: 1120px;
+}
+
+.my-work-heading {
+  align-items: flex-end;
+}
+
+.work-queue {
+  border-top: 1px solid var(--line-soft);
+  list-style: none;
+  margin: 48px 0 0;
+  padding: 0;
+}
+
+.work-queue-item {
+  border-bottom: 1px solid var(--line-soft);
+  padding: 24px 2px;
+}
+
+.work-queue-primary {
+  align-items: flex-start;
+  display: flex;
+  gap: 28px;
+  justify-content: space-between;
+}
+
+.work-queue-kicker {
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 720;
+  margin-bottom: 8px;
+}
+
+.work-queue-item h2 {
+  font-size: 20px;
+  font-weight: 650;
+  margin-bottom: 8px;
+}
+
+.work-queue-dates {
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.5;
+  margin-bottom: 0;
+}
+
+.work-status {
+  align-items: center;
+  background: var(--accent-soft);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-chip);
+  color: var(--accent-strong);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 7px;
+  padding: 7px 10px;
+}
+
+.work-queue-reason {
+  color: var(--text-main);
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 18px 0 0;
+  max-width: 720px;
+}
+
+.work-queue-meta {
+  display: flex;
+  gap: 36px;
+  margin: 20px 0 0;
+}
+
+.work-queue-meta div {
+  display: grid;
+  gap: 4px;
+}
+
+.work-queue-meta dt {
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.work-queue-meta dd {
+  color: var(--text-main);
+  font-size: 13px;
+  margin: 0;
+}
+
+.work-queue-skeleton {
+  border-top: 1px solid var(--line-soft);
+  display: grid;
+  gap: 1px;
+  margin-top: 48px;
+}
+
+.work-queue-skeleton span {
+  background: linear-gradient(90deg, var(--accent-soft), var(--surface-widget), var(--accent-soft));
+  background-size: 240% 100%;
+  border-bottom: 1px solid var(--line-soft);
+  display: block;
+  height: 132px;
+}
+
 .leave-list-surface {
   max-width: 1180px;
 }
@@ -817,6 +925,10 @@ textarea:focus-visible,
   .form-grid-two {
     grid-template-columns: 1fr;
   }
+
+  .work-queue {
+    margin-top: 36px;
+  }
 }
 
 @media (max-width: 430px) {
@@ -841,6 +953,18 @@ textarea:focus-visible,
     align-items: flex-start;
     flex-wrap: wrap;
     margin-top: 22px;
+  }
+
+  .work-queue-primary {
+    display: block;
+  }
+
+  .work-status {
+    margin-top: 16px;
+  }
+
+  .work-queue-meta {
+    gap: 24px;
   }
 
   .leave-form-heading > .text-command {

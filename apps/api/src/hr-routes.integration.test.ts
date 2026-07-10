@@ -51,6 +51,18 @@ interface LeaveResponse {
   readonly version: number;
 }
 
+interface AssignedLeaveResponse {
+  readonly categoryCode: string;
+  readonly employeeDisplayName: string;
+  readonly endDate: string;
+  readonly leaveRequestId: string;
+  readonly reason: string | null;
+  readonly startDate: string;
+  readonly submittedAt: string;
+  readonly version: number;
+  readonly workItemId: string;
+}
+
 let migrationPool: Pool;
 let pool: Pool;
 let server: FastifyInstance;
@@ -429,9 +441,31 @@ describe("HR Leave Request API boundary", () => {
       url: "/v1/hr/leave-requests/assigned?pageSize=10",
     });
     expect(assigned.response.statusCode).toBe(200);
-    expect(
-      assigned.response.json<{ items: LeaveResponse[] }>().items.map((item) => item.leaveRequestId),
-    ).toContain(request.leaveRequestId);
+    const assignedItem = assigned.response
+      .json<{ items: AssignedLeaveResponse[] }>()
+      .items.find((item) => item.leaveRequestId === request.leaveRequestId);
+    expect(assignedItem).toMatchObject({
+      categoryCode: "annual",
+      employeeDisplayName: "Employee A",
+      leaveRequestId: request.leaveRequestId,
+      version: 1,
+      workItemId: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      ),
+    });
+    expect(Object.keys(assignedItem ?? {}).sort()).toEqual(
+      [
+        "categoryCode",
+        "employeeDisplayName",
+        "endDate",
+        "leaveRequestId",
+        "reason",
+        "startDate",
+        "submittedAt",
+        "version",
+        "workItemId",
+      ].sort(),
+    );
 
     const detail = await signedRequest({
       method: "GET",

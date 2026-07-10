@@ -52,6 +52,18 @@ export interface LeaveListCursor {
   readonly submittedAt: string;
 }
 
+export interface AssignedLeaveRequestSummary {
+  readonly categoryCode: LeaveCategory;
+  readonly employeeDisplayName: string;
+  readonly endDate: string;
+  readonly leaveRequestId: string;
+  readonly reason: string | null;
+  readonly startDate: string;
+  readonly submittedAt: string;
+  readonly version: number;
+  readonly workItemId: string;
+}
+
 export interface LeaveEvidenceCursor {
   readonly evidenceEventId: string;
   readonly occurredAt: string;

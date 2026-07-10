@@ -58,6 +58,23 @@ export interface HrLeaveRequestPage {
   readonly nextCursor: HrLeaveRequestCursor | null;
 }
 
+export interface HrAssignedLeaveRequestSummary {
+  readonly categoryCode: HrLeaveCategoryCode;
+  readonly employeeDisplayName: string;
+  readonly endDate: string;
+  readonly leaveRequestId: string;
+  readonly reason: string | null;
+  readonly startDate: string;
+  readonly submittedAt: string;
+  readonly version: number;
+  readonly workItemId: string;
+}
+
+export interface HrAssignedLeaveRequestPage {
+  readonly items: readonly HrAssignedLeaveRequestSummary[];
+  readonly nextCursor: HrLeaveRequestCursor | null;
+}
+
 export interface ApiProblemDetails {
   readonly code: string;
   readonly detail: string;
@@ -222,6 +239,45 @@ export const hrLeaveRequestPageSchema = {
   type: "object",
 } as const;
 
+export const hrAssignedLeaveRequestSchema = {
+  $id: "AssignedLeaveRequest",
+  additionalProperties: false,
+  properties: {
+    categoryCode: { enum: ["annual", "sick", "unpaid", "other"] },
+    employeeDisplayName: { maxLength: 160, minLength: 1, type: "string" },
+    endDate: { pattern: datePattern, type: "string" },
+    leaveRequestId: { pattern: uuidPattern, type: "string" },
+    reason: { anyOf: [{ maxLength: 2000, type: "string" }, { type: "null" }] },
+    startDate: { pattern: datePattern, type: "string" },
+    submittedAt: { format: "date-time", type: "string" },
+    version: { minimum: 1, type: "integer" },
+    workItemId: { pattern: uuidPattern, type: "string" },
+  },
+  required: [
+    "workItemId",
+    "leaveRequestId",
+    "employeeDisplayName",
+    "categoryCode",
+    "startDate",
+    "endDate",
+    "reason",
+    "submittedAt",
+    "version",
+  ],
+  type: "object",
+} as const;
+
+export const hrAssignedLeaveRequestPageSchema = {
+  $id: "AssignedLeaveRequestPage",
+  additionalProperties: false,
+  properties: {
+    items: { items: { $ref: "AssignedLeaveRequest#" }, maxItems: 50, type: "array" },
+    nextCursor: hrLeaveRequestPageSchema.properties.nextCursor,
+  },
+  required: ["items", "nextCursor"],
+  type: "object",
+} as const;
+
 export const hrLeaveRequestDetailSchema = {
   $id: "LeaveRequestDetail",
   additionalProperties: false,
@@ -267,6 +323,18 @@ const leaveRequestKeys = [
   "tenantId",
   "updatedAt",
   "version",
+] as const;
+
+const assignedLeaveRequestKeys = [
+  "categoryCode",
+  "employeeDisplayName",
+  "endDate",
+  "leaveRequestId",
+  "reason",
+  "startDate",
+  "submittedAt",
+  "version",
+  "workItemId",
 ] as const;
 
 const problemDetailsKeys = [
@@ -377,12 +445,11 @@ function assertLeaveRequest(value: unknown, label: string): asserts value is HrL
   }
 }
 
-function assertCursor(value: unknown): asserts value is HrLeaveRequestCursor {
-  if (!isRecord(value))
-    throw new TypeError("LeaveRequestPage.nextCursor must be an object or null");
-  assertExactKeys(value, ["leaveRequestId", "submittedAt"], "LeaveRequestPage.nextCursor");
-  assertUuid(value.leaveRequestId, "LeaveRequestPage.nextCursor.leaveRequestId");
-  assertDateTime(value.submittedAt, "LeaveRequestPage.nextCursor.submittedAt");
+function assertCursor(value: unknown, label: string): asserts value is HrLeaveRequestCursor {
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object or null`);
+  assertExactKeys(value, ["leaveRequestId", "submittedAt"], label);
+  assertUuid(value.leaveRequestId, `${label}.leaveRequestId`);
+  assertDateTime(value.submittedAt, `${label}.submittedAt`);
 }
 
 export function parseHrLeaveRequestPage(value: unknown): HrLeaveRequestPage {
@@ -394,8 +461,51 @@ export function parseHrLeaveRequestPage(value: unknown): HrLeaveRequestPage {
   value.items.forEach((item, index) => {
     assertLeaveRequest(item, `LeaveRequestPage.items[${index}]`);
   });
-  if (value.nextCursor !== null) assertCursor(value.nextCursor);
+  if (value.nextCursor !== null) assertCursor(value.nextCursor, "LeaveRequestPage.nextCursor");
   return value as unknown as HrLeaveRequestPage;
+}
+
+function assertAssignedLeaveRequest(
+  value: unknown,
+  label: string,
+): asserts value is HrAssignedLeaveRequestSummary {
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(value, assignedLeaveRequestKeys, label);
+  assertUuid(value.workItemId, `${label}.workItemId`);
+  assertUuid(value.leaveRequestId, `${label}.leaveRequestId`);
+  assertNonEmptyString(value.employeeDisplayName, `${label}.employeeDisplayName`);
+  if (value.employeeDisplayName.length > 160) {
+    throw new TypeError(`${label}.employeeDisplayName must be at most 160 characters`);
+  }
+  if (
+    !(["annual", "other", "sick", "unpaid"] as const).includes(
+      value.categoryCode as HrLeaveCategoryCode,
+    )
+  ) {
+    throw new TypeError(`${label}.categoryCode is invalid`);
+  }
+  assertDate(value.startDate, `${label}.startDate`);
+  assertDate(value.endDate, `${label}.endDate`);
+  assertNullableString(value.reason, `${label}.reason`);
+  assertDateTime(value.submittedAt, `${label}.submittedAt`);
+  if (!Number.isSafeInteger(value.version) || (value.version as number) < 1) {
+    throw new TypeError(`${label}.version must be a positive integer`);
+  }
+}
+
+export function parseHrAssignedLeaveRequestPage(value: unknown): HrAssignedLeaveRequestPage {
+  if (!isRecord(value)) throw new TypeError("AssignedLeaveRequestPage must be an object");
+  assertExactKeys(value, ["items", "nextCursor"], "AssignedLeaveRequestPage");
+  if (!Array.isArray(value.items) || value.items.length > 50) {
+    throw new TypeError("AssignedLeaveRequestPage.items must be an array of at most 50 requests");
+  }
+  value.items.forEach((item, index) => {
+    assertAssignedLeaveRequest(item, `AssignedLeaveRequestPage.items[${index}]`);
+  });
+  if (value.nextCursor !== null) {
+    assertCursor(value.nextCursor, "AssignedLeaveRequestPage.nextCursor");
+  }
+  return value as unknown as HrAssignedLeaveRequestPage;
 }
 
 export function parseHrLeaveRequest(value: unknown): HrLeaveRequest {
