@@ -125,6 +125,7 @@ export function LeaveApprovalAction({
         </form>
       ) : (
         <button
+          aria-label="Approve leave request"
           className="command-button command-button-primary"
           onClick={beginConfirmation}
           type="button"

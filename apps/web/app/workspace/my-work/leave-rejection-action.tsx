@@ -160,6 +160,7 @@ export function LeaveRejectionAction({
         </form>
       ) : (
         <button
+          aria-label="Reject leave request"
           className="command-button command-button-danger"
           onClick={beginConfirmation}
           type="button"
