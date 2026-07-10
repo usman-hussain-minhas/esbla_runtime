@@ -12,3 +12,4 @@ export {
   workItems,
 } from "./core.js";
 export { hrLeaveCategory, hrLeaveRequestStatus, hrLeaveRequests } from "./hr.js";
+export { workspaceTaskStatus, workspaceTasks } from "./workspace.js";

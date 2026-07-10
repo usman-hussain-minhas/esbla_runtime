@@ -1,4 +1,6 @@
 import {
+  assignedWorkspaceTaskPageSchema,
+  assignedWorkspaceTaskSchema,
   type HrDecideLeaveRequestBody,
   type HrLeaveListQuery,
   type HrLeaveRequestPath,
@@ -16,6 +18,17 @@ import {
   hrLeaveRequestSchema,
   hrSubmitLeaveRequestBodySchema,
   problemDetailsSchema,
+  type WorkspaceCompleteTaskBody,
+  type WorkspaceCreateTaskBody,
+  type WorkspaceTaskListQuery,
+  type WorkspaceTaskPath,
+  workspaceCompleteTaskBodySchema,
+  workspaceCreateTaskBodySchema,
+  workspaceTaskDetailSchema,
+  workspaceTaskEvidenceEventSchema,
+  workspaceTaskListQuerySchema,
+  workspaceTaskPathSchema,
+  workspaceTaskSchema,
 } from "@esbla/contracts";
 import {
   approveLeaveRequest,
@@ -27,6 +40,13 @@ import {
   submitLeaveRequest,
 } from "@esbla/hr";
 import type { OperationContext } from "@esbla/platform-core";
+import {
+  completeWorkspaceTask,
+  createWorkspaceTask,
+  getWorkspaceTaskDetail,
+  listAssignedWorkspaceTasks,
+  WorkspaceTaskError,
+} from "@esbla/workspace";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import type { Pool } from "pg";
 import type { RequestAuthenticator } from "./auth.js";
@@ -70,6 +90,17 @@ function pageResponse<T extends { leaveRequestId: string; submittedAt: string }>
   };
 }
 
+function workspaceTaskPageResponse<T extends { createdAt: string; taskId: string }>(
+  items: readonly T[],
+  pageSize: number,
+) {
+  const last = items.length === pageSize ? items.at(-1) : undefined;
+  return {
+    items,
+    nextCursor: last ? { createdAt: last.createdAt, taskId: last.taskId } : null,
+  };
+}
+
 export function createServer(options: CreateServerOptions): FastifyInstance {
   const server = Fastify({
     ajv: {
@@ -95,6 +126,15 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     hrLeaveEvidenceEventSchema,
     hrLeaveRequestPageSchema,
     hrLeaveRequestDetailSchema,
+    workspaceCreateTaskBodySchema,
+    workspaceCompleteTaskBodySchema,
+    workspaceTaskPathSchema,
+    workspaceTaskListQuerySchema,
+    assignedWorkspaceTaskSchema,
+    assignedWorkspaceTaskPageSchema,
+    workspaceTaskSchema,
+    workspaceTaskEvidenceEventSchema,
+    workspaceTaskDetailSchema,
     problemDetailsSchema,
   ]) {
     server.addSchema(schema);
@@ -254,6 +294,104 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
       },
     );
   }
+
+  server.post<{ Body: WorkspaceCreateTaskBody }>(
+    "/v1/workspace/tasks",
+    {
+      preHandler: authenticate,
+      schema: {
+        body: { $ref: "WorkspaceCreateTask#" },
+        response: {
+          200: { $ref: "WorkspaceTask#" },
+          201: { $ref: "WorkspaceTask#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await createWorkspaceTask(options.pool, operationContext(request), {
+        ...request.body,
+        idempotencyKey: idempotencyKey(request),
+      });
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(result.replayed ? 200 : 201).send(result.task);
+    },
+  );
+
+  server.get<{ Querystring: WorkspaceTaskListQuery }>(
+    "/v1/workspace/tasks/assigned",
+    {
+      preHandler: authenticate,
+      schema: {
+        querystring: { $ref: "WorkspaceTaskListQuery#" },
+        response: {
+          200: { $ref: "AssignedWorkspaceTaskPage#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request) => {
+      const pageSize = request.query.pageSize ?? 50;
+      const items = await listAssignedWorkspaceTasks(options.pool, operationContext(request), {
+        ...(request.query.cursorTaskId && request.query.cursorCreatedAt
+          ? {
+              cursor: {
+                createdAt: request.query.cursorCreatedAt,
+                taskId: request.query.cursorTaskId,
+              },
+            }
+          : {}),
+        pageSize,
+      });
+      return workspaceTaskPageResponse(items, pageSize);
+    },
+  );
+
+  server.get<{ Params: WorkspaceTaskPath }>(
+    "/v1/workspace/tasks/:taskId",
+    {
+      preHandler: authenticate,
+      schema: {
+        params: { $ref: "WorkspaceTaskPath#" },
+        response: {
+          200: { $ref: "WorkspaceTaskDetail#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request) => {
+      const detail = await getWorkspaceTaskDetail(
+        options.pool,
+        operationContext(request),
+        request.params.taskId,
+      );
+      if (!detail) throw new WorkspaceTaskError("WORKSPACE_TASK_NOT_FOUND", "Task was not found");
+      return detail;
+    },
+  );
+
+  server.post<{ Body: WorkspaceCompleteTaskBody; Params: WorkspaceTaskPath }>(
+    "/v1/workspace/tasks/:taskId/complete",
+    {
+      preHandler: authenticate,
+      schema: {
+        body: { $ref: "WorkspaceCompleteTask#" },
+        params: { $ref: "WorkspaceTaskPath#" },
+        response: {
+          200: { $ref: "WorkspaceTask#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await completeWorkspaceTask(options.pool, operationContext(request), {
+        ...request.body,
+        taskId: request.params.taskId,
+      });
+      reply.header("idempotent-replayed", String(result.replayed));
+      return result.task;
+    },
+  );
 
   return server;
 }

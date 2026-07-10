@@ -1,29 +1,29 @@
 {
-  "name": "@esbla/api",
+  "name": "@esbla/workspace",
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "node ../../scripts/build/clean-typescript-output.mjs && tsc -p tsconfig.build.json",
-    "dev": "tsx watch src/main.ts",
-    "start": "node dist/main.js",
     "test": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@esbla/contracts": "workspace:^",
     "@esbla/db": "workspace:^",
-    "@esbla/hr": "workspace:^",
-    "@esbla/observability": "workspace:^",
     "@esbla/platform-core": "workspace:^",
-    "@esbla/workspace": "workspace:^",
-    "fastify": "5.10.0",
     "pg": "8.22.0"
   },
   "devDependencies": {
     "@types/node": "26.1.1",
     "@types/pg": "8.20.0",
-    "tsx": "4.23.0",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
   }
