@@ -9,6 +9,8 @@ import {
   hrLeaveRequestPathSchema,
   hrLeaveRequestSchema,
   hrSubmitLeaveRequestBodySchema,
+  parseApiProblemDetails,
+  parseHrLeaveRequest,
   parseHrLeaveRequestPage,
   problemDetailsSchema,
 } from "./hr-leave-api.js";
@@ -86,7 +88,25 @@ describe("HR Leave Request API schemas", () => {
       },
     };
     expect(parseHrLeaveRequestPage(page)).toBe(page);
+    expect(parseHrLeaveRequest(leaveRequest)).toBe(leaveRequest);
     expect(hrLeaveRequestPageSchema.properties.items.maxItems).toBe(50);
+  });
+
+  it("strictly decodes API problem details", () => {
+    const problem = {
+      code: "LEAVE_MANAGER_REQUIRED",
+      detail: "Employee has no active assigned manager",
+      instance: "/v1/hr/leave-requests",
+      requestId: "request-1",
+      status: 422,
+      title: "Unprocessable Content",
+      type: "urn:esbla:problem:leave_manager_required",
+    };
+    expect(parseApiProblemDetails(problem)).toBe(problem);
+    expect(() => parseApiProblemDetails({ ...problem, privateDetail: "secret" })).toThrow(
+      "unexpected or missing fields",
+    );
+    expect(() => parseApiProblemDetails({ ...problem, status: 200 })).toThrow("HTTP error status");
   });
 
   it("rejects malformed, over-broad, or calendar-invalid page payloads", () => {
