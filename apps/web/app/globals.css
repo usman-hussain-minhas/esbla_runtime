@@ -196,7 +196,7 @@ button {
 }
 
 .page-menu-item {
-  background: var(--accent-soft);
+  background: transparent;
   border-radius: var(--radius-chip);
   color: var(--accent-strong);
   font-size: 13px;
@@ -206,6 +206,11 @@ button {
   text-decoration: none;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.page-menu-item:hover,
+.page-menu-item[aria-current="page"] {
+  background: var(--accent-soft);
 }
 
 .system-controls,
@@ -359,6 +364,136 @@ h1 {
   margin-bottom: 0;
 }
 
+.leave-list-surface {
+  max-width: 1180px;
+}
+
+.leave-list-heading {
+  align-items: flex-end;
+}
+
+.leave-table-wrap {
+  border-top: 1px solid var(--line-soft);
+  margin-top: 48px;
+  overflow-x: auto;
+  padding-top: 16px;
+}
+
+.leave-table {
+  border-collapse: collapse;
+  font-size: 14px;
+  width: 100%;
+}
+
+.leave-table th,
+.leave-table td {
+  border-bottom: 1px solid var(--line-soft);
+  padding: 15px 14px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.leave-table th {
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.leave-table td {
+  color: var(--text-main);
+}
+
+.leave-status {
+  background: var(--accent-soft);
+  border-radius: var(--radius-chip);
+  color: var(--accent-strong);
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 720;
+  padding: 6px 9px;
+  text-transform: capitalize;
+}
+
+.leave-status-approved {
+  color: var(--success);
+}
+
+.leave-status-rejected {
+  color: var(--warning);
+}
+
+.list-pagination {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-top: 24px;
+}
+
+.text-command,
+.command-button {
+  align-items: center;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-button);
+  color: var(--accent-strong);
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 700;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  text-decoration: none;
+}
+
+.text-command:hover,
+.command-button:hover {
+  background: var(--accent-soft);
+  border-color: var(--line-mid);
+}
+
+.command-button {
+  background: var(--surface-widget);
+  cursor: pointer;
+  margin-top: 22px;
+}
+
+.leave-list-skeleton {
+  border-top: 1px solid var(--line-soft);
+  display: grid;
+  gap: 12px;
+  margin-top: 48px;
+  padding-top: 24px;
+}
+
+.leave-list-skeleton span {
+  background: linear-gradient(90deg, var(--accent-soft), var(--surface-widget), var(--accent-soft));
+  background-size: 240% 100%;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  display: block;
+  height: 52px;
+}
+
+.leave-list-error {
+  align-items: center;
+  border-top: 1px solid var(--line-soft);
+  display: flex;
+  flex-direction: column;
+  margin-top: 48px;
+  min-height: 280px;
+  padding: 64px 20px;
+  text-align: center;
+}
+
+.leave-list-error h2 {
+  font-size: 19px;
+  margin-bottom: 9px;
+}
+
+.leave-list-error p {
+  color: var(--text-soft);
+  margin-bottom: 0;
+}
+
 .session-status,
 .queue-status {
   align-items: center;
@@ -432,8 +567,7 @@ a:focus-visible {
   }
 
   .page-menu-item {
-    background: transparent;
-    padding: 0;
+    padding: 6px 8px;
   }
 
   .work-surface {
@@ -460,6 +594,47 @@ a:focus-visible {
 
   .session-status {
     max-width: calc(100vw - 102px);
+  }
+
+  .leave-table-wrap {
+    margin-top: 36px;
+    overflow: visible;
+  }
+
+  .leave-table,
+  .leave-table tbody,
+  .leave-table tr,
+  .leave-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .leave-table thead {
+    display: none;
+  }
+
+  .leave-table tr {
+    border-bottom: 1px solid var(--line-mid);
+    padding: 11px 0;
+  }
+
+  .leave-table td {
+    align-items: center;
+    border: 0;
+    display: flex;
+    justify-content: space-between;
+    min-height: 42px;
+    padding: 8px 2px;
+    text-align: right;
+  }
+
+  .leave-table td::before {
+    color: var(--text-soft);
+    content: attr(data-label);
+    font-size: 12px;
+    font-weight: 700;
+    padding-right: 18px;
+    text-align: left;
   }
 }
 
