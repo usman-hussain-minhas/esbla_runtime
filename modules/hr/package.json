@@ -12,13 +12,18 @@
   },
   "scripts": {
     "build": "node ../../scripts/build/clean-typescript-output.mjs && tsc -p tsconfig.build.json",
-    "test": "vitest run",
+    "test": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@esbla/contracts": "workspace:^"
+    "@esbla/contracts": "workspace:^",
+    "@esbla/db": "workspace:^",
+    "@esbla/platform-core": "workspace:^",
+    "pg": "8.22.0"
   },
   "devDependencies": {
+    "@types/node": "26.1.1",
+    "@types/pg": "8.20.0",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
   }
