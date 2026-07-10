@@ -1,9 +1,13 @@
+import { randomUUID } from "node:crypto";
 import type {
   HrAssignedLeaveRequestSummary,
   HrLeaveRequestCursor,
 } from "@esbla/contracts/hr-leave-api";
 import { ArrowRight, ClipboardCheck, Clock3 } from "lucide-react";
 import { getAssignedLeaveRequests } from "../../../lib/hr-leave-assigned-list";
+import { LeaveApprovalAction } from "./leave-approval-action";
+
+export const dynamic = "force-dynamic";
 
 interface MyWorkPageProps {
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -112,13 +116,20 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
                   <dd>Open</dd>
                 </div>
               </dl>
-              <a
-                className="text-command work-detail-link"
-                href={`/workspace/hr/leave/${item.leaveRequestId}`}
-              >
-                Review details
-                <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
-              </a>
+              <div className="work-queue-actions">
+                <a
+                  className="text-command work-detail-link"
+                  href={`/workspace/hr/leave/${item.leaveRequestId}`}
+                >
+                  Review details
+                  <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
+                </a>
+                <LeaveApprovalAction
+                  expectedVersion={item.version}
+                  idempotencyKey={randomUUID()}
+                  leaveRequestId={item.leaveRequestId}
+                />
+              </div>
             </li>
           ))}
         </ol>
