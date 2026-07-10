@@ -21,6 +21,7 @@ import {
   type LeaveEvidenceEvent,
   type LeaveListCursor,
   type LeaveRequest,
+  type LeaveRequestDetail,
 } from "./types.js";
 
 async function selectLeave(
@@ -36,6 +37,66 @@ async function selectLeave(
   return result.rows[0] ?? null;
 }
 
+type EvidenceRow = {
+  actor_principal_id: string;
+  correlation_id: string;
+  event_type: string;
+  evidence_event_id: string;
+  new_state: string;
+  occurred_at: string;
+  prior_state: string | null;
+};
+
+function mapEvidenceRow(row: EvidenceRow): LeaveEvidenceEvent {
+  return {
+    actorPrincipalId: row.actor_principal_id,
+    correlationId: row.correlation_id,
+    eventType: row.event_type,
+    evidenceEventId: row.evidence_event_id,
+    newState: row.new_state,
+    occurredAt: row.occurred_at,
+    priorState: row.prior_state,
+  };
+}
+
+async function selectEvidence(
+  transaction: TenantTransaction,
+  leaveRequestId: string,
+  pageSize: number,
+  cursor?: LeaveEvidenceCursor,
+): Promise<readonly LeaveEvidenceEvent[]> {
+  const result = cursor
+    ? await transaction.client.query<EvidenceRow>(
+        `SELECT evidence_event_id, event_type, actor_principal_id, correlation_id,
+                prior_state, new_state,
+                to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at
+         FROM evidence_events
+         WHERE tenant_id = $1 AND subject_type = $2 AND subject_id = $3
+           AND (occurred_at, evidence_event_id) > ($4::timestamptz, $5::uuid)
+         ORDER BY occurred_at ASC, evidence_event_id ASC
+         LIMIT $6`,
+        [
+          transaction.context.tenantId,
+          HR_LEAVE_SUBJECT_TYPE,
+          leaveRequestId,
+          cursor.occurredAt,
+          cursor.evidenceEventId,
+          pageSize,
+        ],
+      )
+    : await transaction.client.query<EvidenceRow>(
+        `SELECT evidence_event_id, event_type, actor_principal_id, correlation_id,
+                prior_state, new_state,
+                to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at
+         FROM evidence_events
+         WHERE tenant_id = $1 AND subject_type = $2 AND subject_id = $3
+         ORDER BY occurred_at ASC, evidence_event_id ASC
+         LIMIT $4`,
+        [transaction.context.tenantId, HR_LEAVE_SUBJECT_TYPE, leaveRequestId, pageSize],
+      );
+  return result.rows.map(mapEvidenceRow);
+}
+
 export async function getLeaveRequest(
   pool: Pool,
   context: OperationContext,
@@ -48,6 +109,24 @@ export async function getLeaveRequest(
     if (!row) return null;
     authorizeView(transaction, row);
     return mapLeaveRow(row);
+  });
+}
+
+export async function getLeaveRequestDetail(
+  pool: Pool,
+  context: OperationContext,
+  leaveRequestId: string,
+): Promise<LeaveRequestDetail | null> {
+  assertUuid(leaveRequestId, "leaveRequestId");
+  return await withTenantTransaction(pool, context, async (transaction) => {
+    await requireLeaveServiceActive(transaction);
+    const row = await selectLeave(transaction, leaveRequestId);
+    if (!row) return null;
+    authorizeView(transaction, row);
+    return {
+      history: await selectEvidence(transaction, leaveRequestId, 100),
+      request: mapLeaveRow(row),
+    };
   });
 }
 
@@ -160,60 +239,6 @@ export async function listLeaveEvidence(
     const request = await selectLeave(transaction, leaveRequestId);
     if (!request) return [];
     authorizeView(transaction, request);
-    const cursor = options.cursor;
-    const result = cursor
-      ? await transaction.client.query<{
-          actor_principal_id: string;
-          correlation_id: string;
-          event_type: string;
-          evidence_event_id: string;
-          new_state: string;
-          occurred_at: string;
-          prior_state: string | null;
-        }>(
-          `SELECT evidence_event_id, event_type, actor_principal_id, correlation_id,
-                  prior_state, new_state,
-                  to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at
-           FROM evidence_events
-           WHERE tenant_id = $1 AND subject_type = $2 AND subject_id = $3
-             AND (occurred_at, evidence_event_id) > ($4::timestamptz, $5::uuid)
-           ORDER BY occurred_at ASC, evidence_event_id ASC
-           LIMIT $6`,
-          [
-            transaction.context.tenantId,
-            HR_LEAVE_SUBJECT_TYPE,
-            leaveRequestId,
-            cursor.occurredAt,
-            cursor.evidenceEventId,
-            pageSize,
-          ],
-        )
-      : await transaction.client.query<{
-          actor_principal_id: string;
-          correlation_id: string;
-          event_type: string;
-          evidence_event_id: string;
-          new_state: string;
-          occurred_at: string;
-          prior_state: string | null;
-        }>(
-          `SELECT evidence_event_id, event_type, actor_principal_id, correlation_id,
-                  prior_state, new_state,
-                  to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at
-           FROM evidence_events
-           WHERE tenant_id = $1 AND subject_type = $2 AND subject_id = $3
-           ORDER BY occurred_at ASC, evidence_event_id ASC
-           LIMIT $4`,
-          [transaction.context.tenantId, HR_LEAVE_SUBJECT_TYPE, leaveRequestId, pageSize],
-        );
-    return result.rows.map((row) => ({
-      actorPrincipalId: row.actor_principal_id,
-      correlationId: row.correlation_id,
-      eventType: row.event_type,
-      evidenceEventId: row.evidence_event_id,
-      newState: row.new_state,
-      occurredAt: row.occurred_at,
-      priorState: row.prior_state,
-    }));
+    return await selectEvidence(transaction, leaveRequestId, pageSize, options.cursor);
   });
 }

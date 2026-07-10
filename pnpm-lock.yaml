@@ -24,16 +24,34 @@ importers:
 
   apps/api:
     dependencies:
+      '@esbla/contracts':
+        specifier: workspace:^
+        version: link:../../packages/contracts
+      '@esbla/db':
+        specifier: workspace:^
+        version: link:../../packages/db
+      '@esbla/hr':
+        specifier: workspace:^
+        version: link:../../modules/hr
       '@esbla/observability':
         specifier: workspace:^
         version: link:../../packages/observability
+      '@esbla/platform-core':
+        specifier: workspace:^
+        version: link:../../modules/platform-core
       fastify:
         specifier: 5.10.0
         version: 5.10.0
+      pg:
+        specifier: 8.22.0
+        version: 8.22.0
     devDependencies:
       '@types/node':
         specifier: 26.1.1
         version: 26.1.1
+      '@types/pg':
+        specifier: 8.20.0
+        version: 8.20.0
       tsx:
         specifier: 4.23.0
         version: 4.23.0
