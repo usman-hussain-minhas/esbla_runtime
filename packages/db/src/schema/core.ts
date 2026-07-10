@@ -186,6 +186,7 @@ export const evidenceEvents = pgTable(
     ),
     index("evidence_events_tenant_subject_occurred_idx").on(
       table.tenantId,
+      table.subjectType,
       table.subjectId,
       table.occurredAt,
       table.evidenceEventId,

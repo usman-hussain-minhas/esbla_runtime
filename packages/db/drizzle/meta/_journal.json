@@ -22,6 +22,13 @@
       "when": 1783641088151,
       "tag": "0002_flat_queen_noir",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783642209842,
+      "tag": "0003_illegal_micromacro",
+      "breakpoints": true
     }
   ]
 }

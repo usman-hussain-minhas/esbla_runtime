@@ -132,7 +132,7 @@ describe("core PostgreSQL foundation", () => {
     const migrations = await migrationPool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations`,
     );
-    expect(migrations.rows[0]?.count).toBe("3");
+    expect(migrations.rows[0]?.count).toBe("4");
 
     const rowSecurity = await pool.query<{
       force_row_security: boolean;
@@ -150,6 +150,7 @@ describe("core PostgreSQL foundation", () => {
       [
         [
           "evidence_events",
+          "hr_leave_requests",
           "memberships",
           "outbox_events",
           "service_activations",
@@ -159,7 +160,7 @@ describe("core PostgreSQL foundation", () => {
       ],
     );
 
-    expect(rowSecurity.rows).toHaveLength(6);
+    expect(rowSecurity.rows).toHaveLength(7);
     expect(rowSecurity.rows.every((row) => row.row_security && row.force_row_security)).toBe(true);
     const schemaPrivilege = await pool.query<{ can_create: boolean; current_schema: string }>(
       `SELECT has_schema_privilege(current_user, 'public', 'CREATE') AS can_create,

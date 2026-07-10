@@ -1,0 +1,784 @@
+import { createDatabase, createDatabasePool, migrateDatabase } from "@esbla/db";
+import { evaluatePolicy, setServiceActivation, withTenantTransaction } from "@esbla/platform-core";
+import type { Pool, PoolClient } from "pg";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  approveLeaveRequest,
+  getLeaveRequest,
+  HR_LEAVE_BILLING_STATE,
+  listAssignedLeaveRequests,
+  listLeaveEvidence,
+  listOwnLeaveRequests,
+  rejectLeaveRequest,
+  submitLeaveRequest,
+} from "./index.js";
+
+const ids = {
+  adminA: "10000000-0000-4000-8000-000000000001",
+  adminB: "10000000-0000-4000-8000-000000000008",
+  correlationActivateA: "50000000-0000-4000-8000-000000000001",
+  correlationActivateB: "50000000-0000-4000-8000-000000000002",
+  correlationApprove1: "50000000-0000-4000-8000-000000000011",
+  correlationApproveRetry: "50000000-0000-4000-8000-000000000012",
+  correlationConcurrentSubmit: "50000000-0000-4000-8000-000000000015",
+  correlationDecisionApprove: "50000000-0000-4000-8000-000000000016",
+  correlationDecisionReject: "50000000-0000-4000-8000-000000000017",
+  correlationDeactivateB: "50000000-0000-4000-8000-000000000018",
+  correlationReject2: "50000000-0000-4000-8000-000000000013",
+  correlationRollback: "50000000-0000-4000-8000-000000000014",
+  correlationSubmit1: "50000000-0000-4000-8000-000000000021",
+  correlationSubmit2: "50000000-0000-4000-8000-000000000022",
+  correlationSubmit3: "50000000-0000-4000-8000-000000000023",
+  correlationSubmitB: "50000000-0000-4000-8000-000000000024",
+  correlationSubmitSelf: "50000000-0000-4000-8000-000000000025",
+  employeeA: "10000000-0000-4000-8000-000000000004",
+  employeeA2: "10000000-0000-4000-8000-000000000005",
+  employeeB: "10000000-0000-4000-8000-000000000010",
+  managerA: "10000000-0000-4000-8000-000000000002",
+  managerA2: "10000000-0000-4000-8000-000000000003",
+  managerB: "10000000-0000-4000-8000-000000000009",
+  membershipAdminA: "20000000-0000-4000-8000-000000000001",
+  membershipAdminB: "20000000-0000-4000-8000-000000000008",
+  membershipEmployeeA: "20000000-0000-4000-8000-000000000004",
+  membershipEmployeeA2: "20000000-0000-4000-8000-000000000005",
+  membershipEmployeeB: "20000000-0000-4000-8000-000000000010",
+  membershipManagerA: "20000000-0000-4000-8000-000000000002",
+  membershipManagerA2: "20000000-0000-4000-8000-000000000003",
+  membershipManagerB: "20000000-0000-4000-8000-000000000009",
+  request1: "30000000-0000-4000-8000-000000000001",
+  request2: "30000000-0000-4000-8000-000000000002",
+  request3: "30000000-0000-4000-8000-000000000003",
+  requestB: "30000000-0000-4000-8000-000000000004",
+  requestConcurrent: "30000000-0000-4000-8000-000000000005",
+  requestDecision: "30000000-0000-4000-8000-000000000006",
+  requestRlsProbe: "30000000-0000-4000-8000-000000000007",
+  tenantA: "00000000-0000-4000-8000-000000000001",
+  tenantB: "00000000-0000-4000-8000-000000000002",
+} as const;
+
+let migrationPool: Pool;
+let pool: Pool;
+
+function context(tenantId: string, actorPrincipalId: string, correlationId: string) {
+  return { actorPrincipalId, correlationId, tenantId };
+}
+
+async function seedTenantRow(
+  client: PoolClient,
+  tenantId: string,
+  query: string,
+  values: readonly unknown[],
+): Promise<void> {
+  await client.query("BEGIN");
+  try {
+    await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
+    await client.query(query, [...values]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+async function activateLeaveService(
+  tenantId: string,
+  adminPrincipalId: string,
+  correlationId: string,
+): Promise<void> {
+  await withTenantTransaction(
+    pool,
+    context(tenantId, adminPrincipalId, correlationId),
+    async (transaction) => {
+      const authorization = evaluatePolicy(
+        {
+          actionKey: "platform.service_activation.activate",
+          input: { serviceKey: "hr.leave_request" },
+          resourceKey: "hr.leave_request",
+          transaction,
+        },
+        [
+          {
+            effect: "allow",
+            id: "tenant_admin_activate_service",
+            matches: (_input, actor) => actor.roleKey === "tenant_admin",
+          },
+        ],
+      );
+      await setServiceActivation(transaction, {
+        authorization,
+        evidenceEventType: "evidence.hr.leave_service.activated",
+        expectedVersion: null,
+        outboxEventType: "hr.leave_service.activated",
+        preflight: async () => ({ current: true, reasons: [] }),
+        serviceKey: "hr.leave_request",
+        targetState: "active",
+      });
+    },
+  );
+}
+
+async function setBooleanSetting(tenantId: string, key: string, value: boolean): Promise<void> {
+  await withTenantTransaction(
+    pool,
+    context(tenantId, ids.adminA, ids.correlationSubmit2),
+    async ({ client }) => {
+      await client.query(
+        `INSERT INTO tenant_settings (tenant_id, setting_key, value_type, value)
+         VALUES ($1, $2, 'boolean', $3::jsonb)
+         ON CONFLICT (tenant_id, setting_key)
+         DO UPDATE SET value_type = 'boolean', value = EXCLUDED.value, version = tenant_settings.version + 1`,
+        [tenantId, key, JSON.stringify(value)],
+      );
+    },
+  );
+}
+
+async function deleteSetting(tenantId: string, key: string): Promise<void> {
+  await withTenantTransaction(
+    pool,
+    context(tenantId, ids.adminA, ids.correlationSubmit2),
+    async ({ client }) => {
+      await client.query("DELETE FROM tenant_settings WHERE tenant_id = $1 AND setting_key = $2", [
+        tenantId,
+        key,
+      ]);
+    },
+  );
+}
+
+beforeAll(async () => {
+  const connectionString = process.env.DATABASE_URL;
+  const migrationConnectionString = process.env.DATABASE_MIGRATION_URL;
+  const applicationRole = process.env.ESBLA_TEST_APPLICATION_ROLE;
+  if (!connectionString || !migrationConnectionString || !applicationRole) {
+    throw new Error("PostgreSQL harness environment is required");
+  }
+  if (!/^[a-z_][a-z0-9_]*$/.test(applicationRole)) {
+    throw new Error("Application role is not a safe PostgreSQL identifier");
+  }
+
+  migrationPool = createDatabasePool(migrationConnectionString, { max: 2 });
+  await migrateDatabase(createDatabase(migrationPool));
+  await migrationPool.query(`GRANT USAGE ON SCHEMA public TO ${applicationRole}`);
+  await migrationPool.query(`GRANT SELECT, INSERT ON tenants, principals TO ${applicationRole}`);
+  await migrationPool.query(
+    `GRANT SELECT, INSERT, UPDATE, DELETE
+     ON memberships, service_activations, tenant_settings, work_items,
+        outbox_events, hr_leave_requests
+     TO ${applicationRole}`,
+  );
+  await migrationPool.query(`GRANT SELECT, INSERT ON evidence_events TO ${applicationRole}`);
+
+  pool = createDatabasePool(connectionString, { max: 8 });
+  await pool.query(
+    `INSERT INTO tenants (tenant_id, name) VALUES ($1, 'Tenant A'), ($2, 'Tenant B')`,
+    [ids.tenantA, ids.tenantB],
+  );
+  await pool.query(
+    `INSERT INTO principals (principal_id, display_name)
+     VALUES ($1, 'Admin A'), ($2, 'Manager A'), ($3, 'Manager A2'),
+            ($4, 'Employee A'), ($5, 'Employee A2'),
+            ($6, 'Admin B'), ($7, 'Manager B'), ($8, 'Employee B')`,
+    [
+      ids.adminA,
+      ids.managerA,
+      ids.managerA2,
+      ids.employeeA,
+      ids.employeeA2,
+      ids.adminB,
+      ids.managerB,
+      ids.employeeB,
+    ],
+  );
+
+  const client = await pool.connect();
+  try {
+    await seedTenantRow(
+      client,
+      ids.tenantA,
+      `INSERT INTO memberships
+         (membership_id, tenant_id, principal_id, role_key, manager_principal_id)
+       VALUES ($1, $2, $3, 'tenant_admin', NULL),
+              ($4, $2, $5, 'manager', $6),
+              ($7, $2, $6, 'manager', $6),
+              ($8, $2, $9, 'employee', $5),
+              ($10, $2, $11, 'employee', $5)`,
+      [
+        ids.membershipAdminA,
+        ids.tenantA,
+        ids.adminA,
+        ids.membershipManagerA,
+        ids.managerA,
+        ids.managerA2,
+        ids.membershipManagerA2,
+        ids.membershipEmployeeA,
+        ids.employeeA,
+        ids.membershipEmployeeA2,
+        ids.employeeA2,
+      ],
+    );
+    await seedTenantRow(
+      client,
+      ids.tenantB,
+      `INSERT INTO memberships
+         (membership_id, tenant_id, principal_id, role_key, manager_principal_id)
+       VALUES ($1, $2, $3, 'tenant_admin', NULL),
+              ($4, $2, $5, 'manager', NULL),
+              ($6, $2, $7, 'employee', $5)`,
+      [
+        ids.membershipAdminB,
+        ids.tenantB,
+        ids.adminB,
+        ids.membershipManagerB,
+        ids.managerB,
+        ids.membershipEmployeeB,
+        ids.employeeB,
+      ],
+    );
+  } finally {
+    client.release();
+  }
+  await activateLeaveService(ids.tenantA, ids.adminA, ids.correlationActivateA);
+  await activateLeaveService(ids.tenantB, ids.adminB, ids.correlationActivateB);
+});
+
+afterAll(async () => {
+  await pool.end();
+  await migrationPool.end();
+});
+
+describe("HR Leave Request domain", () => {
+  it("applies the schema with forced RLS and declared query indexes", async () => {
+    const migrations = await migrationPool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations",
+    );
+    expect(migrations.rows[0]?.count).toBe("4");
+    const table = await migrationPool.query<{
+      force_row_security: boolean;
+      row_security: boolean;
+    }>(
+      `SELECT relrowsecurity AS row_security, relforcerowsecurity AS force_row_security
+       FROM pg_class WHERE oid = 'hr_leave_requests'::regclass`,
+    );
+    expect(table.rows).toEqual([{ force_row_security: true, row_security: true }]);
+    const indexes = await migrationPool.query<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes
+       WHERE tablename = 'hr_leave_requests' ORDER BY indexname`,
+    );
+    expect(indexes.rows.map((row) => row.indexname)).toEqual([
+      "hr_leave_requests_assigned_open_idx",
+      "hr_leave_requests_employee_history_idx",
+      "hr_leave_requests_pkey",
+      "hr_leave_requests_tenant_employee_idempotency_uq",
+    ]);
+    await expect(
+      withTenantTransaction(
+        pool,
+        context(ids.tenantA, ids.adminA, ids.correlationActivateA),
+        async ({ client }) => {
+          await client.query(
+            `INSERT INTO hr_leave_requests
+               (leave_request_id, tenant_id, employee_principal_id, approver_principal_id,
+                category_code, start_date, end_date, status, decided_at,
+                idempotency_key, correlation_id)
+             VALUES ('30000000-0000-4000-8000-000000000099', $1, $2, $3,
+                     'other', '2026-01-01', '2026-01-01', 'approved', now(),
+                     'illegal-terminal-insert', $4)`,
+            [ids.tenantA, ids.employeeA, ids.managerA, ids.correlationActivateA],
+          );
+        },
+      ),
+    ).rejects.toMatchObject({ code: "55000" });
+    await expect(
+      withTenantTransaction(
+        pool,
+        context(ids.tenantB, ids.employeeB, ids.correlationSubmitB),
+        async ({ client }) => {
+          await client.query(
+            `INSERT INTO hr_leave_requests
+               (leave_request_id, tenant_id, employee_principal_id, approver_principal_id,
+                category_code, start_date, end_date, idempotency_key, correlation_id)
+             VALUES ($1, $2, $3, $4, 'other', '2026-01-01', '2026-01-01',
+                     'cross-tenant-probe', $5)`,
+            [ids.requestRlsProbe, ids.tenantA, ids.employeeB, ids.managerB, ids.correlationSubmitB],
+          );
+        },
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+  });
+
+  it("submits once, couples work and proof atomically, and replays idempotently", async () => {
+    const input = {
+      categoryCode: "sick" as const,
+      endDate: "2026-07-13",
+      idempotencyKey: "leave-request-1",
+      leaveRequestId: ids.request1,
+      startDate: "2026-07-13",
+    };
+    const submitted = await submitLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.employeeA, ids.correlationSubmit1),
+      input,
+    );
+    expect(submitted).toMatchObject({
+      billingState: HR_LEAVE_BILLING_STATE,
+      replayed: false,
+      request: {
+        approverPrincipalId: ids.managerA,
+        employeePrincipalId: ids.employeeA,
+        leaveRequestId: ids.request1,
+        status: "submitted",
+        version: 1,
+      },
+    });
+    const replay = await submitLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.employeeA, ids.correlationSubmit1),
+      input,
+    );
+    expect(replay).toMatchObject({ replayed: true, request: { leaveRequestId: ids.request1 } });
+    await expect(
+      submitLeaveRequest(pool, context(ids.tenantA, ids.employeeA, ids.correlationSubmit1), {
+        ...input,
+        reason: "changed",
+      }),
+    ).rejects.toMatchObject({ code: "LEAVE_IDEMPOTENCY_CONFLICT" });
+
+    await withTenantTransaction(
+      pool,
+      context(ids.tenantA, ids.employeeA, ids.correlationSubmit1),
+      async ({ client }) => {
+        const counts = await client.query<{
+          evidence_count: string;
+          outbox_count: string;
+          work_count: string;
+        }>(
+          `SELECT
+             (SELECT count(*) FROM evidence_events WHERE subject_type = 'hr.leave_request' AND subject_id = $1)::text AS evidence_count,
+             (SELECT count(*) FROM outbox_events WHERE aggregate_type = 'hr.leave_request' AND aggregate_id = $1)::text AS outbox_count,
+             (SELECT count(*) FROM work_items WHERE subject_type = 'hr.leave_request' AND subject_id = $1)::text AS work_count`,
+          [ids.request1],
+        );
+        expect(counts.rows[0]).toEqual({
+          evidence_count: "1",
+          outbox_count: "1",
+          work_count: "1",
+        });
+        const outbox = await client.query<{ payload: Record<string, unknown> }>(
+          "SELECT payload FROM outbox_events WHERE aggregate_id = $1",
+          [ids.request1],
+        );
+        expect(outbox.rows[0]?.payload).not.toHaveProperty("reason");
+      },
+    );
+  });
+
+  it("serializes concurrent submissions on the domain idempotency key", async () => {
+    const input = {
+      categoryCode: "other" as const,
+      endDate: "2026-07-20",
+      idempotencyKey: "concurrent-submission",
+      leaveRequestId: ids.requestConcurrent,
+      startDate: "2026-07-20",
+    };
+    const results = await Promise.all([
+      submitLeaveRequest(
+        pool,
+        context(ids.tenantA, ids.employeeA2, ids.correlationConcurrentSubmit),
+        input,
+      ),
+      submitLeaveRequest(
+        pool,
+        context(ids.tenantA, ids.employeeA2, ids.correlationConcurrentSubmit),
+        input,
+      ),
+    ]);
+    expect(results.map((result) => result.replayed).sort()).toEqual([false, true]);
+    await withTenantTransaction(
+      pool,
+      context(ids.tenantA, ids.employeeA2, ids.correlationConcurrentSubmit),
+      async ({ client }) => {
+        const counts = await client.query<{
+          evidence_count: string;
+          request_count: string;
+          work_count: string;
+        }>(
+          `SELECT
+             (SELECT count(*) FROM hr_leave_requests WHERE leave_request_id = $1)::text AS request_count,
+             (SELECT count(*) FROM evidence_events WHERE subject_id = $1)::text AS evidence_count,
+             (SELECT count(*) FROM work_items WHERE subject_id = $1)::text AS work_count`,
+          [ids.requestConcurrent],
+        );
+        expect(counts.rows[0]).toEqual({
+          evidence_count: "1",
+          request_count: "1",
+          work_count: "1",
+        });
+      },
+    );
+  });
+
+  it("enforces dates, tenant settings, and the self-approval floor", async () => {
+    await expect(
+      submitLeaveRequest(pool, context(ids.tenantA, ids.employeeA, ids.correlationSubmit2), {
+        categoryCode: "annual",
+        endDate: "2026-02-29",
+        idempotencyKey: "bad-date",
+        startDate: "2026-03-01",
+      }),
+    ).rejects.toMatchObject({ code: "LEAVE_INPUT_INVALID" });
+
+    await setBooleanSetting(ids.tenantA, "hr.leave.require_reason", true);
+    await expect(
+      submitLeaveRequest(pool, context(ids.tenantA, ids.employeeA, ids.correlationSubmit2), {
+        categoryCode: "annual",
+        endDate: "2026-08-04",
+        idempotencyKey: "leave-request-2",
+        leaveRequestId: ids.request2,
+        startDate: "2026-08-03",
+      }),
+    ).rejects.toMatchObject({ code: "LEAVE_INPUT_INVALID" });
+    const submitted = await submitLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.employeeA, ids.correlationSubmit2),
+      {
+        categoryCode: "annual",
+        endDate: "2026-08-04",
+        idempotencyKey: "leave-request-2",
+        leaveRequestId: ids.request2,
+        reason: "Family commitment",
+        startDate: "2026-08-03",
+      },
+    );
+    expect(submitted.request.reason).toBe("Family commitment");
+    await deleteSetting(ids.tenantA, "hr.leave.require_reason");
+
+    await expect(
+      submitLeaveRequest(pool, context(ids.tenantA, ids.managerA2, ids.correlationSubmitSelf), {
+        categoryCode: "other",
+        endDate: "2026-09-01",
+        idempotencyKey: "self-manager-request",
+        startDate: "2026-09-01",
+      }),
+    ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+  });
+
+  it("allows only the assigned manager to approve and makes terminal state immutable", async () => {
+    await expect(
+      approveLeaveRequest(pool, context(ids.tenantA, ids.managerA2, ids.correlationApprove1), {
+        expectedVersion: 1,
+        leaveRequestId: ids.request1,
+      }),
+    ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+
+    const approved = await approveLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.managerA, ids.correlationApprove1),
+      { expectedVersion: 1, leaveRequestId: ids.request1 },
+    );
+    expect(approved).toMatchObject({
+      replayed: false,
+      request: { status: "approved", version: 2 },
+    });
+    const replay = await approveLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.managerA, ids.correlationApprove1),
+      { expectedVersion: 1, leaveRequestId: ids.request1 },
+    );
+    expect(replay).toMatchObject({ replayed: true, request: { status: "approved", version: 2 } });
+    await expect(
+      approveLeaveRequest(pool, context(ids.tenantA, ids.managerA, ids.correlationApproveRetry), {
+        expectedVersion: 2,
+        leaveRequestId: ids.request1,
+      }),
+    ).rejects.toMatchObject({ code: "LEAVE_STATE_CONFLICT" });
+    await expect(
+      withTenantTransaction(
+        pool,
+        context(ids.tenantA, ids.managerA, ids.correlationApproveRetry),
+        async ({ client }) =>
+          await client.query(
+            `UPDATE hr_leave_requests
+             SET status = 'rejected', version = version + 1, decided_at = now()
+             WHERE leave_request_id = $1`,
+            [ids.request1],
+          ),
+      ),
+    ).rejects.toMatchObject({ code: "55000" });
+    await expect(
+      withTenantTransaction(
+        pool,
+        context(ids.tenantA, ids.managerA, ids.correlationApproveRetry),
+        async ({ client }) =>
+          await client.query("DELETE FROM hr_leave_requests WHERE leave_request_id = $1", [
+            ids.request1,
+          ]),
+      ),
+    ).rejects.toMatchObject({ code: "55000" });
+
+    const history = await listLeaveEvidence(
+      pool,
+      context(ids.tenantA, ids.employeeA, ids.correlationApproveRetry),
+      ids.request1,
+    );
+    expect(history.map((event) => event.newState)).toEqual(["submitted", "approved"]);
+    const firstEvidencePage = await listLeaveEvidence(
+      pool,
+      context(ids.tenantA, ids.employeeA, ids.correlationApproveRetry),
+      ids.request1,
+      { pageSize: 1 },
+    );
+    const firstEvidence = firstEvidencePage[0];
+    expect(firstEvidence).toBeDefined();
+    const secondEvidencePage = await listLeaveEvidence(
+      pool,
+      context(ids.tenantA, ids.employeeA, ids.correlationApproveRetry),
+      ids.request1,
+      {
+        cursor: {
+          evidenceEventId: firstEvidence?.evidenceEventId ?? "",
+          occurredAt: firstEvidence?.occurredAt ?? "",
+        },
+        pageSize: 1,
+      },
+    );
+    expect(secondEvidencePage[0]?.newState).toBe("approved");
+    const assigned = await listAssignedLeaveRequests(
+      pool,
+      context(ids.tenantA, ids.managerA, ids.correlationApproveRetry),
+    );
+    expect(assigned.some((request) => request.leaveRequestId === ids.request1)).toBe(false);
+  });
+
+  it("enforces rejection-note policy and completes the assigned work item", async () => {
+    await expect(
+      rejectLeaveRequest(pool, context(ids.tenantA, ids.managerA, ids.correlationReject2), {
+        expectedVersion: 1,
+        leaveRequestId: ids.request2,
+      }),
+    ).rejects.toMatchObject({ code: "LEAVE_INPUT_INVALID" });
+    const rejected = await rejectLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.managerA, ids.correlationReject2),
+      {
+        decisionNote: "Coverage is unavailable for these dates.",
+        expectedVersion: 1,
+        leaveRequestId: ids.request2,
+      },
+    );
+    expect(rejected).toMatchObject({
+      request: {
+        decisionNote: "Coverage is unavailable for these dates.",
+        status: "rejected",
+        version: 2,
+      },
+    });
+    await withTenantTransaction(
+      pool,
+      context(ids.tenantA, ids.managerA, ids.correlationReject2),
+      async ({ client }) => {
+        const work = await client.query<{ completed_at: Date; status: string }>(
+          "SELECT status, completed_at FROM work_items WHERE subject_id = $1",
+          [ids.request2],
+        );
+        expect(work.rows[0]?.status).toBe("completed");
+        expect(work.rows[0]?.completed_at).toBeInstanceOf(Date);
+      },
+    );
+  });
+
+  it("keeps tenant reads isolated and query pages bounded", async () => {
+    await submitLeaveRequest(pool, context(ids.tenantB, ids.employeeB, ids.correlationSubmitB), {
+      categoryCode: "unpaid",
+      endDate: "2026-10-10",
+      idempotencyKey: "tenant-b-request",
+      leaveRequestId: ids.requestB,
+      startDate: "2026-10-10",
+    });
+    expect(
+      await getLeaveRequest(
+        pool,
+        context(ids.tenantB, ids.employeeB, ids.correlationSubmitB),
+        ids.request1,
+      ),
+    ).toBeNull();
+    const ownB = await listOwnLeaveRequests(
+      pool,
+      context(ids.tenantB, ids.employeeB, ids.correlationSubmitB),
+    );
+    expect(ownB.map((request) => request.leaveRequestId)).toEqual([ids.requestB]);
+    await expect(
+      listOwnLeaveRequests(pool, context(ids.tenantB, ids.employeeB, ids.correlationSubmitB), {
+        pageSize: 51,
+      }),
+    ).rejects.toMatchObject({ code: "LEAVE_INPUT_INVALID" });
+    await expect(
+      listAssignedLeaveRequests(pool, context(ids.tenantA, ids.employeeA, ids.correlationSubmit1)),
+    ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+    const firstOwnPage = await listOwnLeaveRequests(
+      pool,
+      context(ids.tenantA, ids.employeeA, ids.correlationSubmit1),
+      { pageSize: 1 },
+    );
+    const firstOwn = firstOwnPage[0];
+    expect(firstOwn).toBeDefined();
+    const nextOwnPage = await listOwnLeaveRequests(
+      pool,
+      context(ids.tenantA, ids.employeeA, ids.correlationSubmit1),
+      {
+        cursor: {
+          leaveRequestId: firstOwn?.leaveRequestId ?? "",
+          submittedAt: firstOwn?.submittedAt ?? "",
+        },
+        pageSize: 1,
+      },
+    );
+    expect(nextOwnPage[0]?.leaveRequestId).not.toBe(firstOwn?.leaveRequestId);
+  });
+
+  it("serializes competing manager decisions with one terminal winner", async () => {
+    await submitLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.employeeA2, ids.correlationDecisionApprove),
+      {
+        categoryCode: "annual",
+        endDate: "2026-12-02",
+        idempotencyKey: "competing-decision",
+        leaveRequestId: ids.requestDecision,
+        startDate: "2026-12-01",
+      },
+    );
+    const decisions = await Promise.allSettled([
+      approveLeaveRequest(
+        pool,
+        context(ids.tenantA, ids.managerA, ids.correlationDecisionApprove),
+        { expectedVersion: 1, leaveRequestId: ids.requestDecision },
+      ),
+      rejectLeaveRequest(pool, context(ids.tenantA, ids.managerA, ids.correlationDecisionReject), {
+        decisionNote: "Concurrent rejection path",
+        expectedVersion: 1,
+        leaveRequestId: ids.requestDecision,
+      }),
+    ]);
+    expect(decisions.filter((decision) => decision.status === "fulfilled")).toHaveLength(1);
+    expect(decisions.filter((decision) => decision.status === "rejected")).toHaveLength(1);
+    const request = await getLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.employeeA2, ids.correlationDecisionApprove),
+      ids.requestDecision,
+    );
+    expect(["approved", "rejected"]).toContain(request?.status);
+    expect(request?.version).toBe(2);
+    const evidence = await listLeaveEvidence(
+      pool,
+      context(ids.tenantA, ids.employeeA2, ids.correlationDecisionApprove),
+      ids.requestDecision,
+    );
+    expect(evidence).toHaveLength(2);
+  });
+
+  it("rolls back a decision when its work-item dependency is missing", async () => {
+    await submitLeaveRequest(pool, context(ids.tenantA, ids.employeeA2, ids.correlationSubmit3), {
+      categoryCode: "other",
+      endDate: "2026-11-12",
+      idempotencyKey: "rollback-request",
+      leaveRequestId: ids.request3,
+      startDate: "2026-11-12",
+    });
+    await withTenantTransaction(
+      pool,
+      context(ids.tenantA, ids.adminA, ids.correlationRollback),
+      async ({ client }) => {
+        await client.query("DELETE FROM work_items WHERE subject_id = $1", [ids.request3]);
+      },
+    );
+    await expect(
+      approveLeaveRequest(pool, context(ids.tenantA, ids.managerA, ids.correlationRollback), {
+        expectedVersion: 1,
+        leaveRequestId: ids.request3,
+      }),
+    ).rejects.toMatchObject({ code: "LEAVE_STATE_CONFLICT" });
+    const request = await getLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.employeeA2, ids.correlationSubmit3),
+      ids.request3,
+    );
+    expect(request).toMatchObject({ status: "submitted", version: 1 });
+    const evidence = await listLeaveEvidence(
+      pool,
+      context(ids.tenantA, ids.employeeA2, ids.correlationSubmit3),
+      ids.request3,
+    );
+    expect(evidence.map((event) => event.newState)).toEqual(["submitted"]);
+  });
+
+  it("uses the declared indexes and fails closed after service deactivation", async () => {
+    await withTenantTransaction(
+      pool,
+      context(ids.tenantA, ids.managerA, ids.correlationApproveRetry),
+      async ({ client }) => {
+        await client.query("SET LOCAL enable_seqscan = off");
+        const assigned = await client.query<{ "QUERY PLAN": string }>(
+          `EXPLAIN (COSTS OFF)
+           SELECT leave_request_id FROM hr_leave_requests
+           WHERE tenant_id = $1 AND approver_principal_id = $2 AND status = 'submitted'
+           ORDER BY submitted_at ASC, leave_request_id ASC LIMIT 50`,
+          [ids.tenantA, ids.managerA],
+        );
+        const own = await client.query<{ "QUERY PLAN": string }>(
+          `EXPLAIN (COSTS OFF)
+           SELECT leave_request_id FROM hr_leave_requests
+           WHERE tenant_id = $1 AND employee_principal_id = $2
+           ORDER BY submitted_at DESC, leave_request_id DESC LIMIT 50`,
+          [ids.tenantA, ids.employeeA],
+        );
+        const evidence = await client.query<{ "QUERY PLAN": string }>(
+          `EXPLAIN (COSTS OFF)
+           SELECT evidence_event_id FROM evidence_events
+           WHERE tenant_id = $1 AND subject_type = 'hr.leave_request' AND subject_id = $2
+           ORDER BY occurred_at ASC, evidence_event_id ASC LIMIT 100`,
+          [ids.tenantA, ids.request1],
+        );
+        const plans = [...assigned.rows, ...own.rows, ...evidence.rows]
+          .map((row) => row["QUERY PLAN"])
+          .join("\n");
+        expect(plans).toContain("hr_leave_requests_assigned_open_idx");
+        expect(plans).toContain("hr_leave_requests_employee_history_idx");
+        expect(plans).toContain("evidence_events_tenant_subject_occurred_idx");
+      },
+    );
+
+    await withTenantTransaction(
+      pool,
+      context(ids.tenantB, ids.adminB, ids.correlationDeactivateB),
+      async (transaction) => {
+        const authorization = evaluatePolicy(
+          {
+            actionKey: "platform.service_activation.deactivate",
+            input: { serviceKey: "hr.leave_request" },
+            resourceKey: "hr.leave_request",
+            transaction,
+          },
+          [
+            {
+              effect: "allow",
+              id: "tenant_admin_deactivate_service",
+              matches: (_input, actor) => actor.roleKey === "tenant_admin",
+            },
+          ],
+        );
+        await setServiceActivation(transaction, {
+          authorization,
+          evidenceEventType: "evidence.hr.leave_service.deactivated",
+          expectedVersion: 1,
+          outboxEventType: "hr.leave_service.deactivated",
+          serviceKey: "hr.leave_request",
+          targetState: "inactive",
+        });
+      },
+    );
+    await expect(
+      listOwnLeaveRequests(pool, context(ids.tenantB, ids.employeeB, ids.correlationDeactivateB)),
+    ).rejects.toMatchObject({ code: "LEAVE_SERVICE_INACTIVE" });
+  });
+});
