@@ -66,3 +66,8 @@ export interface LeaveEvidenceEvent {
   readonly occurredAt: string;
   readonly priorState: string | null;
 }
+
+export interface LeaveRequestDetail {
+  readonly history: readonly LeaveEvidenceEvent[];
+  readonly request: LeaveRequest;
+}
