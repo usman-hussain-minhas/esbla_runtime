@@ -1,4 +1,10 @@
 export {
+  canonicalizeSignedJson,
+  createDevelopmentSignaturePayload,
+  type DevelopmentSignatureInput,
+  signDevelopmentPrincipal,
+} from "./development-principal.js";
+export {
   type HrDecideLeaveRequestBody,
   type HrLeaveListQuery,
   type HrLeaveRequestPath,
