@@ -6,6 +6,8 @@ export {
 } from "./development-principal.js";
 export {
   type ApiProblemDetails,
+  type HrAssignedLeaveRequestPage,
+  type HrAssignedLeaveRequestSummary,
   type HrDecideLeaveRequestBody,
   type HrLeaveCategoryCode,
   type HrLeaveListQuery,
@@ -16,6 +18,8 @@ export {
   type HrLeaveRequestStatus,
   type HrSubmitLeaveRequestBody,
   hrAssignedLeaveListQuerySchema,
+  hrAssignedLeaveRequestPageSchema,
+  hrAssignedLeaveRequestSchema,
   hrDecideLeaveRequestBodySchema,
   hrLeaveEvidenceEventSchema,
   hrLeaveListQuerySchema,
@@ -25,6 +29,7 @@ export {
   hrLeaveRequestSchema,
   hrSubmitLeaveRequestBodySchema,
   parseApiProblemDetails,
+  parseHrAssignedLeaveRequestPage,
   parseHrLeaveRequest,
   parseHrLeaveRequestPage,
   problemDetailsSchema,

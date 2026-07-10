@@ -16,6 +16,8 @@ import {
   validatePageSize,
 } from "./internal.js";
 import {
+  type AssignedLeaveRequestSummary,
+  HR_LEAVE_APPROVAL_WORK_TYPE,
   HR_LEAVE_SUBJECT_TYPE,
   type LeaveEvidenceCursor,
   type LeaveEvidenceEvent,
@@ -23,6 +25,25 @@ import {
   type LeaveRequest,
   type LeaveRequestDetail,
 } from "./types.js";
+
+type AssignedLeaveRow = LeaveRow & {
+  employee_display_name: string;
+  work_item_id: string;
+};
+
+function mapAssignedLeaveRow(row: AssignedLeaveRow): AssignedLeaveRequestSummary {
+  return {
+    categoryCode: row.category_code,
+    employeeDisplayName: row.employee_display_name,
+    endDate: row.end_date,
+    leaveRequestId: row.leave_request_id,
+    reason: row.reason,
+    startDate: row.start_date,
+    submittedAt: row.submitted_at,
+    version: row.version,
+    workItemId: row.work_item_id,
+  };
+}
 
 async function selectLeave(
   transaction: TenantTransaction,
@@ -178,7 +199,7 @@ export async function listAssignedLeaveRequests(
   pool: Pool,
   context: OperationContext,
   options: { readonly cursor?: LeaveListCursor; readonly pageSize?: number } = {},
-): Promise<readonly LeaveRequest[]> {
+): Promise<readonly AssignedLeaveRequestSummary[]> {
   const pageSize = validatePageSize(options.pageSize ?? 50, 50);
   if (options.cursor) {
     assertUuid(options.cursor.leaveRequestId, "cursor.leaveRequestId");
@@ -195,30 +216,73 @@ export async function listAssignedLeaveRequests(
     ]);
     const cursor = options.cursor;
     const result = cursor
-      ? await transaction.client.query<LeaveRow>(
-          `SELECT ${LEAVE_COLUMNS}
-           FROM hr_leave_requests
-           WHERE tenant_id = $1 AND approver_principal_id = $2 AND status = 'submitted'
-             AND (submitted_at, leave_request_id) > ($3::timestamptz, $4::uuid)
-           ORDER BY submitted_at ASC, leave_request_id ASC
-           LIMIT $5`,
+      ? await transaction.client.query<AssignedLeaveRow>(
+          `WITH assigned_leave AS (
+             SELECT request.*, work.work_item_id,
+                    principal.display_name AS employee_display_name
+             FROM hr_leave_requests request
+             JOIN work_items work
+               ON work.tenant_id = request.tenant_id
+              AND work.subject_id = request.leave_request_id
+             JOIN principals principal
+               ON principal.principal_id = request.employee_principal_id
+             WHERE request.tenant_id = $1
+               AND request.approver_principal_id = $2
+               AND request.status = 'submitted'
+               AND work.assignee_principal_id = $2
+               AND work.work_type = $3
+               AND work.subject_type = $4
+               AND work.status = 'open'
+               AND (request.submitted_at, request.leave_request_id)
+                 > ($5::timestamptz, $6::uuid)
+             ORDER BY request.submitted_at ASC, request.leave_request_id ASC
+             LIMIT $7
+           )
+           SELECT ${LEAVE_COLUMNS}, work_item_id, employee_display_name
+           FROM assigned_leave
+           ORDER BY submitted_at ASC, leave_request_id ASC`,
           [
             transaction.context.tenantId,
             transaction.context.actorPrincipalId,
+            HR_LEAVE_APPROVAL_WORK_TYPE,
+            HR_LEAVE_SUBJECT_TYPE,
             cursor.submittedAt,
             cursor.leaveRequestId,
             pageSize,
           ],
         )
-      : await transaction.client.query<LeaveRow>(
-          `SELECT ${LEAVE_COLUMNS}
-           FROM hr_leave_requests
-           WHERE tenant_id = $1 AND approver_principal_id = $2 AND status = 'submitted'
-           ORDER BY submitted_at ASC, leave_request_id ASC
-           LIMIT $3`,
-          [transaction.context.tenantId, transaction.context.actorPrincipalId, pageSize],
+      : await transaction.client.query<AssignedLeaveRow>(
+          `WITH assigned_leave AS (
+             SELECT request.*, work.work_item_id,
+                    principal.display_name AS employee_display_name
+             FROM hr_leave_requests request
+             JOIN work_items work
+               ON work.tenant_id = request.tenant_id
+              AND work.subject_id = request.leave_request_id
+             JOIN principals principal
+               ON principal.principal_id = request.employee_principal_id
+             WHERE request.tenant_id = $1
+               AND request.approver_principal_id = $2
+               AND request.status = 'submitted'
+               AND work.assignee_principal_id = $2
+               AND work.work_type = $3
+               AND work.subject_type = $4
+               AND work.status = 'open'
+             ORDER BY request.submitted_at ASC, request.leave_request_id ASC
+             LIMIT $5
+           )
+           SELECT ${LEAVE_COLUMNS}, work_item_id, employee_display_name
+           FROM assigned_leave
+           ORDER BY submitted_at ASC, leave_request_id ASC`,
+          [
+            transaction.context.tenantId,
+            transaction.context.actorPrincipalId,
+            HR_LEAVE_APPROVAL_WORK_TYPE,
+            HR_LEAVE_SUBJECT_TYPE,
+            pageSize,
+          ],
         );
-    return result.rows.map(mapLeaveRow);
+    return result.rows.map(mapAssignedLeaveRow);
   });
 }
 

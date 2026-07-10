@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   hrAssignedLeaveListQuerySchema,
+  hrAssignedLeaveRequestPageSchema,
+  hrAssignedLeaveRequestSchema,
   hrDecideLeaveRequestBodySchema,
   hrLeaveEvidenceEventSchema,
   hrLeaveListQuerySchema,
@@ -10,6 +12,7 @@ import {
   hrLeaveRequestSchema,
   hrSubmitLeaveRequestBodySchema,
   parseApiProblemDetails,
+  parseHrAssignedLeaveRequestPage,
   parseHrLeaveRequest,
   parseHrLeaveRequestPage,
   problemDetailsSchema,
@@ -43,6 +46,8 @@ describe("HR Leave Request API schemas", () => {
       hrLeaveRequestPathSchema.$id,
       hrLeaveListQuerySchema.$id,
       hrAssignedLeaveListQuerySchema.$id,
+      hrAssignedLeaveRequestSchema.$id,
+      hrAssignedLeaveRequestPageSchema.$id,
       hrLeaveRequestSchema.$id,
       hrLeaveEvidenceEventSchema.$id,
       hrLeaveRequestPageSchema.$id,
@@ -56,6 +61,8 @@ describe("HR Leave Request API schemas", () => {
       "LeaveRequestPath",
       "ListLeaveRequestsQuery",
       "AssignedLeaveRequestsQuery",
+      "AssignedLeaveRequest",
+      "AssignedLeaveRequestPage",
       "LeaveRequest",
       "LeaveEvidenceEvent",
       "LeaveRequestPage",
@@ -90,6 +97,36 @@ describe("HR Leave Request API schemas", () => {
     expect(parseHrLeaveRequestPage(page)).toBe(page);
     expect(parseHrLeaveRequest(leaveRequest)).toBe(leaveRequest);
     expect(hrLeaveRequestPageSchema.properties.items.maxItems).toBe(50);
+  });
+
+  it("strictly decodes a privacy-minimized assigned-work page", () => {
+    const item = {
+      categoryCode: "annual",
+      employeeDisplayName: "Employee A",
+      endDate: "2026-07-12",
+      leaveRequestId: leaveRequest.leaveRequestId,
+      reason: "Rest",
+      startDate: "2026-07-11",
+      submittedAt: leaveRequest.submittedAt,
+      version: 1,
+      workItemId: "11111111-1111-4111-8111-111111111111",
+    };
+    const page = {
+      items: [item],
+      nextCursor: {
+        leaveRequestId: leaveRequest.leaveRequestId,
+        submittedAt: leaveRequest.submittedAt,
+      },
+    };
+
+    expect(parseHrAssignedLeaveRequestPage(page)).toBe(page);
+    expect(hrAssignedLeaveRequestPageSchema.properties.items.maxItems).toBe(50);
+    expect(() =>
+      parseHrAssignedLeaveRequestPage({
+        items: [{ ...item, tenantId: leaveRequest.tenantId }],
+        nextCursor: null,
+      }),
+    ).toThrow("unexpected or missing fields");
   });
 
   it("strictly decodes API problem details", () => {

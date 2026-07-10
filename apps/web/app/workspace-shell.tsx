@@ -10,7 +10,7 @@ interface WorkspaceShellProps {
 }
 
 const navigation = [
-  { href: "/", label: "My Work" },
+  { href: "/workspace/my-work", label: "My Work" },
   { href: "/workspace/hr/leave", label: "HR" },
 ] as const;
 
@@ -26,7 +26,7 @@ export function WorkspaceShell({ children, currentSurface, statusLabel }: Worksp
       </a>
 
       <nav aria-label="Workspace surfaces" className="page-menu">
-        <a className="wordmark" href="/">
+        <a className="wordmark" href="/workspace/my-work">
           Esbla
         </a>
         <span aria-hidden="true" className="page-menu-divider" />
