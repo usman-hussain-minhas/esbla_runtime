@@ -13,6 +13,7 @@ import { HrLeaveError } from "./errors.js";
 import {
   assertUuid,
   authorizeLeaveAction,
+  isCurrentAssignedManager,
   LEAVE_COLUMNS,
   type LeaveRow,
   mapLeaveRow,
@@ -261,7 +262,7 @@ async function decideLeaveRequest(
       {
         effect: "allow",
         id: `manager_${action}_assigned`,
-        matches: (request, actor) => request.approver_principal_id === actor.principalId,
+        matches: isCurrentAssignedManager,
       },
     ]);
 
