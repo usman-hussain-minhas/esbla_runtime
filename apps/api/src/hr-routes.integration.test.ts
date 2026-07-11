@@ -85,6 +85,13 @@ interface LeaveDetailResponse {
   };
 }
 
+interface LeavePersistenceSnapshot {
+  readonly evidence: readonly Record<string, unknown>[];
+  readonly outbox: readonly Record<string, unknown>[];
+  readonly requests: readonly Record<string, unknown>[];
+  readonly work: readonly Record<string, unknown>[];
+}
+
 let migrationPool: Pool;
 let pool: Pool;
 let server: FastifyInstance;
@@ -195,6 +202,152 @@ async function submitLeave(
     url: "/v1/hr/leave-requests",
   });
   return { ...result, body, idempotencyKey };
+}
+
+async function setManagerARole(roleKey: string): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await seedTenantRow(
+      client,
+      ids.tenantA,
+      `UPDATE memberships
+       SET role_key = $3
+       WHERE tenant_id = $1 AND principal_id = $2`,
+      [ids.tenantA, ids.managerA, roleKey],
+    );
+  } finally {
+    client.release();
+  }
+}
+
+async function snapshotLeavePersistence(leaveRequestId: string): Promise<LeavePersistenceSnapshot> {
+  const client = await pool.connect();
+  await client.query("BEGIN");
+  try {
+    await client.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenantA]);
+    const requests = await client.query<Record<string, unknown>>(
+      `SELECT *
+       FROM hr_leave_requests
+       WHERE tenant_id = $1 AND leave_request_id = $2
+       ORDER BY leave_request_id`,
+      [ids.tenantA, leaveRequestId],
+    );
+    const work = await client.query<Record<string, unknown>>(
+      `SELECT *
+       FROM work_items
+       WHERE tenant_id = $1 AND subject_type = 'hr.leave_request' AND subject_id = $2
+       ORDER BY work_item_id`,
+      [ids.tenantA, leaveRequestId],
+    );
+    const evidence = await client.query<Record<string, unknown>>(
+      `SELECT *
+       FROM evidence_events
+       WHERE tenant_id = $1 AND subject_type = 'hr.leave_request' AND subject_id = $2
+       ORDER BY occurred_at, evidence_event_id`,
+      [ids.tenantA, leaveRequestId],
+    );
+    const outbox = await client.query<Record<string, unknown>>(
+      `SELECT *
+       FROM outbox_events
+       WHERE tenant_id = $1 AND aggregate_type = 'hr.leave_request' AND aggregate_id = $2
+       ORDER BY occurred_at, event_id`,
+      [ids.tenantA, leaveRequestId],
+    );
+    await client.query("COMMIT");
+    return {
+      evidence: evidence.rows,
+      outbox: outbox.rows,
+      requests: requests.rows,
+      work: work.rows,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function expectSubmittedPersistence(
+  snapshot: LeavePersistenceSnapshot,
+  leaveRequestId: string,
+): void {
+  expect(snapshot.requests).toHaveLength(1);
+  expect(snapshot.requests[0]).toMatchObject({
+    approver_principal_id: ids.managerA,
+    decided_at: null,
+    decision_note: null,
+    leave_request_id: leaveRequestId,
+    status: "submitted",
+    version: 1,
+  });
+  expect(snapshot.work).toHaveLength(1);
+  expect(snapshot.work[0]).toMatchObject({
+    assignee_principal_id: ids.managerA,
+    completed_at: null,
+    status: "open",
+    subject_id: leaveRequestId,
+  });
+  expect(snapshot.evidence).toHaveLength(1);
+  expect(snapshot.evidence[0]).toMatchObject({
+    event_type: "evidence.hr.leave_request.submitted",
+    new_state: "submitted",
+    subject_id: leaveRequestId,
+  });
+  expect(snapshot.outbox).toHaveLength(1);
+  expect(snapshot.outbox[0]).toMatchObject({
+    aggregate_id: leaveRequestId,
+    aggregate_version: 1,
+    event_type: "hr.leave_request.submitted",
+  });
+}
+
+function expectTerminalPersistence(
+  snapshot: LeavePersistenceSnapshot,
+  leaveRequestId: string,
+  status: "approved" | "rejected",
+): void {
+  expect(snapshot.requests).toHaveLength(1);
+  expect(snapshot.requests[0]).toMatchObject({
+    approver_principal_id: ids.managerA,
+    leave_request_id: leaveRequestId,
+    status,
+    version: 2,
+  });
+  expect(snapshot.work).toHaveLength(1);
+  expect(snapshot.work[0]).toMatchObject({
+    assignee_principal_id: ids.managerA,
+    status: "completed",
+    subject_id: leaveRequestId,
+  });
+  expect(snapshot.evidence).toHaveLength(2);
+  expect(snapshot.evidence.map((row) => row.event_type)).toEqual([
+    "evidence.hr.leave_request.submitted",
+    `evidence.hr.leave_request.${status}`,
+  ]);
+  expect(snapshot.outbox).toHaveLength(2);
+  expect(snapshot.outbox.map((row) => row.event_type)).toEqual([
+    "hr.leave_request.submitted",
+    `hr.leave_request.${status}`,
+  ]);
+}
+
+function expectPolicyDenied(result: Awaited<ReturnType<typeof signedRequest>>): void {
+  expect(result.response.statusCode).toBe(403);
+  expect(result.response.headers["content-type"]).toContain("application/problem+json");
+  expect(result.response.headers["x-request-id"]).toBe(result.requestId);
+  expect(result.response.headers["idempotent-replayed"]).toBeUndefined();
+  const problem = result.response.json<Record<string, unknown>>();
+  expect(problem).toMatchObject({
+    code: "POLICY_DENIED",
+    requestId: result.requestId,
+    status: 403,
+  });
+  expect(Object.keys(problem).sort()).toEqual(
+    ["code", "detail", "instance", "requestId", "status", "title", "type"].sort(),
+  );
+  expect(problem).not.toHaveProperty("request");
+  expect(problem).not.toHaveProperty("history");
 }
 
 beforeAll(async () => {
@@ -554,6 +707,153 @@ describe("HR Leave Request API boundary", () => {
     expect(otherTenant.response.json()).toMatchObject({ code: "LEAVE_NOT_FOUND", status: 404 });
     expect(otherTenant.response.body).not.toContain(ids.tenantA);
     expect(otherTenant.response.body).not.toContain("stack");
+  });
+
+  it("denies a demoted assigned manager direct detail without persistence changes", async () => {
+    const submitted = await submitLeave({ categoryCode: "annual", reason: "Detail denial" });
+    expect(submitted.response.statusCode).toBe(201);
+    const request = submitted.response.json<LeaveResponse>();
+    expect(request.approverPrincipalId).toBe(ids.managerA);
+    const baseline = await snapshotLeavePersistence(request.leaveRequestId);
+    expectSubmittedPersistence(baseline, request.leaveRequestId);
+
+    try {
+      await setManagerARole("employee");
+      const detail = await signedRequest({
+        method: "GET",
+        principalId: ids.managerA,
+        tenantId: ids.tenantA,
+        url: `/v1/hr/leave-requests/${request.leaveRequestId}`,
+      });
+      expectPolicyDenied(detail);
+      expect(await snapshotLeavePersistence(request.leaveRequestId)).toEqual(baseline);
+    } finally {
+      await setManagerARole("manager");
+    }
+  });
+
+  it("denies a demoted assigned manager approval without persistence changes", async () => {
+    const submitted = await submitLeave({ categoryCode: "other", reason: "Approval denial" });
+    expect(submitted.response.statusCode).toBe(201);
+    const request = submitted.response.json<LeaveResponse>();
+    expect(request.approverPrincipalId).toBe(ids.managerA);
+    const baseline = await snapshotLeavePersistence(request.leaveRequestId);
+    expectSubmittedPersistence(baseline, request.leaveRequestId);
+
+    try {
+      await setManagerARole("employee");
+      const approval = await signedRequest({
+        body: { decisionNote: "Should be denied", expectedVersion: 1 },
+        idempotencyKey: randomUUID(),
+        method: "POST",
+        principalId: ids.managerA,
+        tenantId: ids.tenantA,
+        url: `/v1/hr/leave-requests/${request.leaveRequestId}/approve`,
+      });
+      expectPolicyDenied(approval);
+      expect(await snapshotLeavePersistence(request.leaveRequestId)).toEqual(baseline);
+    } finally {
+      await setManagerARole("manager");
+    }
+  });
+
+  it("denies a demoted assigned manager rejection without persistence changes", async () => {
+    const submitted = await submitLeave({ categoryCode: "sick", reason: "Rejection denial" });
+    expect(submitted.response.statusCode).toBe(201);
+    const request = submitted.response.json<LeaveResponse>();
+    expect(request.approverPrincipalId).toBe(ids.managerA);
+    const baseline = await snapshotLeavePersistence(request.leaveRequestId);
+    expectSubmittedPersistence(baseline, request.leaveRequestId);
+
+    try {
+      await setManagerARole("employee");
+      const rejection = await signedRequest({
+        body: { decisionNote: "Required valid rejection note", expectedVersion: 1 },
+        idempotencyKey: randomUUID(),
+        method: "POST",
+        principalId: ids.managerA,
+        tenantId: ids.tenantA,
+        url: `/v1/hr/leave-requests/${request.leaveRequestId}/reject`,
+      });
+      expectPolicyDenied(rejection);
+      expect(await snapshotLeavePersistence(request.leaveRequestId)).toEqual(baseline);
+    } finally {
+      await setManagerARole("manager");
+    }
+  });
+
+  it("denies a demoted assigned manager terminal approval replay", async () => {
+    const submitted = await submitLeave({ categoryCode: "unpaid", reason: "Approval replay" });
+    expect(submitted.response.statusCode).toBe(201);
+    const request = submitted.response.json<LeaveResponse>();
+    expect(request.approverPrincipalId).toBe(ids.managerA);
+    const body = { decisionNote: "Approved before demotion", expectedVersion: 1 };
+    const idempotencyKey = randomUUID();
+    const initialDecision = await signedRequest({
+      body,
+      idempotencyKey,
+      method: "POST",
+      principalId: ids.managerA,
+      tenantId: ids.tenantA,
+      url: `/v1/hr/leave-requests/${request.leaveRequestId}/approve`,
+    });
+    expect(initialDecision.response.statusCode).toBe(200);
+    expect(initialDecision.response.headers["idempotent-replayed"]).toBe("false");
+    const baseline = await snapshotLeavePersistence(request.leaveRequestId);
+    expectTerminalPersistence(baseline, request.leaveRequestId, "approved");
+
+    try {
+      await setManagerARole("employee");
+      const replay = await signedRequest({
+        body,
+        idempotencyKey,
+        method: "POST",
+        principalId: ids.managerA,
+        tenantId: ids.tenantA,
+        url: `/v1/hr/leave-requests/${request.leaveRequestId}/approve`,
+      });
+      expectPolicyDenied(replay);
+      expect(await snapshotLeavePersistence(request.leaveRequestId)).toEqual(baseline);
+    } finally {
+      await setManagerARole("manager");
+    }
+  });
+
+  it("denies a demoted assigned manager terminal rejection replay", async () => {
+    const submitted = await submitLeave({ categoryCode: "sick", reason: "Rejection replay" });
+    expect(submitted.response.statusCode).toBe(201);
+    const request = submitted.response.json<LeaveResponse>();
+    expect(request.approverPrincipalId).toBe(ids.managerA);
+    const body = { decisionNote: "Rejected before demotion", expectedVersion: 1 };
+    const idempotencyKey = randomUUID();
+    const initialDecision = await signedRequest({
+      body,
+      idempotencyKey,
+      method: "POST",
+      principalId: ids.managerA,
+      tenantId: ids.tenantA,
+      url: `/v1/hr/leave-requests/${request.leaveRequestId}/reject`,
+    });
+    expect(initialDecision.response.statusCode).toBe(200);
+    expect(initialDecision.response.headers["idempotent-replayed"]).toBe("false");
+    const baseline = await snapshotLeavePersistence(request.leaveRequestId);
+    expectTerminalPersistence(baseline, request.leaveRequestId, "rejected");
+
+    try {
+      await setManagerARole("employee");
+      const replay = await signedRequest({
+        body,
+        idempotencyKey,
+        method: "POST",
+        principalId: ids.managerA,
+        tenantId: ids.tenantA,
+        url: `/v1/hr/leave-requests/${request.leaveRequestId}/reject`,
+      });
+      expectPolicyDenied(replay);
+      expect(await snapshotLeavePersistence(request.leaveRequestId)).toEqual(baseline);
+    } finally {
+      await setManagerARole("manager");
+    }
   });
 
   it("approves and rejects through versioned, idempotent decision routes", async () => {

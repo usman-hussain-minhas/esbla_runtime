@@ -25,6 +25,15 @@ const ids = {
   correlationDecisionApprove: "50000000-0000-4000-8000-000000000016",
   correlationDecisionReject: "50000000-0000-4000-8000-000000000017",
   correlationDeactivateB: "50000000-0000-4000-8000-000000000018",
+  correlationDemotionApprove: "50000000-0000-4000-8000-000000000031",
+  correlationDemotionReject: "50000000-0000-4000-8000-000000000032",
+  correlationDemotionSnapshot: "50000000-0000-4000-8000-000000000033",
+  correlationDemotionSubmitApprove: "50000000-0000-4000-8000-000000000027",
+  correlationDemotionSubmitReject: "50000000-0000-4000-8000-000000000028",
+  correlationDemotionSubmitReplayApprove: "50000000-0000-4000-8000-000000000029",
+  correlationDemotionSubmitReplayReject: "50000000-0000-4000-8000-000000000030",
+  correlationDemotionSubmitView: "50000000-0000-4000-8000-000000000026",
+  correlationDemotionUpdate: "50000000-0000-4000-8000-000000000034",
   correlationReject2: "50000000-0000-4000-8000-000000000013",
   correlationRollback: "50000000-0000-4000-8000-000000000014",
   correlationSubmit1: "50000000-0000-4000-8000-000000000021",
@@ -52,6 +61,11 @@ const ids = {
   requestB: "30000000-0000-4000-8000-000000000004",
   requestConcurrent: "30000000-0000-4000-8000-000000000005",
   requestDecision: "30000000-0000-4000-8000-000000000006",
+  requestDemotionApprove: "30000000-0000-4000-8000-000000000009",
+  requestDemotionReject: "30000000-0000-4000-8000-000000000010",
+  requestDemotionReplayApprove: "30000000-0000-4000-8000-000000000011",
+  requestDemotionReplayReject: "30000000-0000-4000-8000-000000000012",
+  requestDemotionView: "30000000-0000-4000-8000-000000000008",
   requestRlsProbe: "30000000-0000-4000-8000-000000000007",
   tenantA: "00000000-0000-4000-8000-000000000001",
   tenantB: "00000000-0000-4000-8000-000000000002",
@@ -145,6 +159,134 @@ async function deleteSetting(tenantId: string, key: string): Promise<void> {
       ]);
     },
   );
+}
+
+interface LeavePersistenceSnapshot {
+  readonly evidence: readonly Record<string, unknown>[];
+  readonly outbox: readonly Record<string, unknown>[];
+  readonly requests: readonly Record<string, unknown>[];
+  readonly work: readonly Record<string, unknown>[];
+}
+
+async function setManagerAState(roleKey: string, status: "active" | "suspended"): Promise<void> {
+  await withTenantTransaction(
+    pool,
+    context(ids.tenantA, ids.adminA, ids.correlationDemotionUpdate),
+    async ({ client }) => {
+      const updated = await client.query(
+        `UPDATE memberships
+         SET role_key = $3, status = $4
+         WHERE tenant_id = $1 AND principal_id = $2`,
+        [ids.tenantA, ids.managerA, roleKey, status],
+      );
+      if (updated.rowCount !== 1) throw new Error("Manager A membership was not updated");
+    },
+  );
+}
+
+async function snapshotLeavePersistence(
+  leaveRequestIds: readonly string[],
+): Promise<LeavePersistenceSnapshot> {
+  return await withTenantTransaction(
+    pool,
+    context(ids.tenantA, ids.employeeA2, ids.correlationDemotionSnapshot),
+    async ({ client }) => {
+      const requests = await client.query<{ value: Record<string, unknown> }>(
+        `SELECT to_jsonb(request_row) AS value
+         FROM (
+           SELECT * FROM hr_leave_requests
+           WHERE tenant_id = $1 AND leave_request_id = ANY($2::uuid[])
+           ORDER BY leave_request_id
+         ) request_row`,
+        [ids.tenantA, leaveRequestIds],
+      );
+      const work = await client.query<{ value: Record<string, unknown> }>(
+        `SELECT to_jsonb(work_row) AS value
+         FROM (
+           SELECT * FROM work_items
+           WHERE tenant_id = $1 AND subject_type = 'hr.leave_request'
+             AND subject_id = ANY($2::uuid[])
+           ORDER BY work_item_id
+         ) work_row`,
+        [ids.tenantA, leaveRequestIds],
+      );
+      const evidence = await client.query<{ value: Record<string, unknown> }>(
+        `SELECT to_jsonb(evidence_row) AS value
+         FROM (
+           SELECT * FROM evidence_events
+           WHERE tenant_id = $1 AND subject_type = 'hr.leave_request'
+             AND subject_id = ANY($2::uuid[])
+           ORDER BY evidence_event_id
+         ) evidence_row`,
+        [ids.tenantA, leaveRequestIds],
+      );
+      const outbox = await client.query<{ value: Record<string, unknown> }>(
+        `SELECT to_jsonb(outbox_row) AS value
+         FROM (
+           SELECT * FROM outbox_events
+           WHERE tenant_id = $1 AND aggregate_type = 'hr.leave_request'
+             AND aggregate_id = ANY($2::uuid[])
+           ORDER BY event_id
+         ) outbox_row`,
+        [ids.tenantA, leaveRequestIds],
+      );
+      return {
+        evidence: evidence.rows.map((row) => row.value),
+        outbox: outbox.rows.map((row) => row.value),
+        requests: requests.rows.map((row) => row.value),
+        work: work.rows.map((row) => row.value),
+      };
+    },
+  );
+}
+
+async function expectDeniedWithoutPersistenceChange(
+  operation: () => Promise<unknown>,
+  expectedCode: "ACTOR_NOT_ACTIVE_MEMBER" | "POLICY_DENIED",
+  leaveRequestIds: readonly string[],
+  baseline: LeavePersistenceSnapshot,
+): Promise<void> {
+  await expect(operation()).rejects.toMatchObject({ code: expectedCode });
+  expect(await snapshotLeavePersistence(leaveRequestIds)).toEqual(baseline);
+}
+
+async function expectBackendBlockedBy(
+  observer: PoolClient,
+  blockedPid: number,
+  blockerPid: number,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const result = await observer.query<{ blocked: boolean }>(
+      `SELECT $2::integer = ANY(pg_blocking_pids($1::integer)) AS blocked`,
+      [blockedPid, blockerPid],
+    );
+    if (result.rows[0]?.blocked) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`Backend ${blockedPid} was not blocked by backend ${blockerPid}`);
+}
+
+async function expectAnyBackendBlockedBy(
+  observer: PoolClient,
+  blockerPid: number,
+): Promise<number> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const result = await observer.query<{ blocked_pid: number }>(
+      `SELECT activity.pid AS blocked_pid
+       FROM pg_stat_activity activity
+       WHERE activity.pid <> pg_backend_pid()
+         AND $1::integer = ANY(pg_blocking_pids(activity.pid))
+       ORDER BY activity.pid
+       LIMIT 1`,
+      [blockerPid],
+    );
+    const blockedPid = result.rows[0]?.blocked_pid;
+    if (blockedPid !== undefined) return blockedPid;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`No backend was blocked by backend ${blockerPid}`);
 }
 
 beforeAll(async () => {
@@ -653,6 +795,475 @@ describe("HR Leave Request domain", () => {
       },
     );
   });
+
+  it("requires current manager authority across assigned reads, decisions, and replays", async () => {
+    const leaveRequestIds = [
+      ids.requestDemotionView,
+      ids.requestDemotionApprove,
+      ids.requestDemotionReject,
+      ids.requestDemotionReplayApprove,
+      ids.requestDemotionReplayReject,
+    ] as const;
+
+    await submitLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.employeeA2, ids.correlationDemotionSubmitView),
+      {
+        categoryCode: "other",
+        endDate: "2027-01-04",
+        idempotencyKey: "demotion-view",
+        leaveRequestId: ids.requestDemotionView,
+        startDate: "2027-01-04",
+      },
+    );
+    await submitLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.employeeA2, ids.correlationDemotionSubmitApprove),
+      {
+        categoryCode: "annual",
+        endDate: "2027-01-05",
+        idempotencyKey: "demotion-approve",
+        leaveRequestId: ids.requestDemotionApprove,
+        startDate: "2027-01-05",
+      },
+    );
+    await submitLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.employeeA2, ids.correlationDemotionSubmitReject),
+      {
+        categoryCode: "unpaid",
+        endDate: "2027-01-06",
+        idempotencyKey: "demotion-reject",
+        leaveRequestId: ids.requestDemotionReject,
+        startDate: "2027-01-06",
+      },
+    );
+    await submitLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.employeeA2, ids.correlationDemotionSubmitReplayApprove),
+      {
+        categoryCode: "sick",
+        endDate: "2027-01-07",
+        idempotencyKey: "demotion-replay-approve",
+        leaveRequestId: ids.requestDemotionReplayApprove,
+        startDate: "2027-01-07",
+      },
+    );
+    await submitLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.employeeA2, ids.correlationDemotionSubmitReplayReject),
+      {
+        categoryCode: "other",
+        endDate: "2027-01-08",
+        idempotencyKey: "demotion-replay-reject",
+        leaveRequestId: ids.requestDemotionReplayReject,
+        startDate: "2027-01-08",
+      },
+    );
+
+    expect(
+      await getLeaveRequest(
+        pool,
+        context(ids.tenantA, ids.managerA, ids.correlationDemotionSubmitView),
+        ids.requestDemotionView,
+      ),
+    ).toMatchObject({ leaveRequestId: ids.requestDemotionView, status: "submitted", version: 1 });
+    expect(
+      await getLeaveRequestDetail(
+        pool,
+        context(ids.tenantA, ids.managerA, ids.correlationDemotionSubmitView),
+        ids.requestDemotionView,
+      ),
+    ).toMatchObject({
+      history: [expect.objectContaining({ newState: "submitted" })],
+      request: { leaveRequestId: ids.requestDemotionView, status: "submitted", version: 1 },
+    });
+    expect(
+      await listLeaveEvidence(
+        pool,
+        context(ids.tenantA, ids.managerA, ids.correlationDemotionSubmitView),
+        ids.requestDemotionView,
+      ),
+    ).toEqual([expect.objectContaining({ newState: "submitted" })]);
+    expect(
+      (
+        await listAssignedLeaveRequests(
+          pool,
+          context(ids.tenantA, ids.managerA, ids.correlationDemotionSubmitView),
+        )
+      ).some((request) => request.leaveRequestId === ids.requestDemotionView),
+    ).toBe(true);
+
+    const approved = await approveLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.managerA, ids.correlationDemotionApprove),
+      { expectedVersion: 1, leaveRequestId: ids.requestDemotionReplayApprove },
+    );
+    expect(approved).toMatchObject({
+      replayed: false,
+      request: { status: "approved", version: 2 },
+    });
+    const approvedReplay = await approveLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.managerA, ids.correlationDemotionApprove),
+      { expectedVersion: 1, leaveRequestId: ids.requestDemotionReplayApprove },
+    );
+    expect(approvedReplay).toMatchObject({
+      replayed: true,
+      request: { status: "approved", version: 2 },
+    });
+
+    const rejectionInput = {
+      decisionNote: "Exact replay remains unauthorized after demotion.",
+      expectedVersion: 1,
+      leaveRequestId: ids.requestDemotionReplayReject,
+    } as const;
+    const rejected = await rejectLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.managerA, ids.correlationDemotionReject),
+      rejectionInput,
+    );
+    expect(rejected).toMatchObject({
+      replayed: false,
+      request: { status: "rejected", version: 2 },
+    });
+    const rejectedReplay = await rejectLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.managerA, ids.correlationDemotionReject),
+      rejectionInput,
+    );
+    expect(rejectedReplay).toMatchObject({
+      replayed: true,
+      request: { status: "rejected", version: 2 },
+    });
+
+    const baseline = await snapshotLeavePersistence(leaveRequestIds);
+    expect(baseline.requests).toHaveLength(5);
+    expect(baseline.work).toHaveLength(5);
+    expect(baseline.evidence).toHaveLength(7);
+    expect(baseline.outbox).toHaveLength(7);
+    expect(baseline.requests.map((request) => request.status).sort()).toEqual([
+      "approved",
+      "rejected",
+      "submitted",
+      "submitted",
+      "submitted",
+    ]);
+    expect(baseline.work.map((workItem) => workItem.status).sort()).toEqual([
+      "completed",
+      "completed",
+      "open",
+      "open",
+      "open",
+    ]);
+    for (const leaveRequestId of [
+      ids.requestDemotionView,
+      ids.requestDemotionApprove,
+      ids.requestDemotionReject,
+    ]) {
+      expect(
+        baseline.requests.find((request) => request.leave_request_id === leaveRequestId),
+      ).toMatchObject({
+        approver_principal_id: ids.managerA,
+        decided_at: null,
+        decision_note: null,
+        status: "submitted",
+        version: 1,
+      });
+      expect(
+        baseline.work.find((workItem) => workItem.subject_id === leaveRequestId),
+      ).toMatchObject({
+        assignee_principal_id: ids.managerA,
+        completed_at: null,
+        status: "open",
+      });
+    }
+    expect(
+      baseline.requests.find(
+        (request) => request.leave_request_id === ids.requestDemotionReplayApprove,
+      ),
+    ).toMatchObject({ decided_at: expect.any(String), status: "approved", version: 2 });
+    expect(
+      baseline.requests.find(
+        (request) => request.leave_request_id === ids.requestDemotionReplayReject,
+      ),
+    ).toMatchObject({
+      decided_at: expect.any(String),
+      decision_note: rejectionInput.decisionNote,
+      status: "rejected",
+      version: 2,
+    });
+    for (const leaveRequestId of [
+      ids.requestDemotionReplayApprove,
+      ids.requestDemotionReplayReject,
+    ]) {
+      expect(
+        baseline.work.find((workItem) => workItem.subject_id === leaveRequestId),
+      ).toMatchObject({
+        assignee_principal_id: ids.managerA,
+        completed_at: expect.any(String),
+        status: "completed",
+      });
+    }
+
+    try {
+      for (const roleKey of ["employee", "tenant_admin", "leave_auditor"] as const) {
+        await setManagerAState(roleKey, "active");
+
+        await expect(
+          getLeaveRequest(
+            pool,
+            context(ids.tenantA, ids.managerA, ids.correlationDemotionSubmitView),
+            ids.requestDemotionView,
+          ),
+        ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+        await expect(
+          getLeaveRequestDetail(
+            pool,
+            context(ids.tenantA, ids.managerA, ids.correlationDemotionSubmitView),
+            ids.requestDemotionView,
+          ),
+        ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+        await expect(
+          listLeaveEvidence(
+            pool,
+            context(ids.tenantA, ids.managerA, ids.correlationDemotionSubmitView),
+            ids.requestDemotionView,
+          ),
+        ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+        await expect(
+          listAssignedLeaveRequests(
+            pool,
+            context(ids.tenantA, ids.managerA, ids.correlationDemotionSubmitView),
+          ),
+        ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+
+        await expectDeniedWithoutPersistenceChange(
+          async () =>
+            await approveLeaveRequest(
+              pool,
+              context(ids.tenantA, ids.managerA, ids.correlationDemotionApprove),
+              { expectedVersion: 1, leaveRequestId: ids.requestDemotionApprove },
+            ),
+          "POLICY_DENIED",
+          leaveRequestIds,
+          baseline,
+        );
+        await expectDeniedWithoutPersistenceChange(
+          async () =>
+            await rejectLeaveRequest(
+              pool,
+              context(ids.tenantA, ids.managerA, ids.correlationDemotionReject),
+              {
+                decisionNote: "A valid note must not bypass current-role authorization.",
+                expectedVersion: 1,
+                leaveRequestId: ids.requestDemotionReject,
+              },
+            ),
+          "POLICY_DENIED",
+          leaveRequestIds,
+          baseline,
+        );
+
+        if (roleKey === "employee") {
+          expect(
+            await getLeaveRequest(
+              pool,
+              context(ids.tenantA, ids.employeeA2, ids.correlationDemotionSubmitView),
+              ids.requestDemotionView,
+            ),
+          ).toMatchObject({
+            employeePrincipalId: ids.employeeA2,
+            leaveRequestId: ids.requestDemotionView,
+            status: "submitted",
+          });
+          expect(
+            await getLeaveRequestDetail(
+              pool,
+              context(ids.tenantA, ids.employeeA2, ids.correlationDemotionSubmitView),
+              ids.requestDemotionView,
+            ),
+          ).toMatchObject({
+            history: [expect.objectContaining({ newState: "submitted" })],
+            request: { leaveRequestId: ids.requestDemotionView },
+          });
+          expect(
+            await listLeaveEvidence(
+              pool,
+              context(ids.tenantA, ids.employeeA2, ids.correlationDemotionSubmitView),
+              ids.requestDemotionView,
+            ),
+          ).toEqual([expect.objectContaining({ newState: "submitted" })]);
+
+          await expectDeniedWithoutPersistenceChange(
+            async () =>
+              await approveLeaveRequest(
+                pool,
+                context(ids.tenantA, ids.managerA, ids.correlationDemotionApprove),
+                { expectedVersion: 1, leaveRequestId: ids.requestDemotionReplayApprove },
+              ),
+            "POLICY_DENIED",
+            leaveRequestIds,
+            baseline,
+          );
+          await expectDeniedWithoutPersistenceChange(
+            async () =>
+              await rejectLeaveRequest(
+                pool,
+                context(ids.tenantA, ids.managerA, ids.correlationDemotionReject),
+                rejectionInput,
+              ),
+            "POLICY_DENIED",
+            leaveRequestIds,
+            baseline,
+          );
+        }
+      }
+
+      await setManagerAState("manager", "suspended");
+      for (const operation of [
+        async () =>
+          await getLeaveRequest(
+            pool,
+            context(ids.tenantA, ids.managerA, ids.correlationDemotionSubmitView),
+            ids.requestDemotionView,
+          ),
+        async () =>
+          await getLeaveRequestDetail(
+            pool,
+            context(ids.tenantA, ids.managerA, ids.correlationDemotionSubmitView),
+            ids.requestDemotionView,
+          ),
+        async () =>
+          await listLeaveEvidence(
+            pool,
+            context(ids.tenantA, ids.managerA, ids.correlationDemotionSubmitView),
+            ids.requestDemotionView,
+          ),
+        async () =>
+          await listAssignedLeaveRequests(
+            pool,
+            context(ids.tenantA, ids.managerA, ids.correlationDemotionSubmitView),
+          ),
+      ]) {
+        await expect(operation()).rejects.toMatchObject({ code: "ACTOR_NOT_ACTIVE_MEMBER" });
+      }
+      await expectDeniedWithoutPersistenceChange(
+        async () =>
+          await approveLeaveRequest(
+            pool,
+            context(ids.tenantA, ids.managerA, ids.correlationDemotionApprove),
+            { expectedVersion: 1, leaveRequestId: ids.requestDemotionApprove },
+          ),
+        "ACTOR_NOT_ACTIVE_MEMBER",
+        leaveRequestIds,
+        baseline,
+      );
+      await expectDeniedWithoutPersistenceChange(
+        async () =>
+          await rejectLeaveRequest(
+            pool,
+            context(ids.tenantA, ids.managerA, ids.correlationDemotionReject),
+            {
+              decisionNote: "Suspension must fail before the decision path.",
+              expectedVersion: 1,
+              leaveRequestId: ids.requestDemotionReject,
+            },
+          ),
+        "ACTOR_NOT_ACTIVE_MEMBER",
+        leaveRequestIds,
+        baseline,
+      );
+    } finally {
+      await setManagerAState("manager", "active");
+    }
+  });
+
+  it("serializes current-role reads with committed membership demotion", async () => {
+    const demotionClient = await pool.connect();
+    const observer = await pool.connect();
+    let actorOperation: Promise<boolean> | undefined;
+    let blockedAssignedList: Promise<readonly unknown[]> | undefined;
+    let demotionTransaction = false;
+    let releaseActorLock: (() => void) | undefined;
+
+    try {
+      const demotionPid = Number(
+        (await demotionClient.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]
+          ?.pid,
+      );
+      let signalActorLock: ((pid: number) => void) | undefined;
+      const actorLockAcquired = new Promise<number>((resolve) => {
+        signalActorLock = resolve;
+      });
+      const holdActorLock = new Promise<void>((resolve) => {
+        releaseActorLock = resolve;
+      });
+
+      actorOperation = withTenantTransaction(
+        pool,
+        context(ids.tenantA, ids.managerA, ids.correlationDemotionUpdate),
+        async ({ actor, client }) => {
+          const actorPid = Number(
+            (await client.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]?.pid,
+          );
+          signalActorLock?.(actorPid);
+          await holdActorLock;
+          return actor.roleKey === "manager";
+        },
+      );
+      const actorPid = await actorLockAcquired;
+
+      await demotionClient.query("BEGIN");
+      demotionTransaction = true;
+      await demotionClient.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenantA]);
+      const blockedDemotion = demotionClient.query(
+        `UPDATE memberships
+         SET role_key = 'employee'
+         WHERE tenant_id = $1 AND principal_id = $2`,
+        [ids.tenantA, ids.managerA],
+      );
+      await expectBackendBlockedBy(observer, demotionPid, actorPid);
+
+      releaseActorLock?.();
+      releaseActorLock = undefined;
+      expect(await actorOperation).toBe(true);
+      actorOperation = undefined;
+      expect((await blockedDemotion).rowCount).toBe(1);
+      await demotionClient.query("COMMIT");
+      demotionTransaction = false;
+      await setManagerAState("manager", "active");
+
+      await demotionClient.query("BEGIN");
+      demotionTransaction = true;
+      await demotionClient.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenantA]);
+      await demotionClient.query(
+        `UPDATE memberships
+         SET role_key = 'employee'
+         WHERE tenant_id = $1 AND principal_id = $2`,
+        [ids.tenantA, ids.managerA],
+      );
+
+      blockedAssignedList = listAssignedLeaveRequests(
+        pool,
+        context(ids.tenantA, ids.managerA, ids.correlationDemotionUpdate),
+      );
+      expect(await expectAnyBackendBlockedBy(observer, demotionPid)).toBeGreaterThan(0);
+
+      await demotionClient.query("COMMIT");
+      demotionTransaction = false;
+      await expect(blockedAssignedList).rejects.toMatchObject({ code: "POLICY_DENIED" });
+      blockedAssignedList = undefined;
+    } finally {
+      releaseActorLock?.();
+      if (actorOperation) await Promise.allSettled([actorOperation]);
+      if (demotionTransaction) await demotionClient.query("ROLLBACK");
+      if (blockedAssignedList) await Promise.allSettled([blockedAssignedList]);
+      demotionClient.release();
+      observer.release();
+      await setManagerAState("manager", "active");
+    }
+  }, 15_000);
 
   it("keeps tenant reads isolated and query pages bounded", async () => {
     await submitLeaveRequest(pool, context(ids.tenantB, ids.employeeB, ids.correlationSubmitB), {

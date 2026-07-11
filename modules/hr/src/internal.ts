@@ -3,6 +3,7 @@ import {
   evaluatePolicy,
   getServiceActivation,
   type PolicyRule,
+  type TenantActor,
   type TenantTransaction,
 } from "@esbla/platform-core";
 import { HrLeaveError } from "./errors.js";
@@ -171,6 +172,10 @@ export async function selectLeaveForUpdate(
   return row;
 }
 
+export function isCurrentAssignedManager(request: LeaveRow, actor: TenantActor): boolean {
+  return actor.roleKey === "manager" && request.approver_principal_id === actor.principalId;
+}
+
 export function authorizeView(transaction: TenantTransaction, row: LeaveRow): void {
   authorizeLeaveAction(transaction, "hr.leave.view", row.leave_request_id, row, [
     {
@@ -181,7 +186,7 @@ export function authorizeView(transaction: TenantTransaction, row: LeaveRow): vo
     {
       effect: "allow",
       id: "manager_view_assigned",
-      matches: (request, actor) => request.approver_principal_id === actor.principalId,
+      matches: isCurrentAssignedManager,
     },
   ]);
 }
