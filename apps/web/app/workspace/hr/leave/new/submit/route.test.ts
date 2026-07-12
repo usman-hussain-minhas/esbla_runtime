@@ -11,6 +11,7 @@ vi.mock("../../../../../../lib/hr-leave-submit", () => ({
 import { POST } from "./route";
 
 const url = "http://127.0.0.1:3000/workspace/hr/leave/new/submit";
+const leaveRequestId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 
 function request(body: unknown, origin = "http://127.0.0.1:3000") {
   return new Request(url, {
@@ -64,7 +65,7 @@ describe("HR leave submission web transport", () => {
   });
 
   it("forwards only the normalized submission and returns a bounded success response", async () => {
-    submitOwnLeaveRequest.mockResolvedValue(undefined);
+    submitOwnLeaveRequest.mockResolvedValue({ leaveRequestId });
     const response = await POST(
       request({
         categoryCode: "annual",
@@ -76,7 +77,7 @@ describe("HR leave submission web transport", () => {
     );
 
     expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toEqual({ ok: true });
+    await expect(response.json()).resolves.toEqual({ leaveRequestId, ok: true });
     expect(submitOwnLeaveRequest).toHaveBeenCalledOnce();
     expect(submitOwnLeaveRequest).toHaveBeenCalledWith({
       body: {
@@ -104,5 +105,30 @@ describe("HR leave submission web transport", () => {
     expect(response.status).toBe(415);
     expect(await response.text()).not.toContain("private");
     expect(submitOwnLeaveRequest).not.toHaveBeenCalled();
+  });
+
+  it("returns the same bounded stable ID for an idempotently replayed result", async () => {
+    submitOwnLeaveRequest.mockResolvedValue({ leaveRequestId });
+    const first = await POST(
+      request({
+        categoryCode: "annual",
+        endDate: "2026-07-12",
+        idempotencyKey: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        reason: "Rest",
+        startDate: "2026-07-11",
+      }),
+    );
+    const replay = await POST(
+      request({
+        categoryCode: "annual",
+        endDate: "2026-07-12",
+        idempotencyKey: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        reason: "Rest",
+        startDate: "2026-07-11",
+      }),
+    );
+
+    await expect(first.json()).resolves.toEqual({ leaveRequestId, ok: true });
+    await expect(replay.json()).resolves.toEqual({ leaveRequestId, ok: true });
   });
 });

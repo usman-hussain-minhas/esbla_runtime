@@ -3,6 +3,7 @@
 import { CircleX, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { buildHrLeaveDetailHref } from "../../../lib/hr-leave-navigation-core";
 import {
   INITIAL_HR_LEAVE_REJECT_STATE,
   parseHrLeaveRejectTransport,
@@ -72,7 +73,7 @@ export function LeaveRejectionAction({
         setState(result.state);
         return;
       }
-      router.push(`/workspace/hr/leave/${result.leaveRequestId}?rejected=1`);
+      router.push(buildHrLeaveDetailHref(result.leaveRequestId, "my-work"));
       router.refresh();
     } catch {
       setState(rejectFormStateForError(new Error("unavailable")));

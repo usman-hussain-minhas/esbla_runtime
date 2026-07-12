@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  decodeHrLeaveSubmitTransport,
   decodeSubmitLeaveRequestResponse,
   HrLeaveSubmitError,
   isSameOriginSubmission,
@@ -172,7 +173,15 @@ describe("HR leave submission boundary", () => {
         "127.0.0.1:3000",
       ),
     ).toBe(false);
-    expect(parseHrLeaveSubmitTransport({ ok: true })).toEqual({ ok: true });
+    expect(
+      parseHrLeaveSubmitTransport({
+        leaveRequestId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        ok: true,
+      }),
+    ).toEqual({
+      leaveRequestId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      ok: true,
+    });
     expect(
       parseHrLeaveSubmitTransport({
         ok: false,
@@ -183,8 +192,155 @@ describe("HR leave submission boundary", () => {
         },
       }),
     ).toMatchObject({ ok: false, state: { status: "error" } });
-    expect(() => parseHrLeaveSubmitTransport({ ok: true, private: "leak" })).toThrow(
-      "Submit response is invalid",
-    );
+    expect(() =>
+      parseHrLeaveSubmitTransport({
+        leaveRequestId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        ok: true,
+        private: "leak",
+      }),
+    ).toThrow("Submit response is invalid");
+  });
+
+  it("requires exact JSON 201 success with the stable ID before navigation", async () => {
+    const success = {
+      leaveRequestId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      ok: true,
+    };
+    await expect(
+      decodeHrLeaveSubmitTransport(
+        Promise.resolve(
+          new Response(JSON.stringify(success), {
+            headers: { "content-type": "application/json; charset=utf-8" },
+            status: 201,
+          }),
+        ),
+      ),
+    ).resolves.toEqual(success);
+    await expect(
+      decodeHrLeaveSubmitTransport(
+        Promise.resolve(
+          new Response(JSON.stringify(success), {
+            headers: { "content-type": "application/json" },
+            status: 200,
+          }),
+        ),
+      ),
+    ).rejects.toThrow("Submit response is invalid");
+    await expect(
+      decodeHrLeaveSubmitTransport(
+        Promise.resolve(
+          new Response(JSON.stringify(success), {
+            headers: { "content-type": "text/plain" },
+            status: 201,
+          }),
+        ),
+      ),
+    ).rejects.toThrow("Submit response is invalid");
+  });
+
+  it("rejects malformed, extra-field and URL-like stable success IDs", async () => {
+    await expect(
+      decodeHrLeaveSubmitTransport(
+        Promise.resolve(
+          new Response(JSON.stringify([]), {
+            headers: { "content-type": "application/json" },
+            status: 201,
+          }),
+        ),
+      ),
+    ).rejects.toThrow("Submit response is invalid");
+    await expect(
+      decodeHrLeaveSubmitTransport(
+        Promise.resolve(
+          new Response(JSON.stringify({ ok: true }), {
+            headers: { "content-type": "application/json" },
+            status: 201,
+          }),
+        ),
+      ),
+    ).rejects.toThrow("Submit response is invalid");
+    await expect(
+      decodeHrLeaveSubmitTransport(
+        Promise.resolve(
+          new Response(JSON.stringify({ leaveRequestId: "https://attacker.example", ok: true }), {
+            headers: { "content-type": "application/json" },
+            status: 201,
+          }),
+        ),
+      ),
+    ).rejects.toThrow("Submit response is invalid");
+    await expect(
+      decodeHrLeaveSubmitTransport(
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              leaveRequestId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+              ok: true,
+              tenantId: "private",
+            }),
+            { headers: { "content-type": "application/json" }, status: 201 },
+          ),
+        ),
+      ),
+    ).rejects.toThrow("Submit response is invalid");
+  });
+
+  it("accepts only bounded failure statuses with an exact failure state", async () => {
+    const failure = {
+      ok: false,
+      state: {
+        fieldErrors: {},
+        message: "Review your request and try again.",
+        status: "error",
+      },
+    };
+    for (const status of [400, 403, 409, 415, 422, 503]) {
+      await expect(
+        decodeHrLeaveSubmitTransport(
+          Promise.resolve(
+            new Response(JSON.stringify(failure), {
+              headers: { "content-type": "application/json" },
+              status,
+            }),
+          ),
+        ),
+      ).resolves.toEqual(failure);
+    }
+    await expect(
+      decodeHrLeaveSubmitTransport(
+        Promise.resolve(
+          new Response(JSON.stringify(failure), {
+            headers: { "content-type": "application/json" },
+            status: 201,
+          }),
+        ),
+      ),
+    ).rejects.toThrow("Submit response is invalid");
+    await expect(
+      decodeHrLeaveSubmitTransport(
+        Promise.resolve(
+          new Response(JSON.stringify(failure), {
+            headers: { "content-type": "application/json" },
+            status: 500,
+          }),
+        ),
+      ),
+    ).rejects.toThrow("Submit response is invalid");
+  });
+
+  it("fails opaquely for malformed JSON and transport rejection", async () => {
+    await expect(
+      decodeHrLeaveSubmitTransport(
+        Promise.resolve(
+          new Response("not-json", {
+            headers: { "content-type": "application/json" },
+            status: 201,
+          }),
+        ),
+      ),
+    ).rejects.toThrow("Submit response is invalid");
+    await expect(
+      decodeHrLeaveSubmitTransport(Promise.reject(new Error("private transport detail"))),
+    ).rejects.toThrow("Submit response is invalid");
   });
 });

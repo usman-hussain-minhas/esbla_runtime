@@ -17,6 +17,7 @@ const SUBMISSION_FIELDS = new Set<HrLeaveSubmitField>([
   "reason",
   "startDate",
 ]);
+const SUBMIT_FAILURE_STATUSES = new Set([400, 403, 409, 415, 422, 503]);
 
 export type HrLeaveSubmitField = "categoryCode" | "endDate" | "reason" | "startDate";
 export type HrLeaveSubmitFailureKind =
@@ -46,7 +47,7 @@ export type HrLeaveSubmissionValidation =
 
 export type HrLeaveSubmitTransport =
   | { readonly ok: false; readonly state: HrLeaveSubmitFormState }
-  | { readonly ok: true };
+  | { readonly leaveRequestId: string; readonly ok: true };
 
 export const INITIAL_HR_LEAVE_SUBMIT_STATE: HrLeaveSubmitFormState = {
   fieldErrors: {},
@@ -262,9 +263,46 @@ export function parseHrLeaveSubmitTransport(value: unknown): HrLeaveSubmitTransp
     throw new TypeError("Submit response is invalid");
   }
   if (value.ok) {
-    if (!hasExactKeys(value, ["ok"])) throw new TypeError("Submit response is invalid");
-    return { ok: true };
+    if (
+      !hasExactKeys(value, ["leaveRequestId", "ok"]) ||
+      typeof value.leaveRequestId !== "string" ||
+      !UUID_PATTERN.test(value.leaveRequestId)
+    ) {
+      throw new TypeError("Submit response is invalid");
+    }
+    return { leaveRequestId: value.leaveRequestId, ok: true };
   }
   if (!hasExactKeys(value, ["ok", "state"])) throw new TypeError("Submit response is invalid");
   return { ok: false, state: parseFormState(value.state) };
+}
+
+export async function decodeHrLeaveSubmitTransport(
+  responsePromise: Promise<Response>,
+): Promise<HrLeaveSubmitTransport> {
+  let response: Response;
+  try {
+    response = await responsePromise;
+  } catch {
+    throw new TypeError("Submit response is invalid");
+  }
+
+  const mediaEssence = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (mediaEssence !== "application/json") throw new TypeError("Submit response is invalid");
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new TypeError("Submit response is invalid");
+  }
+
+  const result = parseHrLeaveSubmitTransport(payload);
+  if (result.ok) {
+    if (response.status !== 201) throw new TypeError("Submit response is invalid");
+    return result;
+  }
+  if (!SUBMIT_FAILURE_STATUSES.has(response.status)) {
+    throw new TypeError("Submit response is invalid");
+  }
+  return result;
 }

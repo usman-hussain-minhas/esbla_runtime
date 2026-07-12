@@ -4,6 +4,7 @@ import type { AssignedWorkspaceTaskSummary } from "@esbla/contracts/workspace-ta
 import { ArrowRight, ClipboardCheck, Clock3 } from "lucide-react";
 import { loadAssignedProviderView } from "../../../lib/assigned-provider-core";
 import { getAssignedLeaveRequests } from "../../../lib/hr-leave-assigned-list";
+import { buildHrLeaveDetailHref } from "../../../lib/hr-leave-navigation-core";
 import { getAssignedWorkspaceTasks } from "../../../lib/workspace-task-assigned-list";
 import { LeaveApprovalAction } from "./leave-approval-action";
 import { LeaveRejectionAction } from "./leave-rejection-action";
@@ -180,7 +181,7 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
                   <div className="work-queue-actions">
                     <a
                       className="text-command work-detail-link"
-                      href={`/workspace/hr/leave/${item.leaveRequestId}`}
+                      href={buildHrLeaveDetailHref(item.leaveRequestId, "my-work")}
                     >
                       Review details
                       <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />

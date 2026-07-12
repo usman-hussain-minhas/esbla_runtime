@@ -1,6 +1,7 @@
 import type { HrLeaveRequest, HrLeaveRequestCursor } from "@esbla/contracts/hr-leave-api";
-import { CalendarDays, CheckCircle2, Plus } from "lucide-react";
+import { ArrowRight, CalendarDays, Plus } from "lucide-react";
 import { getOwnLeaveRequests } from "../../../../lib/hr-leave-list";
+import { buildHrLeaveDetailHref } from "../../../../lib/hr-leave-navigation-core";
 
 interface LeaveListPageProps {
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -61,7 +62,6 @@ function nextPageHref(cursor: HrLeaveRequestCursor) {
 export default async function HrLeaveListPage({ searchParams }: LeaveListPageProps) {
   const parameters = await searchParams;
   const cursor = cursorFrom(parameters);
-  const submitted = single(parameters.submitted) === "1";
   const page = await getOwnLeaveRequests(cursor);
 
   return (
@@ -81,16 +81,6 @@ export default async function HrLeaveListPage({ searchParams }: LeaveListPagePro
         </div>
       </header>
 
-      {submitted ? (
-        <div className="success-banner" role="status">
-          <CheckCircle2 aria-hidden="true" size={20} strokeWidth={1.8} />
-          <div>
-            <strong>Leave request submitted</strong>
-            <span>Your request is now waiting for a manager decision.</span>
-          </div>
-        </div>
-      ) : null}
-
       {page.items.length === 0 ? (
         <div className="empty-worklist leave-list-empty">
           <span aria-hidden="true" className="empty-worklist-icon">
@@ -109,6 +99,7 @@ export default async function HrLeaveListPage({ searchParams }: LeaveListPagePro
                 <th scope="col">Type</th>
                 <th scope="col">Dates</th>
                 <th scope="col">Submitted</th>
+                <th scope="col">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -125,6 +116,15 @@ export default async function HrLeaveListPage({ searchParams }: LeaveListPagePro
                     <time dateTime={request.submittedAt}>
                       {formatDateTime(request.submittedAt)}
                     </time>
+                  </td>
+                  <td data-label="Actions">
+                    <a
+                      className="text-command work-detail-link"
+                      href={buildHrLeaveDetailHref(request.leaveRequestId, "leave-list")}
+                    >
+                      View details
+                      <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
+                    </a>
                   </td>
                 </tr>
               ))}
