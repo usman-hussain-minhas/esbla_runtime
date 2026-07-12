@@ -1,13 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type {
-  HrAssignedLeaveRequestSummary,
-  HrLeaveRequestCursor,
-} from "@esbla/contracts/hr-leave-api";
-import type {
-  AssignedWorkspaceTaskSummary,
-  WorkspaceTaskCursor,
-} from "@esbla/contracts/workspace-task-api";
+import type { HrAssignedLeaveRequestSummary } from "@esbla/contracts/hr-leave-api";
+import type { AssignedWorkspaceTaskSummary } from "@esbla/contracts/workspace-task-api";
 import { ArrowRight, ClipboardCheck, Clock3 } from "lucide-react";
+import { loadAssignedProviderView } from "../../../lib/assigned-provider-core";
 import { getAssignedLeaveRequests } from "../../../lib/hr-leave-assigned-list";
 import { getAssignedWorkspaceTasks } from "../../../lib/workspace-task-assigned-list";
 import { LeaveApprovalAction } from "./leave-approval-action";
@@ -26,26 +21,6 @@ const categoryLabels = {
   sick: "Sick",
   unpaid: "Unpaid",
 } as const;
-
-function single(value: string | string[] | undefined): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function cursorFrom(searchParams: Record<string, string | string[] | undefined>) {
-  const leaveRequestId = single(searchParams.cursorLeaveRequestId);
-  const submittedAt = single(searchParams.cursorSubmittedAt);
-  if (!leaveRequestId && !submittedAt) return undefined;
-  if (!leaveRequestId || !submittedAt) throw new Error("Incomplete assigned-work cursor");
-  return { leaveRequestId, submittedAt } satisfies HrLeaveRequestCursor;
-}
-
-function taskCursorFrom(searchParams: Record<string, string | string[] | undefined>) {
-  const taskId = single(searchParams.cursorTaskId);
-  const createdAt = single(searchParams.cursorCreatedAt);
-  if (!taskId && !createdAt) return undefined;
-  if (!taskId || !createdAt) throw new Error("Incomplete assigned-task cursor");
-  return { createdAt, taskId } satisfies WorkspaceTaskCursor;
-}
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", {
@@ -68,22 +43,6 @@ function formatDateTime(value: string) {
 function dateRange(item: HrAssignedLeaveRequestSummary) {
   const start = formatDate(item.startDate);
   return item.startDate === item.endDate ? start : [start, formatDate(item.endDate)].join(" - ");
-}
-
-function nextPageHref(cursor: HrLeaveRequestCursor) {
-  const parameters = new URLSearchParams({
-    cursorLeaveRequestId: cursor.leaveRequestId,
-    cursorSubmittedAt: cursor.submittedAt,
-  });
-  return `/workspace/my-work?${parameters.toString()}`;
-}
-
-function taskNextPageHref(cursor: WorkspaceTaskCursor) {
-  const parameters = new URLSearchParams({
-    cursorCreatedAt: cursor.createdAt,
-    cursorTaskId: cursor.taskId,
-  });
-  return `/workspace/my-work?${parameters.toString()}`;
 }
 
 function TaskQueueItem({ item }: { readonly item: AssignedWorkspaceTaskSummary }) {
@@ -124,15 +83,25 @@ function TaskQueueItem({ item }: { readonly item: AssignedWorkspaceTaskSummary }
   );
 }
 
+function QueueNotice({ heading, summary }: { readonly heading: string; readonly summary: string }) {
+  return (
+    <div className="empty-worklist">
+      <span aria-hidden="true" className="empty-worklist-icon">
+        <ClipboardCheck size={27} strokeWidth={1.6} />
+      </span>
+      <h2>{heading}</h2>
+      <p>{summary}</p>
+    </div>
+  );
+}
+
 export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
   const parameters = await searchParams;
-  const cursor = cursorFrom(parameters);
-  const taskCursor = taskCursorFrom(parameters);
-  const [page, taskPage] = await Promise.all([
-    getAssignedLeaveRequests(cursor),
-    getAssignedWorkspaceTasks(taskCursor),
-  ]);
-  const totalShown = page.items.length + taskPage.items.length;
+  const view = await loadAssignedProviderView({
+    loadHr: (cursor) => getAssignedLeaveRequests(cursor),
+    loadWorkspace: (cursor) => getAssignedWorkspaceTasks(cursor),
+    searchParams: parameters,
+  });
 
   return (
     <section aria-labelledby="my-work-heading" className="work-surface my-work-surface">
@@ -142,10 +111,10 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
           <h1 id="my-work-heading">Assigned work</h1>
           <p className="surface-summary">Approvals and tasks waiting for your action.</p>
         </div>
-        <span className="work-count">{totalShown} shown</span>
+        <span className="work-count">{view.totalShown} shown</span>
       </header>
 
-      {totalShown === 0 ? (
+      {view.queuesClear ? (
         <div className="empty-worklist">
           <span aria-hidden="true" className="empty-worklist-icon">
             <ClipboardCheck size={27} strokeWidth={1.6} />
@@ -155,17 +124,32 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
         </div>
       ) : (
         <>
-          {taskPage.items.length > 0 ? (
+          {view.workspace.unavailable ? (
+            <QueueNotice
+              heading="Workspace tasks unavailable"
+              summary="This queue is unavailable right now."
+            />
+          ) : !view.workspace.empty ? (
             <ol aria-label="Assigned workspace tasks" className="work-queue">
-              {taskPage.items.map((item) => (
+              {view.workspace.page.items.map((item) => (
                 <TaskQueueItem item={item} key={item.workItemId} />
               ))}
             </ol>
-          ) : null}
+          ) : (
+            <QueueNotice
+              heading="No workspace tasks on this page"
+              summary="No workspace tasks are shown at this position."
+            />
+          )}
 
-          {page.items.length > 0 ? (
+          {view.hr.unavailable ? (
+            <QueueNotice
+              heading="Leave approvals unavailable"
+              summary="This queue is unavailable right now."
+            />
+          ) : !view.hr.empty ? (
             <ol aria-label="Assigned leave approvals" className="work-queue">
-              {page.items.map((item) => (
+              {view.hr.page.items.map((item) => (
                 <li className="work-queue-item" key={item.workItemId}>
                   <div className="work-queue-primary">
                     <div>
@@ -215,26 +199,31 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
                 </li>
               ))}
             </ol>
-          ) : null}
+          ) : (
+            <QueueNotice
+              heading="No leave approvals on this page"
+              summary="No leave approvals are shown at this position."
+            />
+          )}
         </>
       )}
 
-      {page.nextCursor || cursor || taskPage.nextCursor || taskCursor ? (
+      {view.nextApprovalsHref || view.nextTasksHref || view.startOverHref ? (
         <nav aria-label="Assigned approval pages" className="list-pagination">
-          {cursor || taskCursor ? (
-            <a className="text-command" href="/workspace/my-work">
+          {view.startOverHref ? (
+            <a className="text-command" href={view.startOverHref}>
               Start over
             </a>
           ) : (
             <span />
           )}
-          {page.nextCursor ? (
-            <a className="text-command" href={nextPageHref(page.nextCursor)}>
+          {view.nextApprovalsHref ? (
+            <a className="text-command" href={view.nextApprovalsHref}>
               Next approvals
             </a>
           ) : null}
-          {taskPage.nextCursor ? (
-            <a className="text-command" href={taskNextPageHref(taskPage.nextCursor)}>
+          {view.nextTasksHref ? (
+            <a className="text-command" href={view.nextTasksHref}>
               Next tasks
             </a>
           ) : null}
