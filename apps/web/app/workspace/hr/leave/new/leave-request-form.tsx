@@ -3,9 +3,10 @@
 import { LoaderCircle, Send, TriangleAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { buildHrLeaveDetailHref } from "../../../../../lib/hr-leave-navigation-core";
 import {
+  decodeHrLeaveSubmitTransport,
   INITIAL_HR_LEAVE_SUBMIT_STATE,
-  parseHrLeaveSubmitTransport,
   submitFormStateForError,
 } from "../../../../../lib/hr-leave-submit-core";
 
@@ -47,23 +48,24 @@ export function LeaveRequestForm({ idempotencyKey }: LeaveRequestFormProps) {
     setPending(true);
     try {
       const formData = new FormData(event.currentTarget);
-      const response = await fetch("/workspace/hr/leave/new/submit", {
-        body: JSON.stringify({
-          categoryCode: formData.get("categoryCode"),
-          endDate: formData.get("endDate"),
-          idempotencyKey: formData.get("idempotencyKey"),
-          reason: formData.get("reason"),
-          startDate: formData.get("startDate"),
+      const result = await decodeHrLeaveSubmitTransport(
+        fetch("/workspace/hr/leave/new/submit", {
+          body: JSON.stringify({
+            categoryCode: formData.get("categoryCode"),
+            endDate: formData.get("endDate"),
+            idempotencyKey: formData.get("idempotencyKey"),
+            reason: formData.get("reason"),
+            startDate: formData.get("startDate"),
+          }),
+          headers: { accept: "application/json", "content-type": "application/json" },
+          method: "POST",
         }),
-        headers: { accept: "application/json", "content-type": "application/json" },
-        method: "POST",
-      });
-      const result = parseHrLeaveSubmitTransport(await response.json());
+      );
       if (!result.ok) {
         setState(result.state);
         return;
       }
-      router.push("/workspace/hr/leave?submitted=1");
+      router.replace(buildHrLeaveDetailHref(result.leaveRequestId, "leave-list"));
     } catch {
       setState(submitFormStateForError(new Error("unavailable")));
     } finally {

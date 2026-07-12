@@ -8,6 +8,7 @@ import {
   INITIAL_HR_LEAVE_APPROVE_STATE,
   parseHrLeaveApproveTransport,
 } from "../../../lib/hr-leave-approve-core";
+import { buildHrLeaveDetailHref } from "../../../lib/hr-leave-navigation-core";
 
 interface LeaveApprovalActionProps {
   readonly expectedVersion: number;
@@ -63,7 +64,7 @@ export function LeaveApprovalAction({
         setState(result.state);
         return;
       }
-      router.push(`/workspace/hr/leave/${result.leaveRequestId}?approved=1`);
+      router.push(buildHrLeaveDetailHref(result.leaveRequestId, "my-work"));
       router.refresh();
     } catch {
       setState(approveFormStateForError(new Error("unavailable")));

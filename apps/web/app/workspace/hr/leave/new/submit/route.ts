@@ -63,8 +63,8 @@ export async function POST(request: Request) {
   if (!validation.ok) return formResponse({ ok: false, state: validation.state }, 400);
 
   try {
-    await submitOwnLeaveRequest(validation.value);
-    return formResponse({ ok: true }, 201);
+    const leaveRequest = await submitOwnLeaveRequest(validation.value);
+    return formResponse({ leaveRequestId: leaveRequest.leaveRequestId, ok: true }, 201);
   } catch (error) {
     return formResponse({ ok: false, state: submitFormStateForError(error) }, failureStatus(error));
   }

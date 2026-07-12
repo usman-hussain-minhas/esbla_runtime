@@ -5,9 +5,14 @@ import type {
 import { ArrowLeft, CalendarDays, Clock3, FileCheck2 } from "lucide-react";
 import { notFound } from "next/navigation";
 import { getLeaveRequestDetail } from "../../../../../lib/hr-leave-detail";
+import {
+  getHrLeaveReturnLink,
+  parseHrLeaveReturnContext,
+} from "../../../../../lib/hr-leave-navigation-core";
 
 interface HrLeaveDetailPageProps {
   readonly params: Promise<{ leaveRequestId: string }>;
+  readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
 const categoryLabels = {
@@ -57,18 +62,25 @@ function eventDescription(event: HrLeaveEvidenceEvent) {
   return "Manager rejected the request.";
 }
 
-export default async function HrLeaveDetailPage({ params }: HrLeaveDetailPageProps) {
+export default async function HrLeaveDetailPage({ params, searchParams }: HrLeaveDetailPageProps) {
   const { leaveRequestId } = await params;
-  const detail = await getLeaveRequestDetail(leaveRequestId);
+  const [detail, parameters] = await Promise.all([
+    getLeaveRequestDetail(leaveRequestId),
+    searchParams,
+  ]);
+  const returnContext = parseHrLeaveReturnContext(parameters.returnContext);
+  const returnLink = getHrLeaveReturnLink(returnContext);
   if (!detail) notFound();
   const { history, request } = detail;
 
   return (
     <section aria-labelledby="leave-detail-heading" className="work-surface leave-detail-surface">
-      <a className="text-command detail-back" href="/workspace/my-work">
-        <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
-        Back to My Work
-      </a>
+      {returnLink ? (
+        <a className="text-command detail-back" href={returnLink.href}>
+          <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
+          {returnLink.label}
+        </a>
+      ) : null}
 
       <header className="surface-heading leave-detail-heading">
         <div>
