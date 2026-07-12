@@ -60,6 +60,20 @@ async function selectLeave(
   return result.rows[0] ?? null;
 }
 
+async function selectLeaveForShare(
+  transaction: TenantTransaction,
+  leaveRequestId: string,
+): Promise<LeaveRow | null> {
+  const result = await transaction.client.query<LeaveRow>(
+    `SELECT ${LEAVE_COLUMNS}
+     FROM hr_leave_requests
+     WHERE tenant_id = $1 AND leave_request_id = $2
+     FOR SHARE`,
+    [transaction.context.tenantId, leaveRequestId],
+  );
+  return result.rows[0] ?? null;
+}
+
 type EvidenceRow = {
   actor_principal_id: string;
   correlation_id: string;
@@ -187,7 +201,7 @@ export async function getLeaveRequestDetail(
   assertUuid(leaveRequestId, "leaveRequestId");
   return await withTenantTransaction(pool, context, async (transaction) => {
     await requireLeaveServiceActive(transaction);
-    const row = await selectLeave(transaction, leaveRequestId);
+    const row = await selectLeaveForShare(transaction, leaveRequestId);
     if (!row) return null;
     authorizeView(transaction, row);
     const history = await selectEvidence(transaction, leaveRequestId, 100);

@@ -34,6 +34,12 @@ const ids = {
   correlationDemotionSubmitReplayReject: "50000000-0000-4000-8000-000000000030",
   correlationDemotionSubmitView: "50000000-0000-4000-8000-000000000026",
   correlationDemotionUpdate: "50000000-0000-4000-8000-000000000034",
+  correlationDetailFirstApprove: "50000000-0000-4000-8000-000000000037",
+  correlationDetailFirstRead: "50000000-0000-4000-8000-000000000036",
+  correlationDetailFirstSubmit: "50000000-0000-4000-8000-000000000035",
+  correlationDecisionFirstRead: "50000000-0000-4000-8000-000000000040",
+  correlationDecisionFirstReject: "50000000-0000-4000-8000-000000000039",
+  correlationDecisionFirstSubmit: "50000000-0000-4000-8000-000000000038",
   correlationReject2: "50000000-0000-4000-8000-000000000013",
   correlationRollback: "50000000-0000-4000-8000-000000000014",
   correlationSubmit1: "50000000-0000-4000-8000-000000000021",
@@ -66,6 +72,9 @@ const ids = {
   requestDemotionReplayApprove: "30000000-0000-4000-8000-000000000011",
   requestDemotionReplayReject: "30000000-0000-4000-8000-000000000012",
   requestDemotionView: "30000000-0000-4000-8000-000000000008",
+  requestDetailFirstApprove: "30000000-0000-4000-8000-000000000013",
+  requestDecisionFirstReject: "30000000-0000-4000-8000-000000000014",
+  requestMissing: "30000000-0000-4000-8000-000000000098",
   requestRlsProbe: "30000000-0000-4000-8000-000000000007",
   tenantA: "00000000-0000-4000-8000-000000000001",
   tenantB: "00000000-0000-4000-8000-000000000002",
@@ -287,6 +296,165 @@ async function expectAnyBackendBlockedBy(
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
   throw new Error(`No backend was blocked by backend ${blockerPid}`);
+}
+
+interface ControlledPool {
+  readonly connected: Promise<number>;
+  readonly isPaused: () => boolean;
+  readonly paused: Promise<{ readonly pid: number; readonly statement: string }>;
+  readonly pool: Pool;
+  readonly release: () => void;
+}
+
+type PausePredicate = (statement: string, values: readonly unknown[]) => boolean;
+
+function normalizeStatement(statement: string): string {
+  return statement.replace(/\s+/g, " ").trim();
+}
+
+function createControlledPool(targetPool: Pool, shouldPause?: PausePredicate): ControlledPool {
+  let connectionClaimed = false;
+  let matched = false;
+  let paused = false;
+  let released = false;
+  let signalConnected: ((pid: number) => void) | undefined;
+  let signalPaused:
+    | ((value: { readonly pid: number; readonly statement: string }) => void)
+    | undefined;
+  let signalRelease: (() => void) | undefined;
+  const connected = new Promise<number>((resolve) => {
+    signalConnected = resolve;
+  });
+  const pausedPromise = new Promise<{ readonly pid: number; readonly statement: string }>(
+    (resolve) => {
+      signalPaused = resolve;
+    },
+  );
+  const hold = new Promise<void>((resolve) => {
+    signalRelease = resolve;
+  });
+
+  const controlledPool = new Proxy(targetPool, {
+    get(target, property, receiver) {
+      if (property === "connect") {
+        return async () => {
+          if (connectionClaimed) throw new Error("Controlled pool supports exactly one connection");
+          connectionClaimed = true;
+          const client = await target.connect();
+          let pid: number;
+          try {
+            pid = Number(
+              (await client.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]?.pid,
+            );
+            if (!Number.isSafeInteger(pid)) throw new Error("Controlled backend PID is invalid");
+          } catch (error) {
+            client.release();
+            throw error;
+          }
+          signalConnected?.(pid);
+          return new Proxy(client, {
+            get(clientTarget, clientProperty, clientReceiver) {
+              if (clientProperty === "query") {
+                return async (...args: Parameters<PoolClient["query"]>) => {
+                  const result = await clientTarget.query(...args);
+                  const statement =
+                    typeof args[0] === "string" ? normalizeStatement(args[0]) : undefined;
+                  const values = Array.isArray(args[1]) ? args[1] : [];
+                  if (!matched && statement !== undefined && shouldPause?.(statement, values)) {
+                    matched = true;
+                    paused = true;
+                    signalPaused?.({ pid, statement });
+                    await hold;
+                  }
+                  return result;
+                };
+              }
+              return Reflect.get(clientTarget, clientProperty, clientReceiver);
+            },
+          });
+        };
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  }) as Pool;
+
+  return {
+    connected,
+    isPaused: () => paused,
+    paused: pausedPromise,
+    pool: controlledPool,
+    release: () => {
+      if (released) return;
+      released = true;
+      signalRelease?.();
+    },
+  };
+}
+
+async function awaitControlledSignal<T>(
+  label: string,
+  signal: Promise<T>,
+  operation: Promise<unknown>,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const operationSettled = operation.then<never>(
+    () => {
+      throw new Error(`${label} operation completed before its control signal`);
+    },
+    (error: unknown) => {
+      throw error;
+    },
+  );
+  const infrastructureDeadline = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error(`${label} control signal was not reached within 5 seconds`));
+    }, 5_000);
+  });
+  try {
+    return await Promise.race([signal, operationSettled, infrastructureDeadline]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function matchesLeaveSelector(
+  statement: string,
+  values: readonly unknown[],
+  leaveRequestId: string,
+  lock: "detail" | "update",
+): boolean {
+  return (
+    statement.startsWith("SELECT ") &&
+    statement.includes(" FROM hr_leave_requests ") &&
+    statement.includes(" WHERE tenant_id = $1 AND leave_request_id = $2") &&
+    (lock === "update" ? statement.endsWith(" FOR UPDATE") : !statement.endsWith(" FOR UPDATE")) &&
+    values[0] === ids.tenantA &&
+    values[1] === leaveRequestId
+  );
+}
+
+async function observeDirectBlockerUntil(
+  observer: PoolClient,
+  blockedPid: number,
+  blockerPid: number,
+  stopped: () => boolean,
+): Promise<boolean> {
+  const directlyBlocked = async (): Promise<boolean> => {
+    const result = await observer.query<{ blocked: boolean }>(
+      "SELECT $2::integer = ANY(pg_blocking_pids($1::integer)) AS blocked",
+      [blockedPid, blockerPid],
+    );
+    return result.rows[0]?.blocked === true;
+  };
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (await directlyBlocked()) return true;
+    if (stopped()) return await directlyBlocked();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  throw new Error(
+    `Neither direct blocking nor the deterministic stop occurred for backend ${blockedPid}`,
+  );
 }
 
 beforeAll(async () => {
@@ -1265,6 +1433,239 @@ describe("HR Leave Request domain", () => {
     }
   }, 15_000);
 
+  it("keeps a detail-first approval snapshot coherent behind the exact detail backend", async () => {
+    await submitLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.employeeA2, ids.correlationDetailFirstSubmit),
+      {
+        categoryCode: "annual",
+        endDate: "2027-02-01",
+        idempotencyKey: "detail-first-approval",
+        leaveRequestId: ids.requestDetailFirstApprove,
+        startDate: "2027-02-01",
+      },
+    );
+
+    const detailControl = createControlledPool(pool, (statement, values) =>
+      matchesLeaveSelector(statement, values, ids.requestDetailFirstApprove, "detail"),
+    );
+    const decisionControl = createControlledPool(pool);
+    const observer = await pool.connect();
+    let detailOperation: ReturnType<typeof getLeaveRequestDetail> | undefined;
+    let decisionOperation: ReturnType<typeof approveLeaveRequest> | undefined;
+
+    try {
+      const observerPid = Number(
+        (await observer.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]?.pid,
+      );
+      detailOperation = getLeaveRequestDetail(
+        detailControl.pool,
+        context(ids.tenantA, ids.employeeA2, ids.correlationDetailFirstRead),
+        ids.requestDetailFirstApprove,
+      );
+      const detailPid = (
+        await awaitControlledSignal(
+          "detail-first detail selector",
+          detailControl.paused,
+          detailOperation,
+        )
+      ).pid;
+
+      decisionOperation = approveLeaveRequest(
+        decisionControl.pool,
+        context(ids.tenantA, ids.managerA, ids.correlationDetailFirstApprove),
+        { expectedVersion: 1, leaveRequestId: ids.requestDetailFirstApprove },
+      );
+      const decisionPid = await awaitControlledSignal(
+        "detail-first approval connection",
+        decisionControl.connected,
+        decisionOperation,
+      );
+      let decisionSettled = false;
+      void decisionOperation.then(
+        () => {
+          decisionSettled = true;
+        },
+        () => {
+          decisionSettled = true;
+        },
+      );
+      expect(new Set([detailPid, decisionPid, observerPid]).size).toBe(3);
+
+      const directBlocker = await observeDirectBlockerUntil(
+        observer,
+        decisionPid,
+        detailPid,
+        () => decisionSettled,
+      );
+      detailControl.release();
+      const detail = await detailOperation;
+      detailOperation = undefined;
+
+      expect({
+        directBlocker,
+        employeeDisplayName: detail?.request.employeeDisplayName,
+        lastHistoryState: detail?.history.at(-1)?.newState,
+        requestStatus: detail?.request.status,
+      }).toEqual({
+        directBlocker: true,
+        employeeDisplayName: "Employee A2",
+        lastHistoryState: "submitted",
+        requestStatus: "submitted",
+      });
+
+      const decision = await decisionOperation;
+      decisionOperation = undefined;
+      expect(decision).toMatchObject({
+        replayed: false,
+        request: { status: "approved", version: 2 },
+      });
+      const terminalDetail = await getLeaveRequestDetail(
+        pool,
+        context(ids.tenantA, ids.employeeA2, ids.correlationDetailFirstRead),
+        ids.requestDetailFirstApprove,
+      );
+      expect(terminalDetail).toMatchObject({
+        history: [
+          expect.objectContaining({ newState: "submitted" }),
+          expect.objectContaining({ newState: "approved" }),
+        ],
+        request: { employeeDisplayName: "Employee A2", status: "approved", version: 2 },
+      });
+      const persistence = await snapshotLeavePersistence([ids.requestDetailFirstApprove]);
+      expect(persistence.requests).toEqual([
+        expect.objectContaining({ status: "approved", version: 2 }),
+      ]);
+      expect(persistence.work).toEqual([expect.objectContaining({ status: "completed" })]);
+      expect(persistence.evidence).toHaveLength(2);
+      expect(persistence.outbox).toHaveLength(2);
+    } finally {
+      detailControl.release();
+      decisionControl.release();
+      const pendingOperations: Promise<unknown>[] = [];
+      if (detailOperation) pendingOperations.push(detailOperation);
+      if (decisionOperation) pendingOperations.push(decisionOperation);
+      await Promise.allSettled(pendingOperations);
+      observer.release();
+    }
+  }, 15_000);
+
+  it("keeps a decision-first rejection snapshot coherent behind the exact decision backend", async () => {
+    await submitLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.employeeA2, ids.correlationDecisionFirstSubmit),
+      {
+        categoryCode: "unpaid",
+        endDate: "2027-02-02",
+        idempotencyKey: "decision-first-rejection",
+        leaveRequestId: ids.requestDecisionFirstReject,
+        startDate: "2027-02-02",
+      },
+    );
+
+    const decisionControl = createControlledPool(pool, (statement, values) =>
+      matchesLeaveSelector(statement, values, ids.requestDecisionFirstReject, "update"),
+    );
+    const detailControl = createControlledPool(pool, (statement, values) =>
+      matchesLeaveSelector(statement, values, ids.requestDecisionFirstReject, "detail"),
+    );
+    const observer = await pool.connect();
+    let decisionOperation: ReturnType<typeof rejectLeaveRequest> | undefined;
+    let detailOperation: ReturnType<typeof getLeaveRequestDetail> | undefined;
+
+    try {
+      const observerPid = Number(
+        (await observer.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]?.pid,
+      );
+      decisionOperation = rejectLeaveRequest(
+        decisionControl.pool,
+        context(ids.tenantA, ids.managerA, ids.correlationDecisionFirstReject),
+        {
+          decisionNote: "Coverage is unavailable for this date.",
+          expectedVersion: 1,
+          leaveRequestId: ids.requestDecisionFirstReject,
+        },
+      );
+      const decisionPid = (
+        await awaitControlledSignal(
+          "decision-first rejection selector",
+          decisionControl.paused,
+          decisionOperation,
+        )
+      ).pid;
+
+      detailOperation = getLeaveRequestDetail(
+        detailControl.pool,
+        context(ids.tenantA, ids.employeeA2, ids.correlationDecisionFirstRead),
+        ids.requestDecisionFirstReject,
+      );
+      const detailPid = await awaitControlledSignal(
+        "decision-first detail connection",
+        detailControl.connected,
+        detailOperation,
+      );
+      expect(new Set([detailPid, decisionPid, observerPid]).size).toBe(3);
+
+      const directBlocker = await observeDirectBlockerUntil(
+        observer,
+        detailPid,
+        decisionPid,
+        detailControl.isPaused,
+      );
+      decisionControl.release();
+      const decision = await decisionOperation;
+      decisionOperation = undefined;
+      expect(decision).toMatchObject({
+        replayed: false,
+        request: { status: "rejected", version: 2 },
+      });
+
+      await awaitControlledSignal(
+        "decision-first detail selector",
+        detailControl.paused,
+        detailOperation,
+      );
+      const beforeDetailCompletion = await snapshotLeavePersistence([
+        ids.requestDecisionFirstReject,
+      ]);
+      detailControl.release();
+      const detail = await detailOperation;
+      detailOperation = undefined;
+      const afterDetailCompletion = await snapshotLeavePersistence([
+        ids.requestDecisionFirstReject,
+      ]);
+
+      expect(afterDetailCompletion).toEqual(beforeDetailCompletion);
+      expect({
+        directBlocker,
+        employeeDisplayName: detail?.request.employeeDisplayName,
+        lastHistoryState: detail?.history.at(-1)?.newState,
+        requestStatus: detail?.request.status,
+      }).toEqual({
+        directBlocker: true,
+        employeeDisplayName: "Employee A2",
+        lastHistoryState: "rejected",
+        requestStatus: "rejected",
+      });
+      expect(afterDetailCompletion.requests).toEqual([
+        expect.objectContaining({ status: "rejected", version: 2 }),
+      ]);
+      expect(afterDetailCompletion.work).toEqual([
+        expect.objectContaining({ status: "completed" }),
+      ]);
+      expect(afterDetailCompletion.evidence).toHaveLength(2);
+      expect(afterDetailCompletion.outbox).toHaveLength(2);
+    } finally {
+      decisionControl.release();
+      detailControl.release();
+      const pendingOperations: Promise<unknown>[] = [];
+      if (decisionOperation) pendingOperations.push(decisionOperation);
+      if (detailOperation) pendingOperations.push(detailOperation);
+      await Promise.allSettled(pendingOperations);
+      observer.release();
+    }
+  }, 15_000);
+
   it("keeps tenant reads isolated and query pages bounded", async () => {
     await submitLeaveRequest(pool, context(ids.tenantB, ids.employeeB, ids.correlationSubmitB), {
       categoryCode: "unpaid",
@@ -1278,6 +1679,20 @@ describe("HR Leave Request domain", () => {
         pool,
         context(ids.tenantB, ids.employeeB, ids.correlationSubmitB),
         ids.request1,
+      ),
+    ).toBeNull();
+    expect(
+      await getLeaveRequestDetail(
+        pool,
+        context(ids.tenantB, ids.employeeB, ids.correlationSubmitB),
+        ids.request1,
+      ),
+    ).toBeNull();
+    expect(
+      await getLeaveRequestDetail(
+        pool,
+        context(ids.tenantA, ids.employeeA, ids.correlationSubmit1),
+        ids.requestMissing,
       ),
     ).toBeNull();
     const ownB = await listOwnLeaveRequests(
@@ -1480,6 +1895,13 @@ describe("HR Leave Request domain", () => {
     );
     await expect(
       listOwnLeaveRequests(pool, context(ids.tenantB, ids.employeeB, ids.correlationDeactivateB)),
+    ).rejects.toMatchObject({ code: "LEAVE_SERVICE_INACTIVE" });
+    await expect(
+      getLeaveRequestDetail(
+        pool,
+        context(ids.tenantB, ids.employeeB, ids.correlationDeactivateB),
+        ids.requestB,
+      ),
     ).rejects.toMatchObject({ code: "LEAVE_SERVICE_INACTIVE" });
   });
 });
