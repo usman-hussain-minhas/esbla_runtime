@@ -1,0 +1,13 @@
+{
+  "name": "@esbla/browser-test-tooling",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Isolated browser-test tooling; never part of a Runtime product dependency graph.",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
+  }
+}

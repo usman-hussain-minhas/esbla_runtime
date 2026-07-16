@@ -9,11 +9,12 @@
   },
   "scripts": {
     "build": "pnpm -r --sort --if-present build",
-    "ci": "pnpm lint && pnpm typecheck && pnpm --filter @esbla/db db:check && pnpm test && pnpm build",
+    "ci": "pnpm lint && pnpm typecheck && pnpm --filter @esbla/db db:check && pnpm test && pnpm test:browser",
     "dev": "pnpm --parallel --filter @esbla/api --filter @esbla/web dev",
     "format": "biome format --write .",
     "lint": "biome check .",
     "test": "pnpm -r --sort --if-present test",
+    "test:browser": "node --test scripts/test/hr-browser-harness.test.mjs && node scripts/test/with-postgres.mjs --supervise-browser node scripts/test/hr-browser-harness.mjs",
     "typecheck": "pnpm -r --sort --if-present typecheck"
   },
   "devDependencies": {

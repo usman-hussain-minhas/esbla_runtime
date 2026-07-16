@@ -20,6 +20,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
           version: 11.7.0
@@ -28,5 +29,22 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir scripts/test/browser-tooling --ignore-workspace install --frozen-lockfile
       - run: pnpm audit --audit-level high
+      - run: pnpm --dir scripts/test/browser-tooling --ignore-workspace audit --audit-level high
+      - run: pnpm --dir scripts/test/browser-tooling --ignore-workspace exec playwright install --with-deps --no-shell chromium
       - run: pnpm run ci
+        env:
+          ESBLA_E2E_ARTIFACT_DIR: ${{ runner.temp }}/esbla-browser-artifacts
+          ESBLA_EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Require sealed synthetic browser-smoke artifacts
+        run: test -f "${{ runner.temp }}/esbla-browser-artifacts/artifact-manifest.json"
+      - name: Upload sealed synthetic browser-smoke artifacts
+        if: ${{ success() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hr-browser-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/esbla-browser-artifacts
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: true
