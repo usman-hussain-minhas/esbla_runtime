@@ -1,5 +1,6 @@
 import { defineModuleManifest } from "@esbla/contracts";
 
+export * from "./activation.js";
 export * from "./commands.js";
 export * from "./errors.js";
 export * from "./queries.js";
