@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import type { Pool, PoolClient, QueryResult } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabase, createDatabasePool } from "./client.js";
@@ -23,6 +24,56 @@ const ids = {
 
 let migrationPool: Pool;
 let pool: Pool;
+
+const migrationBarrierFixture = fileURLToPath(
+  new URL("../test-fixtures/migration-coordination", import.meta.url),
+);
+const migrationBarrierKey = [1163084364, 1296648018] as const;
+const migrationTestGateKey = [1163084364, 1413829460] as const;
+
+async function waitForAdvisoryLock(
+  observer: Pool,
+  key: readonly [number, number],
+  mode: "ExclusiveLock" | "ShareLock",
+  granted: boolean,
+): Promise<number> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const locks = await observer.query<{ pid: number }>(
+      `SELECT pid
+       FROM pg_catalog.pg_locks
+       WHERE locktype = 'advisory' AND database = (
+         SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()
+       )
+         AND classid = $1::oid AND objid = $2::oid AND objsubid = 2
+         AND mode = $3 AND granted = $4`,
+      [key[0], key[1], mode, granted],
+    );
+    const row = locks.rows[0];
+    if (row) return row.pid;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Expected ${granted ? "granted" : "waiting"} ${mode} was not observed`);
+}
+
+async function waitForAdvisoryLockAbsence(
+  observer: Pool,
+  key: readonly [number, number],
+): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const locks = await observer.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+       FROM pg_catalog.pg_locks
+       WHERE locktype = 'advisory' AND classid = $1::oid AND objid = $2::oid
+         AND objsubid = 2`,
+      [...key],
+    );
+    if (locks.rows[0]?.count === "0") return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Migration coordination lock residue remained");
+}
 
 async function tenantTransaction<T>(
   tenantId: string,
@@ -132,7 +183,7 @@ describe("core PostgreSQL foundation", () => {
     const migrations = await migrationPool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations`,
     );
-    expect(migrations.rows[0]?.count).toBe("5");
+    expect(migrations.rows[0]?.count).toBe("6");
 
     const rowSecurity = await pool.query<{
       force_row_security: boolean;
@@ -314,5 +365,119 @@ describe("core PostgreSQL foundation", () => {
         [ids.workItem],
       ),
     ).rejects.toMatchObject({ code: "23514" });
+  });
+
+  it("keeps tenant resolution safe under a hostile caller search path", async () => {
+    const migrationConnectionString = process.env.DATABASE_MIGRATION_URL;
+    if (!migrationConnectionString) throw new Error("Migration connection is required");
+    const attackPool = createDatabasePool(migrationConnectionString, { max: 1 });
+    const client = await attackPool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("CREATE SCHEMA attacker");
+      await client.query(
+        `CREATE FUNCTION attacker.current_setting(text, boolean) RETURNS text
+         LANGUAGE sql IMMUTABLE
+         AS $$ SELECT '00000000-0000-4000-8000-000000000099'::text $$`,
+      );
+      await client.query("SET LOCAL search_path TO attacker, pg_catalog, public");
+      await client.query("SELECT pg_catalog.set_config('app.tenant_id', $1, true)", [ids.tenantA]);
+      const resolved = await client.query<{ tenant_id: string }>(
+        "SELECT public.esbla_current_tenant_id()::text AS tenant_id",
+      );
+      expect(resolved.rows).toEqual([{ tenant_id: ids.tenantA }]);
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+      await attackPool.end();
+    }
+  });
+
+  it("holds one migration barrier across Drizzle preamble, DDL, and ledger commit", async () => {
+    const migrationConnectionString = process.env.DATABASE_MIGRATION_URL;
+    if (!migrationConnectionString) throw new Error("Migration connection is required");
+    const singleConnectionPool = createDatabasePool(migrationConnectionString, { max: 1 });
+    const observerPool = createDatabasePool(migrationConnectionString, { max: 2 });
+    const runtimeClient = await pool.connect();
+    const gateClient = await observerPool.connect();
+    let migration: Promise<void> | undefined;
+    let runtimeOpen = false;
+    let gateHeld = false;
+    let secondRuntimeClient: PoolClient | undefined;
+    let secondRuntimeOpen = false;
+    try {
+      await runtimeClient.query("BEGIN");
+      runtimeOpen = true;
+      await runtimeClient.query(
+        "SELECT pg_catalog.pg_advisory_xact_lock_shared($1::integer, $2::integer)",
+        [...migrationBarrierKey],
+      );
+      await gateClient.query("SELECT pg_catalog.pg_advisory_lock($1::integer, $2::integer)", [
+        ...migrationTestGateKey,
+      ]);
+      gateHeld = true;
+
+      migration = migrateDatabase(createDatabase(singleConnectionPool), migrationBarrierFixture);
+      await waitForAdvisoryLock(observerPool, migrationBarrierKey, "ExclusiveLock", false);
+      await runtimeClient.query("COMMIT");
+      runtimeOpen = false;
+
+      const migrationBackend = await waitForAdvisoryLock(
+        observerPool,
+        migrationBarrierKey,
+        "ExclusiveLock",
+        true,
+      );
+      await waitForAdvisoryLock(observerPool, migrationTestGateKey, "ExclusiveLock", false);
+
+      secondRuntimeClient = await pool.connect();
+      await secondRuntimeClient.query("BEGIN");
+      secondRuntimeOpen = true;
+      const secondShared = secondRuntimeClient.query(
+        "SELECT pg_catalog.pg_advisory_xact_lock_shared($1::integer, $2::integer)",
+        [...migrationBarrierKey],
+      );
+      await waitForAdvisoryLock(observerPool, migrationBarrierKey, "ShareLock", false);
+
+      await gateClient.query("SELECT pg_catalog.pg_advisory_unlock($1::integer, $2::integer)", [
+        ...migrationTestGateKey,
+      ]);
+      gateHeld = false;
+      await migration;
+      await secondShared;
+      await secondRuntimeClient.query("COMMIT");
+      secondRuntimeOpen = false;
+
+      const probe = await observerPool.query<{ backend_pid: number }>(
+        "SELECT backend_pid FROM public.migration_barrier_probe",
+      );
+      expect(probe.rows).toEqual([{ backend_pid: migrationBackend }]);
+      await waitForAdvisoryLockAbsence(observerPool, migrationBarrierKey);
+
+      await expect(
+        migrateDatabase(createDatabase(singleConnectionPool), `${migrationBarrierFixture}-missing`),
+      ).rejects.toThrow();
+      await waitForAdvisoryLockAbsence(observerPool, migrationBarrierKey);
+      const recovered = await singleConnectionPool.query<{ value: number }>(
+        "SELECT 1::integer AS value",
+      );
+      expect(recovered.rows).toEqual([{ value: 1 }]);
+    } finally {
+      if (runtimeOpen) await runtimeClient.query("ROLLBACK").catch(() => undefined);
+      if (secondRuntimeOpen) await secondRuntimeClient?.query("ROLLBACK").catch(() => undefined);
+      if (gateHeld) {
+        await gateClient
+          .query("SELECT pg_catalog.pg_advisory_unlock($1::integer, $2::integer)", [
+            ...migrationTestGateKey,
+          ])
+          .catch(() => undefined);
+      }
+      await migration?.catch(() => undefined);
+      secondRuntimeClient?.release();
+      runtimeClient.release();
+      gateClient.release();
+      await singleConnectionPool.end();
+      await observerPool.end();
+    }
   });
 });

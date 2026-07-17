@@ -331,7 +331,7 @@ describe("HR Leave Request vertical proof closure", () => {
       { pageSize: 10 },
     );
     expect(assigned.every((item) => item.leaveRequestId !== ids.requestApproved)).toBe(true);
-    expect(assignedCounter.total).toBeLessThanOrEqual(8);
+    expect(assignedCounter.total).toBeLessThanOrEqual(9);
     expect(assignedCounter.statements.join("\n")).toContain("WITH assigned_leave");
 
     const detailCounter: QueryCounter = { statements: [], total: 0 };
@@ -341,7 +341,7 @@ describe("HR Leave Request vertical proof closure", () => {
       ids.requestApproved,
     );
     expect(detail?.request.status).toBe("approved");
-    expect(detailCounter.total).toBeLessThanOrEqual(10);
+    expect(detailCounter.total).toBeLessThanOrEqual(11);
     expect(detailCounter.statements.join("\n")).toContain("FROM evidence_events");
   });
 });

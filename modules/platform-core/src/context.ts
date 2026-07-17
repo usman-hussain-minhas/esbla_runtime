@@ -1,3 +1,4 @@
+import { acquireMigrationBarrierShared } from "@esbla/db";
 import type { Pool, PoolClient } from "pg";
 import { PlatformError } from "./errors.js";
 
@@ -20,6 +21,10 @@ export interface TenantTransaction {
   readonly context: OperationContext;
 }
 
+export interface TenantTransactionOptions {
+  readonly migrationBarrier?: "shared";
+}
+
 function assertOperationContext(context: OperationContext): void {
   const invalidFields = Object.entries(context)
     .filter(([, value]) => !UUID_PATTERN.test(value))
@@ -36,12 +41,18 @@ export async function withTenantTransaction<T>(
   pool: Pool,
   context: OperationContext,
   operation: (transaction: TenantTransaction) => Promise<T>,
+  options: TenantTransactionOptions = {},
 ): Promise<T> {
   assertOperationContext(context);
   const client = await pool.connect();
 
+  let discardClient = false;
   try {
     await client.query("BEGIN");
+    if (options.migrationBarrier === "shared") {
+      await acquireMigrationBarrierShared(client);
+    }
+    await client.query("SET LOCAL search_path TO pg_catalog, public, pg_temp");
     await client.query("SELECT set_config('app.tenant_id', $1, true)", [context.tenantId]);
     await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [
       context.actorPrincipalId,
@@ -74,9 +85,13 @@ export async function withTenantTransaction<T>(
     await client.query("COMMIT");
     return result;
   } catch (error) {
-    await client.query("ROLLBACK");
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      discardClient = true;
+    }
     throw error;
   } finally {
-    client.release();
+    client.release(discardClient ? true : undefined);
   }
 }

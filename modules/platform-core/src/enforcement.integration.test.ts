@@ -36,6 +36,8 @@ const ids = {
   tenantB: "00000000-0000-4000-8000-000000000002",
 } as const;
 
+const migrationBarrierKey = [1163084364, 1296648018] as const;
+
 let migrationPool: Pool;
 let pool: Pool;
 
@@ -299,6 +301,83 @@ describe("platform enforcement primitives", () => {
         ]);
       },
     );
+  });
+
+  it("pins tenant transactions to trusted schemas before membership resolution", async () => {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) throw new Error("Application database connection is required");
+    const shadowPool = createDatabasePool(connectionString, { max: 1 });
+    const shadowClient = await shadowPool.connect();
+    try {
+      await shadowClient.query(
+        `CREATE TEMP TABLE memberships (
+           tenant_id uuid NOT NULL,
+           principal_id uuid NOT NULL,
+           role_key text NOT NULL,
+           status text NOT NULL
+         )`,
+      );
+      await shadowClient.query(
+        `INSERT INTO memberships (tenant_id, principal_id, role_key, status)
+         VALUES ($1, $2, 'employee', 'active')`,
+        [ids.tenantA, ids.adminA],
+      );
+    } finally {
+      shadowClient.release();
+    }
+    try {
+      await withTenantTransaction(
+        shadowPool,
+        context(ids.tenantA, ids.adminA, ids.correlationActivate1),
+        async ({ actor, client }) => {
+          expect(actor.roleKey).toBe("tenant_admin");
+          const path = await client.query<{ search_path: string }>("SHOW search_path");
+          expect(path.rows).toEqual([{ search_path: "pg_catalog, public, pg_temp" }]);
+        },
+      );
+    } finally {
+      await shadowPool.end();
+    }
+  });
+
+  it("can acquire the shared migration barrier for the complete tenant transaction", async () => {
+    const operation = async ({ client }: TenantTransaction) => {
+      const locks = await client.query<{ count: string }>(
+        `SELECT count(*)::text AS count
+         FROM pg_catalog.pg_locks
+         WHERE locktype = 'advisory' AND pid = pg_catalog.pg_backend_pid()
+           AND classid = $1::oid AND objid = $2::oid AND objsubid = 2
+           AND mode = 'ShareLock' AND granted`,
+        [...migrationBarrierKey],
+      );
+      expect(locks.rows).toEqual([{ count: "1" }]);
+    };
+    await withTenantTransaction(
+      pool,
+      context(ids.tenantA, ids.adminA, ids.correlationActivate1),
+      operation,
+      { migrationBarrier: "shared" },
+    );
+    await expect(
+      withTenantTransaction(
+        pool,
+        context(ids.tenantA, ids.adminA, ids.correlationActivate1),
+        async () => {
+          throw new Error("force coordinated rollback");
+        },
+        { migrationBarrier: "shared" },
+      ),
+    ).rejects.toThrow("force coordinated rollback");
+    const residue = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+       FROM pg_catalog.pg_locks
+       WHERE locktype = 'advisory' AND database = (
+         SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()
+       )
+         AND classid = $1::oid AND objid = $2::oid AND objsubid = 2`,
+      [...migrationBarrierKey],
+    );
+    expect(residue.rows).toEqual([{ count: "0" }]);
   });
 
   it("resolves registered defaults and validated tenant overrides", async () => {
