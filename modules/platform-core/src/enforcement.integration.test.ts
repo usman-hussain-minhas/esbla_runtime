@@ -19,6 +19,8 @@ const ids = {
   adminB: "10000000-0000-4000-8000-000000000004",
   correlationActivate1: "50000000-0000-4000-8000-000000000001",
   correlationActivate2: "50000000-0000-4000-8000-000000000003",
+  correlationConcurrent1: "50000000-0000-4000-8000-000000000006",
+  correlationConcurrent2: "50000000-0000-4000-8000-000000000007",
   correlationDeactivate: "50000000-0000-4000-8000-000000000002",
   correlationEmployee: "50000000-0000-4000-8000-000000000004",
   correlationManager: "50000000-0000-4000-8000-000000000005",
@@ -61,12 +63,13 @@ function context(tenantId: string, actorPrincipalId: string, correlationId: stri
 function activationAuthorization(
   transaction: TenantTransaction,
   targetState: "active" | "inactive",
+  serviceKey = "hr.leave_request",
 ) {
   return evaluatePolicy(
     {
       actionKey: `platform.service_activation.${targetState === "active" ? "activate" : "deactivate"}`,
-      input: { serviceKey: "hr.leave_request" },
-      resourceKey: "hr.leave_request",
+      input: { serviceKey },
+      resourceKey: serviceKey,
       transaction,
     },
     [
@@ -76,6 +79,110 @@ function activationAuthorization(
         matches: (_input, actor) => actor.roleKey === "tenant_admin",
       },
     ],
+  );
+}
+
+function twoPartyPreflightBarrier(): () => Promise<{ current: true; reasons: never[] }> {
+  let arrivals = 0;
+  let release!: () => void;
+  let rejectBarrier!: (error: Error) => void;
+  const bothArrived = new Promise<void>((resolve, reject) => {
+    release = resolve;
+    rejectBarrier = reject;
+  });
+  const timeout = setTimeout(
+    () => rejectBarrier(new Error("Concurrent activation preflight barrier timed out")),
+    2_000,
+  );
+  return async () => {
+    arrivals += 1;
+    if (arrivals === 2) {
+      clearTimeout(timeout);
+      release();
+    }
+    await bothArrived;
+    return { current: true, reasons: [] };
+  };
+}
+
+async function concurrentActivation(
+  serviceKey: string,
+  correlationIds: readonly [string, string],
+  expectedVersion: number | null = null,
+) {
+  const preflight = twoPartyPreflightBarrier();
+  return await Promise.allSettled(
+    correlationIds.map(
+      async (correlationId) =>
+        await withTenantTransaction(
+          pool,
+          context(ids.tenantB, ids.adminB, correlationId),
+          async (transaction) =>
+            await setServiceActivation(transaction, {
+              authorization: activationAuthorization(transaction, "active", serviceKey),
+              evidenceEventType: "evidence.test.service.activated",
+              expectedVersion,
+              outboxEventType: "test.service.activated",
+              preflight,
+              serviceKey,
+              targetState: "active",
+            }),
+        ),
+    ),
+  );
+}
+
+async function seedInactiveActivation(serviceKey: string): Promise<void> {
+  await withTenantTransaction(
+    pool,
+    context(ids.tenantB, ids.adminB, ids.correlationConcurrent2),
+    async ({ client }) => {
+      await client.query(
+        `INSERT INTO service_activations (tenant_id, service_key, state, version)
+         VALUES ($1, $2, 'inactive', 1)`,
+        [ids.tenantB, serviceKey],
+      );
+    },
+  );
+}
+
+async function expectActivationState(serviceKey: string, version: number): Promise<void> {
+  await withTenantTransaction(
+    pool,
+    context(ids.tenantB, ids.adminB, ids.correlationConcurrent2),
+    async (transaction) => {
+      expect(await getServiceActivation(transaction, serviceKey)).toMatchObject({
+        state: "active",
+        version,
+      });
+    },
+  );
+}
+
+async function expectActivationProofCount(
+  serviceKey: string,
+  expectedCount: string,
+): Promise<void> {
+  await withTenantTransaction(
+    pool,
+    context(ids.tenantB, ids.adminB, ids.correlationConcurrent2),
+    async ({ client }) => {
+      const subjectId = deriveStableUuid("platform.service_activation", ids.tenantB, serviceKey);
+      const proofs = await client.query<{ evidence_count: string; outbox_count: string }>(
+        `SELECT
+           (SELECT count(*) FROM evidence_events
+            WHERE subject_type = 'platform.service_activation' AND subject_id = $1)::text
+             AS evidence_count,
+           (SELECT count(*) FROM outbox_events
+            WHERE aggregate_type = 'platform.service_activation' AND aggregate_id = $1)::text
+             AS outbox_count`,
+        [subjectId],
+      );
+      expect(proofs.rows[0]).toEqual({
+        evidence_count: expectedCount,
+        outbox_count: expectedCount,
+      });
+    },
   );
 }
 
@@ -387,6 +494,23 @@ describe("platform enforcement primitives", () => {
     );
     expect(originalReplay).toMatchObject({ replayed: true, state: "active", version: 1 });
 
+    await expect(
+      withTenantTransaction(
+        pool,
+        context(ids.tenantA, ids.adminA, ids.correlationActivate1),
+        async (transaction) =>
+          await setServiceActivation(transaction, {
+            authorization: activationAuthorization(transaction, "active"),
+            evidenceEventType: "evidence.hr.leave_service.activated",
+            expectedVersion: 2,
+            outboxEventType: "hr.leave_service.activated",
+            preflight: async () => ({ current: true, reasons: [] }),
+            serviceKey: "hr.leave_request",
+            targetState: "active",
+          }),
+      ),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+
     await withTenantTransaction(
       pool,
       context(ids.tenantA, ids.adminA, ids.correlationActivate2),
@@ -401,6 +525,72 @@ describe("platform enforcement primitives", () => {
         expect(outbox.rows[0]?.count).toBe("3");
       },
     );
+  });
+
+  it("converges concurrent same-correlation initial activation retries", async () => {
+    const sameCorrelation = await concurrentActivation("test.concurrent.same", [
+      ids.correlationConcurrent1,
+      ids.correlationConcurrent1,
+    ]);
+    expect(sameCorrelation).toHaveLength(2);
+    expect(sameCorrelation.every((result) => result.status === "fulfilled")).toBe(true);
+    expect(
+      sameCorrelation
+        .filter((result) => result.status === "fulfilled")
+        .map((result) => result.value.replayed)
+        .sort(),
+    ).toEqual([false, true]);
+    await expectActivationProofCount("test.concurrent.same", "1");
+    await expectActivationState("test.concurrent.same", 1);
+  });
+
+  it("rechecks replay after concurrent callers serialize on an existing row", async () => {
+    const serviceKey = "test.concurrent.existing";
+    await seedInactiveActivation(serviceKey);
+    const sameCorrelation = await concurrentActivation(
+      serviceKey,
+      [ids.correlationConcurrent1, ids.correlationConcurrent1],
+      1,
+    );
+    expect(sameCorrelation.every((result) => result.status === "fulfilled")).toBe(true);
+    expect(
+      sameCorrelation
+        .filter((result) => result.status === "fulfilled")
+        .map((result) => ({ replayed: result.value.replayed, version: result.value.version }))
+        .sort((left, right) => Number(left.replayed) - Number(right.replayed)),
+    ).toEqual([
+      { replayed: false, version: 2 },
+      { replayed: true, version: 2 },
+    ]);
+    await expectActivationProofCount(serviceKey, "1");
+    await expectActivationState(serviceKey, 2);
+  });
+
+  it("maps distinct-correlation competing first activations to CAS conflict", async () => {
+    const distinctCorrelations = await concurrentActivation("test.concurrent.distinct", [
+      ids.correlationConcurrent1,
+      ids.correlationConcurrent2,
+    ]);
+    const fulfilled = distinctCorrelations.filter((result) => result.status === "fulfilled");
+    const rejected = distinctCorrelations.filter((result) => result.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(fulfilled[0]).toMatchObject({ value: { replayed: false, state: "active", version: 1 } });
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toMatchObject({
+      reason: {
+        code: "ACTIVATION_CONFLICT",
+        details: {
+          actualState: "active",
+          actualVersion: 1,
+          expectedVersion: null,
+          targetState: "active",
+        },
+        message: "Service activation currentness check failed",
+        name: "PlatformError",
+      },
+    });
+    await expectActivationProofCount("test.concurrent.distinct", "1");
+    await expectActivationState("test.concurrent.distinct", 1);
   });
 
   it("creates and completes typed work items idempotently and rolls back atomically", async () => {
