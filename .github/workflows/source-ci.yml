@@ -20,6 +20,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
           version: 11.7.0
@@ -29,4 +30,67 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --audit-level high
-      - run: pnpm run ci
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Verify exact source bytes before CI
+        run: |
+          test "$(git rev-parse HEAD)" = "$ESBLA_EXPECTED_SOURCE_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+        env:
+          ESBLA_EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - id: source-ci
+        name: Run Source CI
+        run: pnpm run ci
+        env:
+          ESBLA_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/esbla-browser-artifacts
+          ESBLA_EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact source bytes after CI
+        if: always()
+        run: |
+          test "$(git rev-parse HEAD)" = "$ESBLA_EXPECTED_SOURCE_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+        env:
+          ESBLA_EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Record exact source receipt
+        if: always()
+        run: |
+          head="$(git rev-parse HEAD)"
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          clean=false
+          test -z "$(git status --porcelain=v1 --untracked-files=all)" && clean=true
+          source_eligible=false
+          test "$ESBLA_SOURCE_CI_OUTCOME" = success && test "$head" = "$ESBLA_EXPECTED_SOURCE_SHA" && test "$clean" = true && source_eligible=true
+          browser_eligible=false
+          browser_receipt="$RUNNER_TEMP/esbla-browser-artifacts/esbla-playwright-results/.last-run.json"
+          test "$source_eligible" = true && test -f "$browser_receipt" && \
+            jq -e -s 'length == 1 and (.[0] | type == "object" and .status == "passed" and (.failedTests | type) == "array" and (.failedTests | length) == 0)' "$browser_receipt" >/dev/null && \
+            browser_eligible=true
+          jq -n \
+            --arg expected "$ESBLA_EXPECTED_SOURCE_SHA" \
+            --arg head "$head" \
+            --arg tree "$tree" \
+            --arg outcome "$ESBLA_SOURCE_CI_OUTCOME" \
+            --argjson clean "$clean" \
+            --argjson source_eligible "$source_eligible" \
+            --argjson browser_eligible "$browser_eligible" \
+            '{schema_version: 1, expected_head: $expected, tested_head: $head, tested_tree: $tree,
+              source_ci_outcome: $outcome, worktree_clean_after: $clean,
+              receipt_class: "CI_ATTEMPT", source_proof_eligible: $source_eligible,
+              browser_proof_eligible: $browser_eligible,
+              eligible_proof_classes: (if $browser_eligible then ["SOURCE_CI", "ACTUAL_BROWSER_CI"]
+                elif $source_eligible then ["SOURCE_CI"] else [] end),
+              cannot_claim: ["release", "deployment", "production"]}' \
+            > "$RUNNER_TEMP/esbla-source-receipt.json"
+        env:
+          ESBLA_EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ESBLA_SOURCE_CI_OUTCOME: ${{ steps.source-ci.outcome }}
+      - name: Upload sanitized browser and source evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hr-leave-browser-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/esbla-source-receipt.json
+            ${{ runner.temp }}/esbla-browser-artifacts
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14

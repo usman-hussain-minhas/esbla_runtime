@@ -41,12 +41,14 @@ const ids = {
   correlationDecisionFirstReject: "50000000-0000-4000-8000-000000000039",
   correlationDecisionFirstSubmit: "50000000-0000-4000-8000-000000000038",
   correlationReject2: "50000000-0000-4000-8000-000000000013",
+  correlationRejectOptional: "50000000-0000-4000-8000-000000000042",
   correlationRollback: "50000000-0000-4000-8000-000000000014",
   correlationSubmit1: "50000000-0000-4000-8000-000000000021",
   correlationSubmit2: "50000000-0000-4000-8000-000000000022",
   correlationSubmit3: "50000000-0000-4000-8000-000000000023",
   correlationSubmitB: "50000000-0000-4000-8000-000000000024",
   correlationSubmitSelf: "50000000-0000-4000-8000-000000000025",
+  correlationSubmitOptional: "50000000-0000-4000-8000-000000000041",
   employeeA: "10000000-0000-4000-8000-000000000004",
   employeeA2: "10000000-0000-4000-8000-000000000005",
   employeeB: "10000000-0000-4000-8000-000000000010",
@@ -75,6 +77,7 @@ const ids = {
   requestDetailFirstApprove: "30000000-0000-4000-8000-000000000013",
   requestDecisionFirstReject: "30000000-0000-4000-8000-000000000014",
   requestMissing: "30000000-0000-4000-8000-000000000098",
+  requestOptionalReject: "30000000-0000-4000-8000-000000000015",
   requestRlsProbe: "30000000-0000-4000-8000-000000000007",
   tenantA: "00000000-0000-4000-8000-000000000001",
   tenantB: "00000000-0000-4000-8000-000000000002",
@@ -962,6 +965,38 @@ describe("HR Leave Request domain", () => {
         expect(work.rows[0]?.completed_at).toBeInstanceOf(Date);
       },
     );
+  });
+
+  it("honors the tenant override that makes a rejection note optional", async () => {
+    await submitLeaveRequest(
+      pool,
+      context(ids.tenantA, ids.employeeA, ids.correlationSubmitOptional),
+      {
+        categoryCode: "annual",
+        endDate: "2027-03-12",
+        idempotencyKey: "optional-rejection-note",
+        leaveRequestId: ids.requestOptionalReject,
+        startDate: "2027-03-12",
+      },
+    );
+    await setBooleanSetting(ids.tenantA, "hr.leave.reject_note_required", false);
+    try {
+      const rejected = await rejectLeaveRequest(
+        pool,
+        context(ids.tenantA, ids.managerA, ids.correlationRejectOptional),
+        {
+          expectedVersion: 1,
+          leaveRequestId: ids.requestOptionalReject,
+        },
+      );
+      expect(rejected.request).toMatchObject({
+        decisionNote: null,
+        status: "rejected",
+        version: 2,
+      });
+    } finally {
+      await deleteSetting(ids.tenantA, "hr.leave.reject_note_required");
+    }
   });
 
   it("requires current manager authority across assigned reads, decisions, and replays", async () => {

@@ -9,16 +9,19 @@
   },
   "scripts": {
     "build": "pnpm -r --sort --if-present build",
-    "ci": "pnpm lint && pnpm typecheck && pnpm --filter @esbla/db db:check && pnpm test && pnpm test:process-safety && pnpm build",
+    "ci": "pnpm lint && pnpm typecheck && pnpm --filter @esbla/db db:check && pnpm test && pnpm test:process-safety && pnpm test:browser",
     "dev": "pnpm --parallel --filter @esbla/api --filter @esbla/web dev",
     "format": "biome format --write .",
     "lint": "biome check .",
     "test": "pnpm -r --sort --if-present test",
+    "test:browser": "pnpm build && pnpm test:browser:built",
+    "test:browser:built": "node scripts/test/with-postgres.mjs node tests/browser/hr-leave-stack.mjs",
     "test:process-safety": "node --test scripts/test/with-postgres.signal.test.mjs",
     "typecheck": "pnpm -r --sort --if-present typecheck"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.3",
+    "@playwright/test": "1.61.1",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
   }
