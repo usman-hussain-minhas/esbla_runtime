@@ -9,11 +9,12 @@
   },
   "scripts": {
     "build": "pnpm -r --sort --if-present build",
-    "ci": "pnpm lint && pnpm typecheck && pnpm --filter @esbla/db db:check && pnpm test && pnpm build",
+    "ci": "pnpm lint && pnpm typecheck && pnpm --filter @esbla/db db:check && pnpm test && pnpm test:process-safety && pnpm build",
     "dev": "pnpm --parallel --filter @esbla/api --filter @esbla/web dev",
     "format": "biome format --write .",
     "lint": "biome check .",
     "test": "pnpm -r --sort --if-present test",
+    "test:process-safety": "node --test scripts/test/with-postgres.signal.test.mjs",
     "typecheck": "pnpm -r --sort --if-present typecheck"
   },
   "devDependencies": {
