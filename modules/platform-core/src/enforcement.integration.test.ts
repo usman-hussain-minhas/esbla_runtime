@@ -503,6 +503,25 @@ describe("platform enforcement primitives", () => {
     );
     expect(activated).toMatchObject({ replayed: false, state: "active", version: 1 });
 
+    await withTenantTransaction(
+      pool,
+      context(ids.tenantA, ids.adminA, ids.correlationActivate2),
+      async ({ client }) => {
+        const initialEvidence = await client.query<{
+          new_state: string;
+          prior_state: string | null;
+        }>(
+          `SELECT prior_state, new_state
+           FROM evidence_events
+           WHERE tenant_id = $1 AND subject_type = 'platform.service_activation'
+             AND event_type = 'evidence.hr.leave_service.activated'
+             AND correlation_id = $2`,
+          [ids.tenantA, ids.correlationActivate1],
+        );
+        expect(initialEvidence.rows).toEqual([{ new_state: "active", prior_state: "inactive" }]);
+      },
+    );
+
     const replayed = await withTenantTransaction(
       pool,
       context(ids.tenantA, ids.adminA, ids.correlationActivate1),

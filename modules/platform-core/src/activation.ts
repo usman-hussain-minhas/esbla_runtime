@@ -201,7 +201,7 @@ export async function setServiceActivation(
     evidence: {
       eventType: input.evidenceEventType,
       newState: input.targetState,
-      priorState: row?.state ?? null,
+      priorState: row?.state ?? "inactive",
       subjectId,
       subjectType: "platform.service_activation",
     },
