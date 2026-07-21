@@ -105,6 +105,43 @@ async function tenantQuery<T extends Record<string, unknown>>(
   );
 }
 
+async function migrationTenantTransaction<T>(
+  tenantId: string,
+  operation: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await migrationPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
+    const result = await operation(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function withServiceControlGuardDisabled<T>(
+  tenantId: string,
+  operation: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  return await migrationTenantTransaction(tenantId, async (client) => {
+    await client.query(
+      `ALTER TABLE hr_workforce_profile_service_control
+       DISABLE TRIGGER hr_workforce_profile_service_control_enforce_state`,
+    );
+    const result = await operation(client);
+    await client.query(
+      `ALTER TABLE hr_workforce_profile_service_control
+       ENABLE TRIGGER hr_workforce_profile_service_control_enforce_state`,
+    );
+    return result;
+  });
+}
+
 beforeAll(async () => {
   const connectionString = process.env.DATABASE_URL;
   const migrationConnectionString = process.env.DATABASE_MIGRATION_URL;
@@ -125,6 +162,9 @@ beforeAll(async () => {
 
   await migrationPool.query(`GRANT USAGE ON SCHEMA public TO ${applicationRole}`);
   await migrationPool.query(`GRANT SELECT, INSERT ON tenants, principals TO ${applicationRole}`);
+  await migrationPool.query(
+    `GRANT SELECT ON hr_workforce_profile_service_control TO ${applicationRole}`,
+  );
   await migrationPool.query(
     `GRANT SELECT, INSERT, UPDATE, DELETE
      ON memberships, service_activations, tenant_settings, work_items, outbox_events
@@ -183,7 +223,7 @@ describe("core PostgreSQL foundation", () => {
     const migrations = await migrationPool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations`,
     );
-    expect(migrations.rows[0]?.count).toBe("6");
+    expect(migrations.rows[0]?.count).toBe("7");
 
     const rowSecurity = await pool.query<{
       force_row_security: boolean;
@@ -202,6 +242,7 @@ describe("core PostgreSQL foundation", () => {
         [
           "evidence_events",
           "hr_leave_requests",
+          "hr_workforce_profile_service_control",
           "memberships",
           "outbox_events",
           "service_activations",
@@ -212,7 +253,7 @@ describe("core PostgreSQL foundation", () => {
       ],
     );
 
-    expect(rowSecurity.rows).toHaveLength(8);
+    expect(rowSecurity.rows).toHaveLength(9);
     expect(rowSecurity.rows.every((row) => row.row_security && row.force_row_security)).toBe(true);
     const schemaPrivilege = await pool.query<{ can_create: boolean; current_schema: string }>(
       `SELECT has_schema_privilege(current_user, 'public', 'CREATE') AS can_create,
@@ -232,6 +273,343 @@ describe("core PostgreSQL foundation", () => {
       pool.query("ALTER TABLE memberships DISABLE ROW LEVEL SECURITY"),
     ).rejects.toMatchObject({
       code: "42501",
+    });
+  });
+
+  it("installs the bounded workforce-profile service-control projection", async () => {
+    const columns = await migrationPool.query<{ column_name: string }>(
+      `SELECT column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'hr_workforce_profile_service_control'
+       ORDER BY ordinal_position`,
+    );
+    expect(columns.rows.map((row) => row.column_name)).toEqual([
+      "service_control_id",
+      "tenant_id",
+      "service_key",
+      "settings_version",
+      "updated_at",
+      "row_version",
+    ]);
+
+    const constraints = await migrationPool.query<{ definition: string; name: string }>(
+      `SELECT conname AS name, pg_catalog.pg_get_constraintdef(oid) AS definition
+       FROM pg_catalog.pg_constraint
+       WHERE conrelid = 'public.hr_workforce_profile_service_control'::regclass
+       ORDER BY conname`,
+    );
+    expect(constraints.rows.map((row) => row.name)).toEqual([
+      "hr_workforce_profile_service_control_activation_fk",
+      "hr_workforce_profile_service_control_key_exact",
+      "hr_workforce_profile_service_control_pkey",
+      "hr_workforce_profile_service_control_row_version_positive",
+      "hr_workforce_profile_service_control_settings_version_positive",
+    ]);
+    expect(
+      constraints.rows.find(
+        (row) => row.name === "hr_workforce_profile_service_control_activation_fk",
+      )?.definition,
+    ).toContain(
+      "FOREIGN KEY (tenant_id, service_key) REFERENCES service_activations(tenant_id, service_key)",
+    );
+
+    const indexDefinition = await migrationPool.query<{ indexdef: string }>(
+      `SELECT indexdef
+       FROM pg_catalog.pg_indexes
+       WHERE schemaname = 'public'
+         AND tablename = 'hr_workforce_profile_service_control'
+         AND indexname = 'uq_hr_workforce_profile_service_control_tenant_key'`,
+    );
+    expect(indexDefinition.rows).toHaveLength(1);
+    expect(indexDefinition.rows[0]?.indexdef).toContain(
+      "UNIQUE INDEX uq_hr_workforce_profile_service_control_tenant_key",
+    );
+    expect(indexDefinition.rows[0]?.indexdef).toContain("(tenant_id, service_key)");
+
+    const policy = await migrationPool.query<{ policy: string }>(
+      `SELECT policyname || '|' || cmd || '|' || qual || '|' || with_check AS policy
+       FROM pg_catalog.pg_policies
+       WHERE schemaname = 'public'
+         AND tablename = 'hr_workforce_profile_service_control'`,
+    );
+    expect(policy.rows[0]?.policy).toBe(
+      "hr_workforce_profile_service_control_tenant_isolation|ALL|" +
+        "(tenant_id = esbla_current_tenant_id())|(tenant_id = esbla_current_tenant_id())",
+    );
+
+    const functions = await migrationPool.query<{
+      config: string;
+      name: string;
+      owner: string;
+      security_definer: boolean;
+    }>(
+      `SELECT proname AS name,
+              prosecdef AS security_definer,
+              owner.rolname AS owner,
+              proconfig[1] AS config
+       FROM pg_catalog.pg_proc
+       JOIN pg_catalog.pg_roles AS owner ON owner.oid = proowner
+       WHERE pronamespace = 'public'::regnamespace
+         AND proname = ANY($1::text[])
+       ORDER BY proname`,
+      [
+        [
+          "esbla_enforce_hr_workforce_profile_service_control",
+          "esbla_sync_hr_workforce_profile_service_activation",
+        ],
+      ],
+    );
+    expect(functions.rows.map((row) => row.name)).toEqual([
+      "esbla_enforce_hr_workforce_profile_service_control",
+      "esbla_sync_hr_workforce_profile_service_activation",
+    ]);
+    expect(functions.rows.map((row) => row.security_definer)).toEqual([false, true]);
+    expect(functions.rows.every((row) => row.owner === "esbla_migrator")).toBe(true);
+    expect(functions.rows.every((row) => row.config === "search_path=pg_catalog, public")).toBe(
+      true,
+    );
+    const executionPrivileges = await migrationPool.query<{
+      delete_allowed: boolean;
+      enforce_allowed: boolean;
+      insert_allowed: boolean;
+      select_allowed: boolean;
+      sync_allowed: boolean;
+      update_allowed: boolean;
+    }>(
+      `SELECT pg_catalog.has_table_privilege(
+                'esbla_app', 'public.hr_workforce_profile_service_control', 'SELECT'
+              ) AS select_allowed,
+              pg_catalog.has_table_privilege(
+                'esbla_app', 'public.hr_workforce_profile_service_control', 'INSERT'
+              ) AS insert_allowed,
+              pg_catalog.has_table_privilege(
+                'esbla_app', 'public.hr_workforce_profile_service_control', 'UPDATE'
+              ) AS update_allowed,
+              pg_catalog.has_table_privilege(
+                'esbla_app', 'public.hr_workforce_profile_service_control', 'DELETE'
+              ) AS delete_allowed,
+              pg_catalog.has_function_privilege(
+                'esbla_app',
+                'public.esbla_enforce_hr_workforce_profile_service_control()',
+                'EXECUTE'
+              ) AS enforce_allowed,
+              pg_catalog.has_function_privilege(
+                'esbla_app',
+                'public.esbla_sync_hr_workforce_profile_service_activation()',
+                'EXECUTE'
+              ) AS sync_allowed`,
+    );
+    expect(executionPrivileges.rows).toEqual([
+      {
+        delete_allowed: false,
+        enforce_allowed: false,
+        insert_allowed: false,
+        select_allowed: true,
+        sync_allowed: false,
+        update_allowed: false,
+      },
+    ]);
+  });
+
+  it("keeps workforce-profile metadata synchronized, isolated, stable, and fail-closed", async () => {
+    type ServiceControlRow = {
+      row_version: number;
+      service_control_id: string;
+      service_key: string;
+      settings_version: number;
+      tenant_id: string;
+      updated_at: string;
+    };
+    const readControl = async (tenantId: string) =>
+      await tenantQuery<ServiceControlRow>(
+        tenantId,
+        `SELECT service_control_id::text,
+                tenant_id::text,
+                service_key,
+                settings_version,
+                updated_at::text,
+                row_version
+         FROM hr_workforce_profile_service_control
+         ORDER BY service_control_id`,
+      );
+
+    await tenantQuery(
+      ids.tenantA,
+      `INSERT INTO service_activations (tenant_id, service_key, state, version)
+       VALUES ($1, 'workforce_profile', 'active', 1)`,
+      [ids.tenantA],
+    );
+    const createdA = await readControl(ids.tenantA);
+    expect(createdA.rows[0]).toMatchObject({
+      row_version: 1,
+      service_key: "workforce_profile",
+      settings_version: 1,
+      tenant_id: ids.tenantA,
+    });
+    const stableServiceControlId = createdA.rows[0]?.service_control_id;
+    const createdAt = createdA.rows[0]?.updated_at;
+    expect(stableServiceControlId).toMatch(/^[0-9a-f-]{36}$/);
+
+    const noContext = await pool.query("SELECT * FROM hr_workforce_profile_service_control");
+    expect(noContext.rows).toEqual([]);
+    expect((await readControl(ids.tenantB)).rows).toEqual([]);
+
+    await expect(
+      tenantTransaction(ids.tenantA, async (client) => {
+        await client.query("CREATE TEMP TABLE workforce_profile_spoof (id integer) ON COMMIT DROP");
+        await client.query(
+          `CREATE FUNCTION pg_temp.spoof_workforce_profile_projection() RETURNS trigger
+           LANGUAGE plpgsql
+           AS $$
+           BEGIN
+             UPDATE public.hr_workforce_profile_service_control
+             SET row_version = row_version + 1,
+                 updated_at = updated_at + interval '1 microsecond'
+             WHERE tenant_id = current_setting('app.tenant_id')::uuid;
+             RETURN NEW;
+           END
+           $$`,
+        );
+        await client.query(
+          `CREATE TRIGGER workforce_profile_spoof_nested_update
+           AFTER INSERT ON workforce_profile_spoof
+           FOR EACH ROW EXECUTE FUNCTION pg_temp.spoof_workforce_profile_projection()`,
+        );
+        await client.query("INSERT INTO workforce_profile_spoof (id) VALUES (1)");
+      }),
+    ).rejects.toMatchObject({ code: "42501" });
+    expect((await readControl(ids.tenantA)).rows[0]).toMatchObject({
+      row_version: 1,
+      service_control_id: stableServiceControlId,
+    });
+
+    await tenantQuery(
+      ids.tenantA,
+      `UPDATE service_activations
+       SET state = 'inactive', version = 2
+       WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+      [ids.tenantA],
+    );
+    const deactivatedA = await readControl(ids.tenantA);
+    expect(deactivatedA.rows[0]).toMatchObject({
+      row_version: 2,
+      service_control_id: stableServiceControlId,
+      settings_version: 1,
+    });
+    expect(Date.parse(deactivatedA.rows[0]?.updated_at ?? "")).toBeGreaterThan(
+      Date.parse(createdAt ?? ""),
+    );
+
+    await tenantQuery(
+      ids.tenantB,
+      `INSERT INTO service_activations (tenant_id, service_key, state, version)
+       VALUES ($1, 'workforce_profile', 'active', 1)`,
+      [ids.tenantB],
+    );
+    const createdB = await readControl(ids.tenantB);
+
+    const transitionTenantB = async () =>
+      await tenantQuery(
+        ids.tenantB,
+        `UPDATE service_activations
+         SET state = 'inactive', version = 2
+         WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+        [ids.tenantB],
+      );
+    const readTenantBAuthority = async () =>
+      await tenantQuery<{ state: string; version: number }>(
+        ids.tenantB,
+        `SELECT state::text, version
+         FROM service_activations
+         WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+        [ids.tenantB],
+      );
+
+    const removed = await withServiceControlGuardDisabled(
+      ids.tenantB,
+      async (client) =>
+        await client.query(
+          `DELETE FROM hr_workforce_profile_service_control
+         WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+          [ids.tenantB],
+        ),
+    );
+    expect(removed.rowCount).toBe(1);
+    await expect(transitionTenantB()).rejects.toMatchObject({ code: "55000" });
+    expect((await readTenantBAuthority()).rows).toEqual([{ state: "active", version: 1 }]);
+
+    await withServiceControlGuardDisabled(
+      ids.tenantB,
+      async (client) =>
+        await client.query(
+          `INSERT INTO hr_workforce_profile_service_control
+           (service_control_id, tenant_id, service_key, settings_version, updated_at, row_version)
+         VALUES ($1, $2, 'workforce_profile', 1, $3, 1)`,
+          [createdB.rows[0]?.service_control_id, ids.tenantB, createdB.rows[0]?.updated_at],
+        ),
+    );
+    await withServiceControlGuardDisabled(
+      ids.tenantB,
+      async (client) =>
+        await client.query(
+          `UPDATE hr_workforce_profile_service_control
+         SET row_version = 2,
+             updated_at = updated_at + interval '1 microsecond'
+         WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+          [ids.tenantB],
+        ),
+    );
+    await expect(transitionTenantB()).rejects.toMatchObject({ code: "55000" });
+    expect((await readTenantBAuthority()).rows).toEqual([{ state: "active", version: 1 }]);
+    expect((await readControl(ids.tenantB)).rows[0]?.row_version).toBe(2);
+
+    await withServiceControlGuardDisabled(
+      ids.tenantB,
+      async (client) =>
+        await client.query(
+          `UPDATE hr_workforce_profile_service_control
+         SET row_version = 1,
+             updated_at = $2
+         WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+          [ids.tenantB, createdB.rows[0]?.updated_at],
+        ),
+    );
+
+    await expect(
+      migrationTenantTransaction(
+        ids.tenantA,
+        async (client) =>
+          await client.query(
+            `UPDATE hr_workforce_profile_service_control
+           SET settings_version = settings_version + 1
+           WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+            [ids.tenantA],
+          ),
+      ),
+    ).rejects.toMatchObject({ code: "55000" });
+    await expect(
+      migrationTenantTransaction(
+        ids.tenantA,
+        async (client) =>
+          await client.query(
+            `DELETE FROM hr_workforce_profile_service_control
+           WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+            [ids.tenantA],
+          ),
+      ),
+    ).rejects.toMatchObject({ code: "55000" });
+    await expect(
+      migrationTenantTransaction(
+        ids.tenantA,
+        async (client) => await client.query("TRUNCATE hr_workforce_profile_service_control"),
+      ),
+    ).rejects.toMatchObject({ code: "55000" });
+
+    expect((await readControl(ids.tenantB)).rows[0]).toMatchObject({
+      row_version: 1,
+      service_control_id: createdB.rows[0]?.service_control_id,
+      settings_version: 1,
     });
   });
 
