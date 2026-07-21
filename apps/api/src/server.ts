@@ -4,6 +4,9 @@ import {
   type HrDecideLeaveRequestBody,
   type HrLeaveListQuery,
   type HrLeaveRequestPath,
+  type HrServiceActivateBody,
+  type HrServiceControlQuery,
+  type HrServiceDeactivateBody,
   type HrSubmitLeaveRequestBody,
   hrAssignedLeaveListQuerySchema,
   hrAssignedLeaveRequestPageSchema,
@@ -16,7 +19,14 @@ import {
   hrLeaveRequestPageSchema,
   hrLeaveRequestPathSchema,
   hrLeaveRequestSchema,
+  hrServiceActivateBodySchema,
+  hrServiceControlQuerySchema,
+  hrServiceControlSchema,
+  hrServiceDeactivateBodySchema,
   hrSubmitLeaveRequestBodySchema,
+  parseHrServiceActivateBody,
+  parseHrServiceControlQuery,
+  parseHrServiceDeactivateBody,
   problemDetailsSchema,
   type WorkspaceCompleteTaskBody,
   type WorkspaceCreateTaskBody,
@@ -31,8 +41,11 @@ import {
   workspaceTaskSchema,
 } from "@esbla/contracts";
 import {
+  activateWorkforceProfileService,
   approveLeaveRequest,
+  deactivateWorkforceProfileService,
   getLeaveRequestDetail,
+  getWorkforceProfileServiceControl,
   HrLeaveError,
   listAssignedLeaveRequests,
   listOwnLeaveRequests,
@@ -62,7 +75,9 @@ declare module "fastify" {
 export interface CreateServerOptions {
   readonly authenticate: RequestAuthenticator;
   readonly logger?: boolean;
+  readonly migrationReadPool?: Pool;
   readonly pool: Pool;
+  readonly runtimeEnvironment?: "development" | "production" | "test";
 }
 
 function operationContext(request: FastifyRequest): OperationContext {
@@ -75,6 +90,20 @@ function idempotencyKey(request: FastifyRequest): string {
   const key = Array.isArray(value) ? value[0] : value;
   if (!key) throw new Error("authenticated idempotency key is missing");
   return key;
+}
+
+function requestContractViolation(): Error & { readonly validation: readonly unknown[] } {
+  return Object.assign(new Error("Request did not match the API contract"), {
+    validation: [{}],
+  });
+}
+
+function assertStrictRequest<T>(parse: (value: unknown) => T, value: unknown): T {
+  try {
+    return parse(value);
+  } catch {
+    throw requestContractViolation();
+  }
 }
 
 function pageResponse<T extends { leaveRequestId: string; submittedAt: string }>(
@@ -115,6 +144,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
   });
   for (const schema of [
     hrSubmitLeaveRequestBodySchema,
+    hrServiceControlQuerySchema,
+    hrServiceActivateBodySchema,
+    hrServiceDeactivateBodySchema,
+    hrServiceControlSchema,
     hrDecideLeaveRequestBodySchema,
     hrLeaveRequestPathSchema,
     hrLeaveListQuerySchema,
@@ -164,6 +197,87 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
       return reply.code(503).send({ status: "not_ready" });
     }
   });
+
+  server.get<{ Querystring: HrServiceControlQuery }>(
+    "/v1/hr/workforce-profiles/service-control",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictRequest(parseHrServiceControlQuery, request.query);
+        },
+      ],
+      schema: {
+        querystring: { $ref: "HrServiceControlQueryV1#" },
+        response: {
+          200: { $ref: "HrServiceControlResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request) =>
+      (await getWorkforceProfileServiceControl(options.pool, operationContext(request))).control,
+  );
+
+  server.post<{ Body: HrServiceActivateBody }>(
+    "/v1/hr/workforce-profiles/service-control/activate",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictRequest(parseHrServiceActivateBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrServiceActivateRequestV1#" },
+        response: {
+          200: { $ref: "HrServiceControlResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await activateWorkforceProfileService(
+        options.pool,
+        options.migrationReadPool ?? options.pool,
+        operationContext(request),
+        request.body,
+        options.runtimeEnvironment === "development" || options.runtimeEnvironment === "test"
+          ? "non_production"
+          : "production",
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(result.control);
+    },
+  );
+
+  server.post<{ Body: HrServiceDeactivateBody }>(
+    "/v1/hr/workforce-profiles/service-control/deactivate",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictRequest(parseHrServiceDeactivateBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrServiceDeactivateRequestV1#" },
+        response: {
+          200: { $ref: "HrServiceControlResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await deactivateWorkforceProfileService(
+        options.pool,
+        operationContext(request),
+        request.body,
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(result.control);
+    },
+  );
 
   server.post<{ Body: HrSubmitLeaveRequestBody }>(
     "/v1/hr/leave-requests",

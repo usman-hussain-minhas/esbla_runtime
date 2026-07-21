@@ -1,10 +1,12 @@
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { createDatabase, createDatabasePool, migrateDatabase } from "@esbla/db";
 import { evaluatePolicy, setServiceActivation, withTenantTransaction } from "@esbla/platform-core";
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from "fastify";
 import type { Pool, PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDevelopmentAuthenticator, signDevelopmentPrincipal } from "./auth.js";
+import { AuthError, createDevelopmentAuthenticator, signDevelopmentPrincipal } from "./auth.js";
 import { createServer } from "./server.js";
 
 const now = new Date("2026-07-10T12:00:00.000Z");
@@ -36,6 +38,7 @@ interface SignedRequestOptions {
   readonly principalId: string;
   readonly requestId?: string;
   readonly signatureOverride?: string;
+  readonly targetServer?: FastifyInstance;
   readonly tenantId: string;
   readonly timestamp?: string;
   readonly url: string;
@@ -173,7 +176,9 @@ async function signedRequest(options: SignedRequestOptions) {
     url: options.url,
   };
   if (options.body !== undefined) requestOptions.payload = options.body;
-  const response: LightMyRequestResponse = await server.inject(requestOptions);
+  const response: LightMyRequestResponse = await (options.targetServer ?? server).inject(
+    requestOptions,
+  );
   return { requestId, response };
 }
 
@@ -372,6 +377,11 @@ beforeAll(async () => {
      TO ${applicationRole}`,
   );
   await migrationPool.query(`GRANT SELECT, INSERT ON evidence_events TO ${applicationRole}`);
+  await migrationPool.query(
+    `GRANT SELECT
+     ON hr_workforce_profile_service_control, membership_capabilities
+     TO ${applicationRole}`,
+  );
 
   pool = createDatabasePool(connectionString, { max: 8 });
   await pool.query(
@@ -437,13 +447,36 @@ beforeAll(async () => {
   } finally {
     client.release();
   }
+  const authorityClient = await migrationPool.connect();
+  try {
+    await seedTenantRow(
+      authorityClient,
+      ids.tenantA,
+      `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+       SELECT $1, $2, capability_id
+       FROM unnest($3::text[]) AS capability(capability_id)`,
+      [
+        ids.tenantA,
+        ids.adminA,
+        [
+          "hr.workforce.activate_service",
+          "hr.workforce.deactivate_service",
+          "hr.workforce.view_service_control",
+        ],
+      ],
+    );
+  } finally {
+    authorityClient.release();
+  }
 
   await activateLeaveService(ids.tenantA, ids.adminA);
   await activateLeaveService(ids.tenantB, ids.adminB);
   server = createServer({
     authenticate: createDevelopmentAuthenticator({ clock: () => now, secret }),
     logger: false,
+    migrationReadPool: migrationPool,
     pool,
+    runtimeEnvironment: "test",
   });
 });
 
@@ -451,6 +484,76 @@ afterAll(async () => {
   await server.close();
   await pool.end();
   await migrationPool.end();
+});
+
+describe("Runtime environment boundary", () => {
+  function runMain(nodeEnvironment: string | undefined) {
+    const environment = { ...process.env };
+    delete environment.DATABASE_MIGRATION_URL;
+    delete environment.DATABASE_URL;
+    delete environment.ESBLA_DEV_AUTH_SECRET;
+    if (nodeEnvironment === undefined) delete environment.NODE_ENV;
+    else environment.NODE_ENV = nodeEnvironment;
+    return spawnSync(process.execPath, ["--import", "tsx", "src/main.ts"], {
+      cwd: fileURLToPath(new URL("../", import.meta.url)),
+      encoding: "utf8",
+      env: environment,
+      timeout: 10_000,
+    });
+  }
+
+  it.each([
+    undefined,
+    "production",
+    "staging",
+    "unknown",
+  ])("fails mode %s closed before database or development-auth startup", (nodeEnvironment) => {
+    const result = runMain(nodeEnvironment);
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "Production identity verifier has not been selected or configured",
+    );
+  });
+
+  it.each([
+    "development",
+    "test",
+  ])("allows exact %s mode past the identity gate", (nodeEnvironment) => {
+    const result = runMain(nodeEnvironment);
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+    expect(`${result.stdout}${result.stderr}`).toContain("DATABASE_URL is required");
+    expect(`${result.stdout}${result.stderr}`).not.toContain(
+      "Production identity verifier has not been selected or configured",
+    );
+  });
+
+  it("bounds and strips control characters from typed Problem Details", async () => {
+    const problemServer = createServer({
+      authenticate: () => {
+        throw new AuthError("AUTH_INVALID", `unsafe\u0000\u0080\u009f${"x".repeat(512)}`);
+      },
+      logger: false,
+      pool: {} as Pool,
+    });
+    try {
+      const response = await problemServer.inject({ method: "GET", url: "/v1/hr/leave-requests" });
+      const problem = response.json<Record<string, unknown>>();
+      expect(response.statusCode).toBe(401);
+      expect(String(problem.detail).length).toBeLessThanOrEqual(256);
+      expect(
+        [...String(problem.detail)].some((character) => {
+          const codePoint = character.codePointAt(0);
+          return (
+            codePoint !== undefined && (codePoint <= 31 || (codePoint >= 127 && codePoint <= 159))
+          );
+        }),
+      ).toBe(false);
+    } finally {
+      await problemServer.close();
+    }
+  });
 });
 
 describe("HR Leave Request API boundary", () => {
@@ -915,5 +1018,228 @@ describe("HR Leave Request API boundary", () => {
         .json<{ history: { eventType: string }[] }>()
         .history.map((event) => event.eventType),
     ).toEqual(["evidence.hr.leave_request.submitted", "evidence.hr.leave_request.approved"]);
+  });
+});
+
+describe("Workforce Profile service-control API boundary", () => {
+  const url = "/v1/hr/workforce-profiles/service-control";
+
+  it("enforces strict input and current tenant-admin authority before exact replay", async () => {
+    const strictQuery = await signedRequest({
+      method: "GET",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: `${url}?unexpected=true`,
+    });
+    expect(strictQuery.response.statusCode).toBe(400);
+    expect(strictQuery.response.json()).toMatchObject({ code: "REQUEST_VALIDATION_FAILED" });
+
+    const denied = await signedRequest({
+      method: "GET",
+      principalId: ids.employeeA,
+      tenantId: ids.tenantA,
+      url,
+    });
+    expectPolicyDenied(denied);
+    const absent = await signedRequest({
+      method: "GET",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url,
+    });
+    expect(absent.response.statusCode).toBe(404);
+    expect(absent.response.json()).toMatchObject({
+      code: "WORKFORCE_SERVICE_CONTROL_NOT_FOUND",
+    });
+
+    const invalidBody = { expectedVersion: "1" };
+    const invalid = await signedRequest({
+      body: invalidBody,
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: `${url}/activate`,
+    });
+    expect(invalid.response.statusCode).toBe(400);
+    expect(invalid.response.json()).toMatchObject({ code: "REQUEST_VALIDATION_FAILED" });
+
+    const body = { expectedVersion: null };
+    const idempotencyKey = randomUUID();
+    const deniedMutation = await signedRequest({
+      body,
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.employeeA,
+      tenantId: ids.tenantA,
+      url: `${url}/activate`,
+    });
+    expectPolicyDenied(deniedMutation);
+    const authorityClient = await migrationPool.connect();
+    try {
+      await seedTenantRow(
+        authorityClient,
+        ids.tenantA,
+        `DELETE FROM membership_capabilities
+         WHERE tenant_id = $1 AND principal_id = $2 AND capability_id = $3`,
+        [ids.tenantA, ids.adminA, "hr.workforce.activate_service"],
+      );
+      expectPolicyDenied(
+        await signedRequest({
+          body,
+          idempotencyKey: randomUUID(),
+          method: "POST",
+          principalId: ids.adminA,
+          tenantId: ids.tenantA,
+          url: `${url}/activate`,
+        }),
+      );
+    } finally {
+      await seedTenantRow(
+        authorityClient,
+        ids.tenantA,
+        `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+         VALUES ($1, $2, $3)`,
+        [ids.tenantA, ids.adminA, "hr.workforce.activate_service"],
+      );
+      authorityClient.release();
+    }
+    const activated = await signedRequest({
+      body,
+      idempotencyKey,
+      method: "POST",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: `${url}/activate`,
+    });
+    expect(activated.response.statusCode).toBe(200);
+    expect(activated.response.headers["idempotent-replayed"]).toBe("false");
+    expect(activated.response.json()).toEqual({
+      activationState: "active",
+      activationVersion: 1,
+      serviceKey: "workforce_profile",
+      settingsVersion: 1,
+      updatedAt: expect.any(String),
+      version: 1,
+    });
+    const replay = await signedRequest({
+      body,
+      idempotencyKey,
+      method: "POST",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: `${url}/activate`,
+    });
+    expect(replay.response.statusCode).toBe(200);
+    expect(replay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(replay.response.json()).toEqual(activated.response.json());
+
+    const activeView = await signedRequest({
+      method: "GET",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url,
+    });
+    expect(activeView.response.statusCode).toBe(200);
+    expect(activeView.response.json()).toEqual(activated.response.json());
+
+    const conflict = await signedRequest({
+      body,
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: `${url}/activate`,
+    });
+    expect(conflict.response.statusCode).toBe(409);
+    expect(conflict.response.json()).toMatchObject({ code: "ACTIVATION_CONFLICT", status: 409 });
+
+    const invalidDeactivate = await signedRequest({
+      body: { expectedVersion: null },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: `${url}/deactivate`,
+    });
+    expect(invalidDeactivate.response.statusCode).toBe(400);
+    expect(invalidDeactivate.response.json()).toMatchObject({
+      code: "REQUEST_VALIDATION_FAILED",
+      status: 400,
+    });
+
+    const deactivateBody = { expectedVersion: 1 };
+    const deactivateKey = randomUUID();
+    const deactivated = await signedRequest({
+      body: deactivateBody,
+      idempotencyKey: deactivateKey,
+      method: "POST",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: `${url}/deactivate`,
+    });
+    expect(deactivated.response.statusCode).toBe(200);
+    expect(deactivated.response.headers["idempotent-replayed"]).toBe("false");
+    expect(deactivated.response.json()).toMatchObject({
+      activationState: "inactive",
+      activationVersion: 2,
+      serviceKey: "workforce_profile",
+      settingsVersion: 1,
+      version: 2,
+    });
+    const deactivateReplay = await signedRequest({
+      body: deactivateBody,
+      idempotencyKey: deactivateKey,
+      method: "POST",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: `${url}/deactivate`,
+    });
+    expect(deactivateReplay.response.statusCode).toBe(200);
+    expect(deactivateReplay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(deactivateReplay.response.json()).toEqual(deactivated.response.json());
+
+    const productionServer = createServer({
+      authenticate: createDevelopmentAuthenticator({ clock: () => now, secret }),
+      logger: false,
+      migrationReadPool: migrationPool,
+      pool,
+      runtimeEnvironment: "production",
+    });
+    try {
+      const sensitiveQuery = `private=${"secret".repeat(100)}`;
+      const dependencyBlocked = await signedRequest({
+        body: { expectedVersion: 2 },
+        idempotencyKey: randomUUID(),
+        method: "POST",
+        principalId: ids.adminA,
+        targetServer: productionServer,
+        tenantId: ids.tenantA,
+        url: `${url}/activate?${sensitiveQuery}`,
+      });
+      expect(dependencyBlocked.response.statusCode).toBe(503);
+      const problem = dependencyBlocked.response.json<Record<string, unknown>>();
+      expect(problem).toMatchObject({ code: "ACTIVATION_DEPENDENCY_BLOCKED", status: 503 });
+      expect(Object.keys(problem).sort()).toEqual(
+        ["code", "detail", "instance", "requestId", "status", "title", "type"].sort(),
+      );
+      expect(problem).not.toHaveProperty("reasons");
+      expect(problem).not.toHaveProperty("details");
+      expect(problem.instance).toBe("/v1/hr/workforce-profiles/service-control/activate");
+      expect(dependencyBlocked.response.body).not.toContain("secret");
+      for (const value of Object.values(problem)) {
+        if (typeof value === "string") expect(value.length).toBeLessThanOrEqual(256);
+      }
+    } finally {
+      await productionServer.close();
+    }
+    const inactiveView = await signedRequest({
+      method: "GET",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url,
+    });
+    expect(inactiveView.response.statusCode).toBe(200);
+    expect(inactiveView.response.json()).toEqual(deactivated.response.json());
   });
 });
