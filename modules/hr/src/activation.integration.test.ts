@@ -4,10 +4,13 @@ import type { Pool, PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   activateHrLeaveService,
+  activateWorkforceProfileService as activateWorkforceProfileServiceDomain,
   approveLeaveRequest,
   deactivateHrLeaveService,
+  deactivateWorkforceProfileService,
   getLeaveRequest,
   getLeaveRequestDetail,
+  getWorkforceProfileServiceControl,
   listAssignedLeaveRequests,
   listLeaveEvidence,
   listOwnLeaveRequests,
@@ -16,6 +19,8 @@ import {
 } from "./index.js";
 
 const tenantContextHash = "9e360ba35e62b22ddb9b993a9af007ecec92777c4623e805c439fceeee17197f";
+const workforceProfileMigrationHash =
+  "f6ecf5aeedb02686452a2855d96382383a1dc95e0514814c03773fb94fb92dde";
 const migrationBarrierKey = [1163084364, 1296648018] as const;
 const initialActivationConflict = {
   code: "ACTIVATION_CONFLICT",
@@ -38,6 +43,11 @@ const ids = {
   correlationMigration: "50000000-0000-4000-8000-000000002007",
   correlationSubmit: "50000000-0000-4000-8000-000000002008",
   correlationSubmitBlocked: "50000000-0000-4000-8000-000000002009",
+  correlationWorkforceActivate: "50000000-0000-4000-8000-000000002010",
+  correlationWorkforceCatalog: "50000000-0000-4000-8000-000000002011",
+  correlationWorkforceDeactivate: "50000000-0000-4000-8000-000000002012",
+  correlationWorkforceDenied: "50000000-0000-4000-8000-000000002013",
+  correlationWorkforceReactivate: "50000000-0000-4000-8000-000000002014",
   employeeA: "10000000-0000-4000-8000-000000002002",
   managerA: "10000000-0000-4000-8000-000000002003",
   membershipAdminA: "20000000-0000-4000-8000-000000002001",
@@ -132,6 +142,7 @@ const catalogDriftCases = [
   },
 ];
 type CatalogDriftCase = (typeof catalogDriftCases)[number];
+let applicationRole = "";
 let migrationPool: Pool;
 let migrationConnectionString = "";
 let originalTenantContextFunctionDefinition = "";
@@ -145,6 +156,19 @@ const context = (
   actorPrincipalId: string,
   correlationId: string,
 ): OperationContext => ({ actorPrincipalId, correlationId, tenantId });
+const activateWorkforceProfileService = (
+  runtimePool: Pool,
+  migrationReadPool: Pool,
+  operationContext: OperationContext,
+  input: { readonly expectedVersion: number | null },
+) =>
+  activateWorkforceProfileServiceDomain(
+    runtimePool,
+    migrationReadPool,
+    operationContext,
+    input,
+    "non_production",
+  );
 async function seedTenantRow(
   client: PoolClient,
   tenantId: string,
@@ -224,6 +248,52 @@ async function activationSnapshot(
     },
   );
 }
+async function workforceProfileSnapshot() {
+  return await withTenantTransaction(
+    pool,
+    context(ids.tenantA, ids.observerA, ids.correlationWorkforceDenied),
+    async ({ client }) => {
+      const activation = await client.query<{ state: string; version: number }>(
+        `SELECT state, version FROM service_activations
+         WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+        [ids.tenantA],
+      );
+      const control = await client.query<{
+        row_version: number;
+        service_control_id: string;
+        settings_version: number;
+      }>(
+        `SELECT service_control_id, settings_version, row_version
+         FROM hr_workforce_profile_service_control
+         WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+        [ids.tenantA],
+      );
+      const proof = await client.query<{
+        action: string;
+        after_version: number;
+        before_version: number | null;
+        event_type: string;
+      }>(
+        `SELECT evidence.event_type,
+                outbox.payload ->> 'action' AS action,
+                (outbox.payload ->> 'beforeVersion')::integer AS before_version,
+                (outbox.payload ->> 'afterVersion')::integer AS after_version
+         FROM evidence_events evidence
+         JOIN outbox_events outbox
+          ON outbox.tenant_id = evidence.tenant_id
+         AND outbox.aggregate_type = evidence.subject_type
+         AND outbox.aggregate_id = evidence.subject_id
+         AND outbox.correlation_id = evidence.correlation_id
+         AND outbox.event_type = evidence.event_type
+         WHERE evidence.tenant_id = $1
+           AND evidence.subject_type = 'hr.workforce_profile.service_control'
+         ORDER BY outbox.aggregate_version`,
+        [ids.tenantA],
+      );
+      return { activation: activation.rows, control: control.rows, proof: proof.rows };
+    },
+  );
+}
 async function setAdminA(fields: { roleKey?: string; status?: string }): Promise<void> {
   await withTenantTransaction(
     pool,
@@ -237,6 +307,23 @@ async function setAdminA(fields: { roleKey?: string; status?: string }): Promise
       );
     },
   );
+}
+async function setAdminCapability(capabilityId: string, granted: boolean): Promise<void> {
+  const client = await migrationPool.connect();
+  try {
+    await seedTenantRow(
+      client,
+      ids.tenantA,
+      granted
+        ? `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+           VALUES ($1, $2, $3)`
+        : `DELETE FROM membership_capabilities
+           WHERE tenant_id = $1 AND principal_id = $2 AND capability_id = $3`,
+      [ids.tenantA, ids.adminA, capabilityId],
+    );
+  } finally {
+    client.release();
+  }
 }
 async function waitForAdvisoryLock(
   observer: Pool,
@@ -414,13 +501,14 @@ async function withCommittedCatalogDrift(
 beforeAll(async () => {
   const connectionString = process.env.DATABASE_URL;
   migrationConnectionString = process.env.DATABASE_MIGRATION_URL ?? "";
-  const applicationRole = process.env.ESBLA_TEST_APPLICATION_ROLE;
-  if (!connectionString || !migrationConnectionString || !applicationRole) {
+  const configuredApplicationRole = process.env.ESBLA_TEST_APPLICATION_ROLE;
+  if (!connectionString || !migrationConnectionString || !configuredApplicationRole) {
     throw new Error("PostgreSQL harness environment is required");
   }
-  if (!/^[a-z_][a-z0-9_]*$/.test(applicationRole)) {
+  if (!/^[a-z_][a-z0-9_]*$/.test(configuredApplicationRole)) {
     throw new Error("Application role is not a safe PostgreSQL identifier");
   }
+  applicationRole = configuredApplicationRole;
 
   migrationPool = createDatabasePool(migrationConnectionString, { max: 2 });
   await migrateDatabase(createDatabase(migrationPool));
@@ -443,6 +531,11 @@ beforeAll(async () => {
      TO ${applicationRole}`,
   );
   await migrationPool.query(`GRANT SELECT, INSERT ON evidence_events TO ${applicationRole}`);
+  await migrationPool.query(
+    `GRANT SELECT
+     ON hr_workforce_profile_service_control, membership_capabilities
+     TO ${applicationRole}`,
+  );
   pool = createDatabasePool(connectionString, { max: 8 });
   untrustedMigrationReadPool = createDatabasePool(connectionString, { max: 1 });
 
@@ -490,6 +583,27 @@ beforeAll(async () => {
     );
   } finally {
     client.release();
+  }
+  const authorityClient = await migrationPool.connect();
+  try {
+    await seedTenantRow(
+      authorityClient,
+      ids.tenantA,
+      `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+       SELECT $1, $2, capability_id
+       FROM unnest($3::text[]) AS capability(capability_id)`,
+      [
+        ids.tenantA,
+        ids.adminA,
+        [
+          "hr.workforce.activate_service",
+          "hr.workforce.deactivate_service",
+          "hr.workforce.view_service_control",
+        ],
+      ],
+    );
+  } finally {
+    authorityClient.release();
   }
 });
 
@@ -900,5 +1014,388 @@ describe.sequential("HR Leave service lifecycle control plane", () => {
       await expect(operation()).rejects.toMatchObject({ code: "LEAVE_SERVICE_INACTIVE" });
     }
     expect(await activationSnapshot()).toEqual(after);
+  });
+});
+describe.sequential("Workforce Profile service-control lifecycle", () => {
+  it("fails closed for unauthorized actors and preserves exact historical replay proof", async () => {
+    const employeeContext = context(ids.tenantA, ids.employeeA, ids.correlationWorkforceDenied);
+    await expect(getWorkforceProfileServiceControl(pool, employeeContext)).rejects.toMatchObject({
+      code: "POLICY_DENIED",
+    });
+    await expect(
+      getWorkforceProfileServiceControl(
+        pool,
+        context(ids.tenantA, ids.adminA, ids.correlationWorkforceDenied),
+      ),
+    ).rejects.toMatchObject({ code: "WORKFORCE_SERVICE_CONTROL_NOT_FOUND" });
+    const empty = await workforceProfileSnapshot();
+    expect(empty).toEqual({ activation: [], control: [], proof: [] });
+    await expect(
+      activateWorkforceProfileService(pool, rejectingMigrationReadPool, employeeContext, {
+        expectedVersion: null,
+      }),
+    ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+    expect(await workforceProfileSnapshot()).toEqual(empty);
+
+    const activated = await activateWorkforceProfileService(
+      pool,
+      migrationPool,
+      context(ids.tenantA, ids.adminA, ids.correlationWorkforceActivate),
+      { expectedVersion: null },
+    );
+    expect(activated).toEqual({
+      billingState: "non_billable",
+      control: {
+        activationState: "active",
+        activationVersion: 1,
+        serviceKey: "workforce_profile",
+        settingsVersion: 1,
+        updatedAt: expect.any(String),
+        version: 1,
+      },
+      replayed: false,
+    });
+    await expect(
+      activateWorkforceProfileService(
+        pool,
+        rejectingMigrationReadPool,
+        context(ids.tenantA, ids.adminA, ids.correlationWorkforceActivate),
+        { expectedVersion: null },
+      ),
+    ).resolves.toEqual({ ...activated, replayed: true });
+
+    const deactivated = await deactivateWorkforceProfileService(
+      pool,
+      context(ids.tenantA, ids.adminA, ids.correlationWorkforceDeactivate),
+      { expectedVersion: 1 },
+    );
+    expect(deactivated.control).toMatchObject({
+      activationState: "inactive",
+      activationVersion: 2,
+      settingsVersion: 1,
+      version: 2,
+    });
+    await expect(
+      deactivateWorkforceProfileService(
+        pool,
+        context(ids.tenantA, ids.adminA, ids.correlationWorkforceDeactivate),
+        { expectedVersion: 1 },
+      ),
+    ).resolves.toEqual({ ...deactivated, replayed: true });
+
+    const reactivated = await activateWorkforceProfileService(
+      pool,
+      migrationPool,
+      context(ids.tenantA, ids.adminA, ids.correlationWorkforceReactivate),
+      { expectedVersion: 2 },
+    );
+    expect(reactivated.control).toMatchObject({
+      activationState: "active",
+      activationVersion: 3,
+      settingsVersion: 1,
+      version: 3,
+    });
+    await expect(
+      activateWorkforceProfileService(
+        pool,
+        rejectingMigrationReadPool,
+        context(ids.tenantA, ids.adminA, ids.correlationWorkforceActivate),
+        { expectedVersion: null },
+      ),
+    ).resolves.toEqual({ ...activated, replayed: true });
+    await expect(
+      getWorkforceProfileServiceControl(
+        pool,
+        context(ids.tenantA, ids.adminA, ids.correlationWorkforceDenied),
+      ),
+    ).resolves.toEqual({ ...reactivated, replayed: false });
+
+    const proofContext = context(ids.tenantA, ids.observerA, ids.correlationWorkforceDenied);
+    const originalPayload = await withTenantTransaction(pool, proofContext, async ({ client }) => {
+      const proof = await client.query<{ payload: unknown }>(
+        `SELECT payload FROM outbox_events
+         WHERE tenant_id = $1
+           AND aggregate_type = 'hr.workforce_profile.service_control'
+           AND correlation_id = $2`,
+        [ids.tenantA, ids.correlationWorkforceActivate],
+      );
+      const payload = proof.rows[0]?.payload;
+      if (
+        !payload ||
+        typeof payload !== "object" ||
+        !("serviceControl" in payload) ||
+        !payload.serviceControl ||
+        typeof payload.serviceControl !== "object"
+      ) {
+        throw new Error("Workforce Profile replay proof is unavailable");
+      }
+      await client.query(
+        `UPDATE outbox_events
+         SET payload = jsonb_set(payload, '{serviceControl,updatedAt}', '"2000-01-01T00:00:00.000Z"')
+         WHERE tenant_id = $1
+           AND aggregate_type = 'hr.workforce_profile.service_control'
+           AND correlation_id = $2`,
+        [ids.tenantA, ids.correlationWorkforceActivate],
+      );
+      return payload;
+    });
+    try {
+      await expect(
+        activateWorkforceProfileService(
+          pool,
+          rejectingMigrationReadPool,
+          context(ids.tenantA, ids.adminA, ids.correlationWorkforceActivate),
+          { expectedVersion: null },
+        ),
+      ).rejects.toMatchObject({ code: "ACTIVATION_CONFLICT" });
+    } finally {
+      await withTenantTransaction(pool, proofContext, async ({ client }) =>
+        client.query(
+          `UPDATE outbox_events SET payload = $3::jsonb
+           WHERE tenant_id = $1
+             AND aggregate_type = 'hr.workforce_profile.service_control'
+             AND correlation_id = $2`,
+          [ids.tenantA, ids.correlationWorkforceActivate, JSON.stringify(originalPayload)],
+        ),
+      );
+    }
+
+    const beforeDemotion = await workforceProfileSnapshot();
+    await setAdminA({ roleKey: "employee" });
+    try {
+      await expect(
+        getWorkforceProfileServiceControl(
+          pool,
+          context(ids.tenantA, ids.adminA, ids.correlationWorkforceDenied),
+        ),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+      await expect(
+        activateWorkforceProfileService(
+          pool,
+          rejectingMigrationReadPool,
+          context(ids.tenantA, ids.adminA, ids.correlationWorkforceActivate),
+          { expectedVersion: null },
+        ),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+    } finally {
+      await setAdminA({ roleKey: "tenant_admin" });
+    }
+    await expect(
+      getWorkforceProfileServiceControl(
+        pool,
+        context(ids.tenantB, ids.adminA, ids.correlationWorkforceDenied),
+      ),
+    ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+    expect(await workforceProfileSnapshot()).toEqual(beforeDemotion);
+  });
+
+  it("re-reads the exact current capability for every service-control consumer", async () => {
+    const before = await workforceProfileSnapshot();
+    const cases = [
+      {
+        capability: "hr.workforce.view_service_control",
+        operation: () =>
+          getWorkforceProfileServiceControl(
+            pool,
+            context(ids.tenantA, ids.adminA, ids.correlationWorkforceDenied),
+          ),
+      },
+      {
+        capability: "hr.workforce.activate_service",
+        operation: () =>
+          activateWorkforceProfileService(
+            pool,
+            migrationPool,
+            context(ids.tenantA, ids.adminA, ids.correlationWorkforceCatalog),
+            { expectedVersion: 2 },
+          ),
+      },
+      {
+        capability: "hr.workforce.deactivate_service",
+        operation: () =>
+          deactivateWorkforceProfileService(
+            pool,
+            context(ids.tenantA, ids.adminA, ids.correlationWorkforceCatalog),
+            { expectedVersion: 3 },
+          ),
+      },
+    ];
+    for (const testCase of cases) {
+      await setAdminCapability(testCase.capability, false);
+      try {
+        await expect(testCase.operation()).rejects.toMatchObject({ code: "POLICY_DENIED" });
+      } finally {
+        await setAdminCapability(testCase.capability, true);
+      }
+    }
+    expect(await workforceProfileSnapshot()).toEqual(before);
+  });
+
+  it("blocks stale migration and catalog evidence before activation", async () => {
+    await deactivateWorkforceProfileService(
+      pool,
+      context(ids.tenantA, ids.adminA, "50000000-0000-4000-8000-000000002015"),
+      { expectedVersion: 3 },
+    );
+    const inactive = await workforceProfileSnapshot();
+    await expect(
+      activateWorkforceProfileServiceDomain(
+        pool,
+        migrationPool,
+        context(ids.tenantA, ids.adminA, ids.correlationWorkforceCatalog),
+        { expectedVersion: 4 },
+        "production",
+      ),
+    ).rejects.toMatchObject({
+      code: "ACTIVATION_DEPENDENCY_BLOCKED",
+      details: { reasons: ["qualified_retention_evidence_unavailable"] },
+    });
+    expect(await workforceProfileSnapshot()).toEqual(inactive);
+
+    await migrationPool.query(
+      `GRANT UPDATE (settings_version)
+       ON hr_workforce_profile_service_control TO ${applicationRole}`,
+    );
+    try {
+      await expect(
+        activateWorkforceProfileService(
+          pool,
+          migrationPool,
+          context(ids.tenantA, ids.adminA, ids.correlationWorkforceCatalog),
+          { expectedVersion: 4 },
+        ),
+      ).rejects.toMatchObject({
+        code: "ACTIVATION_DEPENDENCY_BLOCKED",
+        details: { reasons: ["runtime_projection_privileges_not_current"] },
+      });
+    } finally {
+      await migrationPool.query(
+        `REVOKE UPDATE (settings_version)
+         ON hr_workforce_profile_service_control FROM ${applicationRole}`,
+      );
+    }
+    expect(await workforceProfileSnapshot()).toEqual(inactive);
+
+    const staleHash = "2".repeat(64);
+    await migrationPool.query("UPDATE drizzle.__drizzle_migrations SET hash = $2 WHERE hash = $1", [
+      workforceProfileMigrationHash,
+      staleHash,
+    ]);
+    try {
+      await expect(
+        activateWorkforceProfileService(
+          pool,
+          migrationPool,
+          context(ids.tenantA, ids.adminA, ids.correlationWorkforceCatalog),
+          { expectedVersion: 4 },
+        ),
+      ).rejects.toMatchObject({
+        code: "ACTIVATION_DEPENDENCY_BLOCKED",
+        details: { reasons: ["migration_0006_not_current"] },
+      });
+    } finally {
+      await migrationPool.query(
+        "UPDATE drizzle.__drizzle_migrations SET hash = $2 WHERE hash = $1",
+        [staleHash, workforceProfileMigrationHash],
+      );
+    }
+    expect(await workforceProfileSnapshot()).toEqual(inactive);
+
+    await migrationPool.query(
+      "ALTER TABLE service_activations DISABLE TRIGGER service_activations_sync_hr_workforce_profile",
+    );
+    try {
+      await expect(
+        activateWorkforceProfileService(
+          pool,
+          migrationPool,
+          context(ids.tenantA, ids.adminA, ids.correlationWorkforceCatalog),
+          { expectedVersion: 4 },
+        ),
+      ).rejects.toMatchObject({
+        code: "ACTIVATION_DEPENDENCY_BLOCKED",
+        details: { reasons: ["schema_dependencies_not_current"] },
+      });
+    } finally {
+      await migrationPool.query(
+        "ALTER TABLE service_activations ENABLE TRIGGER service_activations_sync_hr_workforce_profile",
+      );
+    }
+    expect(await workforceProfileSnapshot()).toEqual(inactive);
+
+    await migrationPool.query(
+      "ALTER TABLE membership_capabilities DISABLE TRIGGER membership_capabilities_guard_authority",
+    );
+    try {
+      await expect(
+        activateWorkforceProfileService(
+          pool,
+          migrationPool,
+          context(ids.tenantA, ids.adminA, ids.correlationWorkforceCatalog),
+          { expectedVersion: 4 },
+        ),
+      ).rejects.toMatchObject({
+        code: "ACTIVATION_DEPENDENCY_BLOCKED",
+        details: { reasons: ["schema_dependencies_not_current"] },
+      });
+    } finally {
+      await migrationPool.query(
+        "ALTER TABLE membership_capabilities ENABLE TRIGGER membership_capabilities_guard_authority",
+      );
+    }
+    expect(await workforceProfileSnapshot()).toEqual(inactive);
+    await expect(
+      activateWorkforceProfileService(
+        pool,
+        migrationPool,
+        context(ids.tenantA, ids.adminA, ids.correlationWorkforceCatalog),
+        { expectedVersion: 4 },
+      ),
+    ).resolves.toMatchObject({
+      control: { activationState: "active", activationVersion: 5, version: 5 },
+      replayed: false,
+    });
+  });
+
+  it("serializes same-key replay and distinct-key conflict without duplicate proof", async () => {
+    await deactivateWorkforceProfileService(
+      pool,
+      context(ids.tenantA, ids.adminA, "50000000-0000-4000-8000-000000002016"),
+      { expectedVersion: 5 },
+    );
+    const sameContext = context(ids.tenantA, ids.adminA, "50000000-0000-4000-8000-000000002017");
+    const same = await Promise.all([
+      activateWorkforceProfileService(pool, migrationPool, sameContext, { expectedVersion: 6 }),
+      activateWorkforceProfileService(pool, migrationPool, sameContext, { expectedVersion: 6 }),
+    ]);
+    expect(same.map(({ replayed }) => replayed).sort()).toEqual([false, true]);
+    expect(same.map(({ control }) => control.version)).toEqual([7, 7]);
+
+    await deactivateWorkforceProfileService(
+      pool,
+      context(ids.tenantA, ids.adminA, "50000000-0000-4000-8000-000000002018"),
+      { expectedVersion: 7 },
+    );
+    const distinct = await Promise.allSettled([
+      activateWorkforceProfileService(
+        pool,
+        migrationPool,
+        context(ids.tenantA, ids.adminA, "50000000-0000-4000-8000-000000002019"),
+        { expectedVersion: 8 },
+      ),
+      activateWorkforceProfileService(
+        pool,
+        migrationPool,
+        context(ids.tenantA, ids.adminA, "50000000-0000-4000-8000-000000002020"),
+        { expectedVersion: 8 },
+      ),
+    ]);
+    expect(distinct.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    const rejected = distinct.find(({ status }) => status === "rejected");
+    expect(rejected).toMatchObject({ reason: { code: "ACTIVATION_CONFLICT" } });
+    const final = await workforceProfileSnapshot();
+    expect(final.activation).toEqual([{ state: "active", version: 9 }]);
+    expect(final.control).toMatchObject([{ row_version: 9, settings_version: 1 }]);
+    expect(final.proof).toHaveLength(9);
   });
 });
