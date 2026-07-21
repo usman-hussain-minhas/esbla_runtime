@@ -10,10 +10,11 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
-import { memberships, tenants } from "./core.js";
+import { memberships, serviceActivations, tenants } from "./core.js";
 
 export const hrLeaveCategory = pgEnum("hr_leave_category", ["annual", "sick", "unpaid", "other"]);
 export const hrLeaveRequestStatus = pgEnum("hr_leave_request_status", [
@@ -21,6 +22,41 @@ export const hrLeaveRequestStatus = pgEnum("hr_leave_request_status", [
   "approved",
   "rejected",
 ]);
+
+export const hrWorkforceProfileServiceControl = pgTable(
+  "hr_workforce_profile_service_control",
+  {
+    serviceControlId: uuid("service_control_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    serviceKey: text("service_key").default("workforce_profile").notNull(),
+    settingsVersion: integer("settings_version").default(1).notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.serviceKey],
+      foreignColumns: [serviceActivations.tenantId, serviceActivations.serviceKey],
+      name: "hr_workforce_profile_service_control_activation_fk",
+    }).onDelete("restrict"),
+    uniqueIndex("uq_hr_workforce_profile_service_control_tenant_key").on(
+      table.tenantId,
+      table.serviceKey,
+    ),
+    check(
+      "hr_workforce_profile_service_control_key_exact",
+      sql`${table.serviceKey} = 'workforce_profile'`,
+    ),
+    check(
+      "hr_workforce_profile_service_control_settings_version_positive",
+      sql`${table.settingsVersion} > 0`,
+    ),
+    check(
+      "hr_workforce_profile_service_control_row_version_positive",
+      sql`${table.rowVersion} > 0`,
+    ),
+  ],
+).enableRLS();
 
 export const hrLeaveRequests = pgTable(
   "hr_leave_requests",

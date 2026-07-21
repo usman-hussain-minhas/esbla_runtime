@@ -40,6 +40,22 @@ export {
   problemDetailsSchema,
 } from "./hr-leave-api.js";
 export {
+  type HrServiceActivateBody,
+  type HrServiceControl,
+  type HrServiceControlQuery,
+  type HrServiceDeactivateBody,
+  type HrServiceKey,
+  hrServiceActivateBodySchema,
+  hrServiceControlQuerySchema,
+  hrServiceControlSchema,
+  hrServiceDeactivateBodySchema,
+  hrServiceKeys,
+  parseHrServiceActivateBody,
+  parseHrServiceControl,
+  parseHrServiceControlQuery,
+  parseHrServiceDeactivateBody,
+} from "./hr-service-control-api.js";
+export {
   type CapabilityDeclaration,
   type CapabilityExposure,
   defineModuleManifest,
