@@ -163,7 +163,9 @@ beforeAll(async () => {
   await migrationPool.query(`GRANT USAGE ON SCHEMA public TO ${applicationRole}`);
   await migrationPool.query(`GRANT SELECT, INSERT ON tenants, principals TO ${applicationRole}`);
   await migrationPool.query(
-    `GRANT SELECT ON hr_workforce_profile_service_control TO ${applicationRole}`,
+    `GRANT SELECT
+     ON hr_workforce_profile_service_control, membership_capabilities
+     TO ${applicationRole}`,
   );
   await migrationPool.query(
     `GRANT SELECT, INSERT, UPDATE, DELETE
@@ -223,7 +225,7 @@ describe("core PostgreSQL foundation", () => {
     const migrations = await migrationPool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations`,
     );
-    expect(migrations.rows[0]?.count).toBe("7");
+    expect(migrations.rows[0]?.count).toBe("8");
 
     const rowSecurity = await pool.query<{
       force_row_security: boolean;
@@ -243,6 +245,7 @@ describe("core PostgreSQL foundation", () => {
           "evidence_events",
           "hr_leave_requests",
           "hr_workforce_profile_service_control",
+          "membership_capabilities",
           "memberships",
           "outbox_events",
           "service_activations",
@@ -253,7 +256,7 @@ describe("core PostgreSQL foundation", () => {
       ],
     );
 
-    expect(rowSecurity.rows).toHaveLength(9);
+    expect(rowSecurity.rows).toHaveLength(10);
     expect(rowSecurity.rows.every((row) => row.row_security && row.force_row_security)).toBe(true);
     const schemaPrivilege = await pool.query<{ can_create: boolean; current_schema: string }>(
       `SELECT has_schema_privilege(current_user, 'public', 'CREATE') AS can_create,
@@ -274,6 +277,193 @@ describe("core PostgreSQL foundation", () => {
     ).rejects.toMatchObject({
       code: "42501",
     });
+  });
+
+  it("keeps exact membership capabilities tenant-scoped and read-only to Runtime", async () => {
+    await migrationTenantTransaction(ids.tenantA, async (client) =>
+      client.query(
+        `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+         VALUES ($1, $2, 'hr.workforce.activate_service')`,
+        [ids.tenantA, ids.managerA],
+      ),
+    );
+    expect((await pool.query("SELECT * FROM membership_capabilities")).rows).toEqual([]);
+    expect(
+      (
+        await tenantQuery<{ capability_id: string }>(
+          ids.tenantA,
+          "SELECT capability_id FROM membership_capabilities",
+        )
+      ).rows,
+    ).toEqual([{ capability_id: "hr.workforce.activate_service" }]);
+    expect((await tenantQuery(ids.tenantB, "SELECT * FROM membership_capabilities")).rows).toEqual(
+      [],
+    );
+    await expect(
+      tenantQuery(
+        ids.tenantA,
+        `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+         VALUES ($1, $2, 'hr.workforce.deactivate_service')`,
+        [ids.tenantA, ids.managerA],
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+    for (const statement of [
+      `UPDATE membership_capabilities SET capability_id = capability_id
+       WHERE tenant_id = '${ids.tenantA}' AND principal_id = '${ids.managerA}'`,
+      `DELETE FROM membership_capabilities
+       WHERE tenant_id = '${ids.tenantA}' AND principal_id = '${ids.managerA}'`,
+      "TRUNCATE membership_capabilities",
+    ]) {
+      await expect(tenantQuery(ids.tenantA, statement)).rejects.toMatchObject({ code: "42501" });
+    }
+    await expect(
+      pool.query("SELECT public.esbla_guard_membership_capability_authority()"),
+    ).rejects.toMatchObject({ code: "42501" });
+
+    const authorityAcl = await migrationPool.query<{
+      can_delete: boolean;
+      can_execute_guard: boolean;
+      can_insert: boolean;
+      can_truncate: boolean;
+      can_update: boolean;
+    }>(
+      `SELECT has_table_privilege('esbla_app', 'membership_capabilities', 'INSERT') AS can_insert,
+              has_table_privilege('esbla_app', 'membership_capabilities', 'UPDATE') AS can_update,
+              has_table_privilege('esbla_app', 'membership_capabilities', 'DELETE') AS can_delete,
+              has_table_privilege('esbla_app', 'membership_capabilities', 'TRUNCATE') AS can_truncate,
+              has_function_privilege(
+                'esbla_app',
+                'public.esbla_guard_membership_capability_authority()',
+                'EXECUTE'
+              ) AS can_execute_guard`,
+    );
+    expect(authorityAcl.rows).toEqual([
+      {
+        can_delete: false,
+        can_execute_guard: false,
+        can_insert: false,
+        can_truncate: false,
+        can_update: false,
+      },
+    ]);
+
+    const membershipForeignKey = await migrationPool.query<{ definition: string }>(
+      `SELECT pg_catalog.pg_get_constraintdef(oid) AS definition
+       FROM pg_catalog.pg_constraint
+       WHERE conrelid = 'public.membership_capabilities'::regclass
+         AND conname = 'membership_capabilities_membership_fk'`,
+    );
+    expect(membershipForeignKey.rows).toEqual([
+      {
+        definition:
+          "FOREIGN KEY (tenant_id, principal_id) REFERENCES memberships(tenant_id, principal_id) ON DELETE RESTRICT",
+      },
+    ]);
+    await migrationPool.query(
+      "ALTER TABLE membership_capabilities DISABLE TRIGGER membership_capabilities_guard_authority",
+    );
+    try {
+      await expect(
+        migrationTenantTransaction(ids.tenantA, async (client) =>
+          client.query(
+            `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+             VALUES ($1, '10000000-0000-4000-8000-000000000099', 'hr.workforce.activate_service')`,
+            [ids.tenantA],
+          ),
+        ),
+      ).rejects.toMatchObject({
+        code: "23503",
+        constraint: "membership_capabilities_membership_fk",
+      });
+    } finally {
+      await migrationPool.query(
+        "ALTER TABLE membership_capabilities ENABLE TRIGGER membership_capabilities_guard_authority",
+      );
+    }
+    await expect(
+      migrationTenantTransaction(ids.tenantA, async (client) =>
+        client.query(
+          `UPDATE membership_capabilities
+           SET capability_id = 'hr.workforce.deactivate_service'
+           WHERE tenant_id = $1 AND principal_id = $2`,
+          [ids.tenantA, ids.managerA],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "55000" });
+    await expect(migrationPool.query("TRUNCATE membership_capabilities")).rejects.toMatchObject({
+      code: "55000",
+    });
+
+    const guard = await migrationPool.query<{
+      config: string;
+      public_execute: boolean;
+      security_definer: boolean;
+    }>(
+      `SELECT procedure.prosecdef AS security_definer,
+              procedure.proconfig[1] AS config,
+              EXISTS (
+                SELECT 1
+                FROM pg_catalog.aclexplode(COALESCE(
+                  procedure.proacl,
+                  pg_catalog.acldefault('f', procedure.proowner)
+                )) privilege
+                WHERE privilege.grantee = 0 AND privilege.privilege_type = 'EXECUTE'
+              ) AS public_execute
+       FROM pg_catalog.pg_proc procedure
+       WHERE procedure.oid =
+         'public.esbla_guard_membership_capability_authority()'::regprocedure`,
+    );
+    expect(guard.rows).toEqual([
+      {
+        config: "search_path=pg_catalog, public",
+        public_execute: false,
+        security_definer: true,
+      },
+    ]);
+
+    const actor = await pool.connect();
+    const revoker = await migrationPool.connect();
+    try {
+      await actor.query("BEGIN");
+      await actor.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenantA]);
+      await actor.query(
+        `SELECT role_key FROM memberships
+         WHERE tenant_id = $1 AND principal_id = $2 FOR SHARE`,
+        [ids.tenantA, ids.managerA],
+      );
+      for (const [text, values] of [
+        [
+          `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+           VALUES ($1, $2, 'hr.workforce.deactivate_service')`,
+          [ids.tenantA, ids.managerA],
+        ],
+        [
+          `UPDATE membership_capabilities SET capability_id = capability_id
+           WHERE tenant_id = $1 AND principal_id = $2`,
+          [ids.tenantA, ids.managerA],
+        ],
+        [
+          `DELETE FROM membership_capabilities
+           WHERE tenant_id = $1 AND principal_id = $2`,
+          [ids.tenantA, ids.managerA],
+        ],
+      ] as const) {
+        await revoker.query("BEGIN");
+        await revoker.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenantA]);
+        await revoker.query("SET LOCAL lock_timeout = '100ms'");
+        await expect(revoker.query(text, [...values])).rejects.toMatchObject({ code: "55P03" });
+        await revoker.query("ROLLBACK");
+      }
+      await actor.query("ROLLBACK");
+    } finally {
+      await revoker.query("ROLLBACK").catch(() => undefined);
+      await actor.query("ROLLBACK").catch(() => undefined);
+      revoker.release();
+      actor.release();
+    }
+    expect(
+      (await tenantQuery(ids.tenantA, "SELECT capability_id FROM membership_capabilities")).rows,
+    ).toHaveLength(1);
   });
 
   it("installs the bounded workforce-profile service-control projection", async () => {
