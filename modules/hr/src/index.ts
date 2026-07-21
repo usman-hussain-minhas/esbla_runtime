@@ -5,3 +5,8 @@ export * from "./manifest.js";
 export * from "./queries.js";
 export * from "./settings.js";
 export * from "./types.js";
+export * from "./workforce-commands.js";
+export * from "./workforce-errors.js";
+export * from "./workforce-queries.js";
+export * from "./workforce-settings.js";
+export * from "./workforce-types.js";

@@ -26,14 +26,18 @@ import {
 } from "./activation-readiness.js";
 import { hrManifest } from "./manifest.js";
 import { HR_LEAVE_BILLING_STATE, HR_LEAVE_SERVICE_KEY } from "./types.js";
+import { HrWorkforceProfileError } from "./workforce-errors.js";
+import {
+  HR_WORKFORCE_PROFILE_BILLING_STATE,
+  HR_WORKFORCE_PROFILE_SERVICE_KEY,
+} from "./workforce-types.js";
+
 export interface HrLeaveServiceLifecycleInput {
   readonly expectedVersion: number | null;
 }
 export interface HrLeaveServiceLifecycleResult extends ServiceActivationResult {
   readonly billingState: typeof HR_LEAVE_BILLING_STATE;
 }
-export const HR_WORKFORCE_PROFILE_SERVICE_KEY = "workforce_profile" as const;
-export const HR_WORKFORCE_PROFILE_BILLING_STATE = "non_billable" as const;
 export interface HrWorkforceProfileServiceLifecycleInput {
   readonly expectedVersion: number | null;
 }
@@ -42,16 +46,6 @@ export interface HrWorkforceProfileServiceControlResult {
   readonly billingState: typeof HR_WORKFORCE_PROFILE_BILLING_STATE;
   readonly control: HrServiceControl;
   readonly replayed: boolean;
-}
-export type HrWorkforceProfileErrorCode = "WORKFORCE_SERVICE_CONTROL_NOT_FOUND";
-export class HrWorkforceProfileError extends Error {
-  readonly code: HrWorkforceProfileErrorCode;
-
-  constructor(code: HrWorkforceProfileErrorCode, message: string) {
-    super(message);
-    this.name = "HrWorkforceProfileError";
-    this.code = code;
-  }
 }
 interface DatabaseIdentity {
   readonly database_name: string;
