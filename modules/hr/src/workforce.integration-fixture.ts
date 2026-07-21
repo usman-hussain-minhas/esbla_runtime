@@ -105,7 +105,8 @@ export async function setupWorkforceIntegration(): Promise<void> {
     `GRANT SELECT, INSERT, UPDATE ON hr_worker_profiles TO ${applicationRole}`,
   );
   await workforceMigrationPool.query(
-    `GRANT SELECT, INSERT ON evidence_events, outbox_events TO ${applicationRole}`,
+    `GRANT SELECT, INSERT ON evidence_events, outbox_events, hr_reporting_relationships
+     TO ${applicationRole}`,
   );
 
   await workforceMigrationPool.query(
@@ -145,6 +146,7 @@ export async function setupWorkforceIntegration(): Promise<void> {
        VALUES ($1, $2, 'hr.workforce.create_profile'),
               ($1, $2, 'hr.workforce.link_principal'),
               ($1, $2, 'hr.workforce.change_status'),
+              ($1, $2, 'hr.workforce.change_reporting_relationship'),
               ($1, $3, 'hr.workforce.view_own'),
               ($1, $4, 'hr.workforce.create_profile')`,
       [

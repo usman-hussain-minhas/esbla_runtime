@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  hrReportingRelationshipSchema,
+  hrWorkforceChangeReportingRelationshipBodySchema,
   hrWorkforceChangeStatusBodySchema,
   hrWorkforceCreateProfileBodySchema,
   hrWorkforceLinkPrincipalBodySchema,
   hrWorkforceOwnQuerySchema,
   hrWorkforceProfilePathSchema,
   hrWorkforceProfileSchema,
+  parseHrReportingRelationship,
+  parseHrWorkforceChangeReportingRelationshipBody,
   parseHrWorkforceChangeStatusBody,
   parseHrWorkforceCreateProfileBody,
   parseHrWorkforceLinkPrincipalBody,
@@ -43,6 +47,80 @@ describe("Workforce Profile API contracts", () => {
     ]);
   });
 
+  it("publishes the exact reporting relationship contract identities and fields", () => {
+    const request = hrWorkforceChangeReportingRelationshipBodySchema;
+    const response = hrReportingRelationshipSchema;
+    expect([request.$id, response.$id]).toEqual([
+      "HrWorkforceChangeReportingRelationshipRequestV1",
+      "HrReportingRelationshipResponseV1",
+    ]);
+    const requestFields = "expectedVersion managerWorkerProfileId relationshipStatus".split(" ");
+    expect(Object.keys(request.properties).sort()).toEqual(requestFields);
+    expect([...request.required].sort()).toEqual(requestFields);
+    const responseFields =
+      "effectiveAt managerWorkerProfileId relationshipStatus relationshipVersion reportingRelationshipId supersedesReportingRelationshipId workerProfileId workerProfileVersion";
+    expect(Object.keys(response.properties).sort()).toEqual(responseFields.split(" "));
+    expect([...response.required].sort()).toEqual(Object.keys(response.properties).sort());
+  });
+  it("enforces the reporting request status and nullable-manager invariant", () => {
+    const parse = parseHrWorkforceChangeReportingRelationshipBody;
+    const assigned = {
+      expectedVersion: 3,
+      managerWorkerProfileId: principalId,
+      relationshipStatus: "assigned",
+    };
+    const unassigned = {
+      expectedVersion: 3,
+      managerWorkerProfileId: null,
+      relationshipStatus: "unassigned",
+    };
+    expect(parse(assigned)).toBe(assigned);
+    expect(parse(unassigned)).toBe(unassigned);
+    for (const invalid of [
+      { ...assigned, managerWorkerProfileId: null },
+      { ...unassigned, managerWorkerProfileId: principalId },
+      { ...assigned, expectedVersion: "3" },
+      { ...assigned, managerWorkerProfileId: "invalid" },
+      { ...assigned, relationshipStatus: "pending" },
+      { ...assigned, tenantId: profileId },
+    ]) {
+      expect(() => parse(invalid)).toThrow();
+    }
+  });
+  it("accepts only the exact reporting relationship response", () => {
+    const parse = parseHrReportingRelationship;
+    const relationship = {
+      effectiveAt: "2026-07-22T00:00:00.000Z",
+      managerWorkerProfileId: principalId,
+      relationshipStatus: "assigned",
+      relationshipVersion: 2,
+      reportingRelationshipId: "10000000-0000-4000-8000-000000000003",
+      supersedesReportingRelationshipId: null,
+      workerProfileId: profileId,
+      workerProfileVersion: 4,
+    };
+    const unassigned = {
+      ...relationship,
+      managerWorkerProfileId: null,
+      relationshipStatus: "unassigned",
+      supersedesReportingRelationshipId: relationship.reportingRelationshipId,
+    };
+    expect(parse(relationship)).toBe(relationship);
+    expect(parse(unassigned)).toBe(unassigned);
+    for (const invalid of [
+      { ...relationship, managerWorkerProfileId: null },
+      { ...unassigned, managerWorkerProfileId: principalId },
+      { ...relationship, effectiveAt: "today" },
+      { ...relationship, relationshipVersion: 0 },
+      { ...relationship, reportingRelationshipId: "invalid" },
+      { ...unassigned, supersedesReportingRelationshipId: "invalid" },
+      { ...relationship, workerProfileId: "invalid" },
+      { ...relationship, workerProfileVersion: "4" },
+      { ...relationship, actorPrincipalId: principalId },
+    ]) {
+      expect(() => parse(invalid)).toThrow();
+    }
+  });
   it("preserves optional opaque employee numbers and rejects injected create fields", () => {
     for (const body of [{}, { employeeNumber: null }, { employeeNumber: " EMP-001 " }]) {
       expect(parseHrWorkforceCreateProfileBody(body)).toBe(body);
