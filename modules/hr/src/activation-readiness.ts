@@ -137,6 +137,11 @@ export const HR_WORKFORCE_PROFILE_REQUIRED_MIGRATIONS = [
     hash: "6e91e539b1ae824f386a468384904794bdb866630748bbd54e2ddc7dd85d9d6a",
     id: "0008",
   },
+  {
+    createdAt: 1784669535260,
+    hash: "1624b2836986fdbf93b1b439a5ac100d70aca195918b31576945d2fd546ce40d",
+    id: "0009",
+  },
 ] as const;
 const runtimeTablePrivilege = (name: string, writable = false) => ({
   delete: false,
@@ -153,16 +158,30 @@ export const HR_WORKFORCE_PROFILE_RUNTIME_TABLE_PRIVILEGES = [
   runtimeTablePrivilege("public.membership_capabilities"),
   runtimeTablePrivilege("public.hr_worker_profiles", true),
   runtimeTablePrivilege("public.hr_workforce_status_history"),
+  {
+    delete: false,
+    insert: true,
+    name: "public.hr_reporting_relationships",
+    references: false,
+    select: true,
+    trigger: false,
+    truncate: false,
+    update: false,
+  },
 ] as const;
 export const HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS = {
   exactTriggerParents:
-    "hr_workforce_profile_service_control,membership_capabilities,hr_worker_profiles,hr_workforce_status_history".split(
+    "hr_workforce_profile_service_control,membership_capabilities,hr_reporting_relationships,hr_worker_profiles,hr_workforce_status_history".split(
       ",",
     ),
-  enums: [{ labels: ["draft", "active", "suspended", "terminated"], name: "hr_workforce_status" }],
+  enums: [
+    { labels: ["assigned", "unassigned"], name: "hr_reporting_relationship_status" },
+    { labels: ["draft", "active", "suspended", "terminated"], name: "hr_workforce_status" },
+  ],
   tables: [
     ...HR_LEAVE_CATALOG_REQUIREMENTS.tables.filter(({ name }) => name !== "hr_leave_requests"),
     { name: "hr_workforce_profile_service_control" },
+    { name: "hr_reporting_relationships" },
     { name: "hr_worker_profiles" },
     { name: "hr_workforce_status_history" },
     { name: "membership_capabilities" },
@@ -191,6 +210,16 @@ export const HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS = {
       "hr_worker_profiles|updated_at|timestamp with time zone|1|now()",
       "hr_worker_profiles|current_reporting_relationship_id|uuid|0|",
       "hr_worker_profiles|row_version|integer|1|1",
+      "hr_reporting_relationships|reporting_relationship_id|uuid|1|gen_random_uuid()",
+      "hr_reporting_relationships|tenant_id|uuid|1|",
+      "hr_reporting_relationships|worker_profile_id|uuid|1|",
+      "hr_reporting_relationships|manager_worker_profile_id|uuid|0|",
+      "hr_reporting_relationships|relationship_status|public.hr_reporting_relationship_status|1|",
+      "hr_reporting_relationships|effective_at|timestamp with time zone|1|now()",
+      "hr_reporting_relationships|supersedes_reporting_relationship_id|uuid|0|",
+      "hr_reporting_relationships|relationship_version|integer|1|",
+      "hr_reporting_relationships|created_at|timestamp with time zone|1|now()",
+      "hr_reporting_relationships|row_version|integer|1|1",
       "hr_workforce_status_history|workforce_status_history_id|uuid|1|gen_random_uuid()",
       "hr_workforce_status_history|tenant_id|uuid|1|",
       "hr_workforce_status_history|worker_profile_id|uuid|1|",
@@ -290,6 +319,76 @@ export const HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS = {
     {
       constraintType: "p",
       definition:
+        "CREATE UNIQUE INDEX hr_reporting_relationships_pkey ON public.hr_reporting_relationships USING btree (reporting_relationship_id)",
+      name: "hr_reporting_relationships_pkey",
+      parent: "hr_reporting_relationships",
+      predicate: "",
+      primary: true,
+      unique: true,
+    },
+    {
+      constraintType: "u",
+      definition:
+        "CREATE UNIQUE INDEX uq_hr_reporting_relationships_composite_identity ON public.hr_reporting_relationships USING btree (tenant_id, worker_profile_id, reporting_relationship_id)",
+      name: "uq_hr_reporting_relationships_composite_identity",
+      parent: "hr_reporting_relationships",
+      predicate: "",
+      primary: false,
+      unique: true,
+    },
+    {
+      constraintType: "",
+      definition:
+        "CREATE UNIQUE INDEX uq_hr_reporting_relationships_tenant_worker_version ON public.hr_reporting_relationships USING btree (tenant_id, worker_profile_id, relationship_version)",
+      name: "uq_hr_reporting_relationships_tenant_worker_version",
+      parent: "hr_reporting_relationships",
+      predicate: "",
+      primary: false,
+      unique: true,
+    },
+    {
+      constraintType: "",
+      definition:
+        "CREATE UNIQUE INDEX uq_hr_reporting_relationships_tenant_successor ON public.hr_reporting_relationships USING btree (tenant_id, supersedes_reporting_relationship_id) WHERE (supersedes_reporting_relationship_id IS NOT NULL)",
+      name: "uq_hr_reporting_relationships_tenant_successor",
+      parent: "hr_reporting_relationships",
+      predicate: "(supersedes_reporting_relationship_id IS NOT NULL)",
+      primary: false,
+      unique: true,
+    },
+    {
+      constraintType: "",
+      definition:
+        "CREATE INDEX idx_hr_reporting_relationships_tenant_manager_current_cursor ON public.hr_reporting_relationships USING btree (tenant_id, manager_worker_profile_id, relationship_status, effective_at DESC, reporting_relationship_id DESC)",
+      name: "idx_hr_reporting_relationships_tenant_manager_current_cursor",
+      parent: "hr_reporting_relationships",
+      predicate: "",
+      primary: false,
+      unique: false,
+    },
+    {
+      constraintType: "",
+      definition:
+        "CREATE INDEX idx_hr_reporting_relationships_tenant_worker_history ON public.hr_reporting_relationships USING btree (tenant_id, worker_profile_id, relationship_version DESC, reporting_relationship_id DESC)",
+      name: "idx_hr_reporting_relationships_tenant_worker_history",
+      parent: "hr_reporting_relationships",
+      predicate: "",
+      primary: false,
+      unique: false,
+    },
+    {
+      constraintType: "",
+      definition:
+        "CREATE UNIQUE INDEX uq_hr_worker_profiles_tenant_relationship_head ON public.hr_worker_profiles USING btree (tenant_id, current_reporting_relationship_id) WHERE (current_reporting_relationship_id IS NOT NULL)",
+      name: "uq_hr_worker_profiles_tenant_relationship_head",
+      parent: "hr_worker_profiles",
+      predicate: "(current_reporting_relationship_id IS NOT NULL)",
+      primary: false,
+      unique: true,
+    },
+    {
+      constraintType: "p",
+      definition:
         "CREATE UNIQUE INDEX hr_workforce_status_history_pkey ON public.hr_workforce_status_history USING btree (workforce_status_history_id)",
       name: "hr_workforce_status_history_pkey",
       parent: "hr_workforce_status_history",
@@ -325,6 +424,7 @@ export const HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS = {
     ...[
       "hr_workforce_profile_service_control|hr_workforce_profile_service_control_tenant_isolation",
       "membership_capabilities|membership_capabilities_tenant_isolation",
+      "hr_reporting_relationships|hr_reporting_relationships_tenant_isolation",
       "hr_worker_profiles|hr_worker_profiles_tenant_isolation",
       "hr_workforce_status_history|hr_workforce_status_history_tenant_isolation",
     ].map((row) => {
@@ -370,6 +470,20 @@ export const HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS = {
       functionName: "esbla_guard_membership_capability_authority",
       name: "membership_capabilities_reject_truncate",
       parent: "membership_capabilities",
+    },
+    {
+      definition:
+        "CREATE TRIGGER hr_reporting_relationships_enforce_state BEFORE INSERT OR DELETE OR UPDATE ON public.hr_reporting_relationships FOR EACH ROW EXECUTE FUNCTION public.esbla_enforce_hr_reporting_relationship_state()",
+      functionName: "esbla_enforce_hr_reporting_relationship_state",
+      name: "hr_reporting_relationships_enforce_state",
+      parent: "hr_reporting_relationships",
+    },
+    {
+      definition:
+        "CREATE TRIGGER hr_reporting_relationships_reject_truncate BEFORE TRUNCATE ON public.hr_reporting_relationships FOR EACH STATEMENT EXECUTE FUNCTION public.esbla_enforce_hr_reporting_relationship_state()",
+      functionName: "esbla_enforce_hr_reporting_relationship_state",
+      name: "hr_reporting_relationships_reject_truncate",
+      parent: "hr_reporting_relationships",
     },
     {
       definition:
@@ -425,8 +539,17 @@ export const HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS = {
       "hr_worker_profiles|hr_worker_profiles_principal_same_tenant_fk|f|FOREIGN KEY (tenant_id, principal_id) REFERENCES public.memberships(tenant_id, principal_id) ON DELETE RESTRICT",
       "hr_worker_profiles|hr_worker_profiles_tenant_profile_uq|u|UNIQUE (tenant_id, worker_profile_id)",
       "hr_worker_profiles|hr_worker_profiles_employee_number_not_blank|c|CHECK (employee_number IS NULL OR char_length(TRIM(BOTH FROM employee_number)) > 0)",
-      "hr_worker_profiles|hr_worker_profiles_relationship_head_blocked|c|CHECK (current_reporting_relationship_id IS NULL)",
+      "hr_worker_profiles|hr_worker_profiles_current_relationship_same_root_fk|f|FOREIGN KEY (tenant_id, worker_profile_id, current_reporting_relationship_id) REFERENCES public.hr_reporting_relationships(tenant_id, worker_profile_id, reporting_relationship_id) ON DELETE RESTRICT",
       "hr_worker_profiles|hr_worker_profiles_row_version_positive|c|CHECK (row_version > 0)",
+      "hr_reporting_relationships|hr_reporting_relationships_pkey|p|PRIMARY KEY (reporting_relationship_id)",
+      "hr_reporting_relationships|uq_hr_reporting_relationships_composite_identity|u|UNIQUE (tenant_id, worker_profile_id, reporting_relationship_id)",
+      "hr_reporting_relationships|hr_reporting_relationships_status_manager_consistent|c|CHECK (relationship_status = 'assigned'::public.hr_reporting_relationship_status AND manager_worker_profile_id IS NOT NULL OR relationship_status = 'unassigned'::public.hr_reporting_relationship_status AND manager_worker_profile_id IS NULL)",
+      "hr_reporting_relationships|hr_reporting_relationships_relationship_version_positive|c|CHECK (relationship_version > 0)",
+      "hr_reporting_relationships|hr_reporting_relationships_row_version_fixed|c|CHECK (row_version = 1)",
+      "hr_reporting_relationships|hr_reporting_relationships_tenant_fk|f|FOREIGN KEY (tenant_id) REFERENCES public.tenants(tenant_id) ON DELETE RESTRICT",
+      "hr_reporting_relationships|hr_reporting_relationships_report_same_tenant_fk|f|FOREIGN KEY (tenant_id, worker_profile_id) REFERENCES public.hr_worker_profiles(tenant_id, worker_profile_id) ON DELETE RESTRICT",
+      "hr_reporting_relationships|hr_reporting_relationships_manager_same_tenant_fk|f|FOREIGN KEY (tenant_id, manager_worker_profile_id) REFERENCES public.hr_worker_profiles(tenant_id, worker_profile_id) ON DELETE RESTRICT",
+      "hr_reporting_relationships|hr_reporting_relationships_predecessor_same_worker_fk|f|FOREIGN KEY (tenant_id, worker_profile_id, supersedes_reporting_relationship_id) REFERENCES public.hr_reporting_relationships(tenant_id, worker_profile_id, reporting_relationship_id) ON DELETE RESTRICT",
       "hr_workforce_status_history|hr_workforce_status_history_pkey|p|PRIMARY KEY (workforce_status_history_id)",
       "hr_workforce_status_history|hr_workforce_status_history_tenant_fk|f|FOREIGN KEY (tenant_id) REFERENCES public.tenants(tenant_id) ON DELETE RESTRICT",
       "hr_workforce_status_history|hr_workforce_status_history_profile_same_tenant_fk|f|FOREIGN KEY (tenant_id, worker_profile_id) REFERENCES public.hr_worker_profiles(tenant_id, worker_profile_id) ON DELETE RESTRICT",
@@ -445,7 +568,8 @@ export const HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS = {
       "esbla_enforce_hr_workforce_profile_service_control|0|c68a506da19fa24dd30e1b4ca1fe53becf4d5f90e73ca4b768594ca05ed14fd5",
       "esbla_sync_hr_workforce_profile_service_activation|1|60f6a2181da37375771c83a4ed41eed10ca66c083d81df9898610744877e505b",
       "esbla_guard_membership_capability_authority|1|ffc08b59c0bedd3ee08cba3106cd2f46bcec595866500b97cbc428740c2e450f",
-      "esbla_enforce_hr_workforce_profile_state|0|865c24194b446176d4be784dc96a2da4ff90aa383650d69939b166400aa0529d",
+      "esbla_enforce_hr_workforce_profile_state|0|1bb62849aab79018daac18ff26fdf17bf000cc1fe8f226b01d7f96151ee64b64",
+      "esbla_enforce_hr_reporting_relationship_state|0|d2a1053d4cf8be46686b1c361fba71ab53c2a3107d565bae325918abc42a51d5",
       "esbla_append_hr_workforce_status_history|1|a456011a8b02c413d4d0b9f8c02d4e3b3b0a29d65fc0eae53a9be95ca29ab936",
       "esbla_reject_hr_workforce_status_history_mutation|0|03f1a1287d355179ec62f8d74f744c998f2fe42057378c729e1cc91761eff793",
     ].map((row) => {

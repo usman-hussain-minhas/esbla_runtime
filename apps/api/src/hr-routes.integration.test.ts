@@ -386,6 +386,9 @@ beforeAll(async () => {
   await migrationPool.query(
     `GRANT SELECT, INSERT, UPDATE ON hr_worker_profiles TO ${applicationRole}`,
   );
+  await migrationPool.query(
+    `GRANT SELECT, INSERT ON hr_reporting_relationships TO ${applicationRole}`,
+  );
 
   pool = createDatabasePool(connectionString, { max: 8 });
   await pool.query(

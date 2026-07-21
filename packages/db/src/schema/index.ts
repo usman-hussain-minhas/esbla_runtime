@@ -16,6 +16,8 @@ export {
   hrLeaveCategory,
   hrLeaveRequestStatus,
   hrLeaveRequests,
+  hrReportingRelationshipStatus,
+  hrReportingRelationships,
   hrWorkforceProfileServiceControl,
   hrWorkforceProfiles,
   hrWorkforceStatus,
