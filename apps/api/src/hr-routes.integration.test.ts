@@ -1247,3 +1247,239 @@ describe("Workforce Profile service-control API boundary", () => {
     expect(inactiveView.response.json()).toEqual(deactivated.response.json());
   });
 });
+
+describe("Workforce Profile onboarding API boundary", () => {
+  it("creates a privacy-minimized draft through current HR-operator authority", async () => {
+    const activated = await signedRequest({
+      body: { expectedVersion: 2 },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/service-control/activate",
+    });
+    expect(activated.response.statusCode).toBe(200);
+
+    const authorityClient = await migrationPool.connect();
+    try {
+      await seedTenantRow(
+        authorityClient,
+        ids.tenantA,
+        `UPDATE memberships
+         SET role_key = 'hr_operator'
+         WHERE tenant_id = $1 AND principal_id = $2`,
+        [ids.tenantA, ids.managerA2],
+      );
+      await seedTenantRow(
+        authorityClient,
+        ids.tenantA,
+        `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+         SELECT $1, authority.principal_id, authority.capability_id
+         FROM unnest($2::uuid[], $3::text[])
+              AS authority(principal_id, capability_id)`,
+        [
+          ids.tenantA,
+          [ids.managerA2, ids.managerA2, ids.managerA2, ids.employeeA],
+          [
+            "hr.workforce.create_profile",
+            "hr.workforce.link_principal",
+            "hr.workforce.change_status",
+            "hr.workforce.view_own",
+          ],
+        ],
+      );
+    } finally {
+      authorityClient.release();
+    }
+
+    const idempotencyKey = randomUUID();
+    const requestId = randomUUID();
+    const created = await signedRequest({
+      body: { employeeNumber: " EMP-API-001 " },
+      idempotencyKey,
+      method: "POST",
+      principalId: ids.managerA2,
+      requestId,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles",
+    });
+    expect(created.response.statusCode).toBe(201);
+    expect(created.response.headers["idempotent-replayed"]).toBe("false");
+    expect(created.response.json()).toEqual({
+      employeeNumber: " EMP-API-001 ",
+      principalLinked: false,
+      version: 1,
+      workerProfileId: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      ),
+      workforceStatus: "draft",
+    });
+
+    const profile = created.response.json<{
+      employeeNumber: string;
+      principalLinked: boolean;
+      version: number;
+      workerProfileId: string;
+      workforceStatus: string;
+    }>();
+    const replay = await signedRequest({
+      body: { employeeNumber: " EMP-API-001 " },
+      idempotencyKey,
+      method: "POST",
+      principalId: ids.managerA2,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles",
+    });
+    expect(replay.response.statusCode).toBe(200);
+    expect(replay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(replay.response.json()).toEqual(profile);
+
+    const conflict = await signedRequest({
+      body: { employeeNumber: "EMP-DIFFERENT" },
+      idempotencyKey,
+      method: "POST",
+      principalId: ids.managerA2,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles",
+    });
+    expect(conflict.response.statusCode).toBe(409);
+    expect(conflict.response.headers["idempotent-replayed"]).toBeUndefined();
+    expect(conflict.response.json()).toMatchObject({ code: "IDEMPOTENCY_CONFLICT", status: 409 });
+
+    const denied = await signedRequest({
+      body: { employeeNumber: "EMP-DENIED" },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles",
+    });
+    expectPolicyDenied(denied);
+    const invalidCreate = await signedRequest({
+      body: { employeeNumber: 1 },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.managerA2,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles",
+    });
+    expect(invalidCreate.response.statusCode).toBe(400);
+    expect(invalidCreate.response.json()).toMatchObject({ code: "REQUEST_VALIDATION_FAILED" });
+    const blankCreate = await signedRequest({
+      body: { employeeNumber: "" },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.managerA2,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles",
+    });
+    expect(blankCreate.response.statusCode).toBe(400);
+    expect(blankCreate.response.json()).toMatchObject({ code: "WORKFORCE_INPUT_INVALID" });
+
+    const linked = await signedRequest({
+      body: { expectedVersion: 1, principalId: ids.employeeA },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.managerA2,
+      tenantId: ids.tenantA,
+      url: `/v1/hr/workforce-profiles/${profile.workerProfileId}/principal-link`,
+    });
+    expect(linked.response.statusCode).toBe(200);
+    expect(linked.response.json()).toMatchObject({ principalLinked: true, version: 2 });
+    const statusKey = randomUUID();
+    const statusBody = { expectedVersion: 2, status: "active" };
+    const active = await signedRequest({
+      body: statusBody,
+      idempotencyKey: statusKey,
+      method: "POST",
+      principalId: ids.managerA2,
+      tenantId: ids.tenantA,
+      url: `/v1/hr/workforce-profiles/${profile.workerProfileId}/status`,
+    });
+    expect(active.response.statusCode).toBe(200);
+    expect(active.response.json()).toMatchObject({ version: 3, workforceStatus: "active" });
+    const statusReplay = await signedRequest({
+      body: statusBody,
+      idempotencyKey: statusKey,
+      method: "POST",
+      principalId: ids.managerA2,
+      tenantId: ids.tenantA,
+      url: `/v1/hr/workforce-profiles/${profile.workerProfileId}/status`,
+    });
+    expect(statusReplay.response.statusCode).toBe(200);
+    expect(statusReplay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(statusReplay.response.json()).toEqual(active.response.json());
+
+    const own = await signedRequest({
+      method: "GET",
+      principalId: ids.employeeA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/own",
+    });
+    expect(own.response.statusCode).toBe(200);
+    expect(own.response.headers["idempotent-replayed"]).toBeUndefined();
+    expect(own.response.json()).toEqual(active.response.json());
+    const invalidOwn = await signedRequest({
+      method: "GET",
+      principalId: ids.employeeA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/own?tenantId=private",
+    });
+    expect(invalidOwn.response.statusCode).toBe(400);
+
+    const second = await signedRequest({
+      body: { employeeNumber: null },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.managerA2,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles",
+    });
+    expect(second.response.statusCode, second.response.body).toBe(201);
+    const secondId = second.response.json<{ workerProfileId: string }>().workerProfileId;
+    const ineligible = await signedRequest({
+      body: { expectedVersion: 1, principalId: ids.managerB },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.managerA2,
+      tenantId: ids.tenantA,
+      url: `/v1/hr/workforce-profiles/${secondId}/principal-link`,
+    });
+    expect(ineligible.response.statusCode).toBe(422);
+    expect(ineligible.response.json()).toMatchObject({
+      code: "WORKFORCE_PRINCIPAL_INELIGIBLE",
+      status: 422,
+    });
+    const missing = await signedRequest({
+      body: { expectedVersion: 1, principalId: ids.employeeA },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.managerA2,
+      tenantId: ids.tenantA,
+      url: `/v1/hr/workforce-profiles/${randomUUID()}/principal-link`,
+    });
+    expect(missing.response.statusCode).toBe(404);
+    expect(missing.response.json()).toMatchObject({ code: "WORKFORCE_PROFILE_NOT_FOUND" });
+
+    const deactivated = await signedRequest({
+      body: { expectedVersion: 3 },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/service-control/deactivate",
+    });
+    expect(deactivated.response.statusCode).toBe(200);
+    const inactive = await signedRequest({
+      method: "GET",
+      principalId: ids.employeeA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/own",
+    });
+    expect(inactive.response.statusCode).toBe(503);
+    expect(inactive.response.json()).toMatchObject({
+      code: "WORKFORCE_SERVICE_INACTIVE",
+      status: 503,
+    });
+  });
+});
