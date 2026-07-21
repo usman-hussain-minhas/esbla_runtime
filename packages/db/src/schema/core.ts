@@ -75,6 +75,30 @@ export const memberships = pgTable(
   ],
 ).enableRLS();
 
+export const membershipCapabilities = pgTable(
+  "membership_capabilities",
+  {
+    tenantId: uuid("tenant_id").notNull(),
+    principalId: uuid("principal_id").notNull(),
+    capabilityId: text("capability_id").notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.principalId, table.capabilityId],
+      name: "membership_capabilities_pk",
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.principalId],
+      foreignColumns: [memberships.tenantId, memberships.principalId],
+      name: "membership_capabilities_membership_fk",
+    }).onDelete("restrict"),
+    check(
+      "membership_capabilities_id_not_blank",
+      sql`char_length(trim(${table.capabilityId})) > 0`,
+    ),
+  ],
+).enableRLS();
+
 export const serviceActivations = pgTable(
   "service_activations",
   {

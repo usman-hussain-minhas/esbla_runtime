@@ -1,5 +1,6 @@
 export {
   evidenceEvents,
+  membershipCapabilities,
   memberships,
   outboxEvents,
   principals,
