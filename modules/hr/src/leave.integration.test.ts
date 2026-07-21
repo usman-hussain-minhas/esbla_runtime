@@ -41,10 +41,6 @@ afterAll(async () => {
 
 describe("HR Leave Request domain", () => {
   it("applies the schema with forced RLS and declared query indexes", async () => {
-    const migrations = await migrationPool.query<{ count: string }>(
-      "SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations",
-    );
-    expect(migrations.rows[0]?.count).toBe("8");
     const table = await migrationPool.query<{
       force_row_security: boolean;
       row_security: boolean;

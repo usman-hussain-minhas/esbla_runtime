@@ -22,6 +22,12 @@ export const hrLeaveRequestStatus = pgEnum("hr_leave_request_status", [
   "approved",
   "rejected",
 ]);
+export const hrWorkforceStatus = pgEnum("hr_workforce_status", [
+  "draft",
+  "active",
+  "suspended",
+  "terminated",
+]);
 
 export const hrWorkforceProfileServiceControl = pgTable(
   "hr_workforce_profile_service_control",
@@ -54,6 +60,98 @@ export const hrWorkforceProfileServiceControl = pgTable(
     check(
       "hr_workforce_profile_service_control_row_version_positive",
       sql`${table.rowVersion} > 0`,
+    ),
+  ],
+).enableRLS();
+
+export const hrWorkforceProfiles = pgTable(
+  "hr_worker_profiles",
+  {
+    workerProfileId: uuid("worker_profile_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    principalId: uuid("principal_id"),
+    employeeNumber: text("employee_number"),
+    workforceStatus: hrWorkforceStatus("workforce_status").default("draft").notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    currentReportingRelationshipId: uuid("current_reporting_relationship_id"),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.principalId],
+      foreignColumns: [memberships.tenantId, memberships.principalId],
+      name: "hr_worker_profiles_principal_same_tenant_fk",
+    }).onDelete("restrict"),
+    unique("hr_worker_profiles_tenant_profile_uq").on(table.tenantId, table.workerProfileId),
+    uniqueIndex("uq_hr_worker_profiles_tenant_principal_current")
+      .on(table.tenantId, table.principalId)
+      .where(sql`${table.principalId} IS NOT NULL AND ${table.workforceStatus} <> 'terminated'`),
+    index("idx_hr_worker_profiles_tenant_principal_fk").on(table.tenantId, table.principalId),
+    index("idx_hr_worker_profiles_tenant_status_cursor").on(
+      table.tenantId,
+      table.workforceStatus,
+      table.createdAt.desc(),
+      table.workerProfileId.desc(),
+    ),
+    check(
+      "hr_worker_profiles_employee_number_not_blank",
+      sql`${table.employeeNumber} IS NULL OR char_length(trim(${table.employeeNumber})) > 0`,
+    ),
+    check(
+      "hr_worker_profiles_relationship_head_blocked",
+      sql`${table.currentReportingRelationshipId} IS NULL`,
+    ),
+    check("hr_worker_profiles_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const hrWorkforceStatusHistory = pgTable(
+  "hr_workforce_status_history",
+  {
+    workforceStatusHistoryId: uuid("workforce_status_history_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    workerProfileId: uuid("worker_profile_id").notNull(),
+    previousStatus: hrWorkforceStatus("previous_status"),
+    newStatus: hrWorkforceStatus("new_status").notNull(),
+    effectiveAt: timestamp("effective_at", { mode: "date", withTimezone: true }).notNull(),
+    actorPrincipalId: uuid("actor_principal_id").notNull(),
+    correlationId: uuid("correlation_id").notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId],
+      foreignColumns: [tenants.tenantId],
+      name: "hr_workforce_status_history_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.workerProfileId],
+      foreignColumns: [hrWorkforceProfiles.tenantId, hrWorkforceProfiles.workerProfileId],
+      name: "hr_workforce_status_history_profile_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.actorPrincipalId],
+      foreignColumns: [memberships.tenantId, memberships.principalId],
+      name: "hr_workforce_status_history_actor_same_tenant_fk",
+    }).onDelete("restrict"),
+    index("idx_hr_workforce_status_history_tenant_worker_effective").on(
+      table.tenantId,
+      table.workerProfileId,
+      table.effectiveAt.desc(),
+      table.workforceStatusHistoryId.desc(),
+    ),
+    index("idx_hr_workforce_status_history_tenant_actor_fk").on(
+      table.tenantId,
+      table.actorPrincipalId,
+    ),
+    check(
+      "hr_workforce_status_history_transition_valid",
+      sql`((${table.previousStatus} IS NULL AND ${table.newStatus} = 'draft') OR
+          (${table.previousStatus} = 'draft' AND ${table.newStatus} = 'active') OR
+          (${table.previousStatus} = 'active' AND ${table.newStatus} IN ('suspended', 'terminated')) OR
+          (${table.previousStatus} = 'suspended' AND ${table.newStatus} IN ('active', 'terminated'))) IS TRUE`,
     ),
   ],
 ).enableRLS();
