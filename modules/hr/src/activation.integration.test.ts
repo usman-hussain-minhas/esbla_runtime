@@ -20,7 +20,7 @@ import {
 
 const tenantContextHash = "9e360ba35e62b22ddb9b993a9af007ecec92777c4623e805c439fceeee17197f";
 const workforceProfileMigrationHash =
-  "6e91e539b1ae824f386a468384904794bdb866630748bbd54e2ddc7dd85d9d6a";
+  "1624b2836986fdbf93b1b439a5ac100d70aca195918b31576945d2fd546ce40d";
 const migrationBarrierKey = [1163084364, 1296648018] as const;
 const initialActivationConflict = {
   code: "ACTIVATION_CONFLICT",
@@ -539,6 +539,9 @@ beforeAll(async () => {
   );
   await migrationPool.query(
     `GRANT SELECT, INSERT, UPDATE ON hr_worker_profiles TO ${applicationRole}`,
+  );
+  await migrationPool.query(
+    `GRANT SELECT, INSERT ON hr_reporting_relationships TO ${applicationRole}`,
   );
   pool = createDatabasePool(connectionString, { max: 8 });
   untrustedMigrationReadPool = createDatabasePool(connectionString, { max: 1 });
@@ -1294,6 +1297,10 @@ describe.sequential("Workforce Profile service-control lifecycle", () => {
         `GRANT TRIGGER ON hr_worker_profiles TO ${applicationRole}`,
         `REVOKE TRIGGER ON hr_worker_profiles FROM ${applicationRole}`,
       ],
+      [
+        `GRANT UPDATE ON hr_reporting_relationships TO ${applicationRole}`,
+        `REVOKE UPDATE ON hr_reporting_relationships FROM ${applicationRole}`,
+      ],
     ] as const) {
       await drift(grant, revoke, "runtime_projection_privileges_not_current");
     }
@@ -1305,7 +1312,7 @@ describe.sequential("Workforce Profile service-control lifecycle", () => {
       staleHash,
     ]);
     try {
-      await blocked("migration_0008_not_current");
+      await blocked("migration_0009_not_current");
     } finally {
       await migrationPool.query(
         "UPDATE drizzle.__drizzle_migrations SET hash = $2 WHERE hash = $1",
@@ -1324,16 +1331,16 @@ describe.sequential("Workforce Profile service-control lifecycle", () => {
         "ALTER TABLE membership_capabilities ENABLE TRIGGER membership_capabilities_guard_authority",
       ],
       [
-        "ALTER TABLE hr_worker_profiles DISABLE TRIGGER hr_worker_profiles_enforce_state",
-        "ALTER TABLE hr_worker_profiles ENABLE TRIGGER hr_worker_profiles_enforce_state",
+        "ALTER TABLE hr_reporting_relationships DISABLE TRIGGER hr_reporting_relationships_enforce_state",
+        "ALTER TABLE hr_reporting_relationships ENABLE TRIGGER hr_reporting_relationships_enforce_state",
       ],
       [
         "CREATE TRIGGER hr_worker_profiles_extra_drift BEFORE UPDATE ON hr_worker_profiles FOR EACH ROW EXECUTE FUNCTION esbla_enforce_hr_workforce_profile_state()",
         "DROP TRIGGER hr_worker_profiles_extra_drift ON hr_worker_profiles",
       ],
       [
-        "ALTER TYPE hr_workforce_status RENAME VALUE 'terminated' TO 'ended'",
-        "ALTER TYPE hr_workforce_status RENAME VALUE 'ended' TO 'terminated'",
+        "ALTER TYPE hr_reporting_relationship_status RENAME VALUE 'unassigned' TO 'ended'",
+        "ALTER TYPE hr_reporting_relationship_status RENAME VALUE 'ended' TO 'unassigned'",
       ],
       [
         "CREATE POLICY hr_worker_profiles_restrictive_drift ON hr_worker_profiles AS RESTRICTIVE FOR SELECT USING (false)",

@@ -5,6 +5,7 @@ import {
   foreignKey,
   index,
   integer,
+  type PgTableExtraConfigValue,
   pgEnum,
   pgTable,
   text,
@@ -28,6 +29,12 @@ export const hrWorkforceStatus = pgEnum("hr_workforce_status", [
   "suspended",
   "terminated",
 ]);
+export const hrReportingRelationshipStatus = pgEnum("hr_reporting_relationship_status", [
+  "assigned",
+  "unassigned",
+]);
+
+type PgTableExtras = PgTableExtraConfigValue[];
 
 export const hrWorkforceProfileServiceControl = pgTable(
   "hr_workforce_profile_service_control",
@@ -79,13 +86,22 @@ export const hrWorkforceProfiles = pgTable(
     currentReportingRelationshipId: uuid("current_reporting_relationship_id"),
     rowVersion: integer("row_version").default(1).notNull(),
   },
-  (table) => [
+  (table): PgTableExtras => [
     foreignKey({
       columns: [table.tenantId, table.principalId],
       foreignColumns: [memberships.tenantId, memberships.principalId],
       name: "hr_worker_profiles_principal_same_tenant_fk",
     }).onDelete("restrict"),
     unique("hr_worker_profiles_tenant_profile_uq").on(table.tenantId, table.workerProfileId),
+    foreignKey({
+      columns: [table.tenantId, table.workerProfileId, table.currentReportingRelationshipId],
+      foreignColumns: [
+        hrReportingRelationships.tenantId,
+        hrReportingRelationships.workerProfileId,
+        hrReportingRelationships.reportingRelationshipId,
+      ],
+      name: "hr_worker_profiles_current_relationship_same_root_fk",
+    }).onDelete("restrict"),
     uniqueIndex("uq_hr_worker_profiles_tenant_principal_current")
       .on(table.tenantId, table.principalId)
       .where(sql`${table.principalId} IS NOT NULL AND ${table.workforceStatus} <> 'terminated'`),
@@ -96,15 +112,90 @@ export const hrWorkforceProfiles = pgTable(
       table.createdAt.desc(),
       table.workerProfileId.desc(),
     ),
+    uniqueIndex("uq_hr_worker_profiles_tenant_relationship_head")
+      .on(table.tenantId, table.currentReportingRelationshipId)
+      .where(sql`${table.currentReportingRelationshipId} IS NOT NULL`),
     check(
       "hr_worker_profiles_employee_number_not_blank",
       sql`${table.employeeNumber} IS NULL OR char_length(trim(${table.employeeNumber})) > 0`,
     ),
-    check(
-      "hr_worker_profiles_relationship_head_blocked",
-      sql`${table.currentReportingRelationshipId} IS NULL`,
-    ),
     check("hr_worker_profiles_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const hrReportingRelationships = pgTable(
+  "hr_reporting_relationships",
+  {
+    reportingRelationshipId: uuid("reporting_relationship_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    workerProfileId: uuid("worker_profile_id").notNull(),
+    managerWorkerProfileId: uuid("manager_worker_profile_id"),
+    relationshipStatus: hrReportingRelationshipStatus("relationship_status").notNull(),
+    effectiveAt: timestamp("effective_at", { mode: "date", withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    supersedesReportingRelationshipId: uuid("supersedes_reporting_relationship_id"),
+    relationshipVersion: integer("relationship_version").notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table): PgTableExtras => [
+    foreignKey({
+      columns: [table.tenantId],
+      foreignColumns: [tenants.tenantId],
+      name: "hr_reporting_relationships_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.workerProfileId],
+      foreignColumns: [hrWorkforceProfiles.tenantId, hrWorkforceProfiles.workerProfileId],
+      name: "hr_reporting_relationships_report_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.managerWorkerProfileId],
+      foreignColumns: [hrWorkforceProfiles.tenantId, hrWorkforceProfiles.workerProfileId],
+      name: "hr_reporting_relationships_manager_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.workerProfileId, table.supersedesReportingRelationshipId],
+      foreignColumns: [table.tenantId, table.workerProfileId, table.reportingRelationshipId],
+      name: "hr_reporting_relationships_predecessor_same_worker_fk",
+    }).onDelete("restrict"),
+    unique("uq_hr_reporting_relationships_composite_identity").on(
+      table.tenantId,
+      table.workerProfileId,
+      table.reportingRelationshipId,
+    ),
+    uniqueIndex("uq_hr_reporting_relationships_tenant_worker_version").on(
+      table.tenantId,
+      table.workerProfileId,
+      table.relationshipVersion,
+    ),
+    uniqueIndex("uq_hr_reporting_relationships_tenant_successor")
+      .on(table.tenantId, table.supersedesReportingRelationshipId)
+      .where(sql`${table.supersedesReportingRelationshipId} IS NOT NULL`),
+    index("idx_hr_reporting_relationships_tenant_manager_current_cursor").on(
+      table.tenantId,
+      table.managerWorkerProfileId,
+      table.relationshipStatus,
+      sql`${table.effectiveAt} DESC`,
+      sql`${table.reportingRelationshipId} DESC`,
+    ),
+    index("idx_hr_reporting_relationships_tenant_worker_history").on(
+      table.tenantId,
+      table.workerProfileId,
+      sql`${table.relationshipVersion} DESC`,
+      sql`${table.reportingRelationshipId} DESC`,
+    ),
+    check(
+      "hr_reporting_relationships_status_manager_consistent",
+      sql`(${table.relationshipStatus} = 'assigned' AND ${table.managerWorkerProfileId} IS NOT NULL)
+          OR (${table.relationshipStatus} = 'unassigned' AND ${table.managerWorkerProfileId} IS NULL)`,
+    ),
+    check(
+      "hr_reporting_relationships_relationship_version_positive",
+      sql`${table.relationshipVersion} > 0`,
+    ),
+    check("hr_reporting_relationships_row_version_fixed", sql`${table.rowVersion} = 1`),
   ],
 ).enableRLS();
 
