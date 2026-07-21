@@ -25,7 +25,7 @@ export const WORKSPACE_SURFACES = [
     statusLabel: "Tasks",
   },
   {
-    href: "/workspace/hr/leave",
+    href: "/workspace/hr",
     icon: "briefcase",
     key: "HR",
     label: "HR",

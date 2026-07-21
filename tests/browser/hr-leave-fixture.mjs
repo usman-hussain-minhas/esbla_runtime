@@ -8,7 +8,7 @@ import {
   migrateDatabase,
 } from "../../packages/db/dist/index.js";
 
-export const ports = { api: 41_900, employee: 41_901, manager: 41_902 };
+export const ports = { api: 41_900, employee: 41_901, manager: 41_902, operator: 41_903 };
 export const fixture = {
   employeeDisplayName: "Browser Employee",
   employeeLabel: "Browser Employee session",
@@ -17,6 +17,9 @@ export const fixture = {
   managerLabel: "Browser Manager session",
   managerOrigin: `http://127.0.0.1:${ports.manager}`,
   managerPrincipalId: "10000000-0000-4000-8000-000000000002",
+  operatorLabel: "Browser HR Operator session",
+  operatorOrigin: `http://127.0.0.1:${ports.operator}`,
+  operatorPrincipalId: "10000000-0000-4000-8000-000000000006",
   tenantId: "00000000-0000-4000-8000-000000000001",
 };
 
@@ -104,12 +107,17 @@ export async function seedHrLeaveFixture() {
     const client = await pool.connect();
     try {
       await client.query(`GRANT USAGE ON SCHEMA public TO ${applicationRole}`);
+      await client.query(`GRANT SELECT ON principals, tenant_settings TO ${applicationRole}`);
       await client.query(
-        `GRANT SELECT ON principals, service_activations, tenant_settings TO ${applicationRole}`,
+        `GRANT SELECT, UPDATE ON memberships, service_activations TO ${applicationRole}`,
       );
-      await client.query(`GRANT SELECT, UPDATE ON memberships TO ${applicationRole}`);
       await client.query(
-        `GRANT SELECT, INSERT, UPDATE ON work_items, hr_leave_requests TO ${applicationRole}`,
+        `GRANT SELECT ON membership_capabilities, hr_workforce_profile_service_control,
+          hr_workforce_status_history TO ${applicationRole}`,
+      );
+      await client.query(
+        `GRANT SELECT, INSERT, UPDATE ON work_items, hr_leave_requests,
+          hr_worker_profiles TO ${applicationRole}`,
       );
       await client.query(
         `GRANT SELECT, INSERT ON evidence_events, outbox_events TO ${applicationRole}`,
@@ -120,24 +128,42 @@ export async function seedHrLeaveFixture() {
         fixture.tenantId,
       ]);
       await client.query(
-        "INSERT INTO principals (principal_id, display_name) VALUES ($1, $2), ($3, $4)",
+        `INSERT INTO principals (principal_id, display_name)
+         VALUES ($1, $2), ($3, $4), ($5, $6)`,
         [
           fixture.managerPrincipalId,
           "Browser Manager",
           fixture.employeePrincipalId,
           fixture.employeeDisplayName,
+          fixture.operatorPrincipalId,
+          "Browser HR Operator",
         ],
       );
       await client.query(
         `INSERT INTO memberships
            (membership_id, tenant_id, principal_id, role_key, manager_principal_id)
          VALUES ('20000000-0000-4000-8000-000000000002', $1, $2, 'manager', NULL),
-                ('20000000-0000-4000-8000-000000000004', $1, $3, 'employee', $2)`,
-        [fixture.tenantId, fixture.managerPrincipalId, fixture.employeePrincipalId],
+                ('20000000-0000-4000-8000-000000000004', $1, $3, 'employee', $2),
+                ('20000000-0000-4000-8000-000000000006', $1, $4, 'hr_operator', NULL)`,
+        [
+          fixture.tenantId,
+          fixture.managerPrincipalId,
+          fixture.employeePrincipalId,
+          fixture.operatorPrincipalId,
+        ],
+      );
+      await client.query(
+        `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+         VALUES ($1, $2, 'hr.workforce.view_own'),
+                ($1, $3, 'hr.workforce.create_profile'),
+                ($1, $3, 'hr.workforce.link_principal'),
+                ($1, $3, 'hr.workforce.change_status')`,
+        [fixture.tenantId, fixture.employeePrincipalId, fixture.operatorPrincipalId],
       );
       await client.query(
         `INSERT INTO service_activations (tenant_id, service_key, state, version)
-         VALUES ($1, 'hr.leave_request', 'active', 1)`,
+         VALUES ($1, 'hr.leave_request', 'active', 1),
+                ($1, 'workforce_profile', 'active', 1)`,
         [fixture.tenantId],
       );
       await client.query("COMMIT");

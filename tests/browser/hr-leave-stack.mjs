@@ -214,9 +214,15 @@ try {
       fixture.managerPrincipalId,
       fixture.managerLabel,
     );
+    const operator = startWeb(
+      new URL(fixture.operatorOrigin),
+      fixture.operatorPrincipalId,
+      fixture.operatorLabel,
+    );
     await Promise.all([
       requireActorReady(new URL(fixture.employeeOrigin), fixture.employeeLabel, employee),
       requireActorReady(new URL(fixture.managerOrigin), fixture.managerLabel, manager),
+      requireActorReady(new URL(fixture.operatorOrigin), fixture.operatorLabel, operator),
     ]);
   }
   if (!closing) {
