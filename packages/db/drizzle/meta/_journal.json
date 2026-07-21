@@ -57,6 +57,13 @@
       "when": 1784622496162,
       "tag": "0007_blue_patch",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784634660084,
+      "tag": "0008_good_darkhawk",
+      "breakpoints": true
     }
   ]
 }

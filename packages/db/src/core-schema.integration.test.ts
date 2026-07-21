@@ -164,8 +164,12 @@ beforeAll(async () => {
   await migrationPool.query(`GRANT SELECT, INSERT ON tenants, principals TO ${applicationRole}`);
   await migrationPool.query(
     `GRANT SELECT
-     ON hr_workforce_profile_service_control, membership_capabilities
+     ON hr_workforce_profile_service_control, membership_capabilities,
+        hr_workforce_status_history
      TO ${applicationRole}`,
+  );
+  await migrationPool.query(
+    `GRANT SELECT, INSERT, UPDATE ON hr_worker_profiles TO ${applicationRole}`,
   );
   await migrationPool.query(
     `GRANT SELECT, INSERT, UPDATE, DELETE
@@ -225,7 +229,7 @@ describe("core PostgreSQL foundation", () => {
     const migrations = await migrationPool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations`,
     );
-    expect(migrations.rows[0]?.count).toBe("8");
+    expect(migrations.rows[0]?.count).toBe("9");
 
     const rowSecurity = await pool.query<{
       force_row_security: boolean;
@@ -244,7 +248,9 @@ describe("core PostgreSQL foundation", () => {
         [
           "evidence_events",
           "hr_leave_requests",
+          "hr_worker_profiles",
           "hr_workforce_profile_service_control",
+          "hr_workforce_status_history",
           "membership_capabilities",
           "memberships",
           "outbox_events",
@@ -256,7 +262,7 @@ describe("core PostgreSQL foundation", () => {
       ],
     );
 
-    expect(rowSecurity.rows).toHaveLength(10);
+    expect(rowSecurity.rows).toHaveLength(12);
     expect(rowSecurity.rows.every((row) => row.row_security && row.force_row_security)).toBe(true);
     const schemaPrivilege = await pool.query<{ can_create: boolean; current_schema: string }>(
       `SELECT has_schema_privilege(current_user, 'public', 'CREATE') AS can_create,
@@ -801,6 +807,315 @@ describe("core PostgreSQL foundation", () => {
       service_control_id: createdB.rows[0]?.service_control_id,
       settings_version: 1,
     });
+  });
+
+  it("enforces the workforce-profile lifecycle, protected history, and exact Runtime ACL", async () => {
+    const privileges = await migrationPool.query<{ actual: boolean[] }>(
+      `SELECT ARRAY[
+         has_table_privilege('esbla_app', 'hr_worker_profiles', 'SELECT'),
+         has_table_privilege('esbla_app', 'hr_worker_profiles', 'INSERT'),
+         has_table_privilege('esbla_app', 'hr_worker_profiles', 'UPDATE'),
+         has_table_privilege('esbla_app', 'hr_worker_profiles', 'DELETE'),
+         has_table_privilege('esbla_app', 'hr_worker_profiles', 'TRUNCATE'),
+         has_table_privilege('esbla_app', 'hr_worker_profiles', 'REFERENCES'),
+         has_table_privilege('esbla_app', 'hr_worker_profiles', 'TRIGGER'),
+         has_table_privilege('esbla_app', 'hr_workforce_status_history', 'SELECT'),
+         has_table_privilege('esbla_app', 'hr_workforce_status_history', 'INSERT'),
+         has_table_privilege('esbla_app', 'hr_workforce_status_history', 'UPDATE'),
+         has_table_privilege('esbla_app', 'hr_workforce_status_history', 'REFERENCES'),
+         has_table_privilege('esbla_app', 'hr_workforce_status_history', 'TRIGGER'),
+         has_function_privilege(
+           'esbla_app', 'esbla_append_hr_workforce_status_history()', 'EXECUTE'
+         )
+       ] AS actual`,
+    );
+    expect(privileges.rows[0]?.actual).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+    ]);
+
+    await tenantQuery(
+      ids.tenantA,
+      `UPDATE service_activations SET state = 'active', version = 3
+       WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+      [ids.tenantA],
+    );
+    const mutate = async <T>(operation: (client: PoolClient) => Promise<T>): Promise<T> =>
+      await tenantTransaction(ids.tenantA, async (client) => {
+        await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [ids.managerA]);
+        await client.query("SELECT set_config('app.correlation_id', $1, true)", [ids.correlation]);
+        return await operation(client);
+      });
+    for (const [actor, correlation] of [
+      [null, ids.correlation],
+      ["not-a-uuid", ids.correlation],
+      [ids.managerA, null],
+      [ids.managerA, "not-a-uuid"],
+    ] as const) {
+      await expect(
+        tenantTransaction(ids.tenantA, async (client) => {
+          if (actor)
+            await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [actor]);
+          if (correlation)
+            await client.query("SELECT set_config('app.correlation_id', $1, true)", [correlation]);
+          await client.query("INSERT INTO hr_worker_profiles (tenant_id) VALUES ($1)", [
+            ids.tenantA,
+          ]);
+        }),
+      ).rejects.toMatchObject({ code: "22023" });
+    }
+
+    const created = await mutate(
+      async (client) =>
+        await client.query<{ server_time: boolean; worker_profile_id: string }>(
+          `INSERT INTO hr_worker_profiles
+             (worker_profile_id, tenant_id, employee_number, created_at, updated_at)
+           VALUES ($1, $2, ' WF-0001 ', '2099-01-01', '2099-01-01')
+           RETURNING worker_profile_id::text,
+             created_at = updated_at AND created_at < '2099-01-01'::timestamptz AS server_time`,
+          [ids.subject, ids.tenantA],
+        ),
+    );
+    const profileId = created.rows[0]?.worker_profile_id;
+    if (!profileId) throw new Error("Workforce profile identifier was not returned");
+    expect(profileId).not.toBe(ids.subject);
+    expect(created.rows[0]?.server_time).toBe(true);
+    await expect(
+      mutate(
+        async (client) =>
+          await client.query(
+            `INSERT INTO hr_worker_profiles
+               (tenant_id, current_reporting_relationship_id)
+             VALUES ($1, $2)`,
+            [ids.tenantA, ids.subject],
+          ),
+      ),
+    ).rejects.toMatchObject({ code: "55000" });
+    expect((await tenantQuery(ids.tenantB, "SELECT * FROM hr_worker_profiles")).rows).toEqual([]);
+    const history = async () =>
+      await tenantQuery<{ new_status: string; previous_status: string | null }>(
+        ids.tenantA,
+        `SELECT previous_status::text, new_status::text
+         FROM hr_workforce_status_history WHERE worker_profile_id = $1
+         ORDER BY effective_at, workforce_status_history_id`,
+        [profileId],
+      );
+    expect((await history()).rows).toEqual([{ new_status: "draft", previous_status: null }]);
+    const initialClock = await tenantQuery<{ server_time: boolean }>(
+      ids.tenantA,
+      `SELECT history.effective_at = profile.created_at
+          AND history.effective_at < '2099-01-01'::timestamptz AS server_time
+       FROM hr_workforce_status_history history
+       JOIN hr_worker_profiles profile USING (tenant_id, worker_profile_id)
+       WHERE history.worker_profile_id = $1 AND history.previous_status IS NULL`,
+      [profileId],
+    );
+    expect(initialClock.rows[0]?.server_time).toBe(true);
+
+    const memberStatus = async (status: "active" | "suspended") =>
+      await tenantQuery(
+        ids.tenantA,
+        "UPDATE memberships SET status = $3 WHERE tenant_id = $1 AND principal_id = $2",
+        [ids.tenantA, ids.employeeA, status],
+      );
+    const link = async (id: string) =>
+      await mutate(
+        async (client) =>
+          await client.query(
+            `UPDATE hr_worker_profiles SET principal_id = $2, row_version = 2
+             WHERE tenant_id = $1 AND worker_profile_id = $3`,
+            [ids.tenantA, ids.employeeA, id],
+          ),
+      );
+    const transition = async (status: string, version: number) =>
+      await mutate(
+        async (client) =>
+          await client.query(
+            `UPDATE hr_worker_profiles SET workforce_status = $3, row_version = $4
+             WHERE tenant_id = $1 AND worker_profile_id = $2`,
+            [ids.tenantA, profileId, status, version],
+          ),
+      );
+
+    await memberStatus("suspended");
+    await expect(link(profileId)).rejects.toMatchObject({ code: "55000" });
+    await memberStatus("active");
+    await link(profileId);
+    expect((await history()).rows).toHaveLength(1);
+    await expect(
+      migrationTenantTransaction(
+        ids.tenantA,
+        async (client) =>
+          await client.query(
+            `INSERT INTO hr_workforce_status_history
+               (tenant_id, worker_profile_id, previous_status, new_status,
+                effective_at, actor_principal_id, correlation_id)
+             VALUES ($1, $2, NULL, 'active', now(), $3, $4)`,
+            [ids.tenantA, profileId, ids.managerA, ids.correlation],
+          ),
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+
+    for (const [sql, values] of [
+      [
+        `UPDATE hr_worker_profiles SET principal_id = $2, workforce_status = 'active',
+           row_version = 3 WHERE tenant_id = $1 AND worker_profile_id = $3`,
+        [ids.tenantA, ids.managerA, profileId],
+      ],
+      [
+        `UPDATE hr_worker_profiles SET workforce_status = 'active', row_version = 2
+         WHERE tenant_id = $1 AND worker_profile_id = $2`,
+        [ids.tenantA, profileId],
+      ],
+      [
+        `UPDATE hr_worker_profiles SET employee_number = 'CHANGED', row_version = 3
+         WHERE tenant_id = $1 AND worker_profile_id = $2`,
+        [ids.tenantA, profileId],
+      ],
+    ] as const)
+      await expect(
+        mutate(async (client) => await client.query(sql, [...values])),
+      ).rejects.toMatchObject({ code: "55000" });
+
+    const second = await mutate(
+      async (client) =>
+        await client.query<{ worker_profile_id: string }>(
+          "INSERT INTO hr_worker_profiles (tenant_id) VALUES ($1) RETURNING worker_profile_id::text",
+          [ids.tenantA],
+        ),
+    );
+    const secondProfileId = second.rows[0]?.worker_profile_id;
+    if (!secondProfileId) throw new Error("Second workforce profile identifier was not returned");
+    await memberStatus("suspended");
+    await expect(transition("active", 3)).rejects.toMatchObject({ code: "55000" });
+    await memberStatus("active");
+    await transition("active", 3);
+    await expect(link(secondProfileId)).rejects.toMatchObject({ code: "23505" });
+    await transition("suspended", 4);
+    await transition("active", 5);
+    await transition("terminated", 6);
+    await expect(transition("suspended", 7)).rejects.toMatchObject({ code: "55000" });
+    const linker = await pool.connect();
+    const contender = await migrationPool.connect();
+    try {
+      for (const [sql, values] of [
+        [
+          "SELECT 1 FROM service_activations WHERE tenant_id = $1 AND service_key = 'workforce_profile' FOR UPDATE",
+          [ids.tenantA],
+        ],
+        [
+          "SELECT 1 FROM memberships WHERE tenant_id = $1 AND principal_id = $2 FOR UPDATE",
+          [ids.tenantA, ids.employeeA],
+        ],
+      ] as const) {
+        await contender.query("BEGIN");
+        await contender.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenantA]);
+        await contender.query(sql, [...values]);
+        await expect(link(secondProfileId)).rejects.toMatchObject({ code: "55P03" });
+        await contender.query("ROLLBACK");
+      }
+      await linker.query("BEGIN");
+      await linker.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenantA]);
+      await linker.query("SELECT set_config('app.actor_principal_id', $1, true)", [ids.managerA]);
+      await linker.query("SELECT set_config('app.correlation_id', $1, true)", [ids.correlation]);
+      expect(
+        (
+          await linker.query(
+            `UPDATE hr_worker_profiles SET principal_id = $2, row_version = 2
+             WHERE tenant_id = $1 AND worker_profile_id = $3`,
+            [ids.tenantA, ids.employeeA, secondProfileId],
+          )
+        ).rowCount,
+      ).toBe(1);
+      for (const [sql, values] of [
+        [
+          `UPDATE service_activations SET state = 'inactive', version = 4
+           WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+          [ids.tenantA],
+        ],
+        [
+          "UPDATE memberships SET status = 'suspended' WHERE tenant_id = $1 AND principal_id = $2",
+          [ids.tenantA, ids.employeeA],
+        ],
+      ] as const) {
+        await contender.query("BEGIN");
+        await contender.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenantA]);
+        await contender.query("SET LOCAL lock_timeout = '100ms'");
+        await expect(contender.query(sql, [...values])).rejects.toMatchObject({ code: "55P03" });
+        await contender.query("ROLLBACK");
+      }
+      await linker.query("COMMIT");
+    } finally {
+      await linker.query("ROLLBACK").catch(() => undefined);
+      await contender.query("ROLLBACK").catch(() => undefined);
+      linker.release();
+      contender.release();
+    }
+    expect((await history()).rows).toEqual([
+      { new_status: "draft", previous_status: null },
+      { new_status: "active", previous_status: "draft" },
+      { new_status: "suspended", previous_status: "active" },
+      { new_status: "active", previous_status: "suspended" },
+      { new_status: "terminated", previous_status: "active" },
+    ]);
+    await expect(
+      tenantQuery(ids.tenantA, "INSERT INTO hr_worker_profiles (tenant_id) VALUES ($1)", [
+        ids.tenantB,
+      ]),
+    ).rejects.toMatchObject({ code: "55000" });
+
+    for (const [sql, values, code] of [
+      ["DELETE FROM hr_worker_profiles WHERE worker_profile_id = $1", [profileId], "55000"],
+      ["TRUNCATE hr_worker_profiles CASCADE", [], "55000"],
+    ] as const) {
+      await expect(
+        migrationTenantTransaction(
+          ids.tenantA,
+          async (client) => await client.query(sql, [...values]),
+        ),
+      ).rejects.toMatchObject({ code });
+    }
+    for (const [sql, values] of [
+      [
+        "UPDATE hr_workforce_status_history SET correlation_id = $1 WHERE worker_profile_id = $2",
+        [ids.correlation, profileId],
+      ],
+      ["DELETE FROM hr_workforce_status_history WHERE worker_profile_id = $1", [profileId]],
+      ["TRUNCATE hr_workforce_status_history", []],
+    ] as const) {
+      await expect(
+        migrationTenantTransaction(
+          ids.tenantA,
+          async (client) => await client.query(sql, [...values]),
+        ),
+      ).rejects.toMatchObject({ code: "55000" });
+    }
+
+    await tenantQuery(
+      ids.tenantA,
+      `UPDATE service_activations SET state = 'inactive', version = 4
+       WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+      [ids.tenantA],
+    );
+    await expect(
+      mutate(
+        async (client) =>
+          await client.query("INSERT INTO hr_worker_profiles (tenant_id) VALUES ($1)", [
+            ids.tenantA,
+          ]),
+      ),
+    ).rejects.toMatchObject({ code: "55000" });
   });
 
   it("fails closed without tenant context and filters reads to the current tenant", async () => {

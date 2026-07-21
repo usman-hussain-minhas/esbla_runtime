@@ -379,8 +379,12 @@ beforeAll(async () => {
   await migrationPool.query(`GRANT SELECT, INSERT ON evidence_events TO ${applicationRole}`);
   await migrationPool.query(
     `GRANT SELECT
-     ON hr_workforce_profile_service_control, membership_capabilities
+     ON hr_workforce_profile_service_control, membership_capabilities,
+        hr_workforce_status_history
      TO ${applicationRole}`,
+  );
+  await migrationPool.query(
+    `GRANT SELECT, INSERT, UPDATE ON hr_worker_profiles TO ${applicationRole}`,
   );
 
   pool = createDatabasePool(connectionString, { max: 8 });

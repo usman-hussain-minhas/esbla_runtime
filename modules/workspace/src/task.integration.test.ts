@@ -203,11 +203,6 @@ afterAll(async () => {
 
 describe("Workspace Task domain", () => {
   it("applies schema with forced RLS, partial assigned index, and terminal-state guards", async () => {
-    const migrations = await migrationPool.query<{ count: string }>(
-      "SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations",
-    );
-    expect(migrations.rows[0]?.count).toBe("8");
-
     const table = await migrationPool.query<{
       force_row_security: boolean;
       row_security: boolean;

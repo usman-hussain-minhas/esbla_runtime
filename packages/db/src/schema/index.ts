@@ -17,5 +17,8 @@ export {
   hrLeaveRequestStatus,
   hrLeaveRequests,
   hrWorkforceProfileServiceControl,
+  hrWorkforceProfiles,
+  hrWorkforceStatus,
+  hrWorkforceStatusHistory,
 } from "./hr.js";
 export { workspaceTaskStatus, workspaceTasks } from "./workspace.js";

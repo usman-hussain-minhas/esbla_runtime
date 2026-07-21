@@ -20,7 +20,7 @@ import {
 
 const tenantContextHash = "9e360ba35e62b22ddb9b993a9af007ecec92777c4623e805c439fceeee17197f";
 const workforceProfileMigrationHash =
-  "f6ecf5aeedb02686452a2855d96382383a1dc95e0514814c03773fb94fb92dde";
+  "6e91e539b1ae824f386a468384904794bdb866630748bbd54e2ddc7dd85d9d6a";
 const migrationBarrierKey = [1163084364, 1296648018] as const;
 const initialActivationConflict = {
   code: "ACTIVATION_CONFLICT",
@@ -533,8 +533,12 @@ beforeAll(async () => {
   await migrationPool.query(`GRANT SELECT, INSERT ON evidence_events TO ${applicationRole}`);
   await migrationPool.query(
     `GRANT SELECT
-     ON hr_workforce_profile_service_control, membership_capabilities
+     ON hr_workforce_profile_service_control, membership_capabilities,
+        hr_workforce_status_history
      TO ${applicationRole}`,
+  );
+  await migrationPool.query(
+    `GRANT SELECT, INSERT, UPDATE ON hr_worker_profiles TO ${applicationRole}`,
   );
   pool = createDatabasePool(connectionString, { max: 8 });
   untrustedMigrationReadPool = createDatabasePool(connectionString, { max: 1 });
@@ -1251,28 +1255,47 @@ describe.sequential("Workforce Profile service-control lifecycle", () => {
       details: { reasons: ["qualified_retention_evidence_unavailable"] },
     });
     expect(await workforceProfileSnapshot()).toEqual(inactive);
-
-    await migrationPool.query(
-      `GRANT UPDATE (settings_version)
-       ON hr_workforce_profile_service_control TO ${applicationRole}`,
-    );
-    try {
+    const blocked = async (reason: string, runtimePool: Pool = pool) =>
       await expect(
         activateWorkforceProfileService(
-          pool,
+          runtimePool,
           migrationPool,
           context(ids.tenantA, ids.adminA, ids.correlationWorkforceCatalog),
           { expectedVersion: 4 },
         ),
       ).rejects.toMatchObject({
         code: "ACTIVATION_DEPENDENCY_BLOCKED",
-        details: { reasons: ["runtime_projection_privileges_not_current"] },
+        details: { reasons: [reason] },
       });
-    } finally {
-      await migrationPool.query(
-        `REVOKE UPDATE (settings_version)
-         ON hr_workforce_profile_service_control FROM ${applicationRole}`,
-      );
+    const drift = async (
+      apply: string,
+      restore: string,
+      reason: string,
+      driftPool = migrationPool,
+    ) => {
+      await driftPool.query(apply);
+      try {
+        await blocked(reason);
+      } finally {
+        await driftPool.query(restore);
+      }
+    };
+
+    for (const [grant, revoke] of [
+      [
+        `GRANT UPDATE (settings_version) ON hr_workforce_profile_service_control TO ${applicationRole}`,
+        `REVOKE UPDATE (settings_version) ON hr_workforce_profile_service_control FROM ${applicationRole}`,
+      ],
+      [
+        `GRANT REFERENCES ON hr_worker_profiles TO ${applicationRole}`,
+        `REVOKE REFERENCES ON hr_worker_profiles FROM ${applicationRole}`,
+      ],
+      [
+        `GRANT TRIGGER ON hr_worker_profiles TO ${applicationRole}`,
+        `REVOKE TRIGGER ON hr_worker_profiles FROM ${applicationRole}`,
+      ],
+    ] as const) {
+      await drift(grant, revoke, "runtime_projection_privileges_not_current");
     }
     expect(await workforceProfileSnapshot()).toEqual(inactive);
 
@@ -1282,17 +1305,7 @@ describe.sequential("Workforce Profile service-control lifecycle", () => {
       staleHash,
     ]);
     try {
-      await expect(
-        activateWorkforceProfileService(
-          pool,
-          migrationPool,
-          context(ids.tenantA, ids.adminA, ids.correlationWorkforceCatalog),
-          { expectedVersion: 4 },
-        ),
-      ).rejects.toMatchObject({
-        code: "ACTIVATION_DEPENDENCY_BLOCKED",
-        details: { reasons: ["migration_0006_not_current"] },
-      });
+      await blocked("migration_0008_not_current");
     } finally {
       await migrationPool.query(
         "UPDATE drizzle.__drizzle_migrations SET hash = $2 WHERE hash = $1",
@@ -1301,47 +1314,124 @@ describe.sequential("Workforce Profile service-control lifecycle", () => {
     }
     expect(await workforceProfileSnapshot()).toEqual(inactive);
 
-    await migrationPool.query(
-      "ALTER TABLE service_activations DISABLE TRIGGER service_activations_sync_hr_workforce_profile",
-    );
-    try {
-      await expect(
-        activateWorkforceProfileService(
-          pool,
-          migrationPool,
-          context(ids.tenantA, ids.adminA, ids.correlationWorkforceCatalog),
-          { expectedVersion: 4 },
-        ),
-      ).rejects.toMatchObject({
-        code: "ACTIVATION_DEPENDENCY_BLOCKED",
-        details: { reasons: ["schema_dependencies_not_current"] },
-      });
-    } finally {
-      await migrationPool.query(
+    for (const [apply, restore] of [
+      [
+        "ALTER TABLE service_activations DISABLE TRIGGER service_activations_sync_hr_workforce_profile",
         "ALTER TABLE service_activations ENABLE TRIGGER service_activations_sync_hr_workforce_profile",
-      );
-    }
-    expect(await workforceProfileSnapshot()).toEqual(inactive);
-
-    await migrationPool.query(
-      "ALTER TABLE membership_capabilities DISABLE TRIGGER membership_capabilities_guard_authority",
-    );
-    try {
-      await expect(
-        activateWorkforceProfileService(
-          pool,
-          migrationPool,
-          context(ids.tenantA, ids.adminA, ids.correlationWorkforceCatalog),
-          { expectedVersion: 4 },
-        ),
-      ).rejects.toMatchObject({
-        code: "ACTIVATION_DEPENDENCY_BLOCKED",
-        details: { reasons: ["schema_dependencies_not_current"] },
-      });
-    } finally {
-      await migrationPool.query(
+      ],
+      [
+        "ALTER TABLE membership_capabilities DISABLE TRIGGER membership_capabilities_guard_authority",
         "ALTER TABLE membership_capabilities ENABLE TRIGGER membership_capabilities_guard_authority",
-      );
+      ],
+      [
+        "ALTER TABLE hr_worker_profiles DISABLE TRIGGER hr_worker_profiles_enforce_state",
+        "ALTER TABLE hr_worker_profiles ENABLE TRIGGER hr_worker_profiles_enforce_state",
+      ],
+      [
+        "CREATE TRIGGER hr_worker_profiles_extra_drift BEFORE UPDATE ON hr_worker_profiles FOR EACH ROW EXECUTE FUNCTION esbla_enforce_hr_workforce_profile_state()",
+        "DROP TRIGGER hr_worker_profiles_extra_drift ON hr_worker_profiles",
+      ],
+      [
+        "ALTER TYPE hr_workforce_status RENAME VALUE 'terminated' TO 'ended'",
+        "ALTER TYPE hr_workforce_status RENAME VALUE 'ended' TO 'terminated'",
+      ],
+      [
+        "CREATE POLICY hr_worker_profiles_restrictive_drift ON hr_worker_profiles AS RESTRICTIVE FOR SELECT USING (false)",
+        "DROP POLICY hr_worker_profiles_restrictive_drift ON hr_worker_profiles",
+      ],
+      [
+        `GRANT EXECUTE ON FUNCTION esbla_append_hr_workforce_status_history() TO ${applicationRole}`,
+        `REVOKE EXECUTE ON FUNCTION esbla_append_hr_workforce_status_history() FROM ${applicationRole}`,
+      ],
+    ] as const)
+      await drift(apply, restore, "schema_dependencies_not_current");
+    const migrationRole = /^postgresql:\/\/([a-z_][a-z0-9_]*)@\//.exec(
+      migrationConnectionString,
+    )?.[1];
+    if (!migrationRole) throw new Error("Unsafe migration role");
+    const adminConnectionString = migrationConnectionString.replace(
+      `postgresql://${migrationRole}@/`,
+      "postgresql://postgres@/",
+    );
+    const applicationConnectionString = migrationConnectionString.replace(
+      `postgresql://${migrationRole}@/`,
+      `postgresql://${applicationRole}@/`,
+    );
+    const adminPool = createDatabasePool(adminConnectionString, { max: 1 });
+    try {
+      for (const attribute of "SUPERUSER,BYPASSRLS,REPLICATION,CREATEROLE,CREATEDB".split(",")) {
+        await adminPool.query(`ALTER ROLE ${applicationRole} WITH ${attribute}`);
+        try {
+          await blocked("runtime_projection_privileges_not_current");
+        } finally {
+          await adminPool.query(`ALTER ROLE ${applicationRole} WITH NO${attribute}`);
+        }
+      }
+      await adminPool.query(`GRANT pg_monitor TO ${applicationRole}`);
+      try {
+        await blocked("runtime_projection_privileges_not_current");
+      } finally {
+        await adminPool.query(`REVOKE pg_monitor FROM ${applicationRole}`);
+      }
+      const assumedRolePool = createDatabasePool(adminConnectionString, {
+        max: 1,
+        options: `-c role=${applicationRole}`,
+      });
+      try {
+        await blocked("runtime_projection_privileges_not_current", assumedRolePool);
+      } finally {
+        await assumedRolePool.end();
+      }
+      await adminPool.query(`ALTER ROLE ${applicationRole} SET session_replication_role = replica`);
+      const replicaPool = createDatabasePool(applicationConnectionString, { max: 1 });
+      try {
+        await blocked("runtime_projection_privileges_not_current", replicaPool);
+      } finally {
+        await replicaPool.end();
+        await adminPool.query(`ALTER ROLE ${applicationRole} RESET session_replication_role`);
+      }
+      const serverVersionNum = (
+        await adminPool.query<{ value: number }>(
+          "SELECT current_setting('server_version_num')::integer AS value",
+        )
+      ).rows[0]?.value;
+      if (!serverVersionNum) throw new Error("PostgreSQL version unavailable");
+      if (serverVersionNum >= 150000) {
+        for (const privilege of ["SET", "ALTER SYSTEM"]) {
+          await drift(
+            `GRANT ${privilege} ON PARAMETER session_replication_role TO ${applicationRole}`,
+            `REVOKE ${privilege} ON PARAMETER session_replication_role FROM ${applicationRole}`,
+            "runtime_projection_privileges_not_current",
+            adminPool,
+          );
+        }
+      }
+      for (const [apply, restore, reason] of [
+        [
+          "ALTER FUNCTION esbla_append_hr_workforce_status_history() OWNER TO postgres",
+          `ALTER FUNCTION esbla_append_hr_workforce_status_history() OWNER TO ${migrationRole}`,
+          "schema_dependencies_not_current",
+        ],
+        [
+          "ALTER TABLE hr_worker_profiles OWNER TO postgres",
+          `ALTER TABLE hr_worker_profiles OWNER TO ${migrationRole}`,
+          "schema_dependencies_not_current",
+        ],
+        [
+          "ALTER TYPE hr_workforce_status OWNER TO postgres",
+          `ALTER TYPE hr_workforce_status OWNER TO ${migrationRole}`,
+          "schema_dependencies_not_current",
+        ],
+      ] as const) {
+        await adminPool.query(apply);
+        try {
+          await blocked(reason);
+        } finally {
+          await adminPool.query(restore);
+        }
+      }
+    } finally {
+      await adminPool.end();
     }
     expect(await workforceProfileSnapshot()).toEqual(inactive);
     await expect(
