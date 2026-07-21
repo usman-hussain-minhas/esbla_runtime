@@ -190,3 +190,77 @@ test("configured rejection note fails accessibly, then rejection persists after 
     await closeActors(employee, manager);
   }
 });
+
+test("HR operator onboards a worker and the employee reloads a minimized profile", async ({
+  browser,
+}) => {
+  const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
+  const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
+  try {
+    await employee.page.goto(`${employee.origin}/workspace/hr/profile`);
+    await expect(employee.page.getByRole("heading", { name: "Workforce profile" })).toBeVisible();
+    await expect(employee.page.getByRole("heading", { name: "No active profile" })).toBeVisible();
+
+    await operator.page.goto(`${operator.origin}/workspace/hr`);
+    await operator.page.getByRole("link", { name: "Workforce administration" }).click();
+    await expect(operator.page.getByRole("heading", { name: "Onboard a worker" })).toBeVisible();
+    const employeeNumber = operator.page.getByLabel("Employee number");
+    await employeeNumber.focus();
+    await employeeNumber.fill("BROWSER-WORKER-001");
+    await employeeNumber.press("Tab");
+    await expect(operator.page.getByRole("button", { name: "Create draft profile" })).toBeFocused();
+    await operator.page.keyboard.press("Enter");
+
+    await expect(operator.page.getByLabel("Principal ID")).toBeFocused();
+    await operator.page.reload();
+    const principalId = operator.page.getByLabel("Principal ID");
+    await expect(principalId).toBeFocused();
+    await principalId.fill("not-a-principal-id");
+    await principalId.press("Tab");
+    await operator.page.keyboard.press("Enter");
+    await expect(operator.page.locator(".form-error-summary")).toBeFocused();
+    await expect(principalId).toHaveAttribute("aria-invalid", "true");
+    expect(operator.diagnostics.console).toEqual([
+      "Failed to load resource: the server responded with a status of 400 (Bad Request)",
+    ]);
+    operator.diagnostics.console.length = 0;
+    await principalId.fill(fixture.employeePrincipalId);
+    await principalId.press("Tab");
+    await expect(operator.page.getByRole("button", { name: "Link principal" })).toBeFocused();
+    await operator.page.keyboard.press("Enter");
+
+    const activate = operator.page.getByRole("button", { name: "Activate profile" });
+    await expect(activate).toBeFocused();
+    await operator.page.keyboard.press("Enter");
+    await expect(operator.page.getByText("Onboarding complete", { exact: true })).toBeVisible();
+    await expect(operator.page.getByRole("link", { name: "Return to HR" })).toBeFocused();
+    await operator.page.getByRole("button", { name: "Onboard another worker" }).click();
+    await expect(operator.page.getByLabel("Employee number")).toBeFocused();
+
+    await employee.page.reload();
+    await expect(employee.page.getByText("BROWSER-WORKER-001", { exact: true })).toBeVisible();
+    await expect(employee.page.locator(".leave-status")).toHaveText("Active");
+    await expect(employee.page.getByText("Connected", { exact: true })).toBeVisible();
+
+    await employee.page.setViewportSize({ height: 844, width: 390 });
+    await employee.page.getByRole("button", { name: "High contrast theme" }).click();
+    await expect(employee.page.locator("html")).toHaveAttribute("data-theme", "high-contrast");
+    expect(
+      await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+
+    await employee.page.goto(`${employee.origin}/workspace/hr/profile/admin`);
+    await employee.page.getByLabel("Employee number").fill("DENIED-WORKER");
+    await employee.page.getByRole("button", { name: "Create draft profile" }).click();
+    await expect(employee.page.locator(".form-error-summary")).toBeFocused();
+    await expect(employee.page.locator(".form-error-summary")).toContainText(
+      "You do not have permission",
+    );
+    expect(employee.diagnostics.console).toEqual([
+      "Failed to load resource: the server responded with a status of 403 (Forbidden)",
+    ]);
+    employee.diagnostics.console.length = 0;
+  } finally {
+    await closeActors(employee, operator);
+  }
+});
