@@ -1,4 +1,4 @@
-import { HrLeaveError } from "@esbla/hr";
+import { HrLeaveError, HrWorkforceProfileError } from "@esbla/hr";
 import { PlatformError } from "@esbla/platform-core";
 import { WorkspaceTaskError } from "@esbla/workspace";
 import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
@@ -25,6 +25,13 @@ function statusForError(error: Error): number {
     if (error.code === "LEAVE_SERVICE_INACTIVE") return 503;
     return 409;
   }
+  if (error instanceof HrWorkforceProfileError) {
+    if (error.code === "WORKFORCE_PROFILE_INPUT_INVALID") return 400;
+    if (error.code === "WORKFORCE_PROFILE_NOT_FOUND") return 404;
+    if (error.code === "WORKFORCE_PROFILE_PRINCIPAL_UNAVAILABLE") return 422;
+    if (error.code === "WORKFORCE_PROFILE_SERVICE_INACTIVE") return 503;
+    return 409;
+  }
   if (error instanceof WorkspaceTaskError) {
     if (error.code === "WORKSPACE_TASK_INPUT_INVALID") return 400;
     if (error.code === "WORKSPACE_TASK_NOT_FOUND") return 404;
@@ -48,6 +55,7 @@ function codeForError(error: Error): string {
   if (
     error instanceof AuthError ||
     error instanceof HrLeaveError ||
+    error instanceof HrWorkforceProfileError ||
     error instanceof WorkspaceTaskError ||
     error instanceof PlatformError
   ) {
@@ -70,6 +78,7 @@ export function sendProblem(caught: unknown, request: FastifyRequest, reply: Fas
         : error.message;
   reply
     .code(status)
+    .header("x-request-id", requestId)
     .type("application/problem+json")
     .send({
       code,

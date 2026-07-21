@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { HrWorkforceProfile, HrWorkforceServiceControl } from "@esbla/contracts";
 import { createDatabase, createDatabasePool, migrateDatabase } from "@esbla/db";
 import { evaluatePolicy, setServiceActivation, withTenantTransaction } from "@esbla/platform-core";
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from "fastify";
@@ -18,6 +19,7 @@ const ids = {
   managerA: "10000000-0000-4000-8000-000000000002",
   managerA2: "10000000-0000-4000-8000-000000000003",
   managerB: "10000000-0000-4000-8000-000000000006",
+  operatorA: "10000000-0000-4000-8000-000000000008",
   membershipAdminA: "20000000-0000-4000-8000-000000000001",
   membershipAdminB: "20000000-0000-4000-8000-000000000005",
   membershipEmployeeA: "20000000-0000-4000-8000-000000000004",
@@ -25,6 +27,7 @@ const ids = {
   membershipManagerA: "20000000-0000-4000-8000-000000000002",
   membershipManagerA2: "20000000-0000-4000-8000-000000000003",
   membershipManagerB: "20000000-0000-4000-8000-000000000006",
+  membershipOperatorA: "20000000-0000-4000-8000-000000000008",
   tenantA: "00000000-0000-4000-8000-000000000001",
   tenantB: "00000000-0000-4000-8000-000000000002",
 } as const;
@@ -90,6 +93,13 @@ interface LeavePersistenceSnapshot {
   readonly outbox: readonly Record<string, unknown>[];
   readonly requests: readonly Record<string, unknown>[];
   readonly work: readonly Record<string, unknown>[];
+}
+
+interface WorkforcePersistenceSnapshot {
+  readonly evidence: readonly Record<string, unknown>[];
+  readonly outbox: readonly Record<string, unknown>[];
+  readonly profiles: readonly Record<string, unknown>[];
+  readonly statusHistory: readonly Record<string, unknown>[];
 }
 
 let migrationPool: Pool;
@@ -215,6 +225,72 @@ async function setManagerARole(roleKey: string): Promise<void> {
        WHERE tenant_id = $1 AND principal_id = $2`,
       [ids.tenantA, ids.managerA, roleKey],
     );
+  } finally {
+    client.release();
+  }
+}
+
+async function setMembership(
+  principalId: string,
+  changes: { readonly roleKey?: string; readonly status?: string },
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await seedTenantRow(
+      client,
+      ids.tenantA,
+      `UPDATE memberships
+       SET role_key = COALESCE($3, role_key), status = COALESCE($4, status)
+       WHERE tenant_id = $1 AND principal_id = $2`,
+      [ids.tenantA, principalId, changes.roleKey ?? null, changes.status ?? null],
+    );
+  } finally {
+    client.release();
+  }
+}
+
+async function snapshotWorkforcePersistence(
+  workerProfileId: string,
+): Promise<WorkforcePersistenceSnapshot> {
+  const client = await pool.connect();
+  await client.query("BEGIN");
+  try {
+    await client.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenantA]);
+    const profiles = await client.query<Record<string, unknown>>(
+      `SELECT * FROM hr_worker_profiles
+       WHERE tenant_id = $1 AND worker_profile_id = $2
+       ORDER BY worker_profile_id`,
+      [ids.tenantA, workerProfileId],
+    );
+    const statusHistory = await client.query<Record<string, unknown>>(
+      `SELECT * FROM hr_workforce_status_history
+       WHERE tenant_id = $1 AND worker_profile_id = $2
+       ORDER BY effective_at, workforce_status_history_id`,
+      [ids.tenantA, workerProfileId],
+    );
+    const evidence = await client.query<Record<string, unknown>>(
+      `SELECT * FROM evidence_events
+       WHERE tenant_id = $1 AND subject_type = 'hr.workforce_profile' AND subject_id = $2
+       ORDER BY occurred_at, evidence_event_id`,
+      [ids.tenantA, workerProfileId],
+    );
+    const outbox = await client.query<Record<string, unknown>>(
+      `SELECT * FROM outbox_events
+       WHERE tenant_id = $1 AND aggregate_type = 'hr.workforce_profile'
+         AND aggregate_id = $2
+       ORDER BY aggregate_version, event_id`,
+      [ids.tenantA, workerProfileId],
+    );
+    await client.query("COMMIT");
+    return {
+      evidence: evidence.rows,
+      outbox: outbox.rows,
+      profiles: profiles.rows,
+      statusHistory: statusHistory.rows,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
   } finally {
     client.release();
   }
@@ -350,6 +426,26 @@ function expectPolicyDenied(result: Awaited<ReturnType<typeof signedRequest>>): 
   expect(problem).not.toHaveProperty("history");
 }
 
+function expectProblem(
+  result: Awaited<ReturnType<typeof signedRequest>>,
+  status: number,
+  code: string,
+): void {
+  expect(result.response.statusCode).toBe(status);
+  expect(result.response.headers["content-type"]).toContain("application/problem+json");
+  expect(result.response.headers["x-request-id"]).toBe(result.requestId);
+  expect(result.response.headers["idempotent-replayed"]).toBeUndefined();
+  expect(result.response.json()).toEqual({
+    code,
+    detail: expect.any(String),
+    instance: expect.any(String),
+    requestId: result.requestId,
+    status,
+    title: expect.any(String),
+    type: `urn:esbla:problem:${code.toLowerCase()}`,
+  });
+}
+
 beforeAll(async () => {
   const connectionString = process.env.DATABASE_URL;
   const migrationConnectionString = process.env.DATABASE_MIGRATION_URL;
@@ -371,7 +467,16 @@ beforeAll(async () => {
         outbox_events, hr_leave_requests
      TO ${applicationRole}`,
   );
-  await migrationPool.query(`GRANT SELECT, INSERT ON evidence_events TO ${applicationRole}`);
+  await migrationPool.query(
+    `GRANT SELECT, INSERT, UPDATE
+     ON hr_worker_profiles, hr_workforce_profile_service_control
+     TO ${applicationRole}`,
+  );
+  await migrationPool.query(
+    `GRANT SELECT, INSERT
+     ON evidence_events, hr_workforce_status_history
+     TO ${applicationRole}`,
+  );
 
   pool = createDatabasePool(connectionString, { max: 8 });
   await pool.query(
@@ -381,7 +486,8 @@ beforeAll(async () => {
   await pool.query(
     `INSERT INTO principals (principal_id, display_name)
      VALUES ($1, 'Admin A'), ($2, 'Manager A'), ($3, 'Manager A2'),
-            ($4, 'Employee A'), ($5, 'Admin B'), ($6, 'Manager B'), ($7, 'Employee B')`,
+            ($4, 'Employee A'), ($5, 'Admin B'), ($6, 'Manager B'),
+            ($7, 'Employee B'), ($8, 'HR Operator A')`,
     [
       ids.adminA,
       ids.managerA,
@@ -390,6 +496,7 @@ beforeAll(async () => {
       ids.adminB,
       ids.managerB,
       ids.employeeB,
+      ids.operatorA,
     ],
   );
 
@@ -403,7 +510,8 @@ beforeAll(async () => {
        VALUES ($1, $2, $3, 'tenant_admin', NULL),
               ($4, $2, $5, 'manager', NULL),
               ($6, $2, $7, 'manager', NULL),
-              ($8, $2, $9, 'employee', $5)`,
+              ($8, $2, $9, 'employee', $5),
+              ($10, $2, $11, 'hr_operator', NULL)`,
       [
         ids.membershipAdminA,
         ids.tenantA,
@@ -414,6 +522,8 @@ beforeAll(async () => {
         ids.managerA2,
         ids.membershipEmployeeA,
         ids.employeeA,
+        ids.membershipOperatorA,
+        ids.operatorA,
       ],
     );
     await seedTenantRow(
@@ -443,6 +553,7 @@ beforeAll(async () => {
   server = createServer({
     authenticate: createDevelopmentAuthenticator({ clock: () => now, secret }),
     logger: false,
+    migrationReadPool: migrationPool,
     pool,
   });
 });
@@ -915,5 +1026,346 @@ describe("HR Leave Request API boundary", () => {
         .json<{ history: { eventType: string }[] }>()
         .history.map((event) => event.eventType),
     ).toEqual(["evidence.hr.leave_request.submitted", "evidence.hr.leave_request.approved"]);
+  });
+});
+
+describe("HR Workforce Profile API boundary", () => {
+  it("enforces inactive, operator, self-service, replay, CAS, and tenant boundaries", async () => {
+    const inactiveOwn = await signedRequest({
+      method: "GET",
+      principalId: ids.employeeA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/own",
+    });
+    expectProblem(inactiveOwn, 503, "WORKFORCE_PROFILE_SERVICE_INACTIVE");
+
+    const activationKey = randomUUID();
+    const activationBody = { expectedVersion: null };
+    const activated = await signedRequest({
+      body: activationBody,
+      idempotencyKey: activationKey,
+      method: "POST",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/service-control/activate",
+    });
+    expect(activated.response.statusCode, activated.response.body).toBe(200);
+    expect(activated.response.headers["idempotent-replayed"]).toBe("false");
+    const activeControl = activated.response.json<HrWorkforceServiceControl>();
+    expect(Object.keys(activeControl).sort()).toEqual(
+      [
+        "activationState",
+        "activationVersion",
+        "serviceKey",
+        "settingsVersion",
+        "updatedAt",
+        "version",
+      ].sort(),
+    );
+    expect(activeControl).toMatchObject({
+      activationState: "active",
+      activationVersion: 1,
+      serviceKey: "workforce_profile",
+    });
+
+    const activationReplay = await signedRequest({
+      body: activationBody,
+      idempotencyKey: activationKey,
+      method: "POST",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/service-control/activate",
+    });
+    expect(activationReplay.response.statusCode).toBe(200);
+    expect(activationReplay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(activationReplay.response.json()).toEqual(activeControl);
+
+    const control = await signedRequest({
+      method: "GET",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/service-control",
+    });
+    expect(control.response.statusCode).toBe(200);
+    expect(control.response.json()).toEqual(activeControl);
+
+    const adminCreate = await signedRequest({
+      body: { employeeNumber: "EMP-ADMIN" },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles",
+    });
+    expectProblem(adminCreate, 403, "POLICY_DENIED");
+
+    const clientScopedCreate = await signedRequest({
+      body: {
+        actorPrincipalId: ids.operatorA,
+        employeeNumber: "EMP-SPOOFED-SCOPE",
+        tenantId: ids.tenantB,
+      },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.operatorA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles",
+    });
+    expect(clientScopedCreate.response.statusCode).toBe(400);
+    expect(clientScopedCreate.response.headers["content-type"]).toContain(
+      "application/problem+json",
+    );
+    const validationProblem = clientScopedCreate.response.json<Record<string, unknown>>();
+    expect(clientScopedCreate.response.headers["x-request-id"]).toBe(validationProblem.requestId);
+    expect(validationProblem).toEqual({
+      code: "REQUEST_VALIDATION_FAILED",
+      detail: "Request did not match the API contract.",
+      instance: "/v1/hr/workforce-profiles",
+      requestId: expect.any(String),
+      status: 400,
+      title: "Bad Request",
+      type: "urn:esbla:problem:request_validation_failed",
+    });
+
+    const createKey = randomUUID();
+    const createBody = { employeeNumber: "EMP-0001" };
+    const created = await signedRequest({
+      body: createBody,
+      idempotencyKey: createKey,
+      method: "POST",
+      principalId: ids.operatorA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles",
+    });
+    expect(created.response.statusCode).toBe(201);
+    expect(created.response.headers["idempotent-replayed"]).toBe("false");
+    const draft = created.response.json<HrWorkforceProfile>();
+    expect(Object.keys(draft).sort()).toEqual(
+      [
+        "createdAt",
+        "employeeNumber",
+        "principalLinked",
+        "updatedAt",
+        "version",
+        "workerProfileId",
+        "workforceStatus",
+      ].sort(),
+    );
+    expect(draft).toMatchObject({
+      employeeNumber: "EMP-0001",
+      principalLinked: false,
+      version: 1,
+      workforceStatus: "draft",
+    });
+
+    const createReplay = await signedRequest({
+      body: createBody,
+      idempotencyKey: createKey,
+      method: "POST",
+      principalId: ids.operatorA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles",
+    });
+    expect(createReplay.response.statusCode).toBe(200);
+    expect(createReplay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(createReplay.response.json()).toEqual(draft);
+
+    const unlinkedOwn = await signedRequest({
+      method: "GET",
+      principalId: ids.employeeA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/own",
+    });
+    expectProblem(unlinkedOwn, 403, "POLICY_DENIED");
+
+    const missing = await signedRequest({
+      body: { expectedVersion: 1, targetStatus: "active" },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.operatorA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/30000000-0000-4000-8000-000000000010/status",
+    });
+    expectProblem(missing, 404, "WORKFORCE_PROFILE_NOT_FOUND");
+
+    const crossTenantLink = await signedRequest({
+      body: { expectedVersion: 1, principalId: ids.employeeB },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.operatorA,
+      tenantId: ids.tenantA,
+      url: `/v1/hr/workforce-profiles/${draft.workerProfileId}/principal-link`,
+    });
+    expectProblem(crossTenantLink, 422, "WORKFORCE_PROFILE_PRINCIPAL_UNAVAILABLE");
+
+    const linkKey = randomUUID();
+    const linkBody = { expectedVersion: 1, principalId: ids.employeeA };
+    const linked = await signedRequest({
+      body: linkBody,
+      idempotencyKey: linkKey,
+      method: "POST",
+      principalId: ids.operatorA,
+      tenantId: ids.tenantA,
+      url: `/v1/hr/workforce-profiles/${draft.workerProfileId}/principal-link`,
+    });
+    expect(linked.response.statusCode).toBe(200);
+    expect(linked.response.headers["idempotent-replayed"]).toBe("false");
+    expect(linked.response.json<HrWorkforceProfile>()).toMatchObject({
+      principalLinked: true,
+      version: 2,
+      workforceStatus: "draft",
+    });
+
+    const linkReplay = await signedRequest({
+      body: linkBody,
+      idempotencyKey: linkKey,
+      method: "POST",
+      principalId: ids.operatorA,
+      tenantId: ids.tenantA,
+      url: `/v1/hr/workforce-profiles/${draft.workerProfileId}/principal-link`,
+    });
+    expect(linkReplay.response.statusCode).toBe(200);
+    expect(linkReplay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(linkReplay.response.json()).toEqual(linked.response.json());
+
+    const draftOwn = await signedRequest({
+      method: "GET",
+      principalId: ids.employeeA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/own",
+    });
+    expectProblem(draftOwn, 403, "POLICY_DENIED");
+
+    const staleStatus = await signedRequest({
+      body: { expectedVersion: 1, targetStatus: "active" },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.operatorA,
+      tenantId: ids.tenantA,
+      url: `/v1/hr/workforce-profiles/${draft.workerProfileId}/status`,
+    });
+    expectProblem(staleStatus, 409, "WORKFORCE_PROFILE_VERSION_CONFLICT");
+
+    const statusKey = randomUUID();
+    const statusBody = { expectedVersion: 2, targetStatus: "active" } as const;
+    const activatedProfile = await signedRequest({
+      body: statusBody,
+      idempotencyKey: statusKey,
+      method: "POST",
+      principalId: ids.operatorA,
+      tenantId: ids.tenantA,
+      url: `/v1/hr/workforce-profiles/${draft.workerProfileId}/status`,
+    });
+    expect(activatedProfile.response.statusCode).toBe(200);
+    expect(activatedProfile.response.headers["idempotent-replayed"]).toBe("false");
+    const activeProfile = activatedProfile.response.json<HrWorkforceProfile>();
+    expect(activeProfile).toMatchObject({
+      principalLinked: true,
+      version: 3,
+      workforceStatus: "active",
+    });
+
+    const own = await signedRequest({
+      method: "GET",
+      principalId: ids.employeeA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/own",
+    });
+    expect(own.response.statusCode).toBe(200);
+    expect(own.response.json()).toEqual(activeProfile);
+    expect(own.response.json()).not.toHaveProperty("tenantId");
+    expect(own.response.json()).not.toHaveProperty("principalId");
+
+    const persistence = await snapshotWorkforcePersistence(draft.workerProfileId);
+    expect(persistence.profiles).toHaveLength(1);
+    expect(persistence.profiles[0]).toMatchObject({
+      employee_number: "EMP-0001",
+      principal_id: ids.employeeA,
+      row_version: 3,
+      workforce_status: "active",
+    });
+    expect(persistence.statusHistory).toHaveLength(2);
+    expect(persistence.statusHistory.map((row) => row.new_status)).toEqual(["draft", "active"]);
+    expect(persistence.evidence.map((row) => row.event_type)).toEqual([
+      "hr.workforce_profile.create_profile",
+      "hr.workforce_profile.link_principal",
+      "hr.workforce_profile.change_status",
+    ]);
+    expect(persistence.outbox.map((row) => row.aggregate_version)).toEqual([1, 2, 3]);
+
+    const statusReplay = await signedRequest({
+      body: statusBody,
+      idempotencyKey: statusKey,
+      method: "POST",
+      principalId: ids.operatorA,
+      tenantId: ids.tenantA,
+      url: `/v1/hr/workforce-profiles/${draft.workerProfileId}/status`,
+    });
+    expect(statusReplay.response.statusCode).toBe(200);
+    expect(statusReplay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(statusReplay.response.json()).toEqual(activeProfile);
+
+    const forgedTenant = await signedRequest({
+      method: "GET",
+      principalId: ids.employeeB,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/own",
+    });
+    expectProblem(forgedTenant, 403, "ACTOR_NOT_ACTIVE_MEMBER");
+
+    const adminOwn = await signedRequest({
+      method: "GET",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/own",
+    });
+    expectProblem(adminOwn, 403, "POLICY_DENIED");
+
+    await setMembership(ids.operatorA, { roleKey: "employee" });
+    const demotedOperator = await signedRequest({
+      body: { expectedVersion: 3, targetStatus: "suspended" },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.operatorA,
+      tenantId: ids.tenantA,
+      url: `/v1/hr/workforce-profiles/${draft.workerProfileId}/status`,
+    });
+    expectProblem(demotedOperator, 403, "POLICY_DENIED");
+    expect(await snapshotWorkforcePersistence(draft.workerProfileId)).toEqual(persistence);
+
+    const deactivationKey = randomUUID();
+    const deactivated = await signedRequest({
+      body: { expectedVersion: 1 },
+      idempotencyKey: deactivationKey,
+      method: "POST",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/service-control/deactivate",
+    });
+    expect(deactivated.response.statusCode).toBe(200);
+    expect(deactivated.response.headers["idempotent-replayed"]).toBe("false");
+    const inactiveControl = deactivated.response.json<HrWorkforceServiceControl>();
+    expect(inactiveControl).toMatchObject({ activationState: "inactive", activationVersion: 2 });
+
+    const deactivationReplay = await signedRequest({
+      body: { expectedVersion: 1 },
+      idempotencyKey: deactivationKey,
+      method: "POST",
+      principalId: ids.adminA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/service-control/deactivate",
+    });
+    expect(deactivationReplay.response.statusCode).toBe(200);
+    expect(deactivationReplay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(deactivationReplay.response.json()).toEqual(inactiveControl);
+
+    const blockedAfterDeactivation = await signedRequest({
+      method: "GET",
+      principalId: ids.employeeA,
+      tenantId: ids.tenantA,
+      url: "/v1/hr/workforce-profiles/own",
+    });
+    expectProblem(blockedAfterDeactivation, 503, "WORKFORCE_PROFILE_SERVICE_INACTIVE");
+    expect(await snapshotWorkforcePersistence(draft.workerProfileId)).toEqual(persistence);
   });
 });

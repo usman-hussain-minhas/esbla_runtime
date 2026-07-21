@@ -21,6 +21,13 @@ describe("HR passenger manifest reuse contract", () => {
       "hr.leave.reject",
       "hr.leave.submit",
       "hr.leave.view",
+      "hr.workforce.activate_service",
+      "hr.workforce.change_status",
+      "hr.workforce.create_profile",
+      "hr.workforce.deactivate_service",
+      "hr.workforce.link_principal",
+      "hr.workforce.view_own",
+      "hr.workforce.view_service_control",
     ]);
     expect(hrManifest.capabilities).not.toContainEqual({
       exposure: "integration",

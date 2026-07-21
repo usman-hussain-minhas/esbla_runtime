@@ -5,6 +5,11 @@ import {
   type HrLeaveListQuery,
   type HrLeaveRequestPath,
   type HrSubmitLeaveRequestBody,
+  type HrWorkforceChangeStatusBody,
+  type HrWorkforceCreateProfileBody,
+  type HrWorkforceLinkPrincipalBody,
+  type HrWorkforceProfilePath,
+  type HrWorkforceServiceLifecycleBody,
   hrAssignedLeaveListQuerySchema,
   hrAssignedLeaveRequestPageSchema,
   hrAssignedLeaveRequestSchema,
@@ -17,6 +22,14 @@ import {
   hrLeaveRequestPathSchema,
   hrLeaveRequestSchema,
   hrSubmitLeaveRequestBodySchema,
+  hrWorkforceChangeStatusBodySchema,
+  hrWorkforceCreateProfileBodySchema,
+  hrWorkforceLinkPrincipalBodySchema,
+  hrWorkforceProfilePathSchema,
+  hrWorkforceProfileSchema,
+  hrWorkforceServiceActivateBodySchema,
+  hrWorkforceServiceControlSchema,
+  hrWorkforceServiceDeactivateBodySchema,
   problemDetailsSchema,
   type WorkspaceCompleteTaskBody,
   type WorkspaceCreateTaskBody,
@@ -31,9 +44,17 @@ import {
   workspaceTaskSchema,
 } from "@esbla/contracts";
 import {
+  activateWorkforceProfileService,
   approveLeaveRequest,
+  changeWorkforceStatus,
+  createWorkforceProfile,
+  deactivateWorkforceProfileService,
   getLeaveRequestDetail,
+  getOwnWorkforceProfile,
+  getWorkforceProfileServiceControl,
   HrLeaveError,
+  HrWorkforceProfileError,
+  linkWorkforcePrincipal,
   listAssignedLeaveRequests,
   listOwnLeaveRequests,
   rejectLeaveRequest,
@@ -62,6 +83,7 @@ declare module "fastify" {
 export interface CreateServerOptions {
   readonly authenticate: RequestAuthenticator;
   readonly logger?: boolean;
+  readonly migrationReadPool?: Pool;
   readonly pool: Pool;
 }
 
@@ -75,6 +97,16 @@ function idempotencyKey(request: FastifyRequest): string {
   const key = Array.isArray(value) ? value[0] : value;
   if (!key) throw new Error("authenticated idempotency key is missing");
   return key;
+}
+
+function workforceActivationMigrationPool(options: CreateServerOptions): Pool {
+  if (!options.migrationReadPool) {
+    throw new HrWorkforceProfileError(
+      "WORKFORCE_PROFILE_SERVICE_INACTIVE",
+      "Workforce Profile activation readiness is unavailable",
+    );
+  }
+  return options.migrationReadPool;
 }
 
 function pageResponse<T extends { leaveRequestId: string; submittedAt: string }>(
@@ -126,6 +158,14 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     hrLeaveEvidenceEventSchema,
     hrLeaveRequestPageSchema,
     hrLeaveRequestDetailSchema,
+    hrWorkforceCreateProfileBodySchema,
+    hrWorkforceLinkPrincipalBodySchema,
+    hrWorkforceChangeStatusBodySchema,
+    hrWorkforceProfilePathSchema,
+    hrWorkforceProfileSchema,
+    hrWorkforceServiceActivateBodySchema,
+    hrWorkforceServiceDeactivateBodySchema,
+    hrWorkforceServiceControlSchema,
     workspaceCreateTaskBodySchema,
     workspaceCompleteTaskBodySchema,
     workspaceTaskPathSchema,
@@ -294,6 +334,154 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
       },
     );
   }
+
+  server.get(
+    "/v1/hr/workforce-profiles/own",
+    {
+      preHandler: authenticate,
+      schema: {
+        response: {
+          200: { $ref: "HrWorkforceProfileResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request) => await getOwnWorkforceProfile(options.pool, operationContext(request)),
+  );
+
+  server.get(
+    "/v1/hr/workforce-profiles/service-control",
+    {
+      preHandler: authenticate,
+      schema: {
+        response: {
+          200: { $ref: "HrServiceControlResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request) =>
+      await getWorkforceProfileServiceControl(options.pool, operationContext(request)),
+  );
+
+  for (const action of ["activate", "deactivate"] as const) {
+    server.post<{ Body: HrWorkforceServiceLifecycleBody }>(
+      `/v1/hr/workforce-profiles/service-control/${action}`,
+      {
+        preHandler: authenticate,
+        schema: {
+          body: {
+            $ref:
+              action === "activate"
+                ? "HrServiceActivateRequestV1#"
+                : "HrServiceDeactivateRequestV1#",
+          },
+          response: {
+            200: { $ref: "HrServiceControlResponseV1#" },
+            default: { $ref: "ProblemDetails#" },
+          },
+        },
+      },
+      async (request, reply) => {
+        const input = {
+          ...request.body,
+          idempotencyKey: idempotencyKey(request),
+        };
+        const result =
+          action === "activate"
+            ? await activateWorkforceProfileService(
+                options.pool,
+                workforceActivationMigrationPool(options),
+                operationContext(request),
+                input,
+              )
+            : await deactivateWorkforceProfileService(
+                options.pool,
+                operationContext(request),
+                input,
+              );
+        reply.header("idempotent-replayed", String(result.replayed));
+        return await getWorkforceProfileServiceControl(options.pool, operationContext(request));
+      },
+    );
+  }
+
+  server.post<{ Body: HrWorkforceCreateProfileBody }>(
+    "/v1/hr/workforce-profiles",
+    {
+      preHandler: authenticate,
+      schema: {
+        body: { $ref: "HrWorkforceCreateProfileRequestV1#" },
+        response: {
+          200: { $ref: "HrWorkforceProfileResponseV1#" },
+          201: { $ref: "HrWorkforceProfileResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await createWorkforceProfile(options.pool, operationContext(request), {
+        ...request.body,
+        idempotencyKey: idempotencyKey(request),
+      });
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(result.replayed ? 200 : 201).send(result.profile);
+    },
+  );
+
+  server.post<{
+    Body: HrWorkforceLinkPrincipalBody;
+    Params: HrWorkforceProfilePath;
+  }>(
+    "/v1/hr/workforce-profiles/:workerProfileId/principal-link",
+    {
+      preHandler: authenticate,
+      schema: {
+        body: { $ref: "HrWorkforceLinkPrincipalRequestV1#" },
+        params: { $ref: "HrWorkforceProfilePathV1#" },
+        response: {
+          200: { $ref: "HrWorkforceProfileResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await linkWorkforcePrincipal(options.pool, operationContext(request), {
+        ...request.body,
+        idempotencyKey: idempotencyKey(request),
+        workerProfileId: request.params.workerProfileId,
+      });
+      reply.header("idempotent-replayed", String(result.replayed));
+      return result.profile;
+    },
+  );
+
+  server.post<{
+    Body: HrWorkforceChangeStatusBody;
+    Params: HrWorkforceProfilePath;
+  }>(
+    "/v1/hr/workforce-profiles/:workerProfileId/status",
+    {
+      preHandler: authenticate,
+      schema: {
+        body: { $ref: "HrWorkforceChangeStatusRequestV1#" },
+        params: { $ref: "HrWorkforceProfilePathV1#" },
+        response: {
+          200: { $ref: "HrWorkforceProfileResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await changeWorkforceStatus(options.pool, operationContext(request), {
+        ...request.body,
+        idempotencyKey: idempotencyKey(request),
+        workerProfileId: request.params.workerProfileId,
+      });
+      reply.header("idempotent-replayed", String(result.replayed));
+      return result.profile;
+    },
+  );
 
   server.post<{ Body: WorkspaceCreateTaskBody }>(
     "/v1/workspace/tasks",

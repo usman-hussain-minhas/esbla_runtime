@@ -9,6 +9,7 @@ const ids = {
   employeeA: "10000000-0000-4000-8000-000000000002",
   employeeB: "10000000-0000-4000-8000-000000000004",
   evidence: "40000000-0000-4000-8000-000000000001",
+  history: "80000000-0000-4000-8000-000000000001",
   managerA: "10000000-0000-4000-8000-000000000001",
   managerB: "10000000-0000-4000-8000-000000000003",
   membershipEmployeeA: "20000000-0000-4000-8000-000000000002",
@@ -20,6 +21,7 @@ const ids = {
   tenantA: "00000000-0000-4000-8000-000000000001",
   tenantB: "00000000-0000-4000-8000-000000000002",
   workItem: "70000000-0000-4000-8000-000000000001",
+  workerProfile: "90000000-0000-4000-8000-000000000001",
 } as const;
 
 let migrationPool: Pool;
@@ -131,6 +133,14 @@ beforeAll(async () => {
      TO ${applicationRole}`,
   );
   await migrationPool.query(`GRANT SELECT, INSERT ON evidence_events TO ${applicationRole}`);
+  await migrationPool.query(
+    `GRANT SELECT, INSERT, UPDATE
+     ON hr_worker_profiles, hr_workforce_profile_service_control
+     TO ${applicationRole}`,
+  );
+  await migrationPool.query(
+    `GRANT SELECT, INSERT ON hr_workforce_status_history TO ${applicationRole}`,
+  );
 
   pool = createDatabasePool(connectionString, { max: 4 });
 
@@ -183,7 +193,7 @@ describe("core PostgreSQL foundation", () => {
     const migrations = await migrationPool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations`,
     );
-    expect(migrations.rows[0]?.count).toBe("6");
+    expect(migrations.rows[0]?.count).toBe("7");
 
     const rowSecurity = await pool.query<{
       force_row_security: boolean;
@@ -202,6 +212,9 @@ describe("core PostgreSQL foundation", () => {
         [
           "evidence_events",
           "hr_leave_requests",
+          "hr_worker_profiles",
+          "hr_workforce_profile_service_control",
+          "hr_workforce_status_history",
           "memberships",
           "outbox_events",
           "service_activations",
@@ -212,7 +225,7 @@ describe("core PostgreSQL foundation", () => {
       ],
     );
 
-    expect(rowSecurity.rows).toHaveLength(8);
+    expect(rowSecurity.rows).toHaveLength(11);
     expect(rowSecurity.rows.every((row) => row.row_security && row.force_row_security)).toBe(true);
     const schemaPrivilege = await pool.query<{ can_create: boolean; current_schema: string }>(
       `SELECT has_schema_privilege(current_user, 'public', 'CREATE') AS can_create,
@@ -365,6 +378,207 @@ describe("core PostgreSQL foundation", () => {
         [ids.workItem],
       ),
     ).rejects.toMatchObject({ code: "23514" });
+  });
+
+  it("enforces workforce profile lifecycle, append-only history, and activation synchronization", async () => {
+    await tenantQuery(
+      ids.tenantA,
+      `INSERT INTO service_activations (tenant_id, service_key, state, version)
+       VALUES ($1, 'workforce_profile', 'active', 1)`,
+      [ids.tenantA],
+    );
+    const initialControl = await tenantQuery<{
+      activation_state: string;
+      activation_version: number;
+      row_version: number;
+      service_key: string;
+      settings_version: number;
+    }>(
+      ids.tenantA,
+      `SELECT service_key, activation_state, activation_version, settings_version, row_version
+       FROM hr_workforce_profile_service_control`,
+    );
+    expect(initialControl.rows).toEqual([
+      {
+        activation_state: "active",
+        activation_version: 1,
+        row_version: 1,
+        service_key: "workforce_profile",
+        settings_version: 1,
+      },
+    ]);
+
+    await tenantQuery(
+      ids.tenantA,
+      `INSERT INTO hr_worker_profiles
+         (worker_profile_id, tenant_id, employee_number)
+       VALUES ($1, $2, 'EMP-0001')`,
+      [ids.workerProfile, ids.tenantA],
+    );
+    await tenantQuery(
+      ids.tenantA,
+      `INSERT INTO hr_workforce_status_history
+         (workforce_status_history_id, tenant_id, worker_profile_id, previous_status,
+          new_status, actor_principal_id, correlation_id)
+       VALUES ($1, $2, $3, NULL, 'draft', $4, $5)`,
+      [ids.history, ids.tenantA, ids.workerProfile, ids.managerA, ids.correlation],
+    );
+    await expect(
+      tenantQuery(
+        ids.tenantA,
+        `UPDATE hr_worker_profiles
+         SET workforce_status = 'active', row_version = 2, updated_at = clock_timestamp()
+         WHERE worker_profile_id = $1`,
+        [ids.workerProfile],
+      ),
+    ).rejects.toMatchObject({ code: "55000" });
+    await expect(
+      tenantQuery(
+        ids.tenantA,
+        `INSERT INTO hr_worker_profiles (tenant_id, principal_id)
+         VALUES ($1, $2)`,
+        [ids.tenantA, ids.employeeB],
+      ),
+    ).rejects.toMatchObject({ code: "23503" });
+    await expect(
+      tenantQuery(
+        ids.tenantA,
+        `UPDATE hr_worker_profiles
+         SET current_reporting_relationship_id = $2,
+             row_version = 2,
+             updated_at = clock_timestamp()
+         WHERE worker_profile_id = $1`,
+        [ids.workerProfile, ids.workItem],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+
+    await tenantQuery(
+      ids.tenantA,
+      `UPDATE hr_worker_profiles
+       SET principal_id = $2, row_version = 2, updated_at = clock_timestamp()
+       WHERE worker_profile_id = $1`,
+      [ids.workerProfile, ids.employeeA],
+    );
+    await tenantQuery(
+      ids.tenantA,
+      `UPDATE hr_worker_profiles
+       SET workforce_status = 'active', row_version = 3, updated_at = clock_timestamp()
+       WHERE worker_profile_id = $1`,
+      [ids.workerProfile],
+    );
+    await tenantQuery(
+      ids.tenantA,
+      `INSERT INTO hr_workforce_status_history
+         (tenant_id, worker_profile_id, previous_status, new_status,
+          actor_principal_id, correlation_id)
+       VALUES ($1, $2, 'draft', 'active', $3, $4)`,
+      [ids.tenantA, ids.workerProfile, ids.managerA, ids.workItem],
+    );
+    const profileVersion = await tenantQuery<{ row_version: number }>(
+      ids.tenantA,
+      `SELECT row_version FROM hr_worker_profiles WHERE worker_profile_id = $1`,
+      [ids.workerProfile],
+    );
+    expect(profileVersion.rows).toEqual([{ row_version: 3 }]);
+    await expect(
+      tenantQuery(
+        ids.tenantA,
+        `UPDATE hr_worker_profiles
+         SET workforce_status = 'draft', row_version = 4, updated_at = clock_timestamp()
+         WHERE worker_profile_id = $1`,
+        [ids.workerProfile],
+      ),
+    ).rejects.toMatchObject({ code: "55000" });
+
+    await tenantQuery(
+      ids.tenantA,
+      `UPDATE service_activations
+       SET state = 'inactive', version = 2
+       WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+      [ids.tenantA],
+    );
+    const synchronizedControl = await tenantQuery<{
+      activation_state: string;
+      activation_version: number;
+      row_version: number;
+    }>(
+      ids.tenantA,
+      `SELECT activation_state, activation_version, row_version
+       FROM hr_workforce_profile_service_control`,
+    );
+    expect(synchronizedControl.rows).toEqual([
+      { activation_state: "inactive", activation_version: 2, row_version: 2 },
+    ]);
+    await tenantQuery(
+      ids.tenantA,
+      `UPDATE hr_workforce_profile_service_control
+       SET settings_version = 2, row_version = 3, updated_at = clock_timestamp()
+       WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+      [ids.tenantA],
+    );
+    await expect(
+      tenantQuery(
+        ids.tenantA,
+        `UPDATE hr_workforce_profile_service_control
+         SET settings_version = 4, row_version = 4, updated_at = clock_timestamp()
+         WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+        [ids.tenantA],
+      ),
+    ).rejects.toMatchObject({ code: "55000" });
+    await expect(
+      tenantQuery(
+        ids.tenantA,
+        `UPDATE hr_workforce_profile_service_control
+         SET activation_state = 'active', activation_version = 3,
+             row_version = 4, updated_at = clock_timestamp()
+         WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+        [ids.tenantA],
+      ),
+    ).rejects.toMatchObject({ code: "55000" });
+
+    const migrationClient = await migrationPool.connect();
+    try {
+      await migrationClient.query("BEGIN");
+      await migrationClient.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenantA]);
+      await expect(
+        migrationClient.query(
+          `UPDATE hr_workforce_status_history
+           SET new_status = 'suspended'
+           WHERE workforce_status_history_id = $1`,
+          [ids.history],
+        ),
+      ).rejects.toMatchObject({ code: "55000" });
+      await migrationClient.query("ROLLBACK");
+
+      await migrationClient.query("BEGIN");
+      await migrationClient.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenantA]);
+      await expect(
+        migrationClient.query("DELETE FROM hr_worker_profiles WHERE worker_profile_id = $1", [
+          ids.workerProfile,
+        ]),
+      ).rejects.toMatchObject({ code: "55000" });
+      await migrationClient.query("ROLLBACK");
+
+      await migrationClient.query("BEGIN");
+      await migrationClient.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenantA]);
+      await expect(
+        migrationClient.query(
+          `DELETE FROM hr_workforce_profile_service_control
+           WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+          [ids.tenantA],
+        ),
+      ).rejects.toMatchObject({ code: "55000" });
+      await migrationClient.query("ROLLBACK");
+
+      await migrationClient.query("BEGIN");
+      await migrationClient.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenantA]);
+      await expect(
+        migrationClient.query("TRUNCATE hr_workforce_status_history"),
+      ).rejects.toMatchObject({ code: "55000" });
+      await migrationClient.query("ROLLBACK");
+    } finally {
+      migrationClient.release();
+    }
   });
 
   it("keeps tenant resolution safe under a hostile caller search path", async () => {

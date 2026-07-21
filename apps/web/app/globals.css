@@ -335,6 +335,214 @@ h1 {
   padding: 8px 11px;
 }
 
+.hr-hub-surface {
+  max-width: 940px;
+}
+
+.hr-service-list {
+  border-top: 1px solid var(--line-soft);
+  display: grid;
+  margin-top: 48px;
+}
+
+.hr-service-link {
+  align-items: center;
+  border-bottom: 1px solid var(--line-soft);
+  display: grid;
+  gap: 18px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 22px 2px;
+  text-decoration: none;
+  transition:
+    background var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard);
+}
+
+.hr-service-link:hover {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.hr-service-icon {
+  align-items: center;
+  background: var(--accent-soft);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-widget);
+  color: var(--accent-strong);
+  display: inline-flex;
+  height: 46px;
+  justify-content: center;
+  width: 46px;
+}
+
+.hr-service-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.hr-service-copy strong {
+  color: var(--heading-main);
+  font-family: var(--font-display);
+  font-size: 16px;
+}
+
+.hr-service-copy span {
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.profile-surface {
+  max-width: 900px;
+}
+
+.profile-heading {
+  align-items: flex-end;
+}
+
+.profile-facts {
+  border-top: 1px solid var(--line-soft);
+  display: grid;
+  gap: 28px;
+  grid-template-columns: auto minmax(0, 1fr);
+  margin-top: 48px;
+  padding-top: 30px;
+}
+
+.profile-identity-icon {
+  align-items: center;
+  background: var(--accent-soft);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-widget);
+  color: var(--accent-strong);
+  display: inline-flex;
+  height: 62px;
+  justify-content: center;
+  width: 62px;
+}
+
+.profile-facts dl {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.profile-fact {
+  align-items: center;
+  border-bottom: 1px solid var(--line-soft);
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(130px, 0.45fr) 1fr;
+  min-height: 62px;
+  padding: 12px 0;
+}
+
+.profile-facts dt {
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.profile-facts dd {
+  color: var(--heading-main);
+  font-size: 14px;
+  font-weight: 620;
+  margin: 0;
+}
+
+.profile-unavailable {
+  margin-top: 48px;
+}
+
+.profile-manage-surface {
+  max-width: 960px;
+}
+
+.profile-workflow,
+.profile-service-control {
+  border-top: 1px solid var(--line-soft);
+  margin-top: 48px;
+  padding-top: 28px;
+}
+
+.profile-steps {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, 1fr);
+  list-style: none;
+  margin: 0 0 30px;
+  padding: 0;
+}
+
+.profile-steps li {
+  border-bottom: 3px solid var(--line-soft);
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 9px 2px;
+}
+
+.profile-steps li[data-complete="true"] {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.profile-step-form {
+  border-top: 0;
+  margin: 0;
+  max-width: 700px;
+  padding-top: 0;
+}
+
+.profile-step-form h2,
+.service-control-row h2 {
+  font-size: 19px;
+  margin: 18px 0 9px;
+}
+
+.profile-step-form > p,
+.service-control-row p,
+.service-control-version {
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.profile-created-summary {
+  align-items: flex-start;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--success);
+  display: flex;
+  font-size: 13px;
+  gap: 10px;
+  margin-bottom: 28px;
+  padding: 0 2px 20px;
+}
+
+.profile-created-summary strong {
+  color: var(--heading-main);
+  overflow-wrap: anywhere;
+}
+
+.service-control-row {
+  align-items: center;
+  display: flex;
+  gap: 36px;
+  justify-content: space-between;
+}
+
+.service-control-action {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+
+.service-control-version {
+  border-top: 1px solid var(--line-soft);
+  margin: 24px 0 0;
+  padding-top: 16px;
+}
+
 .empty-worklist {
   align-items: center;
   border-top: 1px solid var(--line-soft);
@@ -1179,6 +1387,16 @@ textarea:focus-visible,
     grid-template-columns: 1fr;
   }
 
+  .profile-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .service-control-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 18px;
+  }
+
   .work-queue {
     margin-top: 36px;
   }
@@ -1256,6 +1474,16 @@ textarea:focus-visible,
 
   .leave-form-heading > .text-command {
     margin-top: 22px;
+  }
+
+  .profile-heading > .text-command {
+    margin-top: 22px;
+  }
+
+  .profile-fact {
+    align-items: start;
+    gap: 7px;
+    grid-template-columns: 1fr;
   }
 
   .form-actions {

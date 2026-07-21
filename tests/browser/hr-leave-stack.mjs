@@ -56,15 +56,21 @@ function portOpen(port) {
 await seedHrLeaveFixture();
 
 const applicationPool = createDatabasePool(requiredEnvironment("DATABASE_URL"), { max: 8 });
+const migrationReadPool = createDatabasePool(requiredEnvironment("DATABASE_MIGRATION_URL"), {
+  max: 2,
+});
 const server = createServer({
   authenticate: createDevelopmentAuthenticator({
     environment: "test",
     secret: fixtureEnvironment.ESBLA_DEV_AUTH_SECRET,
   }),
   logger: false,
+  migrationReadPool,
   pool: applicationPool,
 });
-server.addHook("onClose", async () => await applicationPool.end());
+server.addHook("onClose", async () => {
+  await Promise.all([applicationPool.end(), migrationReadPool.end()]);
+});
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const webRoot = fileURLToPath(new URL("../../apps/web/", import.meta.url));
@@ -77,7 +83,7 @@ let playwrightRootPromise;
 async function closeApi() {
   if (listening) await listening.catch(() => undefined);
   if (server.server.listening) await server.close();
-  else await applicationPool.end();
+  else await Promise.all([applicationPool.end(), migrationReadPool.end()]);
 }
 
 async function close() {
@@ -173,10 +179,10 @@ function startWeb(origin, principalId, label) {
   );
 }
 
-async function requireActorReady(origin, label, web) {
+async function requireActorReady(origin, label, web, path) {
   for (let attempt = 0; attempt < 100 && !web.settled; attempt += 1) {
     try {
-      const response = await fetch(new URL("/workspace/hr/leave/new", origin), {
+      const response = await fetch(new URL(path, origin), {
         signal: AbortSignal.timeout(500),
       });
       if (response.status === 200 && (await response.text()).includes(label) && !web.settled)
@@ -204,6 +210,11 @@ try {
     await listening;
   }
   if (!closing) {
+    const admin = startWeb(
+      new URL(fixture.adminOrigin),
+      fixture.adminPrincipalId,
+      fixture.adminLabel,
+    );
     const employee = startWeb(
       new URL(fixture.employeeOrigin),
       fixture.employeePrincipalId,
@@ -214,9 +225,36 @@ try {
       fixture.managerPrincipalId,
       fixture.managerLabel,
     );
+    const operator = startWeb(
+      new URL(fixture.operatorOrigin),
+      fixture.operatorPrincipalId,
+      fixture.operatorLabel,
+    );
     await Promise.all([
-      requireActorReady(new URL(fixture.employeeOrigin), fixture.employeeLabel, employee),
-      requireActorReady(new URL(fixture.managerOrigin), fixture.managerLabel, manager),
+      requireActorReady(
+        new URL(fixture.adminOrigin),
+        fixture.adminLabel,
+        admin,
+        "/workspace/hr/profile/settings",
+      ),
+      requireActorReady(
+        new URL(fixture.employeeOrigin),
+        fixture.employeeLabel,
+        employee,
+        "/workspace/hr/leave/new",
+      ),
+      requireActorReady(
+        new URL(fixture.managerOrigin),
+        fixture.managerLabel,
+        manager,
+        "/workspace/hr/leave/new",
+      ),
+      requireActorReady(
+        new URL(fixture.operatorOrigin),
+        fixture.operatorLabel,
+        operator,
+        "/workspace/hr/profile/admin",
+      ),
     ]);
   }
   if (!closing) {

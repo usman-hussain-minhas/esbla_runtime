@@ -40,6 +40,27 @@ export {
   problemDetailsSchema,
 } from "./hr-leave-api.js";
 export {
+  type HrWorkforceChangeStatusBody,
+  type HrWorkforceCreateProfileBody,
+  type HrWorkforceLinkPrincipalBody,
+  type HrWorkforceProfile,
+  type HrWorkforceProfilePath,
+  type HrWorkforceServiceControl,
+  type HrWorkforceServiceLifecycleBody,
+  type HrWorkforceStatus,
+  hrWorkforceChangeStatusBodySchema,
+  hrWorkforceCreateProfileBodySchema,
+  hrWorkforceLinkPrincipalBodySchema,
+  hrWorkforceProfilePathSchema,
+  hrWorkforceProfileSchema,
+  hrWorkforceServiceActivateBodySchema,
+  hrWorkforceServiceControlSchema,
+  hrWorkforceServiceDeactivateBodySchema,
+  hrWorkforceServiceLifecycleBodySchema,
+  parseHrWorkforceProfile,
+  parseHrWorkforceServiceControl,
+} from "./hr-workforce-profile-api.js";
+export {
   type CapabilityDeclaration,
   type CapabilityExposure,
   defineModuleManifest,

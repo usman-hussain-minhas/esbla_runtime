@@ -43,6 +43,13 @@
       "when": 1784276307910,
       "tag": "0005_tenant_context_search_path",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784613324040,
+      "tag": "0006_hr_workforce_profile_foundation",
+      "breakpoints": true
     }
   ]
 }

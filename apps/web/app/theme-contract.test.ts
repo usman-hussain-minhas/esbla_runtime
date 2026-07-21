@@ -54,7 +54,7 @@ describe("Esbla Theme v1 host contract", () => {
     expect(surfaces).toContain("WORKSPACE_SURFACES");
     expect(surfaces).toContain('href: "/workspace/my-work"');
     expect(surfaces).toContain('href: "/workspace/tasks"');
-    expect(surfaces).toContain('href: "/workspace/hr/leave"');
+    expect(surfaces).toContain('href: "/workspace/hr"');
     expect(shell).toContain("WORKSPACE_SURFACES.map");
     expect(shell).not.toContain("statusLabel: string");
     expect(shell).not.toContain('currentSurface === "HR"');

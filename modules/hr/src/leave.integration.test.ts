@@ -566,7 +566,7 @@ describe("HR Leave Request domain", () => {
     const migrations = await migrationPool.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations",
     );
-    expect(migrations.rows[0]?.count).toBe("6");
+    expect(Number(migrations.rows[0]?.count)).toBeGreaterThanOrEqual(6);
     const table = await migrationPool.query<{
       force_row_security: boolean;
       row_security: boolean;

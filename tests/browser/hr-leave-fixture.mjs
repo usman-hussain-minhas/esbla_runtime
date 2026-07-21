@@ -8,8 +8,17 @@ import {
   migrateDatabase,
 } from "../../packages/db/dist/index.js";
 
-export const ports = { api: 41_900, employee: 41_901, manager: 41_902 };
+export const ports = {
+  admin: 41_903,
+  api: 41_900,
+  employee: 41_901,
+  manager: 41_902,
+  operator: 41_904,
+};
 export const fixture = {
+  adminLabel: "Browser Tenant Admin session",
+  adminOrigin: `http://127.0.0.1:${ports.admin}`,
+  adminPrincipalId: "10000000-0000-4000-8000-000000000001",
   employeeDisplayName: "Browser Employee",
   employeeLabel: "Browser Employee session",
   employeeOrigin: `http://127.0.0.1:${ports.employee}`,
@@ -17,6 +26,9 @@ export const fixture = {
   managerLabel: "Browser Manager session",
   managerOrigin: `http://127.0.0.1:${ports.manager}`,
   managerPrincipalId: "10000000-0000-4000-8000-000000000002",
+  operatorLabel: "Browser HR Operator session",
+  operatorOrigin: `http://127.0.0.1:${ports.operator}`,
+  operatorPrincipalId: "10000000-0000-4000-8000-000000000008",
   tenantId: "00000000-0000-4000-8000-000000000001",
 };
 
@@ -104,15 +116,23 @@ export async function seedHrLeaveFixture() {
     const client = await pool.connect();
     try {
       await client.query(`GRANT USAGE ON SCHEMA public TO ${applicationRole}`);
+      await client.query(`GRANT SELECT ON principals, tenant_settings TO ${applicationRole}`);
       await client.query(
-        `GRANT SELECT ON principals, service_activations, tenant_settings TO ${applicationRole}`,
+        `GRANT SELECT, INSERT, UPDATE ON service_activations TO ${applicationRole}`,
       );
       await client.query(`GRANT SELECT, UPDATE ON memberships TO ${applicationRole}`);
       await client.query(
         `GRANT SELECT, INSERT, UPDATE ON work_items, hr_leave_requests TO ${applicationRole}`,
       );
       await client.query(
-        `GRANT SELECT, INSERT ON evidence_events, outbox_events TO ${applicationRole}`,
+        `GRANT SELECT, INSERT, UPDATE
+         ON hr_worker_profiles, hr_workforce_profile_service_control
+         TO ${applicationRole}`,
+      );
+      await client.query(
+        `GRANT SELECT, INSERT
+         ON evidence_events, outbox_events, hr_workforce_status_history
+         TO ${applicationRole}`,
       );
       await client.query("BEGIN");
       await client.query("SELECT set_config('app.tenant_id', $1, true)", [fixture.tenantId]);
@@ -120,20 +140,33 @@ export async function seedHrLeaveFixture() {
         fixture.tenantId,
       ]);
       await client.query(
-        "INSERT INTO principals (principal_id, display_name) VALUES ($1, $2), ($3, $4)",
+        `INSERT INTO principals (principal_id, display_name)
+         VALUES ($1, $2), ($3, $4), ($5, $6), ($7, $8)`,
         [
+          fixture.adminPrincipalId,
+          "Browser Tenant Admin",
           fixture.managerPrincipalId,
           "Browser Manager",
           fixture.employeePrincipalId,
           fixture.employeeDisplayName,
+          fixture.operatorPrincipalId,
+          "Browser HR Operator",
         ],
       );
       await client.query(
         `INSERT INTO memberships
            (membership_id, tenant_id, principal_id, role_key, manager_principal_id)
-         VALUES ('20000000-0000-4000-8000-000000000002', $1, $2, 'manager', NULL),
-                ('20000000-0000-4000-8000-000000000004', $1, $3, 'employee', $2)`,
-        [fixture.tenantId, fixture.managerPrincipalId, fixture.employeePrincipalId],
+         VALUES ('20000000-0000-4000-8000-000000000001', $1, $2, 'tenant_admin', NULL),
+                ('20000000-0000-4000-8000-000000000002', $1, $3, 'manager', NULL),
+                ('20000000-0000-4000-8000-000000000004', $1, $4, 'employee', $3),
+                ('20000000-0000-4000-8000-000000000008', $1, $5, 'hr_operator', NULL)`,
+        [
+          fixture.tenantId,
+          fixture.adminPrincipalId,
+          fixture.managerPrincipalId,
+          fixture.employeePrincipalId,
+          fixture.operatorPrincipalId,
+        ],
       );
       await client.query(
         `INSERT INTO service_activations (tenant_id, service_key, state, version)
