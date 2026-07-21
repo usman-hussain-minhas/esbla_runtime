@@ -8,6 +8,11 @@ import {
   type HrServiceControlQuery,
   type HrServiceDeactivateBody,
   type HrSubmitLeaveRequestBody,
+  type HrWorkforceChangeStatusBody,
+  type HrWorkforceCreateProfileBody,
+  type HrWorkforceLinkPrincipalBody,
+  type HrWorkforceOwnQuery,
+  type HrWorkforceProfilePath,
   hrAssignedLeaveListQuerySchema,
   hrAssignedLeaveRequestPageSchema,
   hrAssignedLeaveRequestSchema,
@@ -24,9 +29,20 @@ import {
   hrServiceControlSchema,
   hrServiceDeactivateBodySchema,
   hrSubmitLeaveRequestBodySchema,
+  hrWorkforceChangeStatusBodySchema,
+  hrWorkforceCreateProfileBodySchema,
+  hrWorkforceLinkPrincipalBodySchema,
+  hrWorkforceOwnQuerySchema,
+  hrWorkforceProfilePathSchema,
+  hrWorkforceProfileSchema,
   parseHrServiceActivateBody,
   parseHrServiceControlQuery,
   parseHrServiceDeactivateBody,
+  parseHrWorkforceChangeStatusBody,
+  parseHrWorkforceCreateProfileBody,
+  parseHrWorkforceLinkPrincipalBody,
+  parseHrWorkforceOwnQuery,
+  parseHrWorkforceProfilePath,
   problemDetailsSchema,
   type WorkspaceCompleteTaskBody,
   type WorkspaceCreateTaskBody,
@@ -43,10 +59,14 @@ import {
 import {
   activateWorkforceProfileService,
   approveLeaveRequest,
+  changeWorkforceStatus,
+  createWorkforceProfile,
   deactivateWorkforceProfileService,
   getLeaveRequestDetail,
+  getOwnWorkforceProfile,
   getWorkforceProfileServiceControl,
   HrLeaveError,
+  linkWorkforcePrincipal,
   listAssignedLeaveRequests,
   listOwnLeaveRequests,
   rejectLeaveRequest,
@@ -148,6 +168,12 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     hrServiceActivateBodySchema,
     hrServiceDeactivateBodySchema,
     hrServiceControlSchema,
+    hrWorkforceCreateProfileBodySchema,
+    hrWorkforceLinkPrincipalBodySchema,
+    hrWorkforceOwnQuerySchema,
+    hrWorkforceChangeStatusBodySchema,
+    hrWorkforceProfilePathSchema,
+    hrWorkforceProfileSchema,
     hrDecideLeaveRequestBodySchema,
     hrLeaveRequestPathSchema,
     hrLeaveListQuerySchema,
@@ -276,6 +302,120 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
       );
       reply.header("idempotent-replayed", String(result.replayed));
       return reply.code(200).send(result.control);
+    },
+  );
+
+  server.post<{ Body: HrWorkforceCreateProfileBody }>(
+    "/v1/hr/workforce-profiles",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictRequest(parseHrWorkforceCreateProfileBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrWorkforceCreateProfileRequestV1#" },
+        response: {
+          200: { $ref: "HrWorkforceProfileResponseV1#" },
+          201: { $ref: "HrWorkforceProfileResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await createWorkforceProfile(options.pool, operationContext(request), {
+        ...request.body,
+        idempotencyKey: idempotencyKey(request),
+      });
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(result.replayed ? 200 : 201).send(result.profile);
+    },
+  );
+
+  server.get<{ Querystring: HrWorkforceOwnQuery }>(
+    "/v1/hr/workforce-profiles/own",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictRequest(parseHrWorkforceOwnQuery, request.query);
+        },
+      ],
+      schema: {
+        querystring: { $ref: "HrWorkforceOwnQueryV1#" },
+        response: {
+          200: { $ref: "HrWorkforceProfileResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request) => await getOwnWorkforceProfile(options.pool, operationContext(request)),
+  );
+
+  server.post<{
+    Body: HrWorkforceLinkPrincipalBody;
+    Params: HrWorkforceProfilePath;
+  }>(
+    "/v1/hr/workforce-profiles/:workerProfileId/principal-link",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictRequest(parseHrWorkforceProfilePath, request.params);
+          assertStrictRequest(parseHrWorkforceLinkPrincipalBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrWorkforceLinkPrincipalRequestV1#" },
+        params: { $ref: "HrWorkforceProfilePathV1#" },
+        response: {
+          200: { $ref: "HrWorkforceProfileResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await linkWorkforcePrincipal(options.pool, operationContext(request), {
+        ...request.body,
+        idempotencyKey: idempotencyKey(request),
+        workerProfileId: request.params.workerProfileId,
+      });
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(result.profile);
+    },
+  );
+
+  server.post<{
+    Body: HrWorkforceChangeStatusBody;
+    Params: HrWorkforceProfilePath;
+  }>(
+    "/v1/hr/workforce-profiles/:workerProfileId/status",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictRequest(parseHrWorkforceProfilePath, request.params);
+          assertStrictRequest(parseHrWorkforceChangeStatusBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrWorkforceChangeStatusRequestV1#" },
+        params: { $ref: "HrWorkforceProfilePathV1#" },
+        response: {
+          200: { $ref: "HrWorkforceProfileResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await changeWorkforceStatus(options.pool, operationContext(request), {
+        ...request.body,
+        idempotencyKey: idempotencyKey(request),
+        workerProfileId: request.params.workerProfileId,
+      });
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(result.profile);
     },
   );
 

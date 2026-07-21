@@ -64,7 +64,15 @@ function statusForError(error: Error): number {
     return 409;
   }
   if (error instanceof HrWorkforceProfileError) {
-    if (error.code === "WORKFORCE_SERVICE_CONTROL_NOT_FOUND") return 404;
+    if (error.code === "WORKFORCE_INPUT_INVALID") return 400;
+    if (
+      error.code === "WORKFORCE_PROFILE_NOT_FOUND" ||
+      error.code === "WORKFORCE_SERVICE_CONTROL_NOT_FOUND"
+    ) {
+      return 404;
+    }
+    if (error.code === "WORKFORCE_PRINCIPAL_INELIGIBLE") return 422;
+    if (error.code === "WORKFORCE_SERVICE_INACTIVE") return 503;
     return 409;
   }
   if (error instanceof WorkspaceTaskError) {
