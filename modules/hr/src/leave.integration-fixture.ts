@@ -72,8 +72,8 @@ export const ids = {
   tenantB: "00000000-0000-4000-8000-000000000002",
 } as const;
 
-let migrationPool: Pool;
-let pool: Pool;
+export let migrationPool: Pool;
+export let pool: Pool;
 
 export function context(tenantId: string, actorPrincipalId: string, correlationId: string) {
   return { actorPrincipalId, correlationId, tenantId };
@@ -459,7 +459,7 @@ export async function observeDirectBlockerUntil(
   );
 }
 
-export async function setupLeaveIntegration(): Promise<{ migrationPool: Pool; pool: Pool }> {
+export async function setupLeaveIntegration(): Promise<void> {
   const connectionString = process.env.DATABASE_URL;
   const migrationConnectionString = process.env.DATABASE_MIGRATION_URL;
   const applicationRole = process.env.ESBLA_TEST_APPLICATION_ROLE;
@@ -553,5 +553,4 @@ export async function setupLeaveIntegration(): Promise<{ migrationPool: Pool; po
   }
   await activateLeaveService(ids.tenantA, ids.adminA, ids.correlationActivateA);
   await activateLeaveService(ids.tenantB, ids.adminB, ids.correlationActivateB);
-  return { migrationPool, pool };
 }

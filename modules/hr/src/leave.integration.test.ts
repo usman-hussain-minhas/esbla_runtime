@@ -1,5 +1,4 @@
 import { evaluatePolicy, setServiceActivation, withTenantTransaction } from "@esbla/platform-core";
-import type { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   approveLeaveRequest,
@@ -22,18 +21,17 @@ import {
   expectDeniedWithoutPersistenceChange,
   ids,
   matchesLeaveSelector,
+  migrationPool,
   observeDirectBlockerUntil,
+  pool,
   setBooleanSetting,
   setManagerAState,
   setupLeaveIntegration,
   snapshotLeavePersistence,
 } from "./leave.integration-fixture.js";
 
-let migrationPool: Pool;
-let pool: Pool;
-
 beforeAll(async () => {
-  ({ migrationPool, pool } = await setupLeaveIntegration());
+  await setupLeaveIntegration();
 });
 
 afterAll(async () => {
