@@ -19,10 +19,19 @@ export interface TenantTransaction {
   readonly actor: TenantActor;
   readonly client: PoolClient;
   readonly context: OperationContext;
+  readonly lockedServiceActivation?: LockedServiceActivation | null;
+}
+
+export interface LockedServiceActivation {
+  readonly serviceKey: string;
+  readonly state: "active" | "inactive";
+  readonly version: number;
 }
 
 export interface TenantTransactionOptions {
   readonly migrationBarrier?: "shared";
+  readonly serviceActivationKey?: string;
+  readonly serviceActivationLock?: "share" | "update";
 }
 
 function assertOperationContext(context: OperationContext): void {
@@ -61,6 +70,40 @@ export async function withTenantTransaction<T>(
       context.correlationId,
     ]);
 
+    let lockedServiceActivation: LockedServiceActivation | null | undefined;
+    if (
+      options.serviceActivationLock !== undefined &&
+      options.serviceActivationLock !== "share" &&
+      options.serviceActivationLock !== "update"
+    ) {
+      throw new PlatformError("INVALID_SERVICE_KEY", "Service activation lock mode is invalid");
+    }
+    if (options.serviceActivationKey !== undefined) {
+      if (!/^[a-z][a-z0-9_.-]{0,127}$/.test(options.serviceActivationKey)) {
+        throw new PlatformError("INVALID_SERVICE_KEY", "Service activation lock key is invalid");
+      }
+      const activation = await client.query<{
+        service_key: string;
+        state: "active" | "inactive";
+        version: number;
+      }>(
+        `SELECT service_key, state, version
+         FROM service_activations
+         WHERE tenant_id = $1 AND service_key = $2
+         ${options.serviceActivationLock === "update" ? "FOR UPDATE" : "FOR SHARE"}`,
+        [context.tenantId, options.serviceActivationKey],
+      );
+      const row = activation.rows[0];
+      lockedServiceActivation = row
+        ? { serviceKey: row.service_key, state: row.state, version: row.version }
+        : null;
+    } else if (options.serviceActivationLock !== undefined) {
+      throw new PlatformError(
+        "INVALID_SERVICE_KEY",
+        "Service activation lock mode requires a service key",
+      );
+    }
+
     const membership = await client.query<{ role_key: string; status: string }>(
       `SELECT role_key, status
        FROM memberships
@@ -77,11 +120,16 @@ export async function withTenantTransaction<T>(
       );
     }
 
-    const result = await operation({
+    const transactionBase = {
       actor: { principalId: context.actorPrincipalId, roleKey: actor.role_key },
       client,
       context,
-    });
+    };
+    const transaction: TenantTransaction =
+      options.serviceActivationKey === undefined
+        ? transactionBase
+        : { ...transactionBase, lockedServiceActivation: lockedServiceActivation ?? null };
+    const result = await operation(transaction);
     await client.query("COMMIT");
     return result;
   } catch (error) {
