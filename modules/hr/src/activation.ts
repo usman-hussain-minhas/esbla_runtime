@@ -1,9 +1,14 @@
 import { createHash } from "node:crypto";
 import { type HrServiceControl, parseHrServiceControl } from "@esbla/contracts";
+import type {
+  HrServiceConfigureBody,
+  HrWorkforceProfileSettings,
+} from "@esbla/contracts/hr-service-control-api";
 import {
   type ActivationPreflight,
   appendEvidence,
   assertPolicyAllowed,
+  deriveStableUuid,
   evaluatePolicy,
   type OperationContext,
   PlatformError,
@@ -27,6 +32,7 @@ import {
 import { hrManifest } from "./manifest.js";
 import { HR_LEAVE_BILLING_STATE, HR_LEAVE_SERVICE_KEY } from "./types.js";
 import { HrWorkforceProfileError } from "./workforce-errors.js";
+import { workforceProfileSettings } from "./workforce-settings.js";
 import {
   HR_WORKFORCE_PROFILE_BILLING_STATE,
   HR_WORKFORCE_PROFILE_SERVICE_KEY,
@@ -41,6 +47,7 @@ export interface HrLeaveServiceLifecycleResult extends ServiceActivationResult {
 export interface HrWorkforceProfileServiceLifecycleInput {
   readonly expectedVersion: number | null;
 }
+export type HrWorkforceProfileServiceConfigureInput = HrServiceConfigureBody;
 export type HrWorkforceProfileActivationMode = "non_production" | "production";
 export interface HrWorkforceProfileServiceControlResult {
   readonly billingState: typeof HR_WORKFORCE_PROFILE_BILLING_STATE;
@@ -74,6 +81,7 @@ type ActivationCatalogRequirements = Omit<
     readonly name: string;
   }[];
   readonly functions: readonly ((typeof HR_LEAVE_CATALOG_REQUIREMENTS.functions)[number] & {
+    readonly applicationExecutable?: boolean;
     readonly identityArguments?: string;
     readonly ownerOnlyExecutable?: boolean;
     readonly publicExecutable?: boolean;
@@ -499,7 +507,7 @@ async function inspectActivationReadiness(
                 name text, language text, "returnType" text, "sourceSha256" text,
                 volatility text, config text, "securityDefiner" boolean,
                 "publicExecutable" boolean, "ownerOnlyExecutable" boolean,
-                "identityArguments" text
+                "identityArguments" text, "applicationExecutable" boolean
               )
          LEFT JOIN LATERAL (
            SELECT true AS current
@@ -558,6 +566,42 @@ async function inspectActivationReadiness(
                      AND privilege.grantee <> procedure.proowner
                  )
                )
+             )
+             AND (
+               required."applicationExecutable" IS NULL OR (
+                 EXISTS (
+                   SELECT 1
+                   FROM pg_catalog.aclexplode(COALESCE(
+                     procedure.proacl,
+                     pg_catalog.acldefault('f', procedure.proowner)
+                   )) privilege
+                   WHERE privilege.privilege_type = 'EXECUTE'
+                     AND privilege.grantee = procedure.proowner
+                 )
+                 AND EXISTS (
+                   SELECT 1
+                   FROM pg_catalog.aclexplode(COALESCE(
+                     procedure.proacl,
+                     pg_catalog.acldefault('f', procedure.proowner)
+                   )) privilege
+                   JOIN pg_catalog.pg_roles role ON role.oid = privilege.grantee
+                   WHERE privilege.privilege_type = 'EXECUTE'
+                     AND role.rolname = 'esbla_app'
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1
+                   FROM pg_catalog.aclexplode(COALESCE(
+                     procedure.proacl,
+                     pg_catalog.acldefault('f', procedure.proowner)
+                   )) privilege
+                   WHERE privilege.privilege_type = 'EXECUTE'
+                     AND privilege.grantee <> procedure.proowner
+                     AND privilege.grantee <> COALESCE((
+                       SELECT role.oid FROM pg_catalog.pg_roles role
+                       WHERE role.rolname = 'esbla_app'
+                     ), 0)
+                 )
+               ) = required."applicationExecutable"
              )
              AND pg_catalog.encode(
                pg_catalog.sha256(pg_catalog.convert_to(procedure.prosrc, 'UTF8')), 'hex'
@@ -738,12 +782,14 @@ export async function deactivateHrLeaveService(
 const WORKFORCE_PROFILE_SUBJECT_TYPE = "hr.workforce_profile.service_control";
 const WORKFORCE_PROFILE_EVENT = {
   activate: "hr.workforce_profile.activate_service",
+  configure: "hr.workforce_profile.configure_service",
   deactivate: "hr.workforce_profile.deactivate_service",
 } as const;
 const WORKFORCE_PROFILE_RESPONSE_BINDING_EVENT =
   "hr.workforce_profile.service_control.response_bound";
 const WORKFORCE_PROFILE_SERVICE_CONTROL_CAPABILITIES = [
   "hr.workforce.activate_service",
+  "hr.workforce.configure_service",
   "hr.workforce.deactivate_service",
   "hr.workforce.view_service_control",
 ] as const;
@@ -779,10 +825,19 @@ function workforceProfileSemanticReadiness(
 interface WorkforceProfileControlRow {
   readonly activation_state: "active" | "inactive";
   readonly activation_version: number;
+  readonly employee_number_required: unknown;
+  readonly employee_number_required_type: string | null;
+  readonly employee_number_required_version: number | null;
+  readonly manager_visibility: unknown;
+  readonly manager_visibility_type: string | null;
+  readonly manager_visibility_version: number | null;
   readonly row_version: number;
   readonly service_control_id: string;
   readonly service_key: string;
   readonly settings_version: number;
+  readonly unlinked_worker_creation_allowed: unknown;
+  readonly unlinked_worker_creation_allowed_type: string | null;
+  readonly unlinked_worker_creation_allowed_version: number | null;
   readonly updated_at: Date | string;
 }
 
@@ -800,6 +855,24 @@ function workforceControlConflict(): PlatformError {
 
 function workforceControlFromRow(row: WorkforceProfileControlRow): WorkforceProfileControlSnapshot {
   const date = row.updated_at instanceof Date ? row.updated_at : new Date(row.updated_at);
+  const settingRowsAbsent =
+    row.employee_number_required === null &&
+    row.employee_number_required_type === null &&
+    row.employee_number_required_version === null &&
+    row.manager_visibility === null &&
+    row.manager_visibility_type === null &&
+    row.manager_visibility_version === null &&
+    row.unlinked_worker_creation_allowed === null &&
+    row.unlinked_worker_creation_allowed_type === null &&
+    row.unlinked_worker_creation_allowed_version === null;
+  const settingRowsCurrent =
+    row.settings_version > 1 &&
+    row.employee_number_required_type === "boolean" &&
+    row.employee_number_required_version === row.settings_version - 1 &&
+    row.manager_visibility_type === "enum" &&
+    row.manager_visibility_version === row.settings_version - 1 &&
+    row.unlinked_worker_creation_allowed_type === "boolean" &&
+    row.unlinked_worker_creation_allowed_version === row.settings_version - 1;
   if (
     row.service_key !== HR_WORKFORCE_PROFILE_SERVICE_KEY ||
     !Number.isSafeInteger(row.activation_version) ||
@@ -808,7 +881,8 @@ function workforceControlFromRow(row: WorkforceProfileControlRow): WorkforceProf
     row.settings_version < 1 ||
     !Number.isSafeInteger(row.row_version) ||
     row.row_version < 1 ||
-    Number.isNaN(date.getTime())
+    Number.isNaN(date.getTime()) ||
+    (row.settings_version === 1 ? !settingRowsAbsent : !settingRowsCurrent)
   ) {
     throw workforceControlConflict();
   }
@@ -818,6 +892,14 @@ function workforceControlFromRow(row: WorkforceProfileControlRow): WorkforceProf
         activationState: row.activation_state,
         activationVersion: row.activation_version,
         serviceKey: row.service_key,
+        settings:
+          row.settings_version === 1
+            ? defaultWorkforceProfileSettings()
+            : {
+                employeeNumberRequired: row.employee_number_required,
+                managerVisibility: row.manager_visibility,
+                unlinkedWorkerCreationAllowed: row.unlinked_worker_creation_allowed,
+              },
         settingsVersion: row.settings_version,
         updatedAt: date.toISOString(),
         version: row.row_version,
@@ -840,13 +922,37 @@ async function readWorkforceProfileControl(
             control.updated_at,
             control.row_version,
             activation.state AS activation_state,
-            activation.version AS activation_version
+            activation.version AS activation_version,
+            employee_number_required.value AS employee_number_required,
+            employee_number_required.value_type AS employee_number_required_type,
+            employee_number_required.version AS employee_number_required_version,
+            manager_visibility.value AS manager_visibility,
+            manager_visibility.value_type AS manager_visibility_type,
+            manager_visibility.version AS manager_visibility_version,
+            unlinked_worker_creation_allowed.value AS unlinked_worker_creation_allowed,
+            unlinked_worker_creation_allowed.value_type AS unlinked_worker_creation_allowed_type,
+            unlinked_worker_creation_allowed.version AS unlinked_worker_creation_allowed_version
      FROM hr_workforce_profile_service_control control
      JOIN service_activations activation
-       ON activation.tenant_id = control.tenant_id
+      ON activation.tenant_id = control.tenant_id
       AND activation.service_key = control.service_key
+     LEFT JOIN tenant_settings employee_number_required
+       ON employee_number_required.tenant_id = control.tenant_id
+      AND employee_number_required.setting_key = $3
+     LEFT JOIN tenant_settings manager_visibility
+       ON manager_visibility.tenant_id = control.tenant_id
+      AND manager_visibility.setting_key = $4
+     LEFT JOIN tenant_settings unlinked_worker_creation_allowed
+       ON unlinked_worker_creation_allowed.tenant_id = control.tenant_id
+      AND unlinked_worker_creation_allowed.setting_key = $5
      WHERE control.tenant_id = $1 AND control.service_key = $2`,
-    [transaction.context.tenantId, HR_WORKFORCE_PROFILE_SERVICE_KEY],
+    [
+      transaction.context.tenantId,
+      HR_WORKFORCE_PROFILE_SERVICE_KEY,
+      workforceProfileSettings.employeeNumberRequired.key,
+      workforceProfileSettings.managerVisibility.key,
+      workforceProfileSettings.unlinkedWorkerCreationAllowed.key,
+    ],
   );
   const row = result.rows[0];
   if (!row) {
@@ -874,7 +980,7 @@ async function readWorkforceProfileControl(
 
 async function authorizeWorkforceProfile(
   transaction: TenantTransaction,
-  action: "activate_service" | "deactivate_service" | "view_service_control",
+  action: "activate_service" | "configure_service" | "deactivate_service" | "view_service_control",
 ): Promise<PolicyDecision> {
   const input = { serviceKey: HR_WORKFORCE_PROFILE_SERVICE_KEY };
   const actionKey = `hr.workforce.${action}`;
@@ -906,7 +1012,7 @@ async function authorizeWorkforceProfile(
     rules,
   );
   assertPolicyAllowed(decision, transaction, actionKey, HR_WORKFORCE_PROFILE_SERVICE_KEY);
-  if (action === "view_service_control") return decision;
+  if (action === "configure_service" || action === "view_service_control") return decision;
 
   const lifecycleAction = action === "activate_service" ? "activate" : "deactivate";
   const platformActionKey = `platform.service_activation.${lifecycleAction}`;
@@ -932,7 +1038,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function workforceProfileResponseSha256(control: HrServiceControl): string {
+function defaultWorkforceProfileSettings(): HrWorkforceProfileSettings {
+  return {
+    employeeNumberRequired: workforceProfileSettings.employeeNumberRequired.defaultValue,
+    managerVisibility: workforceProfileSettings.managerVisibility.defaultValue as
+      | "minimized"
+      | "none",
+    unlinkedWorkerCreationAllowed:
+      workforceProfileSettings.unlinkedWorkerCreationAllowed.defaultValue,
+  };
+}
+function workforceProfileLegacyResponseSha256(control: HrServiceControl): string {
   return createHash("sha256")
     .update(
       [
@@ -946,7 +1062,56 @@ function workforceProfileResponseSha256(control: HrServiceControl): string {
     )
     .digest("hex");
 }
-
+function workforceProfileResponseSha256(control: HrServiceControl): string {
+  const settings = control.settings as HrWorkforceProfileSettings;
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        control.activationState,
+        control.activationVersion,
+        control.serviceKey,
+        settings.employeeNumberRequired,
+        settings.managerVisibility,
+        settings.unlinkedWorkerCreationAllowed,
+        control.settingsVersion,
+        control.updatedAt,
+        control.version,
+      ]),
+    )
+    .digest("hex");
+}
+function parseWorkforceProfileControlProof(value: unknown): {
+  readonly control: HrServiceControl;
+  readonly legacy: boolean;
+} {
+  if (!isRecord(value)) throw workforceControlConflict();
+  const keys = Object.keys(value).sort();
+  const legacyKeys = [
+    "activationState",
+    "activationVersion",
+    "serviceKey",
+    "settingsVersion",
+    "updatedAt",
+    "version",
+  ].sort();
+  const legacy =
+    keys.length === legacyKeys.length && keys.every((key, index) => key === legacyKeys[index]);
+  try {
+    const control = parseHrServiceControl(
+      legacy ? { ...value, settings: defaultWorkforceProfileSettings() } : value,
+    );
+    if (
+      control.serviceKey !== HR_WORKFORCE_PROFILE_SERVICE_KEY ||
+      (legacy && control.settingsVersion !== 1)
+    ) {
+      throw workforceControlConflict();
+    }
+    return { control, legacy };
+  } catch (error) {
+    if (error instanceof PlatformError) throw error;
+    throw workforceControlConflict();
+  }
+}
 function parseWorkforceProfileProof(
   value: unknown,
   expected: {
@@ -957,7 +1122,7 @@ function parseWorkforceProfileProof(
     readonly tenantId: string;
     readonly targetState: "active" | "inactive";
   },
-): HrServiceControl {
+): { readonly control: HrServiceControl; readonly legacy: boolean } {
   if (!isRecord(value)) throw workforceControlConflict();
   const expectedKeys = [
     "action",
@@ -994,7 +1159,8 @@ function parseWorkforceProfileProof(
     throw workforceControlConflict();
   }
   try {
-    const control = parseHrServiceControl(value.serviceControl);
+    const proof = parseWorkforceProfileControlProof(value.serviceControl);
+    const control = proof.control;
     if (
       control.serviceKey !== HR_WORKFORCE_PROFILE_SERVICE_KEY ||
       control.activationState !== expected.targetState ||
@@ -1002,7 +1168,7 @@ function parseWorkforceProfileProof(
     ) {
       throw workforceControlConflict();
     }
-    return control;
+    return proof;
   } catch (error) {
     if (error instanceof PlatformError) throw error;
     throw workforceControlConflict();
@@ -1071,7 +1237,7 @@ async function readWorkforceProfileReplay(
   ) {
     throw workforceControlConflict();
   }
-  const control = parseWorkforceProfileProof(row.payload, {
+  const proof = parseWorkforceProfileProof(row.payload, {
     action,
     actorPrincipalId: transaction.context.actorPrincipalId,
     aggregateId: row.aggregate_id,
@@ -1080,12 +1246,369 @@ async function readWorkforceProfileReplay(
     tenantId: transaction.context.tenantId,
   });
   if (
-    control.version !== row.aggregate_version ||
-    row.response_sha256 !== workforceProfileResponseSha256(control)
+    proof.control.version !== row.aggregate_version ||
+    row.response_sha256 !==
+      (proof.legacy
+        ? workforceProfileLegacyResponseSha256(proof.control)
+        : workforceProfileResponseSha256(proof.control))
   ) {
     throw workforceControlConflict();
   }
-  return control;
+  return proof.control;
+}
+
+const WORKFORCE_PROFILE_CONFIGURE_RECEIPT_SUBJECT_TYPE =
+  "hr.workforce_profile.service_control.idempotency";
+const WORKFORCE_PROFILE_CONFIGURE_RESPONSE_BINDING_EVENT =
+  "hr.workforce_profile.configure_service.response_bound";
+function workforceProfileConfigureSemanticSha256(
+  input: HrWorkforceProfileServiceConfigureInput,
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        input.expectedSettingsVersion,
+        input.settings.employeeNumberRequired,
+        input.settings.managerVisibility,
+        input.settings.unlinkedWorkerCreationAllowed,
+      ]),
+    )
+    .digest("hex");
+}
+function workforceProfileSettingsSha256(
+  settingsVersion: number,
+  settings: HrWorkforceProfileSettings,
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        settingsVersion,
+        settings.employeeNumberRequired,
+        settings.managerVisibility,
+        settings.unlinkedWorkerCreationAllowed,
+      ]),
+    )
+    .digest("hex");
+}
+function workforceProfileConfigureReceiptId(transaction: TenantTransaction): string {
+  return deriveStableUuid(
+    "hr.workforce_profile.service_control.idempotency.v1",
+    transaction.context.tenantId.toLowerCase(),
+    transaction.context.actorPrincipalId.toLowerCase(),
+    "configure_service",
+    transaction.context.correlationId.toLowerCase(),
+  );
+}
+function workforceProfileConfigureIdempotencyConflict(): PlatformError {
+  return new PlatformError(
+    "IDEMPOTENCY_CONFLICT",
+    "Idempotency key was already used with different Workforce Profile settings data",
+  );
+}
+function isPostgresCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && (error as { code?: unknown }).code === code;
+}
+function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const sortedExpected = [...expected].sort();
+  return (
+    actual.length === sortedExpected.length &&
+    actual.every((key, index) => key === sortedExpected[index])
+  );
+}
+async function readWorkforceProfileConfigureReplay(
+  transaction: TenantTransaction,
+  input: HrWorkforceProfileServiceConfigureInput,
+  receiptId: string,
+  semanticSha256: string,
+): Promise<HrServiceControl | null> {
+  const binding = await transaction.client.query<{
+    actor_principal_id: string;
+    correlation_id: string;
+    new_state: string;
+    prior_state: string | null;
+  }>(
+    `SELECT actor_principal_id, correlation_id, prior_state, new_state
+     FROM evidence_events
+     WHERE tenant_id=$1 AND subject_type=$2 AND subject_id=$3 AND event_type=$4
+     ORDER BY occurred_at, evidence_event_id
+     LIMIT 2`,
+    [
+      transaction.context.tenantId,
+      WORKFORCE_PROFILE_CONFIGURE_RECEIPT_SUBJECT_TYPE,
+      receiptId,
+      WORKFORCE_PROFILE_CONFIGURE_RESPONSE_BINDING_EVENT,
+    ],
+  );
+  if (binding.rows.length === 0) {
+    const partial = await transaction.client.query<{
+      evidence_count: number;
+      outbox_count: number;
+    }>(
+      `SELECT
+         (SELECT count(*)::integer FROM evidence_events
+          WHERE tenant_id=$1 AND subject_type=$2 AND event_type=$3
+            AND subject_id=(SELECT service_control_id FROM hr_workforce_profile_service_control
+                            WHERE tenant_id=$1 AND service_key='workforce_profile')
+            AND correlation_id=$4 AND actor_principal_id=$5) AS evidence_count,
+         (SELECT count(*)::integer FROM outbox_events
+          WHERE tenant_id=$1 AND aggregate_type=$2 AND event_type=$3
+            AND correlation_id=$4) AS outbox_count`,
+      [
+        transaction.context.tenantId,
+        WORKFORCE_PROFILE_SUBJECT_TYPE,
+        WORKFORCE_PROFILE_EVENT.configure,
+        transaction.context.correlationId,
+        transaction.context.actorPrincipalId,
+      ],
+    );
+    const row = partial.rows[0];
+    if ((row?.evidence_count ?? 0) !== 0 || (row?.outbox_count ?? 0) !== 0) {
+      throw workforceProfileConfigureIdempotencyConflict();
+    }
+    return null;
+  }
+  const bound = binding.rows[0];
+  if (
+    binding.rows.length !== 1 ||
+    !bound ||
+    bound.actor_principal_id !== transaction.context.actorPrincipalId ||
+    bound.correlation_id !== transaction.context.correlationId ||
+    bound.prior_state !== semanticSha256
+  ) {
+    throw workforceProfileConfigureIdempotencyConflict();
+  }
+  const replay = await transaction.client.query<{
+    aggregate_id: string;
+    aggregate_version: number;
+    correlation_id: string;
+    payload: unknown;
+  }>(
+    `SELECT aggregate_id, aggregate_version, correlation_id, payload
+     FROM outbox_events
+     WHERE tenant_id=$1 AND event_type=$2 AND aggregate_type=$3 AND correlation_id=$4
+     ORDER BY occurred_at, event_id
+     LIMIT 2`,
+    [
+      transaction.context.tenantId,
+      WORKFORCE_PROFILE_EVENT.configure,
+      WORKFORCE_PROFILE_SUBJECT_TYPE,
+      transaction.context.correlationId,
+    ],
+  );
+  const row = replay.rows[0];
+  if (replay.rows.length !== 1 || !row || !isRecord(row.payload)) {
+    throw workforceProfileConfigureIdempotencyConflict();
+  }
+  const payload = row.payload;
+  if (
+    !exactKeys(payload, [
+      "action",
+      "actorPrincipalId",
+      "afterSettingsSha256",
+      "afterSettingsVersion",
+      "aggregateId",
+      "beforeSettingsSha256",
+      "beforeSettingsVersion",
+      "correlationId",
+      "receiptId",
+      "serviceControl",
+      "tenantId",
+    ]) ||
+    payload.action !== "configure_service" ||
+    payload.actorPrincipalId !== transaction.context.actorPrincipalId ||
+    payload.tenantId !== transaction.context.tenantId ||
+    payload.correlationId !== transaction.context.correlationId ||
+    payload.receiptId !== receiptId ||
+    payload.aggregateId !== row.aggregate_id ||
+    typeof payload.beforeSettingsSha256 !== "string" ||
+    !/^[0-9a-f]{64}$/.test(payload.beforeSettingsSha256) ||
+    typeof payload.afterSettingsSha256 !== "string" ||
+    !/^[0-9a-f]{64}$/.test(payload.afterSettingsSha256) ||
+    payload.beforeSettingsVersion !== input.expectedSettingsVersion ||
+    payload.afterSettingsVersion !== input.expectedSettingsVersion + 1
+  ) {
+    throw workforceProfileConfigureIdempotencyConflict();
+  }
+  try {
+    const control = parseHrServiceControl(payload.serviceControl);
+    const evidence = await transaction.client.query<{
+      actor_principal_id: string;
+      correlation_id: string;
+      new_state: string;
+      prior_state: string | null;
+      subject_id: string;
+    }>(
+      `SELECT subject_id, actor_principal_id, correlation_id, prior_state, new_state
+       FROM evidence_events
+       WHERE tenant_id=$1 AND subject_type=$2 AND subject_id=$6 AND event_type=$3
+         AND correlation_id=$4 AND actor_principal_id=$5
+       ORDER BY occurred_at, evidence_event_id
+       LIMIT 2`,
+      [
+        transaction.context.tenantId,
+        WORKFORCE_PROFILE_SUBJECT_TYPE,
+        WORKFORCE_PROFILE_EVENT.configure,
+        transaction.context.correlationId,
+        transaction.context.actorPrincipalId,
+        row.aggregate_id,
+      ],
+    );
+    const proof = evidence.rows[0];
+    if (
+      evidence.rows.length !== 1 ||
+      !proof ||
+      proof.subject_id !== row.aggregate_id ||
+      proof.prior_state !== payload.beforeSettingsSha256 ||
+      proof.new_state !== payload.afterSettingsSha256 ||
+      control.serviceKey !== HR_WORKFORCE_PROFILE_SERVICE_KEY ||
+      control.settingsVersion !== payload.afterSettingsVersion ||
+      control.version !== row.aggregate_version ||
+      (control.settings as HrWorkforceProfileSettings).employeeNumberRequired !==
+        input.settings.employeeNumberRequired ||
+      (control.settings as HrWorkforceProfileSettings).managerVisibility !==
+        input.settings.managerVisibility ||
+      (control.settings as HrWorkforceProfileSettings).unlinkedWorkerCreationAllowed !==
+        input.settings.unlinkedWorkerCreationAllowed ||
+      payload.afterSettingsSha256 !==
+        workforceProfileSettingsSha256(
+          control.settingsVersion,
+          control.settings as HrWorkforceProfileSettings,
+        ) ||
+      bound.new_state !== workforceProfileResponseSha256(control)
+    ) {
+      throw workforceProfileConfigureIdempotencyConflict();
+    }
+    return control;
+  } catch (error) {
+    if (error instanceof PlatformError) throw error;
+    throw workforceProfileConfigureIdempotencyConflict();
+  }
+}
+export async function configureWorkforceProfileService(
+  runtimePool: Pool,
+  context: OperationContext,
+  input: HrWorkforceProfileServiceConfigureInput,
+): Promise<HrWorkforceProfileServiceControlResult> {
+  if (
+    !isRecord(input) ||
+    !exactKeys(input, ["expectedSettingsVersion", "settings"]) ||
+    !Number.isSafeInteger(input.expectedSettingsVersion) ||
+    input.expectedSettingsVersion < 1 ||
+    input.expectedSettingsVersion > 2_147_483_647 ||
+    !isRecord(input.settings) ||
+    !exactKeys(input.settings, [
+      "employeeNumberRequired",
+      "managerVisibility",
+      "unlinkedWorkerCreationAllowed",
+    ]) ||
+    typeof input.settings.employeeNumberRequired !== "boolean" ||
+    (input.settings.managerVisibility !== "minimized" &&
+      input.settings.managerVisibility !== "none") ||
+    typeof input.settings.unlinkedWorkerCreationAllowed !== "boolean"
+  ) {
+    throw new HrWorkforceProfileError(
+      "WORKFORCE_INPUT_INVALID",
+      "Workforce Profile settings input is invalid",
+    );
+  }
+  const normalizedContext = {
+    actorPrincipalId: context.actorPrincipalId.toLowerCase(),
+    correlationId: context.correlationId.toLowerCase(),
+    tenantId: context.tenantId.toLowerCase(),
+  };
+  return await withTenantTransaction(
+    runtimePool,
+    normalizedContext,
+    async (transaction) => {
+      const activation = transaction.lockedServiceActivation;
+      await authorizeWorkforceProfile(transaction, "configure_service");
+      if (
+        activation?.serviceKey !== HR_WORKFORCE_PROFILE_SERVICE_KEY ||
+        activation.state !== "active"
+      ) {
+        throw new HrWorkforceProfileError(
+          "WORKFORCE_SERVICE_INACTIVE",
+          "Workforce Profile service is inactive",
+        );
+      }
+      const receiptId = workforceProfileConfigureReceiptId(transaction);
+      await transaction.client.query(
+        "SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1::text, 0))",
+        [receiptId],
+      );
+      await transaction.client.query(
+        "SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1::text, 0))",
+        [`hr.workforce_profile.settings.v1:${transaction.context.tenantId}`],
+      );
+      const semanticSha256 = workforceProfileConfigureSemanticSha256(input);
+      const replay = await readWorkforceProfileConfigureReplay(
+        transaction,
+        input,
+        receiptId,
+        semanticSha256,
+      );
+      if (replay) {
+        return {
+          billingState: HR_WORKFORCE_PROFILE_BILLING_STATE,
+          control: replay,
+          replayed: true,
+        };
+      }
+
+      try {
+        await transaction.client.query(
+          `SELECT public.esbla_configure_hr_workforce_profile_settings($1, $2, $3, $4)`,
+          [
+            input.expectedSettingsVersion,
+            input.settings.employeeNumberRequired,
+            input.settings.managerVisibility,
+            input.settings.unlinkedWorkerCreationAllowed,
+          ],
+        );
+      } catch (error) {
+        if (isPostgresCode(error, "22023") || isPostgresCode(error, "22003")) {
+          throw new HrWorkforceProfileError(
+            "WORKFORCE_INPUT_INVALID",
+            "Workforce Profile settings input is invalid",
+          );
+        }
+        if (isPostgresCode(error, "42501")) {
+          throw new PlatformError(
+            "POLICY_DENIED",
+            "The actor is not authorized for this Workforce Profile action",
+          );
+        }
+        if (isPostgresCode(error, "55000")) {
+          throw workforceControlConflict();
+        }
+        if (
+          isPostgresCode(error, "40001") ||
+          isPostgresCode(error, "40P01") ||
+          isPostgresCode(error, "55P03")
+        ) {
+          throw workforceControlConflict();
+        }
+        throw error;
+      }
+      const created = await readWorkforceProfileConfigureReplay(
+        transaction,
+        input,
+        receiptId,
+        semanticSha256,
+      );
+      if (!created) throw workforceControlConflict();
+      return {
+        billingState: HR_WORKFORCE_PROFILE_BILLING_STATE,
+        control: created,
+        replayed: false,
+      };
+    },
+    {
+      serviceActivationKey: HR_WORKFORCE_PROFILE_SERVICE_KEY,
+      serviceActivationLock: "share",
+    },
+  );
 }
 
 async function runWorkforceProfileLifecycle(

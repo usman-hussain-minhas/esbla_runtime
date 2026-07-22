@@ -1,9 +1,13 @@
+import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabase, createDatabasePool } from "./client.js";
 import { migrateDatabase } from "./migrate.js";
 
 const ids = {
+  admin: "04000000-0000-4000-8000-000000000003",
+  membership: "04000000-0000-4000-8000-000000000004",
+  membershipOther: "04000000-0000-4000-8000-000000000005",
   tenant: "04000000-0000-4000-8000-000000000001",
   tenantOther: "04000000-0000-4000-8000-000000000002",
 } as const;
@@ -31,6 +35,12 @@ async function tenantTransaction<T>(
     client.release();
   }
 }
+async function setAuthority(client: PoolClient): Promise<void> {
+  await client.query(
+    "SELECT set_config('app.actor_principal_id',$1,true), set_config('app.correlation_id',$2,true)",
+    [ids.admin, randomUUID()],
+  );
+}
 async function configure(
   tenantId: string,
   expectedSettingsVersion: number,
@@ -39,6 +49,7 @@ async function configure(
   unlinkedWorkerCreationAllowed: boolean,
 ): Promise<void> {
   await tenantTransaction(migrationPool, tenantId, async (client) => {
+    await setAuthority(client);
     await client.query(configureSql, [
       expectedSettingsVersion,
       employeeNumberRequired,
@@ -120,12 +131,30 @@ beforeAll(async () => {
      VALUES ($1, 'Settings Tenant'), ($2, 'Other Settings Tenant')`,
     [ids.tenant, ids.tenantOther],
   );
-  for (const tenantId of [ids.tenant, ids.tenantOther]) {
+  await migrationPool.query(
+    "INSERT INTO principals (principal_id, display_name) VALUES ($1, 'Settings Admin')",
+    [ids.admin],
+  );
+  for (const [tenantId, membershipId] of [
+    [ids.tenant, ids.membership],
+    [ids.tenantOther, ids.membershipOther],
+  ] as const) {
     await tenantTransaction(migrationPool, tenantId, async (client) => {
       await client.query(
         `INSERT INTO service_activations (tenant_id, service_key, state, version)
          VALUES ($1, 'workforce_profile', 'active', 1)`,
         [tenantId],
+      );
+      await client.query(
+        `INSERT INTO memberships
+           (membership_id, tenant_id, principal_id, role_key, manager_principal_id)
+         VALUES ($1, $2, $3, 'tenant_admin', NULL)`,
+        [membershipId, tenantId, ids.admin],
+      );
+      await client.query(
+        `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+         VALUES ($1, $2, 'hr.workforce.configure_service')`,
+        [tenantId, ids.admin],
       );
     });
   }
@@ -137,7 +166,7 @@ afterAll(async () => {
 });
 
 describe("Workforce Profile settings persistence kernel", () => {
-  it("installs one owner-only exact boundary without direct table-write authority", async () => {
+  it("installs one exact application boundary without direct table-write authority", async () => {
     const catalog = await migrationPool.query(
       `SELECT pg_catalog.pg_get_function_identity_arguments(procedure.oid) =
                 'integer, boolean, text, boolean'
@@ -149,10 +178,15 @@ describe("Workforce Profile settings persistence kernel", () => {
               AND procedure.prosecdef AND procedure.proowner = role.oid
               AND NOT procedure.proleakproof AND NOT procedure.proisstrict
               AND NOT procedure.proretset
-              AND NOT pg_catalog.has_function_privilege($1, procedure.oid, 'EXECUTE')
+              AND pg_catalog.has_function_privilege($1, procedure.oid, 'EXECUTE')
               AND NOT pg_catalog.has_function_privilege('public', procedure.oid, 'EXECUTE')
-              AND (SELECT pg_catalog.count(*) = 1
-                            AND pg_catalog.bool_and(privilege.grantee = procedure.proowner)
+              AND (SELECT pg_catalog.count(*) = 2
+                            AND pg_catalog.count(*) FILTER (
+                              WHERE privilege.grantee = procedure.proowner
+                            ) = 1
+                            AND pg_catalog.count(*) FILTER (
+                              WHERE privilege.grantee = application.oid
+                            ) = 1
                      FROM pg_catalog.aclexplode(COALESCE(
                        procedure.proacl, pg_catalog.acldefault('f', procedure.proowner)
                      )) privilege
@@ -161,6 +195,7 @@ describe("Workforce Profile settings persistence kernel", () => {
        JOIN pg_catalog.pg_namespace namespace ON namespace.oid = procedure.pronamespace
        JOIN pg_catalog.pg_language language ON language.oid = procedure.prolang
        JOIN pg_catalog.pg_roles role ON role.rolname = current_user
+       JOIN pg_catalog.pg_roles application ON application.rolname = $1
       WHERE namespace.nspname = 'public'
          AND procedure.proname = 'esbla_configure_hr_workforce_profile_settings'`,
       [applicationRole],
@@ -185,11 +220,13 @@ describe("Workforce Profile settings persistence kernel", () => {
       [applicationRole],
     );
     expect(privileges.rows).toEqual([{ read_only: true }]);
-    await expect(
-      tenantTransaction(runtimePool, ids.tenant, (client) =>
-        client.query(configureSql, [1, true, "none", false]),
-      ),
-    ).rejects.toMatchObject({ code: "42501" });
+    const beforeBypass = await snapshot();
+    await tenantTransaction(runtimePool, ids.tenant, async (client) => {
+      await expect(client.query(configureSql, [1, true, "none", false])).rejects.toMatchObject({
+        code: "42501",
+      });
+    });
+    expect(await snapshot()).toEqual(beforeBypass);
   });
 
   it("serializes exact settings CAS, rollback, tenant scope, and activation", async () => {
@@ -226,6 +263,7 @@ describe("Workforce Profile settings persistence kernel", () => {
     try {
       await rollbackClient.query("BEGIN");
       await rollbackClient.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenant]);
+      await setAuthority(rollbackClient);
       await rollbackClient.query(configureSql, [3, false, "none", false]);
       await rollbackClient.query("ROLLBACK");
     } finally {
@@ -249,6 +287,7 @@ describe("Workforce Profile settings persistence kernel", () => {
       );
       await contender.query("BEGIN");
       await contender.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenant]);
+      await setAuthority(contender);
       const pid = (await contender.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]
         ?.pid;
       const pending = contender.query(configureSql, [3, true, "none", false]).then(

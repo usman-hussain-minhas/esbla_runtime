@@ -1,5 +1,6 @@
 const dateTimePattern =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/;
+const maximumPostgresInteger = 2_147_483_647;
 
 export const hrServiceKeys = [
   "attendance",
@@ -21,14 +22,30 @@ export interface HrServiceDeactivateBody {
   readonly expectedVersion: number;
 }
 
-export interface HrServiceControl {
+export interface HrWorkforceProfileSettings {
+  readonly employeeNumberRequired: boolean;
+  readonly managerVisibility: "minimized" | "none";
+  readonly unlinkedWorkerCreationAllowed: boolean;
+}
+export interface HrServiceConfigureBody {
+  readonly expectedSettingsVersion: number;
+  readonly settings: HrWorkforceProfileSettings;
+}
+interface HrServiceControlBase {
   readonly activationState: "active" | "inactive";
   readonly activationVersion: number;
-  readonly serviceKey: HrServiceKey;
   readonly settingsVersion: number;
   readonly updatedAt: string;
   readonly version: number;
 }
+export type HrServiceControl = HrServiceControlBase &
+  (
+    | { readonly serviceKey: "workforce_profile"; readonly settings: HrWorkforceProfileSettings }
+    | {
+        readonly serviceKey: Exclude<HrServiceKey, "workforce_profile">;
+        readonly settings: Readonly<Record<string, never>>;
+      }
+  );
 
 const positiveVersionSchema = {
   maximum: Number.MAX_SAFE_INTEGER,
@@ -61,13 +78,56 @@ export const hrServiceDeactivateBodySchema = {
   type: "object",
 } as const;
 
+const workforceProfileSettingsSchema = {
+  additionalProperties: false,
+  properties: {
+    employeeNumberRequired: { type: "boolean" },
+    managerVisibility: { enum: ["minimized", "none"] },
+    unlinkedWorkerCreationAllowed: { type: "boolean" },
+  },
+  required: ["employeeNumberRequired", "managerVisibility", "unlinkedWorkerCreationAllowed"],
+  type: "object",
+} as const;
+const emptyServiceSettingsSchema = {
+  additionalProperties: false,
+  properties: {},
+  type: "object",
+} as const;
+export const hrServiceConfigureBodySchema = {
+  $id: "HrServiceConfigureRequestV1",
+  additionalProperties: false,
+  properties: {
+    expectedSettingsVersion: { ...positiveVersionSchema, maximum: maximumPostgresInteger },
+    settings: workforceProfileSettingsSchema,
+  },
+  required: ["expectedSettingsVersion", "settings"],
+  type: "object",
+} as const;
+
 export const hrServiceControlSchema = {
   $id: "HrServiceControlResponseV1",
   additionalProperties: false,
+  oneOf: [
+    {
+      properties: {
+        serviceKey: { const: "workforce_profile" },
+        settings: workforceProfileSettingsSchema,
+      },
+      type: "object",
+    },
+    {
+      properties: {
+        serviceKey: { not: { const: "workforce_profile" } },
+        settings: emptyServiceSettingsSchema,
+      },
+      type: "object",
+    },
+  ],
   properties: {
     activationState: { enum: ["active", "inactive"] },
     activationVersion: positiveVersionSchema,
     serviceKey: { enum: hrServiceKeys },
+    settings: { anyOf: [workforceProfileSettingsSchema, emptyServiceSettingsSchema] },
     settingsVersion: positiveVersionSchema,
     updatedAt: { format: "date-time", type: "string" },
     version: positiveVersionSchema,
@@ -76,6 +136,7 @@ export const hrServiceControlSchema = {
     "activationState",
     "activationVersion",
     "serviceKey",
+    "settings",
     "settingsVersion",
     "updatedAt",
     "version",
@@ -87,6 +148,7 @@ const serviceControlKeys = [
   "activationState",
   "activationVersion",
   "serviceKey",
+  "settings",
   "settingsVersion",
   "updatedAt",
   "version",
@@ -108,6 +170,23 @@ function assertPositiveSafeInteger(value: unknown, label: string): asserts value
   if (!Number.isSafeInteger(value) || (value as number) < 1) {
     throw new TypeError(`${label} must be a positive safe integer`);
   }
+}
+
+function parseWorkforceProfileSettings(value: unknown, label: string): HrWorkforceProfileSettings {
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(
+    value,
+    ["employeeNumberRequired", "managerVisibility", "unlinkedWorkerCreationAllowed"],
+    label,
+  );
+  if (
+    typeof value.employeeNumberRequired !== "boolean" ||
+    (value.managerVisibility !== "minimized" && value.managerVisibility !== "none") ||
+    typeof value.unlinkedWorkerCreationAllowed !== "boolean"
+  ) {
+    throw new TypeError(`${label} is invalid`);
+  }
+  return value as unknown as HrWorkforceProfileSettings;
 }
 
 function assertDateTime(value: unknown, label: string): asserts value is string {
@@ -173,6 +252,20 @@ export function parseHrServiceDeactivateBody(value: unknown): HrServiceDeactivat
   ) as HrServiceDeactivateBody;
 }
 
+export function parseHrServiceConfigureBody(value: unknown): HrServiceConfigureBody {
+  if (!isRecord(value)) throw new TypeError("HrServiceConfigureRequestV1 must be an object");
+  assertExactKeys(value, ["expectedSettingsVersion", "settings"], "HrServiceConfigureRequestV1");
+  assertPositiveSafeInteger(
+    value.expectedSettingsVersion,
+    "HrServiceConfigureRequestV1.expectedSettingsVersion",
+  );
+  if (value.expectedSettingsVersion > maximumPostgresInteger) {
+    throw new TypeError("HrServiceConfigureRequestV1.expectedSettingsVersion is invalid");
+  }
+  parseWorkforceProfileSettings(value.settings, "HrServiceConfigureRequestV1.settings");
+  return value as unknown as HrServiceConfigureBody;
+}
+
 export function parseHrServiceControl(value: unknown): HrServiceControl {
   if (!isRecord(value)) throw new TypeError("HrServiceControlResponseV1 must be an object");
   assertExactKeys(value, serviceControlKeys, "HrServiceControlResponseV1");
@@ -181,6 +274,14 @@ export function parseHrServiceControl(value: unknown): HrServiceControl {
   }
   if (value.activationState !== "active" && value.activationState !== "inactive") {
     throw new TypeError("HrServiceControlResponseV1.activationState is invalid");
+  }
+  if (value.serviceKey === "workforce_profile") {
+    parseWorkforceProfileSettings(value.settings, "HrServiceControlResponseV1.settings");
+  } else {
+    if (!isRecord(value.settings)) {
+      throw new TypeError("HrServiceControlResponseV1.settings must be an object");
+    }
+    assertExactKeys(value.settings, [], "HrServiceControlResponseV1.settings");
   }
   assertPositiveSafeInteger(
     value.activationVersion,

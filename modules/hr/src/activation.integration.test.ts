@@ -526,14 +526,14 @@ beforeAll(async () => {
   await migrationPool.query(`GRANT SELECT, INSERT ON tenants, principals TO ${applicationRole}`);
   await migrationPool.query(
     `GRANT SELECT, INSERT, UPDATE
-     ON memberships, service_activations, tenant_settings, work_items,
+     ON memberships, service_activations, work_items,
         outbox_events, hr_leave_requests
      TO ${applicationRole}`,
   );
   await migrationPool.query(`GRANT SELECT, INSERT ON evidence_events TO ${applicationRole}`);
   await migrationPool.query(
     `GRANT SELECT
-     ON hr_workforce_profile_service_control, membership_capabilities,
+     ON hr_workforce_profile_service_control, membership_capabilities, tenant_settings,
         hr_workforce_status_history
      TO ${applicationRole}`,
   );
@@ -1050,7 +1050,7 @@ describe.sequential("Workforce Profile service-control lifecycle", () => {
       context(ids.tenantA, ids.adminA, ids.correlationWorkforceActivate),
       { expectedVersion: null },
     );
-    expect(activated).toEqual({
+    expect(activated).toMatchObject({
       billingState: "non_billable",
       control: {
         activationState: "active",
