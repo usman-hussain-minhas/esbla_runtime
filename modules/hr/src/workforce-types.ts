@@ -95,6 +95,51 @@ export interface DirectReportsPage {
 
 export type AuthorizedWorkforceListPage = DirectReportsPage | WorkforceListPage;
 
+export interface WorkforceStatusHistoryCursor {
+  readonly effectiveAt: string;
+  readonly workforceStatusHistoryId: string;
+}
+
+export interface WorkforceRelationshipHistoryCursor {
+  readonly relationshipVersion: number;
+  readonly reportingRelationshipId: string;
+}
+
+export interface WorkforceStatusHistoryView {
+  readonly effectiveAt: string;
+  readonly newStatus: WorkforceStatus;
+  readonly previousStatus: WorkforceStatus | null;
+  readonly workforceStatusHistoryId: string;
+}
+
+export interface WorkforceRelationshipHistoryView {
+  readonly effectiveAt: string;
+  readonly managerWorkerProfileId: string | null;
+  readonly relationshipStatus: ReportingRelationshipStatus;
+  readonly relationshipVersion: number;
+  readonly reportingRelationshipId: string;
+  readonly supersedesReportingRelationshipId: string | null;
+  readonly workerProfileId: string;
+}
+
+export interface GetAuthorizedWorkforceDetailOptions {
+  readonly pageSize?: number;
+  readonly relationshipCursor?: WorkforceRelationshipHistoryCursor;
+  readonly statusCursor?: WorkforceStatusHistoryCursor;
+  readonly workerProfileId: string;
+}
+
+export interface WorkforceProfileDetailView extends WorkforceProfileView {
+  readonly relationshipHistory: Readonly<{
+    items: readonly WorkforceRelationshipHistoryView[];
+    nextCursor: WorkforceRelationshipHistoryCursor | null;
+  }>;
+  readonly statusHistory: Readonly<{
+    items: readonly WorkforceStatusHistoryView[];
+    nextCursor: WorkforceStatusHistoryCursor | null;
+  }>;
+}
+
 export interface WorkforceProfileCommandResult {
   readonly billingState: typeof HR_WORKFORCE_PROFILE_BILLING_STATE;
   readonly profile: WorkforceProfileView;

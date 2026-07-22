@@ -36,6 +36,14 @@ export interface HrWorkforceProfilePath {
 
 export type HrWorkforceOwnQuery = Readonly<Record<string, never>>;
 
+export interface HrWorkforceDetailQuery {
+  readonly pageSize?: number;
+  readonly relationshipCursorReportingRelationshipId?: string;
+  readonly relationshipCursorVersion?: number;
+  readonly statusCursorEffectiveAt?: string;
+  readonly statusCursorWorkforceStatusHistoryId?: string;
+}
+
 export interface HrWorkforceListQuery {
   readonly cursorCreatedAt?: string;
   readonly cursorEffectiveAt?: string;
@@ -52,6 +60,46 @@ export interface HrWorkforceProfile {
   readonly workerProfileId: string;
   readonly workforceStatus: HrWorkforceStatus;
 }
+
+export interface HrWorkforceStatusHistory {
+  readonly effectiveAt: string;
+  readonly newStatus: HrWorkforceStatus;
+  readonly previousStatus: HrWorkforceStatus | null;
+  readonly workforceStatusHistoryId: string;
+}
+
+export interface HrWorkforceRelationshipHistory {
+  readonly effectiveAt: string;
+  readonly managerWorkerProfileId: string | null;
+  readonly relationshipStatus: HrReportingRelationshipStatus;
+  readonly relationshipVersion: number;
+  readonly reportingRelationshipId: string;
+  readonly supersedesReportingRelationshipId: string | null;
+  readonly workerProfileId: string;
+}
+
+export interface HrWorkforceStatusHistoryCursor {
+  readonly effectiveAt: string;
+  readonly workforceStatusHistoryId: string;
+}
+
+export interface HrWorkforceRelationshipHistoryCursor {
+  readonly relationshipVersion: number;
+  readonly reportingRelationshipId: string;
+}
+
+export interface HrWorkforceProfileDetail extends HrWorkforceProfile {
+  readonly relationshipHistory: Readonly<{
+    items: readonly HrWorkforceRelationshipHistory[];
+    nextCursor: HrWorkforceRelationshipHistoryCursor | null;
+  }>;
+  readonly statusHistory: Readonly<{
+    items: readonly HrWorkforceStatusHistory[];
+    nextCursor: HrWorkforceStatusHistoryCursor | null;
+  }>;
+}
+
+export type HrWorkforceProfileResponse = HrWorkforceProfile | HrWorkforceProfileDetail;
 
 export interface HrReportingRelationship {
   readonly effectiveAt: string;
@@ -215,18 +263,144 @@ export const hrWorkforceListQuerySchema = {
   ],
 } as const;
 
-export const hrWorkforceProfileSchema = {
-  $id: "HrWorkforceProfileResponseV1",
+export const hrWorkforceDetailQuerySchema = {
+  $id: "HrWorkforceDetailQueryV1",
+  additionalProperties: false,
+  dependencies: {
+    relationshipCursorReportingRelationshipId: ["relationshipCursorVersion"],
+    relationshipCursorVersion: ["relationshipCursorReportingRelationshipId"],
+    statusCursorEffectiveAt: ["statusCursorWorkforceStatusHistoryId"],
+    statusCursorWorkforceStatusHistoryId: ["statusCursorEffectiveAt"],
+  },
+  properties: {
+    pageSize: pageSizeSchema,
+    relationshipCursorReportingRelationshipId: uuidSchema,
+    relationshipCursorVersion: positiveVersionSchema,
+    statusCursorEffectiveAt: { format: "date-time", type: "string" },
+    statusCursorWorkforceStatusHistoryId: uuidSchema,
+  },
+  type: "object",
+} as const;
+
+const workforceProfileProperties = {
+  employeeNumber: { type: ["string", "null"] },
+  principalLinked: { type: "boolean" },
+  version: positiveVersionSchema,
+  workerProfileId: uuidSchema,
+  workforceStatus: { enum: hrWorkforceStatuses },
+} as const;
+const workforceProfileRequired = [
+  "employeeNumber",
+  "principalLinked",
+  "version",
+  "workerProfileId",
+  "workforceStatus",
+] as const;
+const workforceProfileBaseSchema = {
+  additionalProperties: false,
+  properties: workforceProfileProperties,
+  required: workforceProfileRequired,
+  type: "object",
+} as const;
+const statusHistoryCursorSchema = {
   additionalProperties: false,
   properties: {
-    employeeNumber: { type: ["string", "null"] },
-    principalLinked: { type: "boolean" },
-    version: positiveVersionSchema,
-    workerProfileId: uuidSchema,
-    workforceStatus: { enum: hrWorkforceStatuses },
+    effectiveAt: { format: "date-time", type: "string" },
+    workforceStatusHistoryId: uuidSchema,
   },
-  required: ["employeeNumber", "principalLinked", "version", "workerProfileId", "workforceStatus"],
+  required: ["effectiveAt", "workforceStatusHistoryId"],
   type: "object",
+} as const;
+const relationshipHistoryCursorSchema = {
+  additionalProperties: false,
+  properties: {
+    relationshipVersion: positiveVersionSchema,
+    reportingRelationshipId: uuidSchema,
+  },
+  required: ["relationshipVersion", "reportingRelationshipId"],
+  type: "object",
+} as const;
+const statusHistoryItemSchema = {
+  additionalProperties: false,
+  properties: {
+    effectiveAt: { format: "date-time", type: "string" },
+    newStatus: { enum: hrWorkforceStatuses },
+    previousStatus: { enum: [...hrWorkforceStatuses, null] },
+    workforceStatusHistoryId: uuidSchema,
+  },
+  required: ["effectiveAt", "newStatus", "previousStatus", "workforceStatusHistoryId"],
+  type: "object",
+} as const;
+const relationshipHistoryItemSchema = {
+  additionalProperties: false,
+  oneOf: [
+    {
+      properties: {
+        managerWorkerProfileId: uuidSchema,
+        relationshipStatus: { const: "assigned" },
+      },
+      type: "object",
+    },
+    {
+      properties: {
+        managerWorkerProfileId: { type: "null" },
+        relationshipStatus: { const: "unassigned" },
+      },
+      type: "object",
+    },
+  ],
+  properties: {
+    effectiveAt: { format: "date-time", type: "string" },
+    managerWorkerProfileId: { pattern: uuidPattern, type: ["string", "null"] },
+    relationshipStatus: { enum: hrReportingRelationshipStatuses },
+    relationshipVersion: positiveVersionSchema,
+    reportingRelationshipId: uuidSchema,
+    supersedesReportingRelationshipId: { pattern: uuidPattern, type: ["string", "null"] },
+    workerProfileId: uuidSchema,
+  },
+  required: [
+    "effectiveAt",
+    "managerWorkerProfileId",
+    "relationshipStatus",
+    "relationshipVersion",
+    "reportingRelationshipId",
+    "supersedesReportingRelationshipId",
+    "workerProfileId",
+  ],
+  type: "object",
+} as const;
+
+export const hrWorkforceProfileSchema = {
+  $id: "HrWorkforceProfileResponseV1",
+  oneOf: [
+    workforceProfileBaseSchema,
+    {
+      additionalProperties: false,
+      properties: {
+        ...workforceProfileProperties,
+        relationshipHistory: {
+          additionalProperties: false,
+          properties: {
+            items: { items: relationshipHistoryItemSchema, maxItems: 50, type: "array" },
+            nextCursor: { anyOf: [relationshipHistoryCursorSchema, { type: "null" }] },
+          },
+          required: ["items", "nextCursor"],
+          type: "object",
+        },
+        statusHistory: {
+          additionalProperties: false,
+          properties: {
+            items: { items: statusHistoryItemSchema, maxItems: 50, type: "array" },
+            nextCursor: { anyOf: [statusHistoryCursorSchema, { type: "null" }] },
+          },
+          required: ["items", "nextCursor"],
+          type: "object",
+        },
+      },
+      required: [...workforceProfileRequired, "relationshipHistory", "statusHistory"],
+      type: "object",
+    },
+  ],
 } as const;
 
 export const hrReportingRelationshipSchema = {
@@ -298,7 +472,7 @@ export const hrWorkforceListResponseSchema = {
       additionalProperties: false,
       properties: {
         items: {
-          items: { $ref: "HrWorkforceProfileResponseV1#" },
+          items: workforceProfileBaseSchema,
           maxItems: 50,
           type: "array",
         },
@@ -315,7 +489,7 @@ export const hrWorkforceListResponseSchema = {
           items: {
             additionalProperties: false,
             properties: {
-              profile: { $ref: "HrWorkforceProfileResponseV1#" },
+              profile: workforceProfileBaseSchema,
               relationship: { $ref: "HrReportingRelationshipResponseV1#" },
             },
             required: ["profile", "relationship"],
@@ -451,6 +625,53 @@ export function parseHrWorkforceListQuery(value: unknown): HrWorkforceListQuery 
   return value as unknown as HrWorkforceListQuery;
 }
 
+export function parseHrWorkforceDetailQuery(value: unknown): HrWorkforceDetailQuery {
+  if (!isRecord(value)) throw new TypeError("HrWorkforceDetailQueryV1 must be an object");
+  const allowed = [
+    "pageSize",
+    "relationshipCursorReportingRelationshipId",
+    "relationshipCursorVersion",
+    "statusCursorEffectiveAt",
+    "statusCursorWorkforceStatusHistoryId",
+  ];
+  if (Object.keys(value).some((key) => !allowed.includes(key))) {
+    throw new TypeError("HrWorkforceDetailQueryV1 has unexpected fields");
+  }
+  if (Object.hasOwn(value, "pageSize"))
+    assertPageSize(value.pageSize, "HrWorkforceDetailQueryV1.pageSize");
+  const hasRelationshipId = Object.hasOwn(value, "relationshipCursorReportingRelationshipId");
+  const hasRelationshipVersion = Object.hasOwn(value, "relationshipCursorVersion");
+  if (hasRelationshipId !== hasRelationshipVersion) {
+    throw new TypeError("HrWorkforceDetailQueryV1 relationship cursor must be paired");
+  }
+  if (hasRelationshipId) {
+    assertUuid(
+      value.relationshipCursorReportingRelationshipId,
+      "HrWorkforceDetailQueryV1.relationshipCursorReportingRelationshipId",
+    );
+    assertPositiveSafeInteger(
+      value.relationshipCursorVersion,
+      "HrWorkforceDetailQueryV1.relationshipCursorVersion",
+    );
+  }
+  const hasStatusAt = Object.hasOwn(value, "statusCursorEffectiveAt");
+  const hasStatusId = Object.hasOwn(value, "statusCursorWorkforceStatusHistoryId");
+  if (hasStatusAt !== hasStatusId) {
+    throw new TypeError("HrWorkforceDetailQueryV1 status cursor must be paired");
+  }
+  if (hasStatusAt) {
+    assertIsoDateTime(
+      value.statusCursorEffectiveAt,
+      "HrWorkforceDetailQueryV1.statusCursorEffectiveAt",
+    );
+    assertUuid(
+      value.statusCursorWorkforceStatusHistoryId,
+      "HrWorkforceDetailQueryV1.statusCursorWorkforceStatusHistoryId",
+    );
+  }
+  return value as unknown as HrWorkforceDetailQuery;
+}
+
 export function parseHrWorkforceChangeStatusBody(value: unknown): HrWorkforceChangeStatusBody {
   if (!isRecord(value)) throw new TypeError("HrWorkforceChangeStatusRequestV1 must be an object");
   assertExactKeys(value, ["expectedVersion", "status"], "HrWorkforceChangeStatusRequestV1");
@@ -503,13 +724,7 @@ export function parseHrWorkforceProfilePath(value: unknown): HrWorkforceProfileP
   return value as unknown as HrWorkforceProfilePath;
 }
 
-export function parseHrWorkforceProfile(value: unknown): HrWorkforceProfile {
-  if (!isRecord(value)) throw new TypeError("HrWorkforceProfileResponseV1 must be an object");
-  assertExactKeys(
-    value,
-    ["employeeNumber", "principalLinked", "version", "workerProfileId", "workforceStatus"],
-    "HrWorkforceProfileResponseV1",
-  );
+function assertWorkforceProfileFields(value: Record<string, unknown>): void {
   if (value.employeeNumber !== null && typeof value.employeeNumber !== "string") {
     throw new TypeError("HrWorkforceProfileResponseV1.employeeNumber must be text or null");
   }
@@ -521,7 +736,148 @@ export function parseHrWorkforceProfile(value: unknown): HrWorkforceProfile {
   if (!(hrWorkforceStatuses as readonly unknown[]).includes(value.workforceStatus)) {
     throw new TypeError("HrWorkforceProfileResponseV1.workforceStatus is invalid");
   }
+}
+
+function parseHrWorkforceProfileBase(value: unknown): HrWorkforceProfile {
+  if (!isRecord(value)) throw new TypeError("HrWorkforceProfileResponseV1 must be an object");
+  assertExactKeys(
+    value,
+    ["employeeNumber", "principalLinked", "version", "workerProfileId", "workforceStatus"],
+    "HrWorkforceProfileResponseV1",
+  );
+  assertWorkforceProfileFields(value);
   return value as unknown as HrWorkforceProfile;
+}
+
+function parseStatusHistoryPage(value: unknown): void {
+  if (!isRecord(value))
+    throw new TypeError("HrWorkforceProfileResponseV1.statusHistory is invalid");
+  assertExactKeys(value, ["items", "nextCursor"], "HrWorkforceProfileResponseV1.statusHistory");
+  if (!Array.isArray(value.items) || value.items.length > 50) {
+    throw new TypeError("HrWorkforceProfileResponseV1.statusHistory.items is invalid");
+  }
+  for (const item of value.items) {
+    if (!isRecord(item)) throw new TypeError("HrWorkforceProfileResponseV1 status item is invalid");
+    assertExactKeys(
+      item,
+      ["effectiveAt", "newStatus", "previousStatus", "workforceStatusHistoryId"],
+      "HrWorkforceProfileResponseV1 status item",
+    );
+    assertIsoDateTime(item.effectiveAt, "HrWorkforceProfileResponseV1 status effectiveAt");
+    assertUuid(item.workforceStatusHistoryId, "HrWorkforceProfileResponseV1 status history id");
+    if (
+      !(hrWorkforceStatuses as readonly unknown[]).includes(item.newStatus) ||
+      (item.previousStatus !== null &&
+        !(hrWorkforceStatuses as readonly unknown[]).includes(item.previousStatus))
+    ) {
+      throw new TypeError("HrWorkforceProfileResponseV1 status transition is invalid");
+    }
+  }
+  if (value.nextCursor !== null) {
+    if (!isRecord(value.nextCursor)) {
+      throw new TypeError("HrWorkforceProfileResponseV1 status cursor is invalid");
+    }
+    assertExactKeys(
+      value.nextCursor,
+      ["effectiveAt", "workforceStatusHistoryId"],
+      "HrWorkforceProfileResponseV1 status cursor",
+    );
+    assertIsoDateTime(
+      value.nextCursor.effectiveAt,
+      "HrWorkforceProfileResponseV1 status cursor effectiveAt",
+    );
+    assertUuid(
+      value.nextCursor.workforceStatusHistoryId,
+      "HrWorkforceProfileResponseV1 status cursor history id",
+    );
+  }
+}
+
+function parseRelationshipHistoryPage(value: unknown): void {
+  if (!isRecord(value)) {
+    throw new TypeError("HrWorkforceProfileResponseV1.relationshipHistory is invalid");
+  }
+  assertExactKeys(
+    value,
+    ["items", "nextCursor"],
+    "HrWorkforceProfileResponseV1.relationshipHistory",
+  );
+  if (!Array.isArray(value.items) || value.items.length > 50) {
+    throw new TypeError("HrWorkforceProfileResponseV1.relationshipHistory.items is invalid");
+  }
+  for (const item of value.items) {
+    if (!isRecord(item)) {
+      throw new TypeError("HrWorkforceProfileResponseV1 relationship item is invalid");
+    }
+    assertExactKeys(
+      item,
+      [
+        "effectiveAt",
+        "managerWorkerProfileId",
+        "relationshipStatus",
+        "relationshipVersion",
+        "reportingRelationshipId",
+        "supersedesReportingRelationshipId",
+        "workerProfileId",
+      ],
+      "HrWorkforceProfileResponseV1 relationship item",
+    );
+    assertIsoDateTime(item.effectiveAt, "HrWorkforceProfileResponseV1 relationship effectiveAt");
+    assertNullableUuid(
+      item.managerWorkerProfileId,
+      "HrWorkforceProfileResponseV1 relationship manager",
+    );
+    assertPositiveSafeInteger(
+      item.relationshipVersion,
+      "HrWorkforceProfileResponseV1 relationship version",
+    );
+    assertUuid(item.reportingRelationshipId, "HrWorkforceProfileResponseV1 relationship id");
+    assertNullableUuid(
+      item.supersedesReportingRelationshipId,
+      "HrWorkforceProfileResponseV1 relationship predecessor",
+    );
+    assertUuid(item.workerProfileId, "HrWorkforceProfileResponseV1 relationship worker");
+    if (
+      !(hrReportingRelationshipStatuses as readonly unknown[]).includes(item.relationshipStatus) ||
+      (item.relationshipStatus === "assigned") !== (item.managerWorkerProfileId !== null)
+    ) {
+      throw new TypeError("HrWorkforceProfileResponseV1 relationship state is invalid");
+    }
+  }
+  if (value.nextCursor !== null) {
+    if (!isRecord(value.nextCursor)) {
+      throw new TypeError("HrWorkforceProfileResponseV1 relationship cursor is invalid");
+    }
+    assertExactKeys(
+      value.nextCursor,
+      ["relationshipVersion", "reportingRelationshipId"],
+      "HrWorkforceProfileResponseV1 relationship cursor",
+    );
+    assertPositiveSafeInteger(
+      value.nextCursor.relationshipVersion,
+      "HrWorkforceProfileResponseV1 relationship cursor version",
+    );
+    assertUuid(
+      value.nextCursor.reportingRelationshipId,
+      "HrWorkforceProfileResponseV1 relationship cursor id",
+    );
+  }
+}
+
+export function parseHrWorkforceProfile(value: unknown): HrWorkforceProfileResponse {
+  if (!isRecord(value)) throw new TypeError("HrWorkforceProfileResponseV1 must be an object");
+  if (!Object.hasOwn(value, "relationshipHistory") && !Object.hasOwn(value, "statusHistory")) {
+    return parseHrWorkforceProfileBase(value);
+  }
+  assertExactKeys(
+    value,
+    [...workforceProfileRequired, "relationshipHistory", "statusHistory"],
+    "HrWorkforceProfileResponseV1",
+  );
+  assertWorkforceProfileFields(value);
+  parseRelationshipHistoryPage(value.relationshipHistory);
+  parseStatusHistoryPage(value.statusHistory);
+  return value as unknown as HrWorkforceProfileDetail;
 }
 
 export function parseHrReportingRelationship(value: unknown): HrReportingRelationship {
@@ -603,7 +959,7 @@ export function parseHrWorkforceListResponse(value: unknown): HrWorkforceListRes
     throw new TypeError("HrWorkforceListResponseV1.items must contain at most 50 items");
   }
   if (value.kind === "workforce") {
-    for (const item of value.items) parseHrWorkforceProfile(item);
+    for (const item of value.items) parseHrWorkforceProfileBase(item);
     parseWorkforceCursor(value.nextCursor);
     return value as unknown as HrWorkforcePage;
   }
@@ -613,7 +969,7 @@ export function parseHrWorkforceListResponse(value: unknown): HrWorkforceListRes
         throw new TypeError("HrWorkforceListResponseV1 direct report must be an object");
       }
       assertExactKeys(item, ["profile", "relationship"], "HrWorkforceListResponseV1 item");
-      parseHrWorkforceProfile(item.profile);
+      parseHrWorkforceProfileBase(item.profile);
       parseHrReportingRelationship(item.relationship);
     }
     parseDirectReportsCursor(value.nextCursor);

@@ -131,7 +131,7 @@ export function requireWorkforceServiceActive(transaction: TenantTransaction): v
 
 export async function authorizeWorkforceAction(
   transaction: TenantTransaction,
-  action: WorkforceAction | "list_authorized" | "view_own",
+  action: WorkforceAction | "list_authorized" | "view_authorized_detail" | "view_own",
   roleKey: "employee" | "hr_operator" | "manager",
 ): Promise<void> {
   const actionKey = `hr.workforce.${action}`;

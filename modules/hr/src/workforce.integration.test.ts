@@ -18,7 +18,11 @@ import {
   createWorkforceProfile,
   linkWorkforcePrincipal,
 } from "./workforce-commands.js";
-import { getOwnWorkforceProfile, listAuthorizedWorkforceProfiles } from "./workforce-queries.js";
+import {
+  getAuthorizedWorkforceProfileDetail,
+  getOwnWorkforceProfile,
+  listAuthorizedWorkforceProfiles,
+} from "./workforce-queries.js";
 import type { ChangeWorkforceReportingRelationshipInput } from "./workforce-types.js";
 
 function context(
@@ -65,7 +69,7 @@ async function setServiceState(state: "active" | "inactive"): Promise<void> {
   await tenantQuery(
     workforceIds.tenantA,
     `UPDATE service_activations SET state = $2, version = version + 1
-     WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
+     WHERE tenant_id = $1 AND service_key = 'workforce_profile' AND state IS DISTINCT FROM $2`,
     [workforceIds.tenantA, state],
   );
 }
@@ -168,6 +172,18 @@ async function setListCapability(principalId: string, present: boolean) {
     [workforceIds.tenantA, principalId],
   );
 }
+async function setDetailCapability(principalId: string, present: boolean) {
+  await tenantQuery(
+    workforceIds.tenantA,
+    present
+      ? `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+         VALUES ($1, $2, 'hr.workforce.view_authorized_detail') ON CONFLICT DO NOTHING`
+      : `DELETE FROM membership_capabilities
+         WHERE tenant_id=$1 AND principal_id=$2
+           AND capability_id='hr.workforce.view_authorized_detail'`,
+    [workforceIds.tenantA, principalId],
+  );
+}
 async function setReportingStatus(workerProfileId: string, workforceStatus: string): Promise<void> {
   await withWorkforceTenant(workforceIds.tenantA, async (client) => {
     await client.query(
@@ -175,7 +191,8 @@ async function setReportingStatus(workerProfileId: string, workforceStatus: stri
       [workforceIds.hrOperatorA, randomUUID()],
     );
     await client.query(
-      "UPDATE hr_worker_profiles SET workforce_status=$3, row_version=row_version+1 WHERE tenant_id=$1 AND worker_profile_id=$2",
+      `UPDATE hr_worker_profiles SET workforce_status=$3, row_version=row_version+1
+       WHERE tenant_id=$1 AND worker_profile_id=$2 AND workforce_status IS DISTINCT FROM $3`,
       [workforceIds.tenantA, workerProfileId, workforceStatus],
     );
   });
@@ -874,6 +891,214 @@ describe("Workforce Profile domain", () => {
       );
     }
     expect(await readWorkforceTenantSnapshot(workforceIds.tenantA)).toEqual(before);
+  });
+  it("reads one atomic privacy-minimized detail snapshot through current role-scoped authority", async () => {
+    const previousManager = await createActiveReportingProfile("manager");
+    const manager = await createActiveReportingProfile("manager");
+    const report = await createActiveReportingProfile("employee");
+    const otherReport = await createActiveReportingProfile("employee");
+    const foreign = await createActiveReportingProfile(
+      "employee",
+      workforceIds.tenantB,
+      workforceIds.hrOperatorB,
+    );
+    await changeReporting(
+      reportingInput(report.workerProfileId, 3, previousManager.workerProfileId),
+    );
+    await changeReporting(reportingInput(report.workerProfileId, 4, null, "unassigned"));
+    await changeReporting(reportingInput(report.workerProfileId, 5, manager.workerProfileId));
+    await setReportingStatus(otherReport.workerProfileId, "suspended");
+    const authorized = [
+      workforceIds.hrOperatorA,
+      workforceIds.tenantAdminA,
+      previousManager.principalId,
+      manager.principalId,
+      report.principalId,
+      otherReport.principalId,
+    ];
+    for (const principalId of authorized) await setDetailCapability(principalId, true);
+    const before = await reportingSnapshot(workforceIds.tenantA, report.workerProfileId);
+    try {
+      const first = await getAuthorizedWorkforceProfileDetail(workforcePool, context(), {
+        pageSize: 1,
+        workerProfileId: report.workerProfileId,
+      });
+      expect(first).toMatchObject({
+        employeeNumber: null,
+        principalLinked: true,
+        relationshipHistory: {
+          items: [
+            {
+              managerWorkerProfileId: manager.workerProfileId,
+              relationshipStatus: "assigned",
+              relationshipVersion: 3,
+            },
+          ],
+          nextCursor: { relationshipVersion: 3, reportingRelationshipId: expect.any(String) },
+        },
+        statusHistory: {
+          items: [{ newStatus: "active", previousStatus: "draft" }],
+          nextCursor: {
+            effectiveAt: expect.any(String),
+            workforceStatusHistoryId: expect.any(String),
+          },
+        },
+        workerProfileId: report.workerProfileId,
+        workforceStatus: "active",
+      });
+      if (!first.relationshipHistory.nextCursor || !first.statusHistory.nextCursor) {
+        throw new Error("Expected independent detail history cursors");
+      }
+      const statusOnly = await getAuthorizedWorkforceProfileDetail(workforcePool, context(), {
+        pageSize: 1,
+        statusCursor: first.statusHistory.nextCursor,
+        workerProfileId: report.workerProfileId,
+      });
+      expect(statusOnly.statusHistory.items[0]).toMatchObject({
+        newStatus: "draft",
+        previousStatus: null,
+      });
+      expect(statusOnly.relationshipHistory.items[0]?.relationshipVersion).toBe(3);
+      const relationshipOnly = await getAuthorizedWorkforceProfileDetail(workforcePool, context(), {
+        pageSize: 1,
+        relationshipCursor: first.relationshipHistory.nextCursor,
+        workerProfileId: report.workerProfileId,
+      });
+      expect(relationshipOnly.statusHistory.items[0]?.newStatus).toBe("active");
+      expect(relationshipOnly.relationshipHistory.items[0]).toMatchObject({
+        managerWorkerProfileId: null,
+        relationshipStatus: "unassigned",
+        relationshipVersion: 2,
+      });
+      const own = await getAuthorizedWorkforceProfileDetail(
+        workforcePool,
+        context(workforceIds.tenantA, report.principalId),
+        { pageSize: 50, workerProfileId: report.workerProfileId },
+      );
+      expect(
+        own.relationshipHistory.items.map(({ relationshipVersion }) => relationshipVersion),
+      ).toEqual([3, 2, 1]);
+      const managed = await getAuthorizedWorkforceProfileDetail(
+        workforcePool,
+        context(workforceIds.tenantA, manager.principalId),
+        { pageSize: 50, workerProfileId: report.workerProfileId },
+      );
+      expect(managed.relationshipHistory.items).toHaveLength(1);
+      expect(managed.relationshipHistory.items[0]).toMatchObject({
+        managerWorkerProfileId: manager.workerProfileId,
+        relationshipVersion: 3,
+      });
+      for (const [actor, target, code] of [
+        [previousManager.principalId, report.workerProfileId, "POLICY_DENIED"],
+        [report.principalId, otherReport.workerProfileId, "POLICY_DENIED"],
+        [workforceIds.tenantAdminA, report.workerProfileId, "POLICY_DENIED"],
+        [workforceIds.hrOperatorA, foreign.workerProfileId, "WORKFORCE_PROFILE_NOT_FOUND"],
+      ] as const) {
+        await expect(
+          getAuthorizedWorkforceProfileDetail(workforcePool, context(workforceIds.tenantA, actor), {
+            workerProfileId: target,
+          }),
+        ).rejects.toMatchObject({ code });
+      }
+      for (const principalId of [
+        manager.principalId,
+        workforceIds.hrOperatorA,
+        report.principalId,
+      ]) {
+        await setDetailCapability(principalId, false);
+        await expect(
+          getAuthorizedWorkforceProfileDetail(
+            workforcePool,
+            context(workforceIds.tenantA, principalId),
+            { workerProfileId: report.workerProfileId },
+          ),
+        ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+        await setDetailCapability(principalId, true);
+      }
+      await expect(
+        getAuthorizedWorkforceProfileDetail(
+          workforcePool,
+          context(workforceIds.tenantA, otherReport.principalId),
+          { workerProfileId: otherReport.workerProfileId },
+        ),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+      await setReportingStatus(manager.workerProfileId, "suspended");
+      await expect(
+        getAuthorizedWorkforceProfileDetail(
+          workforcePool,
+          context(workforceIds.tenantA, manager.principalId),
+          { workerProfileId: report.workerProfileId },
+        ),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+      await setReportingStatus(manager.workerProfileId, "active");
+      await setReportingRole(manager.principalId, "employee");
+      await expect(
+        getAuthorizedWorkforceProfileDetail(
+          workforcePool,
+          context(workforceIds.tenantA, manager.principalId),
+          { workerProfileId: report.workerProfileId },
+        ),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+      await setReportingRole(manager.principalId, "manager");
+      await tenantQuery(
+        workforceIds.tenantA,
+        `INSERT INTO tenant_settings (tenant_id, setting_key, value_type, value)
+         VALUES ($1, 'hr.workforce_profile.manager_visibility', 'enum', '"none"'::jsonb)`,
+        [workforceIds.tenantA],
+      );
+      await expect(
+        getAuthorizedWorkforceProfileDetail(
+          workforcePool,
+          context(workforceIds.tenantA, manager.principalId),
+          { workerProfileId: report.workerProfileId },
+        ),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+      await tenantQuery(
+        workforceIds.tenantA,
+        "DELETE FROM tenant_settings WHERE tenant_id=$1 AND setting_key='hr.workforce_profile.manager_visibility'",
+        [workforceIds.tenantA],
+      );
+      await setServiceState("inactive");
+      await expect(
+        getAuthorizedWorkforceProfileDetail(workforcePool, context(), {
+          workerProfileId: report.workerProfileId,
+        }),
+      ).rejects.toMatchObject({ code: "WORKFORCE_SERVICE_INACTIVE" });
+      await setServiceState("active");
+      const blocker = await workforceMigrationPool.connect();
+      try {
+        await blocker.query("BEGIN");
+        await blocker.query("SELECT set_config('app.tenant_id',$1,true)", [workforceIds.tenantA]);
+        await blocker.query(
+          "SELECT worker_profile_id FROM hr_worker_profiles WHERE tenant_id=$1 AND worker_profile_id=$2 FOR UPDATE",
+          [workforceIds.tenantA, report.workerProfileId],
+        );
+        let settled = false;
+        const pending = getAuthorizedWorkforceProfileDetail(workforcePool, context(), {
+          workerProfileId: report.workerProfileId,
+        }).finally(() => {
+          settled = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        expect(settled).toBe(false);
+        await blocker.query("COMMIT");
+        expect((await pending).workerProfileId).toBe(report.workerProfileId);
+      } finally {
+        await blocker.query("ROLLBACK").catch(() => undefined);
+        blocker.release();
+      }
+    } finally {
+      await setServiceState("active");
+      await setReportingRole(manager.principalId, "manager");
+      await setReportingStatus(manager.workerProfileId, "active");
+      await tenantQuery(
+        workforceIds.tenantA,
+        "DELETE FROM tenant_settings WHERE tenant_id=$1 AND setting_key='hr.workforce_profile.manager_visibility'",
+        [workforceIds.tenantA],
+      );
+      for (const principalId of authorized) await setDetailCapability(principalId, false);
+    }
+    expect(await reportingSnapshot(workforceIds.tenantA, report.workerProfileId)).toEqual(before);
   });
   it("table-drives authority, activation, manager-eligibility, and tenant denials", async () => {
     const report = await createActiveReportingProfile("employee");

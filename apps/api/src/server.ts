@@ -11,6 +11,7 @@ import {
   type HrWorkforceChangeReportingRelationshipBody,
   type HrWorkforceChangeStatusBody,
   type HrWorkforceCreateProfileBody,
+  type HrWorkforceDetailQuery,
   type HrWorkforceLinkPrincipalBody,
   type HrWorkforceListQuery,
   type HrWorkforceOwnQuery,
@@ -35,6 +36,7 @@ import {
   hrWorkforceChangeReportingRelationshipBodySchema,
   hrWorkforceChangeStatusBodySchema,
   hrWorkforceCreateProfileBodySchema,
+  hrWorkforceDetailQuerySchema,
   hrWorkforceLinkPrincipalBodySchema,
   hrWorkforceListQuerySchema,
   hrWorkforceListResponseSchema,
@@ -47,6 +49,7 @@ import {
   parseHrWorkforceChangeReportingRelationshipBody,
   parseHrWorkforceChangeStatusBody,
   parseHrWorkforceCreateProfileBody,
+  parseHrWorkforceDetailQuery,
   parseHrWorkforceLinkPrincipalBody,
   parseHrWorkforceListQuery,
   parseHrWorkforceOwnQuery,
@@ -71,6 +74,7 @@ import {
   changeWorkforceStatus,
   createWorkforceProfile,
   deactivateWorkforceProfileService,
+  getAuthorizedWorkforceProfileDetail,
   getLeaveRequestDetail,
   getOwnWorkforceProfile,
   getWorkforceProfileServiceControl,
@@ -179,6 +183,7 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     hrServiceDeactivateBodySchema,
     hrServiceControlSchema,
     hrWorkforceCreateProfileBodySchema,
+    hrWorkforceDetailQuerySchema,
     hrWorkforceLinkPrincipalBodySchema,
     hrWorkforceListQuerySchema,
     hrWorkforceListResponseSchema,
@@ -412,6 +417,54 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
       },
     },
     async (request) => await getOwnWorkforceProfile(options.pool, operationContext(request)),
+  );
+
+  server.get<{ Params: HrWorkforceProfilePath; Querystring: HrWorkforceDetailQuery }>(
+    "/v1/hr/workforce-profiles/by-id/:workerProfileId",
+    {
+      preHandler: [
+        async (request) => {
+          assertStrictRequest(parseHrWorkforceDetailQuery, request.query);
+        },
+      ],
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictRequest(parseHrWorkforceProfilePath, request.params);
+        },
+      ],
+      schema: {
+        params: { $ref: "HrWorkforceProfilePathV1#" },
+        querystring: { $ref: "HrWorkforceDetailQueryV1#" },
+        response: {
+          200: { $ref: "HrWorkforceProfileResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request) => {
+      const query = request.query;
+      return await getAuthorizedWorkforceProfileDetail(options.pool, operationContext(request), {
+        ...(query.pageSize === undefined ? {} : { pageSize: query.pageSize }),
+        ...(query.relationshipCursorReportingRelationshipId && query.relationshipCursorVersion
+          ? {
+              relationshipCursor: {
+                relationshipVersion: query.relationshipCursorVersion,
+                reportingRelationshipId: query.relationshipCursorReportingRelationshipId,
+              },
+            }
+          : {}),
+        ...(query.statusCursorEffectiveAt && query.statusCursorWorkforceStatusHistoryId
+          ? {
+              statusCursor: {
+                effectiveAt: query.statusCursorEffectiveAt,
+                workforceStatusHistoryId: query.statusCursorWorkforceStatusHistoryId,
+              },
+            }
+          : {}),
+        workerProfileId: request.params.workerProfileId,
+      });
+    },
   );
 
   server.post<{
