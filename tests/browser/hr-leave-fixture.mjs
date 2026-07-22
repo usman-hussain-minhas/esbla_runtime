@@ -8,8 +8,17 @@ import {
   migrateDatabase,
 } from "../../packages/db/dist/index.js";
 
-export const ports = { api: 41_900, employee: 41_901, manager: 41_902, operator: 41_903 };
+export const ports = {
+  admin: 41_904,
+  api: 41_900,
+  employee: 41_901,
+  manager: 41_902,
+  operator: 41_903,
+};
 export const fixture = {
+  adminLabel: "Browser Tenant Admin session",
+  adminOrigin: `http://127.0.0.1:${ports.admin}`,
+  adminPrincipalId: "10000000-0000-4000-8000-000000000010",
   employeeDisplayName: "Browser Employee",
   employeeLabel: "Browser Employee session",
   employeeOrigin: `http://127.0.0.1:${ports.employee}`,
@@ -131,7 +140,7 @@ export async function seedHrLeaveFixture() {
       ]);
       await client.query(
         `INSERT INTO principals (principal_id, display_name)
-         VALUES ($1, $2), ($3, $4), ($5, $6), ($7, $8)`,
+         VALUES ($1, $2), ($3, $4), ($5, $6), ($7, $8), ($9, $10)`,
         [
           fixture.managerPrincipalId,
           "Browser Manager",
@@ -141,6 +150,8 @@ export async function seedHrLeaveFixture() {
           "Browser HR Operator",
           fixture.reportPrincipalId,
           "Browser Direct Report",
+          fixture.adminPrincipalId,
+          "Browser Tenant Admin",
         ],
       );
       await client.query(
@@ -149,13 +160,15 @@ export async function seedHrLeaveFixture() {
          VALUES ('20000000-0000-4000-8000-000000000002', $1, $2, 'manager', NULL),
                 ('20000000-0000-4000-8000-000000000004', $1, $3, 'employee', $2),
                 ('20000000-0000-4000-8000-000000000006', $1, $4, 'hr_operator', NULL),
-                ('20000000-0000-4000-8000-000000000008', $1, $5, 'employee', $2)`,
+                ('20000000-0000-4000-8000-000000000008', $1, $5, 'employee', $2),
+                ('20000000-0000-4000-8000-000000000010', $1, $6, 'tenant_admin', NULL)`,
         [
           fixture.tenantId,
           fixture.managerPrincipalId,
           fixture.employeePrincipalId,
           fixture.operatorPrincipalId,
           fixture.reportPrincipalId,
+          fixture.adminPrincipalId,
         ],
       );
       await client.query(
@@ -168,12 +181,17 @@ export async function seedHrLeaveFixture() {
                 ($1, $4, 'hr.workforce.view_authorized_detail'),
                 ($1, $3, 'hr.workforce.view_authorized_detail'),
                 ($1, $4, 'hr.workforce.list_authorized'),
-                ($1, $3, 'hr.workforce.list_authorized')`,
+                ($1, $3, 'hr.workforce.list_authorized'),
+                ($1, $5, 'hr.workforce.activate_service'),
+                ($1, $5, 'hr.workforce.configure_service'),
+                ($1, $5, 'hr.workforce.deactivate_service'),
+                ($1, $5, 'hr.workforce.view_service_control')`,
         [
           fixture.tenantId,
           fixture.employeePrincipalId,
           fixture.operatorPrincipalId,
           fixture.managerPrincipalId,
+          fixture.adminPrincipalId,
         ],
       );
       await client.query(

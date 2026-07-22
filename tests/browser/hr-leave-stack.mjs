@@ -56,15 +56,22 @@ function portOpen(port) {
 await seedHrLeaveFixture();
 
 const applicationPool = createDatabasePool(requiredEnvironment("DATABASE_URL"), { max: 8 });
+const migrationReadPool = createDatabasePool(requiredEnvironment("DATABASE_MIGRATION_URL"), {
+  max: 2,
+});
 const server = createServer({
   authenticate: createDevelopmentAuthenticator({
     environment: "test",
     secret: fixtureEnvironment.ESBLA_DEV_AUTH_SECRET,
   }),
   logger: false,
+  migrationReadPool,
   pool: applicationPool,
+  runtimeEnvironment: "test",
 });
-server.addHook("onClose", async () => await applicationPool.end());
+server.addHook("onClose", async () => {
+  await Promise.all([applicationPool.end(), migrationReadPool.end()]);
+});
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const webRoot = fileURLToPath(new URL("../../apps/web/", import.meta.url));
@@ -77,7 +84,7 @@ let playwrightRootPromise;
 async function closeApi() {
   if (listening) await listening.catch(() => undefined);
   if (server.server.listening) await server.close();
-  else await applicationPool.end();
+  else await Promise.all([applicationPool.end(), migrationReadPool.end()]);
 }
 
 async function close() {
@@ -219,10 +226,16 @@ try {
       fixture.operatorPrincipalId,
       fixture.operatorLabel,
     );
+    const admin = startWeb(
+      new URL(fixture.adminOrigin),
+      fixture.adminPrincipalId,
+      fixture.adminLabel,
+    );
     await Promise.all([
       requireActorReady(new URL(fixture.employeeOrigin), fixture.employeeLabel, employee),
       requireActorReady(new URL(fixture.managerOrigin), fixture.managerLabel, manager),
       requireActorReady(new URL(fixture.operatorOrigin), fixture.operatorLabel, operator),
+      requireActorReady(new URL(fixture.adminOrigin), fixture.adminLabel, admin),
     ]);
   }
   if (!closing) {
