@@ -4,6 +4,7 @@ import {
   hrWorkforceChangeReportingRelationshipBodySchema,
   hrWorkforceChangeStatusBodySchema,
   hrWorkforceCreateProfileBodySchema,
+  hrWorkforceDetailQuerySchema,
   hrWorkforceLinkPrincipalBodySchema,
   hrWorkforceListQuerySchema,
   hrWorkforceListResponseSchema,
@@ -14,6 +15,7 @@ import {
   parseHrWorkforceChangeReportingRelationshipBody,
   parseHrWorkforceChangeStatusBody,
   parseHrWorkforceCreateProfileBody,
+  parseHrWorkforceDetailQuery,
   parseHrWorkforceLinkPrincipalBody,
   parseHrWorkforceListQuery,
   parseHrWorkforceListResponse,
@@ -173,6 +175,106 @@ describe("Workforce Profile API contracts", () => {
     ]) {
       expect(() => parseHrWorkforceProfile(invalid)).toThrow();
     }
+  });
+
+  it("binds independently paired detail-history cursors without authority selectors", () => {
+    expect(hrWorkforceDetailQuerySchema.$id).toBe("HrWorkforceDetailQueryV1");
+    const query = {
+      pageSize: 2,
+      relationshipCursorReportingRelationshipId: principalId,
+      relationshipCursorVersion: 3,
+      statusCursorEffectiveAt: "2026-07-22T00:00:00.000Z",
+      statusCursorWorkforceStatusHistoryId: profileId,
+    };
+    expect(parseHrWorkforceDetailQuery(query)).toBe(query);
+    for (const valid of [
+      {
+        statusCursorEffectiveAt: query.statusCursorEffectiveAt,
+        statusCursorWorkforceStatusHistoryId: query.statusCursorWorkforceStatusHistoryId,
+      },
+      {
+        relationshipCursorReportingRelationshipId: principalId,
+        relationshipCursorVersion: 3,
+      },
+    ]) {
+      expect(parseHrWorkforceDetailQuery(valid)).toBe(valid);
+    }
+    for (const invalid of [
+      { statusCursorEffectiveAt: query.statusCursorEffectiveAt },
+      { statusCursorWorkforceStatusHistoryId: profileId },
+      { relationshipCursorVersion: 3 },
+      { relationshipCursorReportingRelationshipId: principalId },
+      { relationshipCursorReportingRelationshipId: principalId, relationshipCursorVersion: 0 },
+      { relationshipCursorReportingRelationshipId: "invalid", relationshipCursorVersion: 3 },
+      { ...query, pageSize: 51 },
+      { ...query, include: "history" },
+      { ...query, mode: "manager" },
+      { ...query, tenantId: profileId },
+      { ...query, actorPrincipalId: principalId },
+    ]) {
+      expect(() => parseHrWorkforceDetailQuery(invalid)).toThrow();
+    }
+  });
+
+  it("accepts only complete privacy-minimized detail histories and keeps lists base-only", () => {
+    const relationship = {
+      effectiveAt: "2026-07-22T00:00:00.000Z",
+      managerWorkerProfileId: principalId,
+      relationshipStatus: "assigned",
+      relationshipVersion: 2,
+      reportingRelationshipId: "10000000-0000-4000-8000-000000000003",
+      supersedesReportingRelationshipId: null,
+      workerProfileId: profileId,
+    } as const;
+    const status = {
+      effectiveAt: "2026-07-21T00:00:00.000Z",
+      newStatus: "active",
+      previousStatus: "draft",
+      workforceStatusHistoryId: "10000000-0000-4000-8000-000000000004",
+    } as const;
+    const detail = {
+      ...profile,
+      relationshipHistory: {
+        items: [relationship],
+        nextCursor: {
+          relationshipVersion: 2,
+          reportingRelationshipId: relationship.reportingRelationshipId,
+        },
+      },
+      statusHistory: {
+        items: [status],
+        nextCursor: {
+          effectiveAt: status.effectiveAt,
+          workforceStatusHistoryId: status.workforceStatusHistoryId,
+        },
+      },
+    };
+    expect(parseHrWorkforceProfile(detail)).toBe(detail);
+    for (const invalid of [
+      { ...detail, relationshipHistory: undefined },
+      { ...detail, statusHistory: undefined },
+      { ...detail, actorPrincipalId: principalId },
+      {
+        ...detail,
+        statusHistory: {
+          ...detail.statusHistory,
+          items: [{ ...status, correlationId: profileId }],
+        },
+      },
+      {
+        ...detail,
+        relationshipHistory: {
+          ...detail.relationshipHistory,
+          items: [{ ...relationship, workerProfileVersion: 4 }],
+        },
+      },
+      { ...detail, statusHistory: { items: Array(51).fill(status), nextCursor: null } },
+    ]) {
+      expect(() => parseHrWorkforceProfile(invalid)).toThrow();
+    }
+    expect(() =>
+      parseHrWorkforceListResponse({ items: [detail], kind: "workforce", nextCursor: null }),
+    ).toThrow();
   });
 
   it("strictly separates HR workforce and manager direct-report list contracts", () => {
