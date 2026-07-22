@@ -19,6 +19,11 @@
       "development": "./src/hr-leave-api.ts",
       "import": "./dist/hr-leave-api.js"
     },
+    "./hr-service-control-api": {
+      "types": "./src/hr-service-control-api.ts",
+      "development": "./src/hr-service-control-api.ts",
+      "import": "./dist/hr-service-control-api.js"
+    },
     "./workspace-task-api": {
       "types": "./src/workspace-task-api.ts",
       "development": "./src/workspace-task-api.ts",
