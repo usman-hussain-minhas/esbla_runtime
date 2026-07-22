@@ -1,6 +1,11 @@
-import { ArrowRight, CalendarDays, UserRound, UserRoundPlus } from "lucide-react";
+import { ArrowRight, CalendarDays, UserRound, UserRoundPlus, UsersRound } from "lucide-react";
+import { loadAuthorizedWorkforceList } from "../../../lib/hr-workforce-profile-list";
 
-export default function HrHubPage() {
+export default async function HrHubPage() {
+  const [directReports, workforceAdministration] = await Promise.all([
+    loadAuthorizedWorkforceList({}, "direct_reports"),
+    loadAuthorizedWorkforceList({}, "workforce"),
+  ]);
   return (
     <section aria-labelledby="hr-hub-heading" className="work-surface">
       <header className="surface-heading">
@@ -33,10 +38,18 @@ export default function HrHubPage() {
               My workforce profile
               <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
             </a>
-            <a className="text-command" href="/workspace/hr/profile/admin">
-              <UserRoundPlus aria-hidden="true" size={15} strokeWidth={1.8} />
-              Workforce administration
-            </a>
+            {workforceAdministration.status === "success" ? (
+              <a className="text-command" href="/workspace/hr/profile/admin">
+                <UserRoundPlus aria-hidden="true" size={15} strokeWidth={1.8} />
+                Workforce administration
+              </a>
+            ) : null}
+            {directReports.status === "success" ? (
+              <a className="text-command" href="/workspace/hr/profile/direct-reports">
+                <UsersRound aria-hidden="true" size={15} strokeWidth={1.8} />
+                Direct reports
+              </a>
+            ) : null}
           </div>
         </li>
         <li className="work-queue-item">

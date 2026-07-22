@@ -264,3 +264,91 @@ test("HR operator onboards a worker and the employee reloads a minimized profile
     await closeActors(employee, operator);
   }
 });
+
+test("current manager browses direct reports and returns from persistent detail", async ({
+  browser,
+}) => {
+  const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
+  try {
+    await manager.page.goto(`${manager.origin}/workspace/hr`);
+    await expect(manager.page.getByRole("link", { name: "Workforce administration" })).toHaveCount(
+      0,
+    );
+    const directReports = manager.page.getByRole("link", { name: "Direct reports" });
+    await directReports.focus();
+    await manager.page.keyboard.press("Enter");
+    await expect(
+      manager.page.getByRole("heading", { name: "Direct reports", exact: true }),
+    ).toBeVisible();
+    await expect(manager.page.getByText("BROWSER-DIRECT-001", { exact: true })).toBeVisible();
+    await expect(manager.page.getByText("BROWSER-DRAFT-001", { exact: true })).toHaveCount(0);
+
+    const row = manager.page.locator("tbody tr").filter({ hasText: "BROWSER-DIRECT-001" });
+    const viewDetails = row.getByRole("link", { name: "View details" });
+    await viewDetails.focus();
+    await manager.page.keyboard.press("Enter");
+    await expect(manager.page).toHaveURL(/returnContext=direct-reports$/);
+    await expect(
+      manager.page.getByRole("heading", { name: "Employee BROWSER-DIRECT-001" }),
+    ).toBeVisible();
+    await expect(manager.page.getByRole("heading", { name: "Reporting history" })).toBeVisible();
+    await expect(manager.page.getByText("Manager assigned", { exact: true })).toBeVisible();
+
+    const back = manager.page.getByRole("link", { name: "Back to direct reports" });
+    await back.focus();
+    await manager.page.keyboard.press("Enter");
+    await expect(
+      manager.page.getByRole("heading", { name: "Direct reports", exact: true }),
+    ).toBeVisible();
+
+    await manager.page.setViewportSize({ height: 844, width: 390 });
+    await manager.page.getByRole("button", { name: "High contrast theme" }).click();
+    await expect(manager.page.locator("html")).toHaveAttribute("data-theme", "high-contrast");
+    expect(
+      await manager.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+  } finally {
+    await closeActors(manager);
+  }
+});
+
+test("HR operator filters workforce while employee list access fails closed", async ({
+  browser,
+}) => {
+  const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
+  const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
+  try {
+    await operator.page.goto(`${operator.origin}/workspace/hr`);
+    await expect(operator.page.getByRole("link", { name: "Direct reports" })).toHaveCount(0);
+    await operator.page.getByRole("link", { name: "Workforce administration" }).click();
+    await expect(operator.page.getByRole("heading", { name: "Workforce directory" })).toBeVisible();
+    await expect(operator.page.getByText("BROWSER-MANAGER-001", { exact: true })).toBeVisible();
+    const activeRow = operator.page.locator("tbody tr").filter({ hasText: "BROWSER-MANAGER-001" });
+    await activeRow.getByRole("link", { name: "View details" }).click();
+    await expect(
+      operator.page.getByRole("heading", { name: "Employee BROWSER-MANAGER-001" }),
+    ).toBeVisible();
+    await operator.page.getByRole("link", { name: "Back to workforce administration" }).click();
+
+    const draft = operator.page.getByRole("link", { name: "Draft" });
+    await draft.focus();
+    await operator.page.keyboard.press("Enter");
+    await expect(operator.page).toHaveURL(/\/workspace\/hr\/profile\/admin\?status=draft$/);
+    await expect(operator.page.getByText("BROWSER-DRAFT-001", { exact: true })).toBeVisible();
+    await expect(draft).toHaveAttribute("aria-current", "page");
+
+    await employee.page.goto(`${employee.origin}/workspace/hr`);
+    await expect(employee.page.getByRole("link", { name: "Workforce administration" })).toHaveCount(
+      0,
+    );
+    await expect(employee.page.getByRole("link", { name: "Direct reports" })).toHaveCount(0);
+    await employee.page.goto(`${employee.origin}/workspace/hr/profile/direct-reports`);
+    await expect(
+      employee.page.getByRole("heading", { name: "Workforce list unavailable" }),
+    ).toBeVisible();
+    await expect(employee.page.locator("table")).toHaveCount(0);
+    await expect(employee.page.getByText("BROWSER-DIRECT-001", { exact: true })).toHaveCount(0);
+  } finally {
+    await closeActors(employee, operator);
+  }
+});
