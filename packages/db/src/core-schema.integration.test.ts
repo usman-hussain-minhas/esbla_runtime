@@ -1,3 +1,4 @@
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Pool, PoolClient, QueryResult } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -28,6 +29,21 @@ let pool: Pool;
 const migrationBarrierFixture = fileURLToPath(
   new URL("../test-fixtures/migration-coordination", import.meta.url),
 );
+const migrationDirectory = fileURLToPath(new URL("../drizzle", import.meta.url));
+const numberedMigrationEntries = readdirSync(migrationDirectory, { withFileTypes: true })
+  .filter(({ name }) => /^\d{4}.*\.sql$/.test(name))
+  .sort(({ name: left }, { name: right }) => left.localeCompare(right));
+const migrationJournal = JSON.parse(
+  readFileSync(new URL("../drizzle/meta/_journal.json", import.meta.url), "utf8"),
+) as {
+  readonly dialect: unknown;
+  readonly entries: readonly {
+    readonly idx: unknown;
+    readonly tag: unknown;
+    readonly version: unknown;
+  }[];
+  readonly version: unknown;
+};
 const migrationBarrierKey = [1163084364, 1296648018] as const;
 const migrationTestGateKey = [1163084364, 1413829460] as const;
 
@@ -229,7 +245,30 @@ describe("core PostgreSQL foundation", () => {
     const migrations = await migrationPool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations`,
     );
-    expect(migrations.rows[0]?.count).toBe("11");
+    const journalTags = migrationJournal.entries.map(({ tag }) => tag);
+    expect({ dialect: migrationJournal.dialect, version: migrationJournal.version }).toEqual({
+      dialect: "postgresql",
+      version: "7",
+    });
+    expect(migrationJournal.entries.length).toBeGreaterThanOrEqual(11);
+    expect(
+      migrationJournal.entries.every(
+        (entry, index) =>
+          entry.idx === index &&
+          entry.version === "7" &&
+          /^\d{4}_[a-z0-9_]+$/.test(String(entry.tag)),
+      ),
+    ).toBe(true);
+    expect(new Set(journalTags).size).toBe(journalTags.length);
+    expect(
+      numberedMigrationEntries.every(
+        (entry) => entry.isFile() && /^\d{4}_[a-z0-9_]+\.sql$/.test(entry.name),
+      ),
+    ).toBe(true);
+    expect(numberedMigrationEntries.map(({ name }) => name)).toEqual(
+      journalTags.map((tag) => `${String(tag)}.sql`),
+    );
+    expect(migrations.rows[0]?.count).toBe(String(migrationJournal.entries.length));
 
     const rowSecurity = await pool.query<{
       force_row_security: boolean;
