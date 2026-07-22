@@ -19,6 +19,7 @@ describe("hrManifest", () => {
       "hr.workforce.create_profile",
       "hr.workforce.deactivate_service",
       "hr.workforce.link_principal",
+      "hr.workforce.list_authorized",
       "hr.workforce.view_own",
       "hr.workforce.view_service_control",
     ]);
@@ -31,6 +32,7 @@ describe("hrManifest", () => {
       { exposure: "tenant", id: "hr.workforce.create_profile" },
       { exposure: "admin", id: "hr.workforce.deactivate_service" },
       { exposure: "tenant", id: "hr.workforce.link_principal" },
+      { exposure: "tenant", id: "hr.workforce.list_authorized" },
       { exposure: "tenant", id: "hr.workforce.view_own" },
       { exposure: "admin", id: "hr.workforce.view_service_control" },
     ]);

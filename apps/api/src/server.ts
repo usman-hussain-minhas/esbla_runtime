@@ -12,6 +12,7 @@ import {
   type HrWorkforceChangeStatusBody,
   type HrWorkforceCreateProfileBody,
   type HrWorkforceLinkPrincipalBody,
+  type HrWorkforceListQuery,
   type HrWorkforceOwnQuery,
   type HrWorkforceProfilePath,
   hrAssignedLeaveListQuerySchema,
@@ -35,6 +36,8 @@ import {
   hrWorkforceChangeStatusBodySchema,
   hrWorkforceCreateProfileBodySchema,
   hrWorkforceLinkPrincipalBodySchema,
+  hrWorkforceListQuerySchema,
+  hrWorkforceListResponseSchema,
   hrWorkforceOwnQuerySchema,
   hrWorkforceProfilePathSchema,
   hrWorkforceProfileSchema,
@@ -45,6 +48,7 @@ import {
   parseHrWorkforceChangeStatusBody,
   parseHrWorkforceCreateProfileBody,
   parseHrWorkforceLinkPrincipalBody,
+  parseHrWorkforceListQuery,
   parseHrWorkforceOwnQuery,
   parseHrWorkforceProfilePath,
   problemDetailsSchema,
@@ -73,6 +77,7 @@ import {
   HrLeaveError,
   linkWorkforcePrincipal,
   listAssignedLeaveRequests,
+  listAuthorizedWorkforceProfiles,
   listOwnLeaveRequests,
   rejectLeaveRequest,
   submitLeaveRequest,
@@ -175,6 +180,8 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     hrServiceControlSchema,
     hrWorkforceCreateProfileBodySchema,
     hrWorkforceLinkPrincipalBodySchema,
+    hrWorkforceListQuerySchema,
+    hrWorkforceListResponseSchema,
     hrWorkforceOwnQuerySchema,
     hrWorkforceChangeReportingRelationshipBodySchema,
     hrWorkforceChangeStatusBodySchema,
@@ -309,6 +316,53 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
       );
       reply.header("idempotent-replayed", String(result.replayed));
       return reply.code(200).send(result.control);
+    },
+  );
+
+  server.get<{ Querystring: HrWorkforceListQuery }>(
+    "/v1/hr/workforce-profiles",
+    {
+      preHandler: [
+        async (request) => {
+          assertStrictRequest(parseHrWorkforceListQuery, request.query);
+        },
+      ],
+      preValidation: [authenticate],
+      schema: {
+        querystring: { $ref: "HrWorkforceListQueryV1#" },
+        response: {
+          200: { $ref: "HrWorkforceListResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request) => {
+      const query = request.query;
+      if (query.status !== undefined) {
+        return await listAuthorizedWorkforceProfiles(options.pool, operationContext(request), {
+          ...(query.cursorCreatedAt && query.cursorWorkerProfileId
+            ? {
+                cursor: {
+                  createdAt: query.cursorCreatedAt,
+                  workerProfileId: query.cursorWorkerProfileId,
+                },
+              }
+            : {}),
+          ...(query.pageSize === undefined ? {} : { pageSize: query.pageSize }),
+          status: query.status,
+        });
+      }
+      return await listAuthorizedWorkforceProfiles(options.pool, operationContext(request), {
+        ...(query.cursorEffectiveAt && query.cursorReportingRelationshipId
+          ? {
+              cursor: {
+                effectiveAt: query.cursorEffectiveAt,
+                reportingRelationshipId: query.cursorReportingRelationshipId,
+              },
+            }
+          : {}),
+        ...(query.pageSize === undefined ? {} : { pageSize: query.pageSize }),
+      });
     },
   );
 

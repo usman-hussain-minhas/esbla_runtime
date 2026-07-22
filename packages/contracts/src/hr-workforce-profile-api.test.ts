@@ -5,6 +5,8 @@ import {
   hrWorkforceChangeStatusBodySchema,
   hrWorkforceCreateProfileBodySchema,
   hrWorkforceLinkPrincipalBodySchema,
+  hrWorkforceListQuerySchema,
+  hrWorkforceListResponseSchema,
   hrWorkforceOwnQuerySchema,
   hrWorkforceProfilePathSchema,
   hrWorkforceProfileSchema,
@@ -13,6 +15,8 @@ import {
   parseHrWorkforceChangeStatusBody,
   parseHrWorkforceCreateProfileBody,
   parseHrWorkforceLinkPrincipalBody,
+  parseHrWorkforceListQuery,
+  parseHrWorkforceListResponse,
   parseHrWorkforceOwnQuery,
   parseHrWorkforceProfile,
   parseHrWorkforceProfilePath,
@@ -168,6 +172,93 @@ describe("Workforce Profile API contracts", () => {
       { ...profile, workforceStatus: "unknown" },
     ]) {
       expect(() => parseHrWorkforceProfile(invalid)).toThrow();
+    }
+  });
+
+  it("strictly separates HR workforce and manager direct-report list contracts", () => {
+    expect([hrWorkforceListQuerySchema.$id, hrWorkforceListResponseSchema.$id]).toEqual([
+      "HrWorkforceListQueryV1",
+      "HrWorkforceListResponseV1",
+    ]);
+    const workforceQuery = {
+      cursorCreatedAt: "2026-07-22T00:00:00.000Z",
+      cursorWorkerProfileId: profileId,
+      pageSize: 25,
+      status: "active",
+    } as const;
+    const directReportsQuery = {
+      cursorEffectiveAt: "2026-07-22T00:00:00.000Z",
+      cursorReportingRelationshipId: principalId,
+      pageSize: 25,
+    } as const;
+    expect(parseHrWorkforceListQuery(workforceQuery)).toBe(workforceQuery);
+    expect(parseHrWorkforceListQuery(directReportsQuery)).toBe(directReportsQuery);
+    expect(parseHrWorkforceListQuery({ status: "draft" })).toEqual({ status: "draft" });
+    expect(parseHrWorkforceListQuery({})).toEqual({});
+    for (const invalid of [
+      { cursorCreatedAt: workforceQuery.cursorCreatedAt, status: "active" },
+      { cursorWorkerProfileId: profileId, status: "active" },
+      { cursorEffectiveAt: directReportsQuery.cursorEffectiveAt },
+      { cursorReportingRelationshipId: principalId },
+      {
+        ...workforceQuery,
+        cursorEffectiveAt: directReportsQuery.cursorEffectiveAt,
+        cursorReportingRelationshipId: principalId,
+      },
+      {
+        cursorCreatedAt: workforceQuery.cursorCreatedAt,
+        cursorWorkerProfileId: profileId,
+      },
+      { ...directReportsQuery, status: "active" },
+      { pageSize: 51 },
+      { pageSize: "25" },
+      { mode: "manager" },
+      { kind: "workforce" },
+      { status: "unknown" },
+      { unexpected: true },
+    ]) {
+      expect(() => parseHrWorkforceListQuery(invalid)).toThrow();
+    }
+  });
+
+  it("accepts only the exact actor-derived authorized-list response branch", () => {
+    const relationship = {
+      effectiveAt: "2026-07-22T00:00:00.000Z",
+      managerWorkerProfileId: principalId,
+      relationshipStatus: "assigned",
+      relationshipVersion: 1,
+      reportingRelationshipId: "10000000-0000-4000-8000-000000000003",
+      supersedesReportingRelationshipId: null,
+      workerProfileId: profileId,
+      workerProfileVersion: 4,
+    } as const;
+    const workforce = {
+      items: [profile],
+      kind: "workforce",
+      nextCursor: { createdAt: "2026-07-22T00:00:00.000Z", workerProfileId: profileId },
+    } as const;
+    const directReports = {
+      items: [{ profile, relationship }],
+      kind: "direct_reports",
+      nextCursor: {
+        effectiveAt: relationship.effectiveAt,
+        reportingRelationshipId: relationship.reportingRelationshipId,
+      },
+    } as const;
+    expect(parseHrWorkforceListResponse(workforce)).toBe(workforce);
+    expect(parseHrWorkforceListResponse(directReports)).toBe(directReports);
+    for (const invalid of [
+      { ...workforce, kind: "direct_reports" },
+      { ...workforce, tenantId: profileId },
+      { ...workforce, nextCursor: { effectiveAt: relationship.effectiveAt } },
+      { ...directReports, kind: "workforce" },
+      { ...directReports, items: [{ profile: { ...profile, principalId }, relationship }] },
+      {
+        ...directReports,
+        nextCursor: { reportingRelationshipId: relationship.reportingRelationshipId },
+      },
+    ]) {
+      expect(() => parseHrWorkforceListResponse(invalid)).toThrow();
     }
   });
 });

@@ -36,6 +36,15 @@ export interface HrWorkforceProfilePath {
 
 export type HrWorkforceOwnQuery = Readonly<Record<string, never>>;
 
+export interface HrWorkforceListQuery {
+  readonly cursorCreatedAt?: string;
+  readonly cursorEffectiveAt?: string;
+  readonly cursorReportingRelationshipId?: string;
+  readonly cursorWorkerProfileId?: string;
+  readonly pageSize?: number;
+  readonly status?: HrWorkforceStatus;
+}
+
 export interface HrWorkforceProfile {
   readonly employeeNumber: string | null;
   readonly principalLinked: boolean;
@@ -54,6 +63,35 @@ export interface HrReportingRelationship {
   readonly workerProfileId: string;
   readonly workerProfileVersion: number;
 }
+
+export interface HrWorkforceCursor {
+  readonly createdAt: string;
+  readonly workerProfileId: string;
+}
+
+export interface HrDirectReportsCursor {
+  readonly effectiveAt: string;
+  readonly reportingRelationshipId: string;
+}
+
+export interface HrWorkforceDirectReport {
+  readonly profile: HrWorkforceProfile;
+  readonly relationship: HrReportingRelationship;
+}
+
+export interface HrWorkforcePage {
+  readonly items: readonly HrWorkforceProfile[];
+  readonly kind: "workforce";
+  readonly nextCursor: HrWorkforceCursor | null;
+}
+
+export interface HrDirectReportsPage {
+  readonly items: readonly HrWorkforceDirectReport[];
+  readonly kind: "direct_reports";
+  readonly nextCursor: HrDirectReportsCursor | null;
+}
+
+export type HrWorkforceListResponse = HrDirectReportsPage | HrWorkforcePage;
 
 const positiveVersionSchema = {
   maximum: Number.MAX_SAFE_INTEGER,
@@ -137,6 +175,46 @@ export const hrWorkforceProfilePathSchema = {
   type: "object",
 } as const;
 
+const pageSizeSchema = {
+  maximum: 50,
+  minimum: 1,
+  type: "integer",
+} as const;
+
+export const hrWorkforceListQuerySchema = {
+  $id: "HrWorkforceListQueryV1",
+  oneOf: [
+    {
+      additionalProperties: false,
+      dependencies: {
+        cursorCreatedAt: ["cursorWorkerProfileId"],
+        cursorWorkerProfileId: ["cursorCreatedAt"],
+      },
+      properties: {
+        cursorCreatedAt: { format: "date-time", type: "string" },
+        cursorWorkerProfileId: uuidSchema,
+        pageSize: pageSizeSchema,
+        status: { enum: hrWorkforceStatuses },
+      },
+      required: ["status"],
+      type: "object",
+    },
+    {
+      additionalProperties: false,
+      dependencies: {
+        cursorEffectiveAt: ["cursorReportingRelationshipId"],
+        cursorReportingRelationshipId: ["cursorEffectiveAt"],
+      },
+      properties: {
+        cursorEffectiveAt: { format: "date-time", type: "string" },
+        cursorReportingRelationshipId: uuidSchema,
+        pageSize: pageSizeSchema,
+      },
+      type: "object",
+    },
+  ],
+} as const;
+
 export const hrWorkforceProfileSchema = {
   $id: "HrWorkforceProfileResponseV1",
   additionalProperties: false,
@@ -193,6 +271,68 @@ export const hrReportingRelationshipSchema = {
   type: "object",
 } as const;
 
+const workforceCursorSchema = {
+  additionalProperties: false,
+  properties: {
+    createdAt: { format: "date-time", type: "string" },
+    workerProfileId: uuidSchema,
+  },
+  required: ["createdAt", "workerProfileId"],
+  type: "object",
+} as const;
+
+const directReportsCursorSchema = {
+  additionalProperties: false,
+  properties: {
+    effectiveAt: { format: "date-time", type: "string" },
+    reportingRelationshipId: uuidSchema,
+  },
+  required: ["effectiveAt", "reportingRelationshipId"],
+  type: "object",
+} as const;
+
+export const hrWorkforceListResponseSchema = {
+  $id: "HrWorkforceListResponseV1",
+  oneOf: [
+    {
+      additionalProperties: false,
+      properties: {
+        items: {
+          items: { $ref: "HrWorkforceProfileResponseV1#" },
+          maxItems: 50,
+          type: "array",
+        },
+        kind: { const: "workforce" },
+        nextCursor: { anyOf: [workforceCursorSchema, { type: "null" }] },
+      },
+      required: ["items", "kind", "nextCursor"],
+      type: "object",
+    },
+    {
+      additionalProperties: false,
+      properties: {
+        items: {
+          items: {
+            additionalProperties: false,
+            properties: {
+              profile: { $ref: "HrWorkforceProfileResponseV1#" },
+              relationship: { $ref: "HrReportingRelationshipResponseV1#" },
+            },
+            required: ["profile", "relationship"],
+            type: "object",
+          },
+          maxItems: 50,
+          type: "array",
+        },
+        kind: { const: "direct_reports" },
+        nextCursor: { anyOf: [directReportsCursorSchema, { type: "null" }] },
+      },
+      required: ["items", "kind", "nextCursor"],
+      type: "object",
+    },
+  ],
+} as const;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -214,6 +354,12 @@ function assertUuid(value: unknown, label: string): asserts value is string {
 function assertPositiveSafeInteger(value: unknown, label: string): asserts value is number {
   if (!Number.isSafeInteger(value) || (value as number) < 1) {
     throw new TypeError(`${label} must be a positive safe integer`);
+  }
+}
+
+function assertPageSize(value: unknown, label: string): asserts value is number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > 50) {
+    throw new TypeError(`${label} must be an integer from 1 through 50`);
   }
 }
 
@@ -261,6 +407,48 @@ export function parseHrWorkforceOwnQuery(value: unknown): HrWorkforceOwnQuery {
   if (!isRecord(value)) throw new TypeError("HrWorkforceOwnQueryV1 must be an object");
   assertExactKeys(value, [], "HrWorkforceOwnQueryV1");
   return value as HrWorkforceOwnQuery;
+}
+
+export function parseHrWorkforceListQuery(value: unknown): HrWorkforceListQuery {
+  if (!isRecord(value)) throw new TypeError("HrWorkforceListQueryV1 must be an object");
+  const workforceMode = Object.hasOwn(value, "status");
+  const allowed = workforceMode
+    ? ["cursorCreatedAt", "cursorWorkerProfileId", "pageSize", "status"]
+    : ["cursorEffectiveAt", "cursorReportingRelationshipId", "pageSize"];
+  if (Object.keys(value).some((key) => !allowed.includes(key))) {
+    throw new TypeError("HrWorkforceListQueryV1 has unexpected fields");
+  }
+  if (Object.hasOwn(value, "pageSize")) {
+    assertPageSize(value.pageSize, "HrWorkforceListQueryV1.pageSize");
+  }
+  if (workforceMode) {
+    if (!(hrWorkforceStatuses as readonly unknown[]).includes(value.status)) {
+      throw new TypeError("HrWorkforceListQueryV1.status is invalid");
+    }
+    const hasCreatedAt = Object.hasOwn(value, "cursorCreatedAt");
+    const hasProfileId = Object.hasOwn(value, "cursorWorkerProfileId");
+    if (hasCreatedAt !== hasProfileId) {
+      throw new TypeError("HrWorkforceListQueryV1 workforce cursor must be paired");
+    }
+    if (hasCreatedAt) {
+      assertIsoDateTime(value.cursorCreatedAt, "HrWorkforceListQueryV1.cursorCreatedAt");
+      assertUuid(value.cursorWorkerProfileId, "HrWorkforceListQueryV1.cursorWorkerProfileId");
+    }
+  } else {
+    const hasEffectiveAt = Object.hasOwn(value, "cursorEffectiveAt");
+    const hasRelationshipId = Object.hasOwn(value, "cursorReportingRelationshipId");
+    if (hasEffectiveAt !== hasRelationshipId) {
+      throw new TypeError("HrWorkforceListQueryV1 direct-reports cursor must be paired");
+    }
+    if (hasEffectiveAt) {
+      assertIsoDateTime(value.cursorEffectiveAt, "HrWorkforceListQueryV1.cursorEffectiveAt");
+      assertUuid(
+        value.cursorReportingRelationshipId,
+        "HrWorkforceListQueryV1.cursorReportingRelationshipId",
+      );
+    }
+  }
+  return value as unknown as HrWorkforceListQuery;
 }
 
 export function parseHrWorkforceChangeStatusBody(value: unknown): HrWorkforceChangeStatusBody {
@@ -381,4 +569,55 @@ export function parseHrReportingRelationship(value: unknown): HrReportingRelatio
     "HrReportingRelationshipResponseV1.workerProfileVersion",
   );
   return value as unknown as HrReportingRelationship;
+}
+
+function parseWorkforceCursor(value: unknown): HrWorkforceCursor | null {
+  if (value === null) return null;
+  if (!isRecord(value)) throw new TypeError("HrWorkforceListResponseV1 cursor is invalid");
+  assertExactKeys(value, ["createdAt", "workerProfileId"], "HrWorkforceListResponseV1 cursor");
+  assertIsoDateTime(value.createdAt, "HrWorkforceListResponseV1.nextCursor.createdAt");
+  assertUuid(value.workerProfileId, "HrWorkforceListResponseV1.nextCursor.workerProfileId");
+  return value as unknown as HrWorkforceCursor;
+}
+
+function parseDirectReportsCursor(value: unknown): HrDirectReportsCursor | null {
+  if (value === null) return null;
+  if (!isRecord(value)) throw new TypeError("HrWorkforceListResponseV1 cursor is invalid");
+  assertExactKeys(
+    value,
+    ["effectiveAt", "reportingRelationshipId"],
+    "HrWorkforceListResponseV1 cursor",
+  );
+  assertIsoDateTime(value.effectiveAt, "HrWorkforceListResponseV1.nextCursor.effectiveAt");
+  assertUuid(
+    value.reportingRelationshipId,
+    "HrWorkforceListResponseV1.nextCursor.reportingRelationshipId",
+  );
+  return value as unknown as HrDirectReportsCursor;
+}
+
+export function parseHrWorkforceListResponse(value: unknown): HrWorkforceListResponse {
+  if (!isRecord(value)) throw new TypeError("HrWorkforceListResponseV1 must be an object");
+  assertExactKeys(value, ["items", "kind", "nextCursor"], "HrWorkforceListResponseV1");
+  if (!Array.isArray(value.items) || value.items.length > 50) {
+    throw new TypeError("HrWorkforceListResponseV1.items must contain at most 50 items");
+  }
+  if (value.kind === "workforce") {
+    for (const item of value.items) parseHrWorkforceProfile(item);
+    parseWorkforceCursor(value.nextCursor);
+    return value as unknown as HrWorkforcePage;
+  }
+  if (value.kind === "direct_reports") {
+    for (const item of value.items) {
+      if (!isRecord(item)) {
+        throw new TypeError("HrWorkforceListResponseV1 direct report must be an object");
+      }
+      assertExactKeys(item, ["profile", "relationship"], "HrWorkforceListResponseV1 item");
+      parseHrWorkforceProfile(item.profile);
+      parseHrReportingRelationship(item.relationship);
+    }
+    parseDirectReportsCursor(value.nextCursor);
+    return value as unknown as HrDirectReportsPage;
+  }
+  throw new TypeError("HrWorkforceListResponseV1.kind is invalid");
 }

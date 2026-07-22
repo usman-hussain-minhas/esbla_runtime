@@ -18,7 +18,7 @@ import {
   createWorkforceProfile,
   linkWorkforcePrincipal,
 } from "./workforce-commands.js";
-import { getOwnWorkforceProfile } from "./workforce-queries.js";
+import { getOwnWorkforceProfile, listAuthorizedWorkforceProfiles } from "./workforce-queries.js";
 import type { ChangeWorkforceReportingRelationshipInput } from "./workforce-types.js";
 
 function context(
@@ -154,6 +154,18 @@ async function setReportingRole(principalId: string, role: string, status = "act
     workforceIds.tenantA,
     "UPDATE memberships SET role_key=$3, status=$4 WHERE tenant_id=$1 AND principal_id=$2",
     [workforceIds.tenantA, principalId, role, status],
+  );
+}
+async function setListCapability(principalId: string, present: boolean) {
+  await tenantQuery(
+    workforceIds.tenantA,
+    present
+      ? `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+         VALUES ($1, $2, 'hr.workforce.list_authorized') ON CONFLICT DO NOTHING`
+      : `DELETE FROM membership_capabilities
+         WHERE tenant_id=$1 AND principal_id=$2
+           AND capability_id='hr.workforce.list_authorized'`,
+    [workforceIds.tenantA, principalId],
   );
 }
 async function setReportingStatus(workerProfileId: string, workforceStatus: string): Promise<void> {
@@ -689,6 +701,179 @@ describe("Workforce Profile domain", () => {
       "action afterVersion beforeVersion managerAssigned receiptId relationshipStatus reportingRelationshipId workerProfileId workerProfileVersion";
     for (const { payload } of proof)
       expect(Object.keys(payload).sort()).toEqual(proofKeys.split(" "));
+  });
+  it("lists status-filtered workforce or current direct reports through current authority", async () => {
+    const manager = await createActiveReportingProfile("manager");
+    const [firstReport, secondReport, staleReport] = await Promise.all([
+      createActiveReportingProfile("employee"),
+      createActiveReportingProfile("employee"),
+      createActiveReportingProfile("employee"),
+    ]);
+    await changeReporting(reportingInput(firstReport.workerProfileId, 3, manager.workerProfileId));
+    await changeReporting(reportingInput(secondReport.workerProfileId, 3, manager.workerProfileId));
+    await changeReporting(reportingInput(staleReport.workerProfileId, 3, manager.workerProfileId));
+    await changeReporting(reportingInput(staleReport.workerProfileId, 4, null, "unassigned"));
+    await tenantQuery(
+      workforceIds.tenantA,
+      `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+       VALUES ($1, $2, 'hr.workforce.list_authorized'),
+              ($1, $3, 'hr.workforce.list_authorized'),
+              ($1, $4, 'hr.workforce.list_authorized')`,
+      [
+        workforceIds.tenantA,
+        workforceIds.hrOperatorA,
+        manager.principalId,
+        workforceIds.tenantAdminA,
+      ],
+    );
+    const before = await readWorkforceTenantSnapshot(workforceIds.tenantA);
+    try {
+      const workforce = await listAuthorizedWorkforceProfiles(workforcePool, context(), {
+        pageSize: 1,
+        status: "active",
+      });
+      expect(workforce).toMatchObject({ kind: "workforce", items: expect.any(Array) });
+      if (workforce.kind !== "workforce") {
+        throw new Error("Expected a workforce page");
+      }
+      expect(workforce.items).toHaveLength(1);
+      expect(workforce.items.every((item) => item.workforceStatus === "active")).toBe(true);
+      expect(workforce.nextCursor).toEqual({
+        createdAt: expect.any(String),
+        workerProfileId: expect.any(String),
+      });
+      if (!workforce.nextCursor) throw new Error("Expected one workforce cursor");
+      const nextWorkforce = await listAuthorizedWorkforceProfiles(workforcePool, context(), {
+        cursor: workforce.nextCursor,
+        pageSize: 1,
+        status: "active",
+      });
+      if (nextWorkforce.kind !== "workforce") throw new Error("Expected a workforce page");
+      expect(nextWorkforce.items).toHaveLength(1);
+      expect(nextWorkforce.items[0]?.workerProfileId).not.toBe(workforce.items[0]?.workerProfileId);
+
+      const firstPage = await listAuthorizedWorkforceProfiles(
+        workforcePool,
+        context(workforceIds.tenantA, manager.principalId),
+        { pageSize: 1 },
+      );
+      expect(firstPage).toMatchObject({
+        items: [
+          { profile: { principalLinked: true }, relationship: { relationshipStatus: "assigned" } },
+        ],
+        kind: "direct_reports",
+        nextCursor: {
+          effectiveAt: expect.any(String),
+          reportingRelationshipId: expect.any(String),
+        },
+      });
+      if (firstPage.kind !== "direct_reports" || !firstPage.nextCursor) {
+        throw new Error("Expected one direct-report cursor");
+      }
+      const secondPage = await listAuthorizedWorkforceProfiles(
+        workforcePool,
+        context(workforceIds.tenantA, manager.principalId),
+        { cursor: firstPage.nextCursor, pageSize: 1 },
+      );
+      expect(secondPage.kind).toBe("direct_reports");
+      if (secondPage.kind !== "direct_reports") {
+        throw new Error("Expected a direct-report page");
+      }
+      expect(
+        [...firstPage.items, ...secondPage.items]
+          .map(({ profile }) => profile.workerProfileId)
+          .sort(),
+      ).toEqual([firstReport.workerProfileId, secondReport.workerProfileId].sort());
+      const currentReports = await listAuthorizedWorkforceProfiles(
+        workforcePool,
+        context(workforceIds.tenantA, manager.principalId),
+        { pageSize: 50 },
+      );
+      if (currentReports.kind !== "direct_reports") {
+        throw new Error("Expected a direct-report page");
+      }
+      expect(currentReports.items.map(({ profile }) => profile.workerProfileId).sort()).toEqual(
+        [firstReport.workerProfileId, secondReport.workerProfileId].sort(),
+      );
+
+      await expect(
+        listAuthorizedWorkforceProfiles(
+          workforcePool,
+          context(workforceIds.tenantA, manager.principalId),
+          { status: "active" },
+        ),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+      await expect(listAuthorizedWorkforceProfiles(workforcePool, context())).rejects.toMatchObject(
+        { code: "POLICY_DENIED" },
+      );
+
+      await setListCapability(manager.principalId, false);
+      try {
+        await expect(
+          listAuthorizedWorkforceProfiles(
+            workforcePool,
+            context(workforceIds.tenantA, manager.principalId),
+          ),
+        ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+      } finally {
+        await setListCapability(manager.principalId, true);
+      }
+      await setListCapability(workforceIds.hrOperatorA, false);
+      try {
+        await expect(
+          listAuthorizedWorkforceProfiles(workforcePool, context(), { status: "active" }),
+        ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+      } finally {
+        await setListCapability(workforceIds.hrOperatorA, true);
+      }
+
+      await expect(
+        listAuthorizedWorkforceProfiles(
+          workforcePool,
+          context(workforceIds.tenantA, workforceIds.tenantAdminA),
+          { status: "active" },
+        ),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+      await setReportingRole(manager.principalId, "employee");
+      await expect(
+        listAuthorizedWorkforceProfiles(
+          workforcePool,
+          context(workforceIds.tenantA, manager.principalId),
+        ),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+      await setReportingRole(manager.principalId, "manager");
+      await tenantQuery(
+        workforceIds.tenantA,
+        `INSERT INTO tenant_settings (tenant_id, setting_key, value_type, value)
+         VALUES ($1, 'hr.workforce_profile.manager_visibility', 'enum', '"none"'::jsonb)`,
+        [workforceIds.tenantA],
+      );
+      await expect(
+        listAuthorizedWorkforceProfiles(
+          workforcePool,
+          context(workforceIds.tenantA, manager.principalId),
+        ),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+    } finally {
+      await setReportingRole(manager.principalId, "manager");
+      await tenantQuery(
+        workforceIds.tenantA,
+        `DELETE FROM tenant_settings
+         WHERE tenant_id = $1 AND setting_key = 'hr.workforce_profile.manager_visibility'`,
+        [workforceIds.tenantA],
+      );
+      await tenantQuery(
+        workforceIds.tenantA,
+        `DELETE FROM membership_capabilities
+         WHERE tenant_id = $1 AND capability_id = 'hr.workforce.list_authorized'
+           AND principal_id = ANY($2::uuid[])`,
+        [
+          workforceIds.tenantA,
+          [workforceIds.hrOperatorA, manager.principalId, workforceIds.tenantAdminA],
+        ],
+      );
+    }
+    expect(await readWorkforceTenantSnapshot(workforceIds.tenantA)).toEqual(before);
   });
   it("table-drives authority, activation, manager-eligibility, and tenant denials", async () => {
     const report = await createActiveReportingProfile("employee");

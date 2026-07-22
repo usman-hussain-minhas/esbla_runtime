@@ -7,6 +7,13 @@ export const workforceProfileSettings = Object.freeze({
     key: "hr.workforce_profile.employee_number_required",
     valueType: "boolean",
   } satisfies SettingDefinition<boolean>),
+  managerVisibility: Object.freeze({
+    allowTenantOverride: true,
+    defaultValue: "minimized",
+    key: "hr.workforce_profile.manager_visibility",
+    validate: (value) => value === "minimized" || value === "none",
+    valueType: "enum",
+  } satisfies SettingDefinition<string>),
   unlinkedWorkerCreationAllowed: Object.freeze({
     allowTenantOverride: true,
     defaultValue: true,
