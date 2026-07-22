@@ -20,6 +20,7 @@ export const fixture = {
   operatorLabel: "Browser HR Operator session",
   operatorOrigin: `http://127.0.0.1:${ports.operator}`,
   operatorPrincipalId: "10000000-0000-4000-8000-000000000006",
+  reportPrincipalId: "10000000-0000-4000-8000-000000000008",
   tenantId: "00000000-0000-4000-8000-000000000001",
 };
 
@@ -113,7 +114,7 @@ export async function seedHrLeaveFixture() {
       );
       await client.query(
         `GRANT SELECT ON membership_capabilities, hr_workforce_profile_service_control,
-          hr_workforce_status_history TO ${applicationRole}`,
+          hr_workforce_status_history, hr_reporting_relationships TO ${applicationRole}`,
       );
       await client.query(
         `GRANT SELECT, INSERT, UPDATE ON work_items, hr_leave_requests,
@@ -129,7 +130,7 @@ export async function seedHrLeaveFixture() {
       ]);
       await client.query(
         `INSERT INTO principals (principal_id, display_name)
-         VALUES ($1, $2), ($3, $4), ($5, $6)`,
+         VALUES ($1, $2), ($3, $4), ($5, $6), ($7, $8)`,
         [
           fixture.managerPrincipalId,
           "Browser Manager",
@@ -137,6 +138,8 @@ export async function seedHrLeaveFixture() {
           fixture.employeeDisplayName,
           fixture.operatorPrincipalId,
           "Browser HR Operator",
+          fixture.reportPrincipalId,
+          "Browser Direct Report",
         ],
       );
       await client.query(
@@ -144,12 +147,14 @@ export async function seedHrLeaveFixture() {
            (membership_id, tenant_id, principal_id, role_key, manager_principal_id)
          VALUES ('20000000-0000-4000-8000-000000000002', $1, $2, 'manager', NULL),
                 ('20000000-0000-4000-8000-000000000004', $1, $3, 'employee', $2),
-                ('20000000-0000-4000-8000-000000000006', $1, $4, 'hr_operator', NULL)`,
+                ('20000000-0000-4000-8000-000000000006', $1, $4, 'hr_operator', NULL),
+                ('20000000-0000-4000-8000-000000000008', $1, $5, 'employee', $2)`,
         [
           fixture.tenantId,
           fixture.managerPrincipalId,
           fixture.employeePrincipalId,
           fixture.operatorPrincipalId,
+          fixture.reportPrincipalId,
         ],
       );
       await client.query(
@@ -157,14 +162,73 @@ export async function seedHrLeaveFixture() {
          VALUES ($1, $2, 'hr.workforce.view_own'),
                 ($1, $3, 'hr.workforce.create_profile'),
                 ($1, $3, 'hr.workforce.link_principal'),
-                ($1, $3, 'hr.workforce.change_status')`,
-        [fixture.tenantId, fixture.employeePrincipalId, fixture.operatorPrincipalId],
+                ($1, $3, 'hr.workforce.change_status'),
+                ($1, $4, 'hr.workforce.view_authorized_detail'),
+                ($1, $3, 'hr.workforce.view_authorized_detail'),
+                ($1, $4, 'hr.workforce.list_authorized'),
+                ($1, $3, 'hr.workforce.list_authorized')`,
+        [
+          fixture.tenantId,
+          fixture.employeePrincipalId,
+          fixture.operatorPrincipalId,
+          fixture.managerPrincipalId,
+        ],
       );
       await client.query(
         `INSERT INTO service_activations (tenant_id, service_key, state, version)
          VALUES ($1, 'hr.leave_request', 'active', 1),
                 ($1, 'workforce_profile', 'active', 1)`,
         [fixture.tenantId],
+      );
+      await client.query(
+        `SELECT set_config('app.actor_principal_id', $1, true),
+                set_config('app.correlation_id', $2, true)`,
+        [fixture.operatorPrincipalId, "90000000-0000-4000-8000-000000000001"],
+      );
+      const createActiveProfile = async (employeeNumber, principalId) => {
+        const inserted = await client.query(
+          `INSERT INTO hr_worker_profiles (tenant_id, employee_number)
+           VALUES ($1, $2) RETURNING worker_profile_id`,
+          [fixture.tenantId, employeeNumber],
+        );
+        const workerProfileId = inserted.rows[0]?.worker_profile_id;
+        if (typeof workerProfileId !== "string") throw new Error("Workforce fixture insert failed");
+        await client.query(
+          `UPDATE hr_worker_profiles SET principal_id=$3, row_version=2
+           WHERE tenant_id=$1 AND worker_profile_id=$2`,
+          [fixture.tenantId, workerProfileId, principalId],
+        );
+        await client.query(
+          `UPDATE hr_worker_profiles SET workforce_status='active', row_version=3
+           WHERE tenant_id=$1 AND worker_profile_id=$2`,
+          [fixture.tenantId, workerProfileId],
+        );
+        return workerProfileId;
+      };
+      const managerWorkerProfileId = await createActiveProfile(
+        "BROWSER-MANAGER-001",
+        fixture.managerPrincipalId,
+      );
+      const reportWorkerProfileId = await createActiveProfile(
+        "BROWSER-DIRECT-001",
+        fixture.reportPrincipalId,
+      );
+      await client.query(
+        `INSERT INTO hr_worker_profiles (tenant_id, employee_number)
+         VALUES ($1, 'BROWSER-DRAFT-001')`,
+        [fixture.tenantId],
+      );
+      const relationship = await client.query(
+        `INSERT INTO hr_reporting_relationships
+           (tenant_id, worker_profile_id, manager_worker_profile_id,
+            relationship_status, relationship_version)
+         VALUES ($1, $2, $3, 'assigned', 1) RETURNING reporting_relationship_id`,
+        [fixture.tenantId, reportWorkerProfileId, managerWorkerProfileId],
+      );
+      await client.query(
+        `UPDATE hr_worker_profiles SET current_reporting_relationship_id=$3, row_version=4
+         WHERE tenant_id=$1 AND worker_profile_id=$2`,
+        [fixture.tenantId, reportWorkerProfileId, relationship.rows[0]?.reporting_relationship_id],
       );
       await client.query("COMMIT");
     } catch (error) {
