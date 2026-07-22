@@ -71,6 +71,13 @@
       "when": 1784669535260,
       "tag": "0009_ambitious_nitro",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1784706016430,
+      "tag": "0010_workforce_profile_settings_persistence",
+      "breakpoints": true
     }
   ]
 }
