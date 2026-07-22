@@ -13,6 +13,11 @@ export {
   workItems,
 } from "./core.js";
 export {
+  hrEmploymentRecordServiceControl,
+  hrEmploymentRecordStatus,
+  hrEmploymentRecords,
+  hrEmploymentRecordVersions,
+  hrEmploymentVersionKind,
   hrLeaveCategory,
   hrLeaveRequestStatus,
   hrLeaveRequests,
