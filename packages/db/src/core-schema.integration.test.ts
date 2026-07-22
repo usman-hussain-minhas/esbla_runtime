@@ -229,7 +229,7 @@ describe("core PostgreSQL foundation", () => {
     const migrations = await migrationPool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations`,
     );
-    expect(migrations.rows[0]?.count).toBe("10");
+    expect(migrations.rows[0]?.count).toBe("11");
 
     const rowSecurity = await pool.query<{
       force_row_security: boolean;
@@ -757,21 +757,9 @@ describe("core PostgreSQL foundation", () => {
           [ids.tenantB],
         ),
     );
-    await expect(transitionTenantB()).rejects.toMatchObject({ code: "55000" });
-    expect((await readTenantBAuthority()).rows).toEqual([{ state: "active", version: 1 }]);
-    expect((await readControl(ids.tenantB)).rows[0]?.row_version).toBe(2);
-
-    await withServiceControlGuardDisabled(
-      ids.tenantB,
-      async (client) =>
-        await client.query(
-          `UPDATE hr_workforce_profile_service_control
-         SET row_version = 1,
-             updated_at = $2
-         WHERE tenant_id = $1 AND service_key = 'workforce_profile'`,
-          [ids.tenantB, createdB.rows[0]?.updated_at],
-        ),
-    );
+    await transitionTenantB();
+    expect((await readTenantBAuthority()).rows).toEqual([{ state: "inactive", version: 2 }]);
+    expect((await readControl(ids.tenantB)).rows[0]?.row_version).toBe(3);
 
     await expect(
       migrationTenantTransaction(
@@ -804,7 +792,7 @@ describe("core PostgreSQL foundation", () => {
     ).rejects.toMatchObject({ code: "55000" });
 
     expect((await readControl(ids.tenantB)).rows[0]).toMatchObject({
-      row_version: 1,
+      row_version: 3,
       service_control_id: createdB.rows[0]?.service_control_id,
       settings_version: 1,
     });

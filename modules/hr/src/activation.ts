@@ -74,6 +74,7 @@ type ActivationCatalogRequirements = Omit<
     readonly name: string;
   }[];
   readonly functions: readonly ((typeof HR_LEAVE_CATALOG_REQUIREMENTS.functions)[number] & {
+    readonly identityArguments?: string;
     readonly ownerOnlyExecutable?: boolean;
     readonly publicExecutable?: boolean;
     readonly securityDefiner?: boolean;
@@ -497,7 +498,8 @@ async function inspectActivationReadiness(
               pg_catalog.jsonb_to_recordset(value -> 'functions') AS required(
                 name text, language text, "returnType" text, "sourceSha256" text,
                 volatility text, config text, "securityDefiner" boolean,
-                "publicExecutable" boolean, "ownerOnlyExecutable" boolean
+                "publicExecutable" boolean, "ownerOnlyExecutable" boolean,
+                "identityArguments" text
               )
          LEFT JOIN LATERAL (
            SELECT true AS current
@@ -505,7 +507,15 @@ async function inspectActivationReadiness(
            JOIN pg_catalog.pg_proc procedure ON procedure.pronamespace = namespace.oid
            JOIN pg_catalog.pg_language language ON language.oid = procedure.prolang
            WHERE namespace.nspname = 'public' AND procedure.proname = required.name
-             AND procedure.pronargs = 0 AND procedure.prokind = 'f'
+             AND pg_catalog.pg_get_function_identity_arguments(procedure.oid) =
+                   COALESCE(required."identityArguments", '')
+             AND procedure.prokind = 'f'
+             AND NOT EXISTS (
+               SELECT 1 FROM pg_catalog.pg_proc overload
+               WHERE overload.pronamespace = procedure.pronamespace
+                 AND overload.proname = procedure.proname
+                 AND overload.oid <> procedure.oid
+             )
              AND procedure.proowner = (
                SELECT role.oid FROM pg_catalog.pg_roles role
                WHERE role.rolname = current_user

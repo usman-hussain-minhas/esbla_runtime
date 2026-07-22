@@ -142,6 +142,11 @@ export const HR_WORKFORCE_PROFILE_REQUIRED_MIGRATIONS = [
     hash: "1624b2836986fdbf93b1b439a5ac100d70aca195918b31576945d2fd546ce40d",
     id: "0009",
   },
+  {
+    createdAt: 1784706016430,
+    hash: "b2801c3ade245a891ba0b5be587b62693f6566f1e5e1e81250d6237e736d4b55",
+    id: "0010",
+  },
 ] as const;
 const runtimeTablePrivilege = (name: string, writable = false) => ({
   delete: false,
@@ -565,8 +570,8 @@ export const HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS = {
       ({ name }) => name !== "esbla_enforce_hr_leave_state",
     ),
     ...[
-      "esbla_enforce_hr_workforce_profile_service_control|0|c68a506da19fa24dd30e1b4ca1fe53becf4d5f90e73ca4b768594ca05ed14fd5",
-      "esbla_sync_hr_workforce_profile_service_activation|1|60f6a2181da37375771c83a4ed41eed10ca66c083d81df9898610744877e505b",
+      "esbla_enforce_hr_workforce_profile_service_control|0|46946221929617cdfdc79444e75953c12455444a2001e9c027b9408364497659",
+      "esbla_sync_hr_workforce_profile_service_activation|1|275ac8efc9ea68d97a5eb51fbabb38723c205bd3da1737bd98a1f52f9596c24b",
       "esbla_guard_membership_capability_authority|1|ffc08b59c0bedd3ee08cba3106cd2f46bcec595866500b97cbc428740c2e450f",
       "esbla_enforce_hr_workforce_profile_state|0|1bb62849aab79018daac18ff26fdf17bf000cc1fe8f226b01d7f96151ee64b64",
       "esbla_enforce_hr_reporting_relationship_state|0|d2a1053d4cf8be46686b1c361fba71ab53c2a3107d565bae325918abc42a51d5",
@@ -586,5 +591,17 @@ export const HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS = {
         volatility: "v",
       };
     }),
+    {
+      config: "search_path=pg_catalog, public",
+      identityArguments: "integer, boolean, text, boolean",
+      language: "plpgsql",
+      name: "esbla_configure_hr_workforce_profile_settings",
+      ownerOnlyExecutable: true,
+      publicExecutable: false,
+      returnType: "void",
+      securityDefiner: true,
+      sourceSha256: "435771e4d37af26d5c22e03878aa12c60e9c3a824c4891ffef4ae765c28097fe",
+      volatility: "v",
+    },
   ],
 };
