@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   check,
   date,
   foreignKey,
@@ -33,8 +34,189 @@ export const hrReportingRelationshipStatus = pgEnum("hr_reporting_relationship_s
   "assigned",
   "unassigned",
 ]);
+export const hrEmploymentRecordStatus = pgEnum("hr_employment_record_status", [
+  "draft",
+  "active",
+  "ended",
+]);
+export const hrEmploymentVersionKind = pgEnum("hr_employment_version_kind", ["effective", "end"]);
 
 type PgTableExtras = PgTableExtraConfigValue[];
+
+export const hrEmploymentRecordServiceControl = pgTable(
+  "hr_employment_record_service_control",
+  {
+    serviceControlId: uuid("service_control_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    serviceKey: text("service_key").default("employment_record").notNull(),
+    settingsVersion: integer("settings_version").default(1).notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.serviceKey],
+      foreignColumns: [serviceActivations.tenantId, serviceActivations.serviceKey],
+      name: "hr_employment_record_service_control_activation_fk",
+    }).onDelete("restrict"),
+    uniqueIndex("uq_hr_employment_record_service_control_tenant_key").on(
+      table.tenantId,
+      table.serviceKey,
+    ),
+    check(
+      "hr_employment_record_service_control_key_exact",
+      sql`${table.serviceKey} = 'employment_record'`,
+    ),
+    check(
+      "hr_employment_record_service_control_settings_version_positive",
+      sql`${table.settingsVersion} > 0`,
+    ),
+    check(
+      "hr_employment_record_service_control_row_version_positive",
+      sql`${table.rowVersion} > 0`,
+    ),
+  ],
+).enableRLS();
+
+export const hrEmploymentRecords = pgTable(
+  "hr_employment_records",
+  {
+    employmentRecordId: uuid("employment_record_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    workerProfileId: uuid("worker_profile_id").notNull(),
+    status: hrEmploymentRecordStatus("status").default("draft").notNull(),
+    currentVersionId: uuid("current_version_id"),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table): PgTableExtras => [
+    unique("uq_hr_employment_records_composite_identity").on(
+      table.tenantId,
+      table.employmentRecordId,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.workerProfileId],
+      foreignColumns: [hrWorkforceProfiles.tenantId, hrWorkforceProfiles.workerProfileId],
+      name: "hr_employment_records_worker_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.employmentRecordId, table.currentVersionId],
+      foreignColumns: [
+        hrEmploymentRecordVersions.tenantId,
+        hrEmploymentRecordVersions.employmentRecordId,
+        hrEmploymentRecordVersions.employmentRecordVersionId,
+      ],
+      name: "hr_employment_records_current_version_same_root_fk",
+    }).onDelete("restrict"),
+    index("idx_hr_employment_records_tenant_cursor").on(
+      table.tenantId,
+      table.workerProfileId,
+      table.createdAt.desc(),
+      table.employmentRecordId.desc(),
+    ),
+    index("idx_hr_employment_records_tenant_worker_active_head").on(
+      table.tenantId,
+      table.workerProfileId,
+      table.status,
+      table.employmentRecordId,
+    ),
+    uniqueIndex("uq_hr_employment_records_tenant_worker_current")
+      .on(table.tenantId, table.workerProfileId)
+      .where(sql`${table.status} <> 'ended'`),
+    check(
+      "hr_employment_records_status_head_consistent",
+      sql`(${table.status} = 'draft' AND ${table.currentVersionId} IS NULL)
+          OR (${table.status} IN ('active', 'ended') AND ${table.currentVersionId} IS NOT NULL)`,
+    ),
+    check("hr_employment_records_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const hrEmploymentRecordVersions = pgTable(
+  "hr_employment_record_versions",
+  {
+    employmentRecordVersionId: uuid("employment_record_version_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    employmentRecordId: uuid("employment_record_id").notNull(),
+    workerProfileId: uuid("worker_profile_id").notNull(),
+    effectiveFrom: date("effective_from", { mode: "string" }).notNull(),
+    effectiveTo: date("effective_to", { mode: "string" }),
+    employmentTypeCode: text("employment_type_code"),
+    organizationReference: text("organization_reference"),
+    positionReference: text("position_reference"),
+    supersedesVersionId: uuid("supersedes_version_id"),
+    version: integer("version").notNull(),
+    versionKind: hrEmploymentVersionKind("version_kind").notNull(),
+    terminalVersion: boolean("terminal_version").default(false).notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table): PgTableExtras => [
+    foreignKey({
+      columns: [table.tenantId],
+      foreignColumns: [tenants.tenantId],
+      name: "hr_employment_record_versions_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.employmentRecordId],
+      foreignColumns: [hrEmploymentRecords.tenantId, hrEmploymentRecords.employmentRecordId],
+      name: "hr_employment_record_versions_record_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.workerProfileId],
+      foreignColumns: [hrWorkforceProfiles.tenantId, hrWorkforceProfiles.workerProfileId],
+      name: "hr_employment_record_versions_worker_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.employmentRecordId, table.supersedesVersionId],
+      foreignColumns: [table.tenantId, table.employmentRecordId, table.employmentRecordVersionId],
+      name: "hr_employment_record_versions_predecessor_same_root_fk",
+    }).onDelete("restrict"),
+    unique("uq_hr_employment_record_versions_composite_identity").on(
+      table.tenantId,
+      table.employmentRecordId,
+      table.employmentRecordVersionId,
+    ),
+    uniqueIndex("uq_hr_employment_record_versions_tenant_record_version").on(
+      table.tenantId,
+      table.employmentRecordId,
+      table.version,
+    ),
+    uniqueIndex("uq_hr_employment_record_versions_tenant_successor")
+      .on(table.tenantId, table.employmentRecordId, table.supersedesVersionId)
+      .where(sql`${table.supersedesVersionId} IS NOT NULL`),
+    index("idx_hr_employment_record_versions_tenant_record_cursor").on(
+      table.tenantId,
+      table.employmentRecordId,
+      table.version.desc(),
+      table.employmentRecordVersionId.desc(),
+    ),
+    check(
+      "hr_employment_record_versions_effective_range_valid",
+      sql`${table.effectiveTo} IS NULL OR ${table.effectiveTo} >= ${table.effectiveFrom}`,
+    ),
+    check(
+      "hr_employment_record_versions_identifier_values_valid",
+      sql`(${table.employmentTypeCode} IS NULL OR char_length(trim(${table.employmentTypeCode})) > 0)
+          AND (${table.organizationReference} IS NULL OR char_length(trim(${table.organizationReference})) > 0)
+          AND (${table.positionReference} IS NULL OR char_length(trim(${table.positionReference})) > 0)`,
+    ),
+    check(
+      "hr_employment_record_versions_predecessor_version_consistent",
+      sql`(${table.version} = 1 AND ${table.supersedesVersionId} IS NULL)
+          OR (${table.version} > 1 AND ${table.supersedesVersionId} IS NOT NULL)`,
+    ),
+    check(
+      "hr_employment_record_versions_terminal_kind_consistent",
+      sql`(${table.versionKind} = 'effective' AND ${table.terminalVersion} = false)
+          OR (${table.versionKind} = 'end' AND ${table.terminalVersion} = true
+              AND ${table.effectiveTo} IS NOT NULL)`,
+    ),
+    check("hr_employment_record_versions_version_positive", sql`${table.version} > 0`),
+    check("hr_employment_record_versions_row_version_fixed", sql`${table.rowVersion} = 1`),
+  ],
+).enableRLS();
 
 export const hrWorkforceProfileServiceControl = pgTable(
   "hr_workforce_profile_service_control",
