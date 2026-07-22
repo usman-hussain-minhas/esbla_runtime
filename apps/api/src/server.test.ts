@@ -50,6 +50,19 @@ describe("runtime probes", () => {
     expect(response.body).not.toContain("secret database detail");
   });
 
+  it("keeps the dormant Employment Record service-control prerequisite unreachable", async () => {
+    const { query, server } = testServer();
+    for (const [method, url] of [
+      ["GET", "/v1/hr/employment-records/service-control"],
+      ["POST", "/v1/hr/employment-records/service-control/activate"],
+      ["POST", "/v1/hr/employment-records/service-control/deactivate"],
+      ["PATCH", "/v1/hr/employment-records/service-control/settings"],
+    ] as const) {
+      expect((await server.inject({ method, url })).statusCode).toBe(404);
+    }
+    expect(query).not.toHaveBeenCalled();
+  });
+
   it("turns unexpected API failures into opaque problem details", async () => {
     const requestId = randomUUID();
     const principalId = randomUUID();

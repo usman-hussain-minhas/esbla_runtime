@@ -288,7 +288,7 @@ export function WorkforceProfileSettingsControl({
             </button>
           </div>
         </form>
-      ) : control ? (
+      ) : control?.serviceKey === "workforce_profile" ? (
         <section aria-labelledby="preserved-workforce-settings" className="leave-detail-section">
           <h2 id="preserved-workforce-settings">Preserved settings</h2>
           <p className="surface-summary">

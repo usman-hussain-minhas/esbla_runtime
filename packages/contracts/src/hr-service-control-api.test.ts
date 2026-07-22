@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  hrEmploymentRecordSettingsDefaults,
   hrServiceActivateBodySchema,
   hrServiceConfigureBodySchema,
   hrServiceControlQuerySchema,
@@ -25,6 +26,11 @@ const serviceControl = {
   settingsVersion: 2,
   updatedAt: "2026-07-21T08:30:00.000Z",
   version: 4,
+} as const;
+
+const employmentRecordSettings = {
+  effectiveRangeOverlapAllowed: false,
+  employmentTypeCodes: "unspecified,Fixed Term",
 } as const;
 
 describe("shared HR service-control contracts", () => {
@@ -119,9 +125,36 @@ describe("shared HR service-control contracts", () => {
       const response = {
         ...serviceControl,
         serviceKey,
-        settings: serviceKey === "workforce_profile" ? serviceControl.settings : {},
+        settings:
+          serviceKey === "workforce_profile"
+            ? serviceControl.settings
+            : serviceKey === "employment_record"
+              ? employmentRecordSettings
+              : {},
       };
       expect(parseHrServiceControl(response)).toBe(response);
+    }
+  });
+
+  it("registers and strictly preserves opaque Employment Record settings", () => {
+    expect(hrEmploymentRecordSettingsDefaults).toEqual({
+      effectiveRangeOverlapAllowed: false,
+      employmentTypeCodes: "unspecified",
+    });
+    const response = {
+      ...serviceControl,
+      serviceKey: "employment_record",
+      settings: employmentRecordSettings,
+    } as const;
+    expect(parseHrServiceControl(response)).toBe(response);
+
+    for (const settings of [
+      { ...employmentRecordSettings, employmentTypeCodes: "" },
+      { ...employmentRecordSettings, employmentTypeCodes: "unspecified,,fixed" },
+      { ...employmentRecordSettings, effectiveRangeOverlapAllowed: true },
+      { ...employmentRecordSettings, privateSetting: true },
+    ]) {
+      expect(() => parseHrServiceControl({ ...response, settings })).toThrow();
     }
   });
 
@@ -132,6 +165,7 @@ describe("shared HR service-control contracts", () => {
       { ...serviceControl, privateDetail: "secret" },
       { ...serviceControl, serviceKey: "leave_request" },
       { ...serviceControl, serviceKey: "attendance" },
+      { ...serviceControl, serviceKey: "employment_record" },
       { ...serviceControl, settings: {} },
       { ...serviceControl, settings: { ...serviceControl.settings, privateSetting: true } },
       { ...serviceControl, activationState: "enabled" },

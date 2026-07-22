@@ -71,10 +71,13 @@ interface MigrationCheck {
 interface CatalogCheck {
   readonly current: boolean;
 }
-type ActivationCatalogRequirements = Omit<
+export type ActivationCatalogRequirements = Omit<
   typeof HR_LEAVE_CATALOG_REQUIREMENTS,
   "enums" | "functions"
 > & {
+  readonly exactColumnParents?: readonly string[];
+  readonly exactConstraintParents?: readonly string[];
+  readonly exactIndexParents?: readonly string[];
   readonly exactTriggerParents?: readonly string[];
   readonly enums?: readonly {
     readonly labels: readonly string[];
@@ -117,7 +120,7 @@ function sameDatabase(left: DatabaseIdentity, right: DatabaseIdentity): boolean 
     left.postmaster_started_at === right.postmaster_started_at
   );
 }
-async function inspectActivationReadiness(
+export async function inspectActivationReadiness(
   transaction: TenantTransaction,
   migrationClient: PoolClient,
   requirements: {
@@ -322,6 +325,21 @@ async function inspectActivationReadiness(
              AND COALESCE(
                pg_catalog.pg_get_expr(default_record.adbin, default_record.adrelid), ''
              ) = required."defaultExpression"
+             AND (required.parent NOT IN (
+               SELECT pg_catalog.jsonb_array_elements_text(
+                 COALESCE(value -> 'exactColumnParents', '[]'::jsonb)
+               )
+             ) OR NOT EXISTS (
+               SELECT 1 FROM pg_catalog.pg_attribute other
+               WHERE other.attrelid = relation.oid AND other.attnum > 0
+                 AND NOT other.attisdropped
+                 AND NOT EXISTS (
+                   SELECT 1 FROM pg_catalog.jsonb_to_recordset(value -> 'columns')
+                     AS declared(name text, parent text)
+                   WHERE declared.parent = required.parent
+                     AND declared.name = other.attname
+                 )
+             ))
          ) actual ON true
 
          UNION ALL
@@ -367,6 +385,24 @@ async function inspectActivationReadiness(
                  AND NOT constraint_record.condeferrable
                  AND NOT constraint_record.condeferred
              ) END
+             AND (required.parent NOT IN (
+               SELECT pg_catalog.jsonb_array_elements_text(
+                 COALESCE(value -> 'exactIndexParents', '[]'::jsonb)
+               )
+             ) OR NOT EXISTS (
+               SELECT 1
+               FROM pg_catalog.pg_index other_index
+               JOIN pg_catalog.pg_class other_relation
+                 ON other_relation.oid = other_index.indexrelid
+               WHERE other_index.indrelid = parent_relation.oid
+                 AND other_relation.relkind = 'i'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM pg_catalog.jsonb_to_recordset(value -> 'indexes')
+                     AS declared(name text, parent text)
+                   WHERE declared.parent = required.parent
+                     AND declared.name = other_relation.relname
+                 )
+             ))
          ) actual ON true
 
          UNION ALL
@@ -471,6 +507,21 @@ async function inspectActivationReadiness(
                  AND index_record.indisvalid AND index_record.indisready
                  AND index_record.indislive
              ) ELSE constraint_record.conindid = 0 END
+             AND (required.parent NOT IN (
+               SELECT pg_catalog.jsonb_array_elements_text(
+                 COALESCE(value -> 'exactConstraintParents', '[]'::jsonb)
+               )
+             ) OR NOT EXISTS (
+               SELECT 1 FROM pg_catalog.pg_constraint other
+               WHERE other.conrelid = relation.oid
+                 AND other.contype::text IN ('c', 'f', 'p', 'u', 'x')
+                 AND NOT EXISTS (
+                   SELECT 1 FROM pg_catalog.jsonb_to_recordset(value -> 'constraints')
+                     AS declared(name text, parent text)
+                   WHERE declared.parent = required.parent
+                     AND declared.name = other.conname
+                 )
+             ))
          ) actual ON true
 
          UNION ALL

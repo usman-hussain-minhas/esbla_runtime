@@ -173,15 +173,15 @@ export const HR_WORKFORCE_PROFILE_REQUIRED_MIGRATIONS = [
     id: "0011",
   },
 ] as const;
-const runtimeTablePrivilege = (name: string, writable = false) => ({
+const runtimeTablePrivilege = (name: string, update = false, insert = update) => ({
   delete: false,
-  insert: writable,
+  insert,
   name,
   references: false,
   select: true,
   trigger: false,
   truncate: false,
-  update: writable,
+  update,
 });
 export const HR_WORKFORCE_PROFILE_RUNTIME_TABLE_PRIVILEGES = [
   runtimeTablePrivilege("public.tenant_settings"),
@@ -629,5 +629,205 @@ export const HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS = {
       sourceSha256: "0189ff52261e59c6135407dc6185c19cce339984926df358795bd1f839a58d7e",
       volatility: "v",
     },
+  ],
+};
+
+export const HR_EMPLOYMENT_RECORD_REQUIRED_MIGRATIONS = [
+  ...HR_WORKFORCE_PROFILE_REQUIRED_MIGRATIONS,
+  {
+    createdAt: 1784727430847,
+    hash: "5496f5e8bda0554d90c5bb1941ea797143cb6f82c9e6ca3793cec90d6861d6be",
+    id: "0012",
+  },
+] as const;
+
+export const HR_EMPLOYMENT_RECORD_RUNTIME_TABLE_PRIVILEGES = [
+  ...HR_WORKFORCE_PROFILE_RUNTIME_TABLE_PRIVILEGES,
+  runtimeTablePrivilege("public.memberships"),
+  runtimeTablePrivilege("public.service_activations", true),
+  runtimeTablePrivilege("public.evidence_events", false, true),
+  runtimeTablePrivilege("public.outbox_events", false, true),
+  runtimeTablePrivilege("public.hr_employment_record_service_control", true),
+  runtimeTablePrivilege("public.hr_employment_records", true),
+  {
+    delete: false,
+    insert: true,
+    name: "public.hr_employment_record_versions",
+    references: false,
+    select: true,
+    trigger: false,
+    truncate: false,
+    update: false,
+  },
+] as const;
+
+const HR_EMPLOYMENT_RECORD_EXACT_CATALOG_PARENTS = [
+  "hr_employment_record_service_control",
+  "hr_employment_record_versions",
+  "hr_employment_records",
+] as const;
+
+export const HR_EMPLOYMENT_RECORD_CATALOG_REQUIREMENTS = {
+  exactColumnParents: HR_EMPLOYMENT_RECORD_EXACT_CATALOG_PARENTS,
+  exactConstraintParents: HR_EMPLOYMENT_RECORD_EXACT_CATALOG_PARENTS,
+  exactIndexParents: HR_EMPLOYMENT_RECORD_EXACT_CATALOG_PARENTS,
+  exactTriggerParents: [
+    ...HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS.exactTriggerParents,
+    ...HR_EMPLOYMENT_RECORD_EXACT_CATALOG_PARENTS,
+  ],
+  enums: [
+    ...HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS.enums,
+    { labels: ["draft", "active", "ended"], name: "hr_employment_record_status" },
+    { labels: ["effective", "end"], name: "hr_employment_version_kind" },
+  ],
+  tables: [
+    ...HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS.tables,
+    { name: "hr_employment_record_service_control" },
+    { name: "hr_employment_record_versions" },
+    { name: "hr_employment_records" },
+  ],
+  columns: [
+    ...HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS.columns,
+    ...[
+      "hr_employment_record_service_control|service_control_id|uuid|1|gen_random_uuid()",
+      "hr_employment_record_service_control|tenant_id|uuid|1|",
+      "hr_employment_record_service_control|service_key|text|1|'employment_record'::text",
+      "hr_employment_record_service_control|settings_version|integer|1|1",
+      "hr_employment_record_service_control|updated_at|timestamp with time zone|1|now()",
+      "hr_employment_record_service_control|row_version|integer|1|1",
+      "hr_employment_record_versions|employment_record_version_id|uuid|1|gen_random_uuid()",
+      "hr_employment_record_versions|tenant_id|uuid|1|",
+      "hr_employment_record_versions|employment_record_id|uuid|1|",
+      "hr_employment_record_versions|worker_profile_id|uuid|1|",
+      "hr_employment_record_versions|effective_from|date|1|",
+      "hr_employment_record_versions|effective_to|date|0|",
+      "hr_employment_record_versions|employment_type_code|text|0|",
+      "hr_employment_record_versions|organization_reference|text|0|",
+      "hr_employment_record_versions|position_reference|text|0|",
+      "hr_employment_record_versions|supersedes_version_id|uuid|0|",
+      "hr_employment_record_versions|version|integer|1|",
+      "hr_employment_record_versions|version_kind|public.hr_employment_version_kind|1|",
+      "hr_employment_record_versions|terminal_version|boolean|1|false",
+      "hr_employment_record_versions|row_version|integer|1|1",
+      "hr_employment_records|employment_record_id|uuid|1|gen_random_uuid()",
+      "hr_employment_records|tenant_id|uuid|1|",
+      "hr_employment_records|worker_profile_id|uuid|1|",
+      "hr_employment_records|status|public.hr_employment_record_status|1|'draft'::public.hr_employment_record_status",
+      "hr_employment_records|current_version_id|uuid|0|",
+      "hr_employment_records|created_at|timestamp with time zone|1|now()",
+      "hr_employment_records|row_version|integer|1|1",
+    ].map((entry) => {
+      const [parent, name, type, notNull, defaultExpression] = entry.split("|");
+      return { defaultExpression, name, notNull: notNull === "1", parent, type };
+    }),
+  ],
+  indexes: [
+    ...HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS.indexes,
+    ...[
+      "hr_employment_record_service_control_pkey|hr_employment_record_service_control|CREATE UNIQUE INDEX hr_employment_record_service_control_pkey ON public.hr_employment_record_service_control USING btree (service_control_id)||p|1|1",
+      "uq_hr_employment_record_service_control_tenant_key|hr_employment_record_service_control|CREATE UNIQUE INDEX uq_hr_employment_record_service_control_tenant_key ON public.hr_employment_record_service_control USING btree (tenant_id, service_key)|||0|1",
+      "hr_employment_record_versions_pkey|hr_employment_record_versions|CREATE UNIQUE INDEX hr_employment_record_versions_pkey ON public.hr_employment_record_versions USING btree (employment_record_version_id)||p|1|1",
+      "idx_hr_employment_record_versions_tenant_record_cursor|hr_employment_record_versions|CREATE INDEX idx_hr_employment_record_versions_tenant_record_cursor ON public.hr_employment_record_versions USING btree (tenant_id, employment_record_id, version DESC NULLS LAST, employment_record_version_id DESC NULLS LAST)|||0|0",
+      "uq_hr_employment_record_versions_composite_identity|hr_employment_record_versions|CREATE UNIQUE INDEX uq_hr_employment_record_versions_composite_identity ON public.hr_employment_record_versions USING btree (tenant_id, employment_record_id, employment_record_version_id)||u|0|1",
+      "uq_hr_employment_record_versions_tenant_record_version|hr_employment_record_versions|CREATE UNIQUE INDEX uq_hr_employment_record_versions_tenant_record_version ON public.hr_employment_record_versions USING btree (tenant_id, employment_record_id, version)|||0|1",
+      "uq_hr_employment_record_versions_tenant_successor|hr_employment_record_versions|CREATE UNIQUE INDEX uq_hr_employment_record_versions_tenant_successor ON public.hr_employment_record_versions USING btree (tenant_id, employment_record_id, supersedes_version_id) WHERE (supersedes_version_id IS NOT NULL)|(supersedes_version_id IS NOT NULL)||0|1",
+      "hr_employment_records_pkey|hr_employment_records|CREATE UNIQUE INDEX hr_employment_records_pkey ON public.hr_employment_records USING btree (employment_record_id)||p|1|1",
+      "idx_hr_employment_records_tenant_cursor|hr_employment_records|CREATE INDEX idx_hr_employment_records_tenant_cursor ON public.hr_employment_records USING btree (tenant_id, worker_profile_id, created_at DESC NULLS LAST, employment_record_id DESC NULLS LAST)|||0|0",
+      "idx_hr_employment_records_tenant_worker_active_head|hr_employment_records|CREATE INDEX idx_hr_employment_records_tenant_worker_active_head ON public.hr_employment_records USING btree (tenant_id, worker_profile_id, status, employment_record_id)|||0|0",
+      "uq_hr_employment_records_composite_identity|hr_employment_records|CREATE UNIQUE INDEX uq_hr_employment_records_composite_identity ON public.hr_employment_records USING btree (tenant_id, employment_record_id)||u|0|1",
+      "uq_hr_employment_records_tenant_worker_current|hr_employment_records|CREATE UNIQUE INDEX uq_hr_employment_records_tenant_worker_current ON public.hr_employment_records USING btree (tenant_id, worker_profile_id) WHERE (status <> 'ended'::public.hr_employment_record_status)|(status <> 'ended'::public.hr_employment_record_status)||0|1",
+    ].map((entry) => {
+      const [name, parent, definition, predicate, constraintType, primary, unique] =
+        entry.split("|");
+      return {
+        constraintType,
+        definition: definition ?? "",
+        name,
+        parent,
+        predicate,
+        primary: primary === "1",
+        unique: unique === "1",
+      };
+    }),
+  ],
+  policies: [
+    ...HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS.policies,
+    ...[
+      "hr_employment_record_service_control|hr_employment_record_service_control_tenant_isolation",
+      "hr_employment_record_versions|hr_employment_record_versions_tenant_isolation",
+      "hr_employment_records|hr_employment_records_tenant_isolation",
+    ].map((entry) => {
+      const [parent, name] = entry.split("|");
+      return { name, parent };
+    }),
+  ],
+  triggers: [
+    ...HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS.triggers,
+    ...[
+      "hr_employment_record_service_control|hr_employment_record_service_control_enforce_state|CREATE TRIGGER hr_employment_record_service_control_enforce_state BEFORE INSERT OR DELETE OR UPDATE ON public.hr_employment_record_service_control FOR EACH ROW EXECUTE FUNCTION public.esbla_enforce_hr_employment_service_control()|esbla_enforce_hr_employment_service_control",
+      "hr_employment_record_service_control|hr_employment_record_service_control_reject_truncate|CREATE TRIGGER hr_employment_record_service_control_reject_truncate BEFORE TRUNCATE ON public.hr_employment_record_service_control FOR EACH STATEMENT EXECUTE FUNCTION public.esbla_enforce_hr_employment_service_control()|esbla_enforce_hr_employment_service_control",
+      "hr_employment_record_versions|hr_employment_record_versions_enforce_state|CREATE TRIGGER hr_employment_record_versions_enforce_state BEFORE INSERT OR DELETE OR UPDATE ON public.hr_employment_record_versions FOR EACH ROW EXECUTE FUNCTION public.esbla_enforce_hr_employment_record_version()|esbla_enforce_hr_employment_record_version",
+      "hr_employment_record_versions|hr_employment_record_versions_reject_truncate|CREATE TRIGGER hr_employment_record_versions_reject_truncate BEFORE TRUNCATE ON public.hr_employment_record_versions FOR EACH STATEMENT EXECUTE FUNCTION public.esbla_enforce_hr_employment_record_version()|esbla_enforce_hr_employment_record_version",
+      "hr_employment_record_versions|hr_employment_record_versions_require_current_chain|CREATE CONSTRAINT TRIGGER hr_employment_record_versions_require_current_chain AFTER INSERT ON public.hr_employment_record_versions DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.esbla_require_hr_employment_record_version_chain()|esbla_require_hr_employment_record_version_chain",
+      "hr_employment_records|hr_employment_records_enforce_state|CREATE TRIGGER hr_employment_records_enforce_state BEFORE INSERT OR DELETE OR UPDATE ON public.hr_employment_records FOR EACH ROW EXECUTE FUNCTION public.esbla_enforce_hr_employment_record_root()|esbla_enforce_hr_employment_record_root",
+      "hr_employment_records|hr_employment_records_reject_truncate|CREATE TRIGGER hr_employment_records_reject_truncate BEFORE TRUNCATE ON public.hr_employment_records FOR EACH STATEMENT EXECUTE FUNCTION public.esbla_enforce_hr_employment_record_root()|esbla_enforce_hr_employment_record_root",
+    ].map((entry) => {
+      const [parent, name, definition, functionName] = entry.split("|");
+      return { definition: definition ?? "", functionName, name, parent };
+    }),
+  ],
+  constraints: [
+    ...HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS.constraints,
+    ...[
+      "hr_employment_record_service_control|hr_employment_record_service_control_activation_fk|f|FOREIGN KEY (tenant_id, service_key) REFERENCES public.service_activations(tenant_id, service_key) ON DELETE RESTRICT",
+      "hr_employment_record_service_control|hr_employment_record_service_control_key_exact|c|CHECK (service_key = 'employment_record'::text)",
+      "hr_employment_record_service_control|hr_employment_record_service_control_pkey|p|PRIMARY KEY (service_control_id)",
+      "hr_employment_record_service_control|hr_employment_record_service_control_row_version_positive|c|CHECK (row_version > 0)",
+      "hr_employment_record_service_control|hr_employment_record_service_control_settings_version_positive|c|CHECK (settings_version > 0)",
+      "hr_employment_record_versions|hr_employment_record_versions_effective_range_valid|c|CHECK (effective_to IS NULL OR effective_to >= effective_from)",
+      "hr_employment_record_versions|hr_employment_record_versions_identifier_values_valid|c|CHECK ((employment_type_code IS NULL OR char_length(TRIM(BOTH FROM employment_type_code)) > 0) AND (organization_reference IS NULL OR char_length(TRIM(BOTH FROM organization_reference)) > 0) AND (position_reference IS NULL OR char_length(TRIM(BOTH FROM position_reference)) > 0))",
+      "hr_employment_record_versions|hr_employment_record_versions_pkey|p|PRIMARY KEY (employment_record_version_id)",
+      "hr_employment_record_versions|hr_employment_record_versions_predecessor_same_root_fk|f|FOREIGN KEY (tenant_id, employment_record_id, supersedes_version_id) REFERENCES public.hr_employment_record_versions(tenant_id, employment_record_id, employment_record_version_id) ON DELETE RESTRICT",
+      "hr_employment_record_versions|hr_employment_record_versions_predecessor_version_consistent|c|CHECK (version = 1 AND supersedes_version_id IS NULL OR version > 1 AND supersedes_version_id IS NOT NULL)",
+      "hr_employment_record_versions|hr_employment_record_versions_record_same_tenant_fk|f|FOREIGN KEY (tenant_id, employment_record_id) REFERENCES public.hr_employment_records(tenant_id, employment_record_id) ON DELETE RESTRICT",
+      "hr_employment_record_versions|hr_employment_record_versions_row_version_fixed|c|CHECK (row_version = 1)",
+      "hr_employment_record_versions|hr_employment_record_versions_tenant_fk|f|FOREIGN KEY (tenant_id) REFERENCES public.tenants(tenant_id) ON DELETE RESTRICT",
+      "hr_employment_record_versions|hr_employment_record_versions_terminal_kind_consistent|c|CHECK (version_kind = 'effective'::public.hr_employment_version_kind AND terminal_version = false OR version_kind = 'end'::public.hr_employment_version_kind AND terminal_version = true AND effective_to IS NOT NULL)",
+      "hr_employment_record_versions|hr_employment_record_versions_version_positive|c|CHECK (version > 0)",
+      "hr_employment_record_versions|hr_employment_record_versions_worker_same_tenant_fk|f|FOREIGN KEY (tenant_id, worker_profile_id) REFERENCES public.hr_worker_profiles(tenant_id, worker_profile_id) ON DELETE RESTRICT",
+      "hr_employment_record_versions|uq_hr_employment_record_versions_composite_identity|u|UNIQUE (tenant_id, employment_record_id, employment_record_version_id)",
+      "hr_employment_records|hr_employment_records_current_version_same_root_fk|f|FOREIGN KEY (tenant_id, employment_record_id, current_version_id) REFERENCES public.hr_employment_record_versions(tenant_id, employment_record_id, employment_record_version_id) ON DELETE RESTRICT",
+      "hr_employment_records|hr_employment_records_pkey|p|PRIMARY KEY (employment_record_id)",
+      "hr_employment_records|hr_employment_records_row_version_positive|c|CHECK (row_version > 0)",
+      "hr_employment_records|hr_employment_records_status_head_consistent|c|CHECK (status = 'draft'::public.hr_employment_record_status AND current_version_id IS NULL OR (status = ANY (ARRAY['active'::public.hr_employment_record_status, 'ended'::public.hr_employment_record_status])) AND current_version_id IS NOT NULL)",
+      "hr_employment_records|hr_employment_records_tenant_id_tenants_tenant_id_fk|f|FOREIGN KEY (tenant_id) REFERENCES public.tenants(tenant_id) ON DELETE RESTRICT",
+      "hr_employment_records|hr_employment_records_worker_same_tenant_fk|f|FOREIGN KEY (tenant_id, worker_profile_id) REFERENCES public.hr_worker_profiles(tenant_id, worker_profile_id) ON DELETE RESTRICT",
+      "hr_employment_records|uq_hr_employment_records_composite_identity|u|UNIQUE (tenant_id, employment_record_id)",
+    ].map((entry) => {
+      const [parent, name, type, definition] = entry.split("|");
+      return { definition, name, parent, type };
+    }),
+  ],
+  functions: [
+    ...HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS.functions,
+    ...[
+      "esbla_enforce_hr_employment_record_root|41cfedb483f94a0dd9e1e748e4a3724cbc2989894f1e6bc90abfcb6f7c683744",
+      "esbla_enforce_hr_employment_record_version|70dbe86027189c18e3b22bf7476406b03af9ef56c351a1a0fe826a04074d981e",
+      "esbla_enforce_hr_employment_service_control|e06fe09499d4e571ce14d9fc65336413c9333854eb99ffd1a725f5255d9a488f",
+      "esbla_require_hr_employment_record_version_chain|46974d0e27e7f4d91fdbcec665e3a10fa5d01e0f7a2050af7555867041b09152",
+    ].map((entry) => {
+      const [name, sourceSha256] = entry.split("|");
+      return {
+        config: "search_path=pg_catalog, public",
+        language: "plpgsql",
+        name,
+        ownerOnlyExecutable: true,
+        publicExecutable: false,
+        returnType: "trigger",
+        securityDefiner: false,
+        sourceSha256,
+        volatility: "v",
+      };
+    }),
   ],
 };

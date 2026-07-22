@@ -27,6 +27,14 @@ export interface HrWorkforceProfileSettings {
   readonly managerVisibility: "minimized" | "none";
   readonly unlinkedWorkerCreationAllowed: boolean;
 }
+export interface HrEmploymentRecordSettings {
+  readonly effectiveRangeOverlapAllowed: false;
+  readonly employmentTypeCodes: string;
+}
+export const hrEmploymentRecordSettingsDefaults: HrEmploymentRecordSettings = Object.freeze({
+  effectiveRangeOverlapAllowed: false,
+  employmentTypeCodes: "unspecified",
+});
 export interface HrServiceConfigureBody {
   readonly expectedSettingsVersion: number;
   readonly settings: HrWorkforceProfileSettings;
@@ -41,8 +49,9 @@ interface HrServiceControlBase {
 export type HrServiceControl = HrServiceControlBase &
   (
     | { readonly serviceKey: "workforce_profile"; readonly settings: HrWorkforceProfileSettings }
+    | { readonly serviceKey: "employment_record"; readonly settings: HrEmploymentRecordSettings }
     | {
-        readonly serviceKey: Exclude<HrServiceKey, "workforce_profile">;
+        readonly serviceKey: Exclude<HrServiceKey, "employment_record" | "workforce_profile">;
         readonly settings: Readonly<Record<string, never>>;
       }
   );
@@ -88,6 +97,18 @@ const workforceProfileSettingsSchema = {
   required: ["employeeNumberRequired", "managerVisibility", "unlinkedWorkerCreationAllowed"],
   type: "object",
 } as const;
+const employmentRecordSettingsSchema = {
+  additionalProperties: false,
+  properties: {
+    effectiveRangeOverlapAllowed: { const: false },
+    employmentTypeCodes: {
+      pattern: "^(?=[^,]*[^\\s,])[^,]+(?:,(?=[^,]*[^\\s,])[^,]+)*$",
+      type: "string",
+    },
+  },
+  required: ["effectiveRangeOverlapAllowed", "employmentTypeCodes"],
+  type: "object",
+} as const;
 const emptyServiceSettingsSchema = {
   additionalProperties: false,
   properties: {},
@@ -117,7 +138,14 @@ export const hrServiceControlSchema = {
     },
     {
       properties: {
-        serviceKey: { not: { const: "workforce_profile" } },
+        serviceKey: { const: "employment_record" },
+        settings: employmentRecordSettingsSchema,
+      },
+      type: "object",
+    },
+    {
+      properties: {
+        serviceKey: { not: { enum: ["employment_record", "workforce_profile"] } },
         settings: emptyServiceSettingsSchema,
       },
       type: "object",
@@ -127,7 +155,13 @@ export const hrServiceControlSchema = {
     activationState: { enum: ["active", "inactive"] },
     activationVersion: positiveVersionSchema,
     serviceKey: { enum: hrServiceKeys },
-    settings: { anyOf: [workforceProfileSettingsSchema, emptyServiceSettingsSchema] },
+    settings: {
+      anyOf: [
+        workforceProfileSettingsSchema,
+        employmentRecordSettingsSchema,
+        emptyServiceSettingsSchema,
+      ],
+    },
     settingsVersion: positiveVersionSchema,
     updatedAt: { format: "date-time", type: "string" },
     version: positiveVersionSchema,
@@ -187,6 +221,19 @@ function parseWorkforceProfileSettings(value: unknown, label: string): HrWorkfor
     throw new TypeError(`${label} is invalid`);
   }
   return value as unknown as HrWorkforceProfileSettings;
+}
+
+function parseEmploymentRecordSettings(value: unknown, label: string): HrEmploymentRecordSettings {
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(value, ["effectiveRangeOverlapAllowed", "employmentTypeCodes"], label);
+  if (
+    value.effectiveRangeOverlapAllowed !== false ||
+    typeof value.employmentTypeCodes !== "string" ||
+    value.employmentTypeCodes.split(",").some((code) => code.trim().length === 0)
+  ) {
+    throw new TypeError(`${label} is invalid`);
+  }
+  return value as unknown as HrEmploymentRecordSettings;
 }
 
 function assertDateTime(value: unknown, label: string): asserts value is string {
@@ -277,6 +324,8 @@ export function parseHrServiceControl(value: unknown): HrServiceControl {
   }
   if (value.serviceKey === "workforce_profile") {
     parseWorkforceProfileSettings(value.settings, "HrServiceControlResponseV1.settings");
+  } else if (value.serviceKey === "employment_record") {
+    parseEmploymentRecordSettings(value.settings, "HrServiceControlResponseV1.settings");
   } else {
     if (!isRecord(value.settings)) {
       throw new TypeError("HrServiceControlResponseV1.settings must be an object");
