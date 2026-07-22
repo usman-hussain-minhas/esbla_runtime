@@ -55,7 +55,7 @@ function portOpen(port) {
   });
 }
 
-await seedHrLeaveFixture();
+const seededFixture = await seedHrLeaveFixture();
 
 const applicationPool = createDatabasePool(requiredEnvironment("DATABASE_URL"), { max: 8 });
 const migrationReadPool = createDatabasePool(requiredEnvironment("DATABASE_MIGRATION_URL"), {
@@ -170,7 +170,7 @@ function startChild(name, command, args, options, unexpectedExit) {
   return record;
 }
 
-function startWeb(origin, principalId, label, projectRoot) {
+function startWeb(origin, principalId, label, projectRoot, tenantId = fixture.tenantId) {
   return startChild(
     label,
     process.execPath,
@@ -182,7 +182,7 @@ function startWeb(origin, principalId, label, projectRoot) {
         ...fixtureEnvironment,
         ESBLA_DEV_PRINCIPAL_ID: principalId,
         ESBLA_DEV_SESSION_LABEL: label,
-        ESBLA_DEV_TENANT_ID: fixture.tenantId,
+        ESBLA_DEV_TENANT_ID: tenantId,
         NODE_ENV: "development",
       },
     },
@@ -190,10 +190,10 @@ function startWeb(origin, principalId, label, projectRoot) {
   );
 }
 
-async function requireActorReady(origin, label, web) {
+async function requireActorReady(origin, label, web, pathname = "/workspace/hr/leave/new") {
   for (let attempt = 0; attempt < 100 && !web.settled; attempt += 1) {
     try {
-      const response = await fetch(new URL("/workspace/hr/leave/new", origin), {
+      const response = await fetch(new URL(pathname, origin), {
         signal: AbortSignal.timeout(500),
       });
       if (response.status === 200 && (await response.text()).includes(label) && !web.settled)
@@ -230,6 +230,37 @@ try {
       fixture.employeeLabel,
       nextRuntimeRoot.projects.employee,
     );
+    const employmentEmployee = startWeb(
+      new URL(fixture.employmentEmployeeOrigin),
+      fixture.employmentEmployeePrincipalId,
+      fixture.employmentEmployeeLabel,
+      nextRuntimeRoot.projects.employmentEmployee,
+    );
+    const employmentActionOperator = startWeb(
+      new URL(fixture.employmentActionOperatorOrigin),
+      fixture.employmentActionOperatorPrincipalId,
+      fixture.employmentActionOperatorLabel,
+      nextRuntimeRoot.projects.employmentActionOperator,
+    );
+    const employmentActionAdmin = startWeb(
+      new URL(fixture.employmentActionAdminOrigin),
+      fixture.employmentActionAdminPrincipalId,
+      fixture.employmentActionAdminLabel,
+      nextRuntimeRoot.projects.employmentActionAdmin,
+      fixture.employmentActionAdminTenantId,
+    );
+    const employmentViewAdmin = startWeb(
+      new URL(fixture.employmentViewAdminOrigin),
+      fixture.employmentViewAdminPrincipalId,
+      fixture.employmentViewAdminLabel,
+      nextRuntimeRoot.projects.employmentViewAdmin,
+    );
+    const employmentListOperator = startWeb(
+      new URL(fixture.employmentListOperatorOrigin),
+      fixture.employmentListOperatorPrincipalId,
+      fixture.employmentListOperatorLabel,
+      nextRuntimeRoot.projects.employmentListOperator,
+    );
     const manager = startWeb(
       new URL(fixture.managerOrigin),
       fixture.managerPrincipalId,
@@ -250,6 +281,32 @@ try {
     );
     await Promise.all([
       requireActorReady(new URL(fixture.employeeOrigin), fixture.employeeLabel, employee),
+      requireActorReady(
+        new URL(fixture.employmentEmployeeOrigin),
+        fixture.employmentEmployeeLabel,
+        employmentEmployee,
+      ),
+      requireActorReady(
+        new URL(fixture.employmentActionOperatorOrigin),
+        fixture.employmentActionOperatorLabel,
+        employmentActionOperator,
+      ),
+      requireActorReady(
+        new URL(fixture.employmentActionAdminOrigin),
+        fixture.employmentActionAdminLabel,
+        employmentActionAdmin,
+        "/workspace/hr/employment/settings",
+      ),
+      requireActorReady(
+        new URL(fixture.employmentViewAdminOrigin),
+        fixture.employmentViewAdminLabel,
+        employmentViewAdmin,
+      ),
+      requireActorReady(
+        new URL(fixture.employmentListOperatorOrigin),
+        fixture.employmentListOperatorLabel,
+        employmentListOperator,
+      ),
       requireActorReady(new URL(fixture.managerOrigin), fixture.managerLabel, manager),
       requireActorReady(new URL(fixture.operatorOrigin), fixture.operatorLabel, operator),
       requireActorReady(new URL(fixture.adminOrigin), fixture.adminLabel, admin),
@@ -268,6 +325,8 @@ try {
           env: {
             ...childRuntimeEnvironment,
             ...playwrightArtifactEnvironment,
+            ESBLA_TEST_EMPLOYMENT_ACTION_WORKER_PROFILE_ID:
+              seededFixture.employmentActionWorkerProfileId,
             TMPDIR: playwrightRoot.path,
           },
         },

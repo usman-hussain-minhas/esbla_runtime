@@ -61,6 +61,20 @@ export type HrServiceControl = HrServiceControlBase &
       }
   );
 
+export type HrServiceMutationOperation =
+  | "activate_service"
+  | "configure_service"
+  | "deactivate_service";
+
+export interface HrServiceMutationResponse {
+  readonly activationState: "active" | "inactive";
+  readonly activationVersion: number;
+  readonly controlVersion: number;
+  readonly operation: HrServiceMutationOperation;
+  readonly serviceKey: HrServiceKey;
+  readonly settingsVersion: number;
+}
+
 const positiveVersionSchema = {
   maximum: Number.MAX_SAFE_INTEGER,
   minimum: 1,
@@ -181,6 +195,72 @@ export const hrServiceControlSchema = {
     "version",
   ],
   type: "object",
+} as const;
+
+export const hrServiceMutationResponseSchema = {
+  $id: "HrServiceMutationResponseV1",
+  oneOf: [
+    {
+      additionalProperties: false,
+      properties: {
+        activationState: { const: "active" },
+        activationVersion: positiveVersionSchema,
+        controlVersion: positiveVersionSchema,
+        operation: { const: "activate_service" },
+        serviceKey: { enum: hrServiceKeys },
+        settingsVersion: positiveVersionSchema,
+      },
+      required: [
+        "activationState",
+        "activationVersion",
+        "controlVersion",
+        "operation",
+        "serviceKey",
+        "settingsVersion",
+      ],
+      type: "object",
+    },
+    {
+      additionalProperties: false,
+      properties: {
+        activationState: { const: "active" },
+        activationVersion: positiveVersionSchema,
+        controlVersion: positiveVersionSchema,
+        operation: { const: "configure_service" },
+        serviceKey: { enum: hrServiceKeys },
+        settingsVersion: positiveVersionSchema,
+      },
+      required: [
+        "activationState",
+        "activationVersion",
+        "controlVersion",
+        "operation",
+        "serviceKey",
+        "settingsVersion",
+      ],
+      type: "object",
+    },
+    {
+      additionalProperties: false,
+      properties: {
+        activationState: { const: "inactive" },
+        activationVersion: positiveVersionSchema,
+        controlVersion: positiveVersionSchema,
+        operation: { const: "deactivate_service" },
+        serviceKey: { enum: hrServiceKeys },
+        settingsVersion: positiveVersionSchema,
+      },
+      required: [
+        "activationState",
+        "activationVersion",
+        "controlVersion",
+        "operation",
+        "serviceKey",
+        "settingsVersion",
+      ],
+      type: "object",
+    },
+  ],
 } as const;
 
 const serviceControlKeys = [
@@ -352,4 +432,46 @@ export function parseHrServiceControl(value: unknown): HrServiceControl {
   assertDateTime(value.updatedAt, "HrServiceControlResponseV1.updatedAt");
   assertPositiveSafeInteger(value.version, "HrServiceControlResponseV1.version");
   return value as unknown as HrServiceControl;
+}
+
+export function parseHrServiceMutationResponse(value: unknown): HrServiceMutationResponse {
+  const label = "HrServiceMutationResponseV1";
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(
+    value,
+    [
+      "activationState",
+      "activationVersion",
+      "controlVersion",
+      "operation",
+      "serviceKey",
+      "settingsVersion",
+    ],
+    label,
+  );
+  if (!(hrServiceKeys as readonly unknown[]).includes(value.serviceKey)) {
+    throw new TypeError(`${label}.serviceKey is invalid`);
+  }
+  if (
+    value.operation !== "activate_service" &&
+    value.operation !== "configure_service" &&
+    value.operation !== "deactivate_service"
+  ) {
+    throw new TypeError(`${label}.operation is invalid`);
+  }
+  const expectedState = value.operation === "deactivate_service" ? "inactive" : "active";
+  if (value.activationState !== expectedState) {
+    throw new TypeError(`${label}.activationState conflicts with operation`);
+  }
+  assertPositiveSafeInteger(value.activationVersion, `${label}.activationVersion`);
+  assertPositiveSafeInteger(value.settingsVersion, `${label}.settingsVersion`);
+  assertPositiveSafeInteger(value.controlVersion, `${label}.controlVersion`);
+  const expectedControlVersion = value.activationVersion + value.settingsVersion - 1;
+  if (
+    !Number.isSafeInteger(expectedControlVersion) ||
+    value.controlVersion !== expectedControlVersion
+  ) {
+    throw new TypeError(`${label}.controlVersion is invalid`);
+  }
+  return value as unknown as HrServiceMutationResponse;
 }

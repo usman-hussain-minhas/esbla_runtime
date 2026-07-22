@@ -86,6 +86,31 @@ export interface HrEmploymentRecord extends HrEmploymentRecordSummary {
   readonly history: HrEmploymentHistoryPage;
 }
 
+export type HrEmploymentRecordMutationOperation = "create_record" | "create_version" | "end_record";
+
+export type HrEmploymentRecordMutationResponse =
+  | Readonly<{
+      currentVersion: null;
+      employmentRecordId: string;
+      operation: "create_record";
+      rootVersion: 1;
+      status: "draft";
+    }>
+  | Readonly<{
+      currentVersion: number;
+      employmentRecordId: string;
+      operation: "create_version";
+      rootVersion: number;
+      status: "active";
+    }>
+  | Readonly<{
+      currentVersion: number;
+      employmentRecordId: string;
+      operation: "end_record";
+      rootVersion: number;
+      status: "ended";
+    }>;
+
 export interface HrEmploymentListCursor {
   readonly createdAt: string;
   readonly employmentRecordId: string;
@@ -289,6 +314,48 @@ export const hrEmploymentRecordSchema = {
   },
   required: [...employmentSummaryRequired, "accessScope", "history"],
   type: "object",
+} as const;
+
+export const hrEmploymentRecordMutationResponseSchema = {
+  $id: "HrEmploymentRecordMutationResponseV1",
+  oneOf: [
+    {
+      additionalProperties: false,
+      properties: {
+        currentVersion: { type: "null" },
+        employmentRecordId: uuidSchema,
+        operation: { const: "create_record" },
+        rootVersion: { const: 1 },
+        status: { const: "draft" },
+      },
+      required: ["currentVersion", "employmentRecordId", "operation", "rootVersion", "status"],
+      type: "object",
+    },
+    {
+      additionalProperties: false,
+      properties: {
+        currentVersion: positivePostgresIntegerSchema,
+        employmentRecordId: uuidSchema,
+        operation: { const: "create_version" },
+        rootVersion: positivePostgresIntegerSchema,
+        status: { const: "active" },
+      },
+      required: ["currentVersion", "employmentRecordId", "operation", "rootVersion", "status"],
+      type: "object",
+    },
+    {
+      additionalProperties: false,
+      properties: {
+        currentVersion: positivePostgresIntegerSchema,
+        employmentRecordId: uuidSchema,
+        operation: { const: "end_record" },
+        rootVersion: positivePostgresIntegerSchema,
+        status: { const: "ended" },
+      },
+      required: ["currentVersion", "employmentRecordId", "operation", "rootVersion", "status"],
+      type: "object",
+    },
+  ],
 } as const;
 
 const listCursorSchema = {
@@ -607,6 +674,36 @@ export function parseHrEmploymentRecord(value: unknown): HrEmploymentRecord {
     );
   }
   return value as unknown as HrEmploymentRecord;
+}
+
+export function parseHrEmploymentRecordMutationResponse(
+  value: unknown,
+): HrEmploymentRecordMutationResponse {
+  const label = "HrEmploymentRecordMutationResponseV1";
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(
+    value,
+    ["currentVersion", "employmentRecordId", "operation", "rootVersion", "status"],
+    label,
+  );
+  assertUuid(value.employmentRecordId, `${label}.employmentRecordId`);
+  assertPositivePostgresInteger(value.rootVersion, `${label}.rootVersion`);
+  if (value.operation === "create_record") {
+    if (value.status !== "draft" || value.rootVersion !== 1 || value.currentVersion !== null) {
+      throw new TypeError(`${label} create_record outcome is invalid`);
+    }
+  } else if (value.operation === "create_version" || value.operation === "end_record") {
+    assertPositivePostgresInteger(value.currentVersion, `${label}.currentVersion`);
+    if (
+      value.status !== (value.operation === "create_version" ? "active" : "ended") ||
+      value.rootVersion !== value.currentVersion + 1
+    ) {
+      throw new TypeError(`${label} version outcome is invalid`);
+    }
+  } else {
+    throw new TypeError(`${label}.operation is invalid`);
+  }
+  return value as unknown as HrEmploymentRecordMutationResponse;
 }
 
 export function parseHrEmploymentListResponse(value: unknown): HrEmploymentListResponse {

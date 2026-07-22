@@ -18,6 +18,11 @@ import {
   getEmploymentRecordServiceControl,
 } from "./employment-service-control.js";
 import {
+  awaitControlledSignal,
+  createControlledPool,
+  observeDirectBlockerUntil,
+} from "./leave.integration-fixture.js";
+import {
   changeWorkforceStatus,
   createWorkforceProfile,
   linkWorkforcePrincipal,
@@ -25,12 +30,24 @@ import {
 
 const ids = {
   adminA: randomUUID(),
+  adminAccessRace: randomUUID(),
+  adminDetailRace: randomUUID(),
+  adminSettingsRace: randomUUID(),
   employeeA: randomUUID(),
+  employeeAccessRace: randomUUID(),
+  employeeDetailRace: randomUUID(),
+  employeeSettingsRace: randomUUID(),
   hrA: randomUUID(),
   hrB: randomUUID(),
+  hrAccessRace: randomUUID(),
+  hrDetailRace: randomUUID(),
+  hrSettingsRace: randomUUID(),
   managerA: randomUUID(),
   tenantA: randomUUID(),
+  tenantAccessRace: randomUUID(),
   tenantB: randomUUID(),
+  tenantDetailRace: randomUUID(),
+  tenantSettingsRace: randomUUID(),
 };
 let appPool: Pool, migrationPool: Pool, migrationReadPool: Pool;
 function context(
@@ -105,20 +122,50 @@ interface Snapshot {
   readonly versions: number;
   readonly work: number;
 }
-async function snapshot(): Promise<Snapshot> {
+async function snapshot(tenantId: string = ids.tenantA): Promise<Snapshot> {
   const rows = await tenantRows<Snapshot>(
-    ids.tenantA,
+    tenantId,
     `SELECT
        (SELECT count(*)::integer FROM hr_employment_records WHERE tenant_id=$1) records,
        (SELECT count(*)::integer FROM hr_employment_record_versions WHERE tenant_id=$1) versions,
        (SELECT count(*)::integer FROM evidence_events WHERE tenant_id=$1) evidence,
        (SELECT count(*)::integer FROM outbox_events WHERE tenant_id=$1) outbox,
        (SELECT count(*)::integer FROM work_items WHERE tenant_id=$1) work`,
-    [ids.tenantA],
+    [tenantId],
   );
   const row = rows[0];
   if (!row) throw new Error("Employment snapshot was unavailable");
   return row;
+}
+async function seedRaceTenant(
+  tenantId: string,
+  hrPrincipalId: string,
+  adminPrincipalId: string,
+  employeePrincipalId: string,
+): Promise<void> {
+  await withTenant(tenantId, async (client) => {
+    await client.query(
+      `INSERT INTO memberships (membership_id,tenant_id,principal_id,role_key) VALUES
+         (gen_random_uuid(),$1,$2,'hr_operator'),
+         (gen_random_uuid(),$1,$3,'tenant_admin'),
+         (gen_random_uuid(),$1,$4,'employee')`,
+      [tenantId, hrPrincipalId, adminPrincipalId, employeePrincipalId],
+    );
+    await client.query(
+      `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id) VALUES
+       ($1,$2,'hr.workforce.create_profile'),($1,$2,'hr.workforce.link_principal'),
+       ($1,$2,'hr.workforce.change_status'),($1,$2,'hr.employment.create_record'),
+       ($1,$2,'hr.employment.create_version'),
+       ($1,$3,'hr.employment.activate_service'),($1,$3,'hr.employment.configure_service'),
+       ($1,$4,'hr.employment.list_authorized'),($1,$4,'hr.employment.view_detail')`,
+      [tenantId, hrPrincipalId, adminPrincipalId, employeePrincipalId],
+    );
+    await client.query(
+      `INSERT INTO service_activations (tenant_id,service_key,state,version)
+       VALUES ($1,'workforce_profile','active',1)`,
+      [tenantId],
+    );
+  });
 }
 async function restoreRuntimeTableAuthority(applicationRole: string): Promise<void> {
   for (const required of HR_EMPLOYMENT_RECORD_RUNTIME_TABLE_PRIVILEGES) {
@@ -171,14 +218,35 @@ async function setup(): Promise<void> {
   );
   appPool = createDatabasePool(runtimeUrl, { max: 8 });
   await migrationPool.query(
-    `INSERT INTO tenants (tenant_id,name) VALUES ($1,'Employment A'),($2,'Employment B')`,
-    [ids.tenantA, ids.tenantB],
+    `INSERT INTO tenants (tenant_id,name) VALUES
+       ($1,'Employment A'),($2,'Employment B'),
+       ($3,'Employment Access Race'),($4,'Employment Settings Race'),
+       ($5,'Employment Detail Race')`,
+    [ids.tenantA, ids.tenantB, ids.tenantAccessRace, ids.tenantSettingsRace, ids.tenantDetailRace],
   );
   await migrationPool.query(
     `INSERT INTO principals (principal_id,display_name) VALUES
        ($1,'HR A'),($2,'Admin A'),($3,'Employee A'),($4,'Manager A'),
-       ($5,'HR B')`,
-    [ids.hrA, ids.adminA, ids.employeeA, ids.managerA, ids.hrB],
+       ($5,'HR B'),($6,'Access Race HR'),($7,'Access Race Admin'),
+       ($8,'Access Race Employee'),($9,'Settings Race HR'),
+       ($10,'Settings Race Admin'),($11,'Settings Race Employee'),
+       ($12,'Detail Race HR'),($13,'Detail Race Admin'),($14,'Detail Race Employee')`,
+    [
+      ids.hrA,
+      ids.adminA,
+      ids.employeeA,
+      ids.managerA,
+      ids.hrB,
+      ids.hrAccessRace,
+      ids.adminAccessRace,
+      ids.employeeAccessRace,
+      ids.hrSettingsRace,
+      ids.adminSettingsRace,
+      ids.employeeSettingsRace,
+      ids.hrDetailRace,
+      ids.adminDetailRace,
+      ids.employeeDetailRace,
+    ],
   );
   await withTenant(ids.tenantA, async (client) => {
     await client.query(
@@ -224,6 +292,24 @@ async function setup(): Promise<void> {
       [ids.tenantB],
     );
   });
+  await seedRaceTenant(
+    ids.tenantAccessRace,
+    ids.hrAccessRace,
+    ids.adminAccessRace,
+    ids.employeeAccessRace,
+  );
+  await seedRaceTenant(
+    ids.tenantSettingsRace,
+    ids.hrSettingsRace,
+    ids.adminSettingsRace,
+    ids.employeeSettingsRace,
+  );
+  await seedRaceTenant(
+    ids.tenantDetailRace,
+    ids.hrDetailRace,
+    ids.adminDetailRace,
+    ids.employeeDetailRace,
+  );
 }
 async function createActiveEmployeeProfile(): Promise<string> {
   const created = await createWorkforceProfile(appPool, context(), {
@@ -243,6 +329,90 @@ async function createActiveEmployeeProfile(): Promise<string> {
   });
   return active.profile.workerProfileId;
 }
+interface RaceFixture {
+  readonly employmentRecordId: string;
+  readonly recordVersion: number;
+  readonly settingsVersion: number;
+  readonly workerProfileId: string;
+  readonly workerProfileVersion: number;
+}
+async function prepareRaceFixture(
+  tenantId: string,
+  hrPrincipalId: string,
+  adminPrincipalId: string,
+  employeePrincipalId: string,
+): Promise<RaceFixture> {
+  await activateEmploymentRecordService(
+    appPool,
+    migrationReadPool,
+    context(adminPrincipalId, tenantId),
+    { expectedVersion: null },
+    "non_production",
+  );
+  const configured = await configureEmploymentRecordService(
+    appPool,
+    context(adminPrincipalId, tenantId),
+    {
+      expectedSettingsVersion: 1,
+      settings: {
+        effectiveRangeOverlapAllowed: false,
+        employmentTypeCodes: "permanent,race",
+      },
+    },
+  );
+  const createdProfile = await createWorkforceProfile(appPool, context(hrPrincipalId, tenantId), {
+    idempotencyKey: randomUUID(),
+  });
+  const linkedProfile = await linkWorkforcePrincipal(appPool, context(hrPrincipalId, tenantId), {
+    expectedVersion: createdProfile.profile.version,
+    idempotencyKey: randomUUID(),
+    principalId: employeePrincipalId,
+    workerProfileId: createdProfile.profile.workerProfileId,
+  });
+  const activeProfile = await changeWorkforceStatus(appPool, context(hrPrincipalId, tenantId), {
+    expectedVersion: linkedProfile.profile.version,
+    idempotencyKey: randomUUID(),
+    status: "active",
+    workerProfileId: linkedProfile.profile.workerProfileId,
+  });
+  const createdRecord = await createEmploymentRecord(appPool, context(hrPrincipalId, tenantId), {
+    idempotencyKey: randomUUID(),
+    workerProfileId: activeProfile.profile.workerProfileId,
+  });
+  const firstVersion = await createEmploymentRecordVersion(
+    appPool,
+    context(hrPrincipalId, tenantId),
+    {
+      effectiveFrom: "2026-01-01",
+      effectiveTo: "2026-12-31",
+      employmentRecordId: createdRecord.mutation.employmentRecordId,
+      employmentTypeCode: "permanent",
+      expectedCurrentVersion: null,
+      expectedVersion: createdRecord.mutation.rootVersion,
+      idempotencyKey: randomUUID(),
+      organizationReference: null,
+      positionReference: null,
+    },
+  );
+  return {
+    employmentRecordId: firstVersion.mutation.employmentRecordId,
+    recordVersion: firstVersion.mutation.rootVersion,
+    settingsVersion: configured.mutation.settingsVersion,
+    workerProfileId: activeProfile.profile.workerProfileId,
+    workerProfileVersion: activeProfile.profile.version,
+  };
+}
+async function expectBackendsIdle(observer: PoolClient, pids: readonly number[]): Promise<void> {
+  const result = await observer.query<{ active_transaction: boolean; pid: number; state: string }>(
+    `SELECT pid,state,xact_start IS NOT NULL AS active_transaction
+     FROM pg_catalog.pg_stat_activity WHERE pid=ANY($1::integer[]) ORDER BY pid`,
+    [[...pids]],
+  );
+  expect(result.rows).toHaveLength(pids.length);
+  expect(
+    result.rows.every(({ active_transaction, state }) => !active_transaction && state === "idle"),
+  ).toBe(true);
+}
 describe("Employment Record complete domain", () => {
   beforeAll(setup);
   afterAll(async () => {
@@ -261,10 +431,10 @@ describe("Employment Record complete domain", () => {
     );
     expect(activated).toMatchObject({
       billingState: "non_billable",
-      control: {
+      mutation: {
         activationState: "active",
+        operation: "activate_service",
         serviceKey: "employment_record",
-        settings: { effectiveRangeOverlapAllowed: false, employmentTypeCodes: "unspecified" },
       },
       replayed: false,
     });
@@ -273,7 +443,7 @@ describe("Employment Record complete domain", () => {
         appPool,
         migrationReadPool,
         context(ids.adminA),
-        { expectedVersion: activated.control.activationVersion },
+        { expectedVersion: activated.mutation.activationVersion },
         "production",
       ),
       "ACTIVATION_DEPENDENCY_BLOCKED",
@@ -286,10 +456,13 @@ describe("Employment Record complete domain", () => {
         employmentTypeCodes: "unspecified,permanent,contract",
       },
     });
-    expect(configured.control).toMatchObject({
-      settings: { employmentTypeCodes: "unspecified,permanent,contract" },
+    expect(configured.mutation).toMatchObject({
+      operation: "configure_service",
       settingsVersion: 2,
     });
+    expect(
+      (await getEmploymentRecordServiceControl(appPool, context(ids.adminA))).control.settings,
+    ).toMatchObject({ employmentTypeCodes: "unspecified,permanent,contract" });
     await expectCode(
       configureEmploymentRecordService(appPool, configureContext, {
         expectedSettingsVersion: 1,
@@ -314,8 +487,17 @@ describe("Employment Record complete domain", () => {
       idempotencyKey: createKey,
       workerProfileId,
     });
-    const employmentRecordId = created.record.employmentRecordId;
-    expect(created.record).toMatchObject({
+    const employmentRecordId = created.mutation.employmentRecordId;
+    expect(created.mutation).toEqual({
+      currentVersion: null,
+      employmentRecordId,
+      operation: "create_record",
+      rootVersion: 1,
+      status: "draft",
+    });
+    expect(
+      await getAuthorizedEmploymentRecordDetail(appPool, context(), { employmentRecordId }),
+    ).toMatchObject({
       accessScope: "tenant",
       history: { items: [] },
       status: "draft",
@@ -349,7 +531,17 @@ describe("Employment Record complete domain", () => {
       positionReference: "position-opaque",
     } as const;
     const first = await createEmploymentRecordVersion(appPool, context(), firstInput);
-    expect(first.record.currentVersion).toMatchObject({
+    expect(first.mutation).toEqual({
+      currentVersion: 1,
+      employmentRecordId,
+      operation: "create_version",
+      rootVersion: 2,
+      status: "active",
+    });
+    expect(
+      (await getAuthorizedEmploymentRecordDetail(appPool, context(), { employmentRecordId }))
+        .currentVersion,
+    ).toMatchObject({
       effectiveFrom: "2026-01-01",
       effectiveTo: "2026-06-30",
       kind: "effective",
@@ -401,7 +593,11 @@ describe("Employment Record complete domain", () => {
     const winner = competingSuccessors.find(({ status }) => status === "fulfilled");
     if (winner?.status !== "fulfilled") throw new Error("Expected one CAS winner");
     const second = winner.value;
-    expect(second.record.currentVersion).toMatchObject({ effectiveFrom: "2026-07-01", version: 2 });
+    expect(second.mutation).toMatchObject({
+      currentVersion: 2,
+      operation: "create_version",
+      rootVersion: 3,
+    });
     expect(await snapshot()).toEqual({
       ...beforeCompetingSuccessors,
       evidence: beforeCompetingSuccessors.evidence + 2,
@@ -441,13 +637,23 @@ describe("Employment Record complete domain", () => {
       idempotencyKey: randomUUID(),
     } as const;
     const ended = await endEmploymentRecord(appPool, endContext, endInput);
-    expect(ended.record).toMatchObject({
+    expect(ended.mutation).toEqual({
+      currentVersion: 3,
+      employmentRecordId,
+      operation: "end_record",
+      rootVersion: 4,
+      status: "ended",
+    });
+    const endedDetail = await getAuthorizedEmploymentRecordDetail(appPool, context(), {
+      employmentRecordId,
+    });
+    expect(endedDetail).toMatchObject({
       accessScope: "tenant",
       currentVersion: { kind: "end", terminal: true, version: 3 },
       status: "ended",
       version: 4,
     });
-    expect(ended.record.history.items.map(({ kind, version }) => [kind, version])).toEqual([
+    expect(endedDetail.history.items.map(({ kind, version }) => [kind, version])).toEqual([
       ["end", 3],
       ["effective", 2],
       ["effective", 1],
@@ -586,6 +792,24 @@ describe("Employment Record complete domain", () => {
     );
     expect(employeeDetail).toMatchObject({ accessScope: "own" });
     expect(employeeDetail.history.items).toHaveLength(1);
+    const unrelatedProfile = await createWorkforceProfile(appPool, context(), {
+      idempotencyKey: randomUUID(),
+    });
+    const unrelatedRecord = await createEmploymentRecord(appPool, context(), {
+      idempotencyKey: randomUUID(),
+      workerProfileId: unrelatedProfile.profile.workerProfileId,
+    });
+    for (const inaccessibleRecordId of [
+      unrelatedRecord.mutation.employmentRecordId,
+      randomUUID(),
+    ]) {
+      await expectCode(
+        getAuthorizedEmploymentRecordDetail(appPool, context(ids.employeeA), {
+          employmentRecordId: inaccessibleRecordId,
+        }),
+        "EMPLOYMENT_NOT_FOUND",
+      );
+    }
     const historyCursor = employeeDetail.history.nextCursor;
     if (!historyCursor) throw new Error("Expected another Employment Record history page");
     const secondHistoryPage = await getAuthorizedEmploymentRecordDetail(
@@ -635,15 +859,15 @@ describe("Employment Record complete domain", () => {
       appPool,
       context(ids.adminA),
       {
-        expectedSettingsVersion: configured.control.settingsVersion,
+        expectedSettingsVersion: configured.mutation.settingsVersion,
         settings: {
           effectiveRangeOverlapAllowed: false,
           employmentTypeCodes: "unspecified,permanent,contract,seasonal",
         },
       },
     );
-    expect(dependencyUnavailableConfiguration.control.settingsVersion).toBe(
-      configured.control.settingsVersion + 1,
+    expect(dependencyUnavailableConfiguration.mutation.settingsVersion).toBe(
+      configured.mutation.settingsVersion + 1,
     );
     expect(
       await configureEmploymentRecordService(appPool, configureContext, {
@@ -655,9 +879,9 @@ describe("Employment Record complete domain", () => {
       }),
     ).toEqual({ ...configured, replayed: true });
     const deactivated = await deactivateEmploymentRecordService(appPool, context(ids.adminA), {
-      expectedVersion: activated.control.activationVersion,
+      expectedVersion: activated.mutation.activationVersion,
     });
-    expect(deactivated.control.activationState).toBe("inactive");
+    expect(deactivated.mutation.activationState).toBe("inactive");
     expect(
       (await getEmploymentRecordServiceControl(appPool, context(ids.adminA))).control
         .activationState,
@@ -667,7 +891,7 @@ describe("Employment Record complete domain", () => {
         appPool,
         migrationReadPool,
         context(ids.adminA),
-        { expectedVersion: deactivated.control.activationVersion },
+        { expectedVersion: deactivated.mutation.activationVersion },
         "non_production",
       ),
       "EMPLOYMENT_DEPENDENCY_INACTIVE",
@@ -677,16 +901,16 @@ describe("Employment Record complete domain", () => {
       appPool,
       migrationReadPool,
       context(ids.adminA),
-      { expectedVersion: deactivated.control.activationVersion },
+      { expectedVersion: deactivated.mutation.activationVersion },
       "non_production",
     );
-    expect(reactivated.control.activationState).toBe("active");
+    expect(reactivated.mutation.activationState).toBe("active");
     const finallyDeactivated = await deactivateEmploymentRecordService(
       appPool,
       context(ids.adminA),
-      { expectedVersion: reactivated.control.activationVersion },
+      { expectedVersion: reactivated.mutation.activationVersion },
     );
-    expect(finallyDeactivated.control.activationState).toBe("inactive");
+    expect(finallyDeactivated.mutation.activationState).toBe("inactive");
     const controlProof = await tenantRows<{
       aggregate_version: number;
       event_type: string;
@@ -766,4 +990,314 @@ describe("Employment Record complete domain", () => {
     );
     expect((await snapshot()).work).toBe(deniedBaseline.work);
   });
+
+  it("serializes employee-own reads before a concurrent Workforce suspension", async () => {
+    const fixture = await prepareRaceFixture(
+      ids.tenantAccessRace,
+      ids.hrAccessRace,
+      ids.adminAccessRace,
+      ids.employeeAccessRace,
+    );
+    const readControl = createControlledPool(
+      appPool,
+      (statement, values) =>
+        statement.includes(" FROM hr_worker_profiles ") &&
+        statement.includes(" principal_id=$2 ") &&
+        statement.includes(" workforce_status='active' ") &&
+        values[0] === ids.tenantAccessRace &&
+        values[1] === ids.employeeAccessRace,
+    );
+    const statusControl = createControlledPool(appPool);
+    const observer = await appPool.connect();
+    let readOperation: ReturnType<typeof getAuthorizedEmploymentRecordDetail> | undefined;
+    let statusOperation: ReturnType<typeof changeWorkforceStatus> | undefined;
+    let readPid: number | undefined;
+    let statusPid: number | undefined;
+    try {
+      readOperation = getAuthorizedEmploymentRecordDetail(
+        readControl.pool,
+        context(ids.employeeAccessRace, ids.tenantAccessRace),
+        { employmentRecordId: fixture.employmentRecordId },
+      );
+      readPid = (
+        await awaitControlledSignal(
+          "employee authority resolver",
+          readControl.paused,
+          readOperation,
+        )
+      ).pid;
+      statusOperation = changeWorkforceStatus(
+        statusControl.pool,
+        context(ids.hrAccessRace, ids.tenantAccessRace),
+        {
+          expectedVersion: fixture.workerProfileVersion,
+          idempotencyKey: randomUUID(),
+          status: "suspended",
+          workerProfileId: fixture.workerProfileId,
+        },
+      );
+      statusPid = await awaitControlledSignal(
+        "Workforce suspension connection",
+        statusControl.connected,
+        statusOperation,
+      );
+      let statusSettled = false;
+      void statusOperation.then(
+        () => {
+          statusSettled = true;
+        },
+        () => {
+          statusSettled = true;
+        },
+      );
+      expect(
+        await observeDirectBlockerUntil(observer, statusPid, readPid, () => statusSettled),
+      ).toBe(true);
+
+      readControl.release();
+      const detail = await readOperation;
+      readOperation = undefined;
+      const suspended = await statusOperation;
+      statusOperation = undefined;
+      expect(detail).toMatchObject({
+        accessScope: "own",
+        employmentRecordId: fixture.employmentRecordId,
+      });
+      expect(suspended.profile).toMatchObject({ workforceStatus: "suspended" });
+      const afterSuspension = await snapshot(ids.tenantAccessRace);
+      await expectCode(
+        getAuthorizedEmploymentRecordDetail(
+          appPool,
+          context(ids.employeeAccessRace, ids.tenantAccessRace),
+          { employmentRecordId: fixture.employmentRecordId },
+        ),
+        "POLICY_DENIED",
+      );
+      expect(await snapshot(ids.tenantAccessRace)).toEqual(afterSuspension);
+      await expectBackendsIdle(observer, [readPid, statusPid]);
+    } finally {
+      readControl.release();
+      statusControl.release();
+      const pending: Promise<unknown>[] = [];
+      if (readOperation) pending.push(readOperation);
+      if (statusOperation) pending.push(statusOperation);
+      await Promise.allSettled(pending);
+      observer.release();
+    }
+  }, 15_000);
+
+  it("serializes employment-type validation before a concurrent settings removal", async () => {
+    const fixture = await prepareRaceFixture(
+      ids.tenantSettingsRace,
+      ids.hrSettingsRace,
+      ids.adminSettingsRace,
+      ids.employeeSettingsRace,
+    );
+    const versionControl = createControlledPool(
+      appPool,
+      (statement, values) =>
+        statement.includes(" FROM hr_employment_record_service_control control ") &&
+        statement.includes(" LEFT JOIN tenant_settings setting ") &&
+        values[0] === ids.tenantSettingsRace &&
+        values[1] === "hr.employment_record.employment_type_codes",
+    );
+    const settingsControl = createControlledPool(appPool);
+    const observer = await appPool.connect();
+    let versionOperation: ReturnType<typeof createEmploymentRecordVersion> | undefined;
+    let settingsOperation: ReturnType<typeof configureEmploymentRecordService> | undefined;
+    let versionPid: number | undefined;
+    let settingsPid: number | undefined;
+    try {
+      versionOperation = createEmploymentRecordVersion(
+        versionControl.pool,
+        context(ids.hrSettingsRace, ids.tenantSettingsRace),
+        {
+          effectiveFrom: "2027-01-01",
+          effectiveTo: "2027-12-31",
+          employmentRecordId: fixture.employmentRecordId,
+          employmentTypeCode: "race",
+          expectedCurrentVersion: 1,
+          expectedVersion: fixture.recordVersion,
+          idempotencyKey: randomUUID(),
+          organizationReference: null,
+          positionReference: null,
+        },
+      );
+      versionPid = (
+        await awaitControlledSignal(
+          "employment type settings resolver",
+          versionControl.paused,
+          versionOperation,
+        )
+      ).pid;
+      settingsOperation = configureEmploymentRecordService(
+        settingsControl.pool,
+        context(ids.adminSettingsRace, ids.tenantSettingsRace),
+        {
+          expectedSettingsVersion: fixture.settingsVersion,
+          settings: {
+            effectiveRangeOverlapAllowed: false,
+            employmentTypeCodes: "permanent",
+          },
+        },
+      );
+      settingsPid = await awaitControlledSignal(
+        "Employment settings connection",
+        settingsControl.connected,
+        settingsOperation,
+      );
+      let settingsSettled = false;
+      void settingsOperation.then(
+        () => {
+          settingsSettled = true;
+        },
+        () => {
+          settingsSettled = true;
+        },
+      );
+      expect(
+        await observeDirectBlockerUntil(observer, settingsPid, versionPid, () => settingsSettled),
+      ).toBe(true);
+
+      versionControl.release();
+      const version = await versionOperation;
+      versionOperation = undefined;
+      const configured = await settingsOperation;
+      settingsOperation = undefined;
+      expect(version.mutation).toMatchObject({
+        currentVersion: 2,
+        operation: "create_version",
+        rootVersion: 3,
+      });
+      expect(configured.mutation).toMatchObject({ operation: "configure_service" });
+      const afterConfiguration = await snapshot(ids.tenantSettingsRace);
+      await expectCode(
+        createEmploymentRecordVersion(
+          appPool,
+          context(ids.hrSettingsRace, ids.tenantSettingsRace),
+          {
+            effectiveFrom: "2028-01-01",
+            effectiveTo: "2028-12-31",
+            employmentRecordId: fixture.employmentRecordId,
+            employmentTypeCode: "race",
+            expectedCurrentVersion: 2,
+            expectedVersion: version.mutation.rootVersion,
+            idempotencyKey: randomUUID(),
+            organizationReference: null,
+            positionReference: null,
+          },
+        ),
+        "EMPLOYMENT_INPUT_INVALID",
+      );
+      expect(await snapshot(ids.tenantSettingsRace)).toEqual(afterConfiguration);
+      await expectBackendsIdle(observer, [versionPid, settingsPid]);
+    } finally {
+      versionControl.release();
+      settingsControl.release();
+      const pending: Promise<unknown>[] = [];
+      if (versionOperation) pending.push(versionOperation);
+      if (settingsOperation) pending.push(settingsOperation);
+      await Promise.allSettled(pending);
+      observer.release();
+    }
+  }, 15_000);
+
+  it("returns one coherent root, head, and history before a concurrent successor", async () => {
+    const fixture = await prepareRaceFixture(
+      ids.tenantDetailRace,
+      ids.hrDetailRace,
+      ids.adminDetailRace,
+      ids.employeeDetailRace,
+    );
+    const detailControl = createControlledPool(
+      appPool,
+      (statement, values) =>
+        statement.includes(" FROM hr_employment_records record ") &&
+        statement.includes(" LEFT JOIN hr_employment_record_versions head ") &&
+        values[0] === ids.tenantDetailRace &&
+        values[1] === fixture.employmentRecordId,
+    );
+    const versionControl = createControlledPool(appPool);
+    const observer = await appPool.connect();
+    let detailOperation: ReturnType<typeof getAuthorizedEmploymentRecordDetail> | undefined;
+    let versionOperation: ReturnType<typeof createEmploymentRecordVersion> | undefined;
+    let detailPid: number | undefined;
+    let versionPid: number | undefined;
+    try {
+      detailOperation = getAuthorizedEmploymentRecordDetail(
+        detailControl.pool,
+        context(ids.employeeDetailRace, ids.tenantDetailRace),
+        { employmentRecordId: fixture.employmentRecordId },
+      );
+      detailPid = (
+        await awaitControlledSignal("employment detail root", detailControl.paused, detailOperation)
+      ).pid;
+      versionOperation = createEmploymentRecordVersion(
+        versionControl.pool,
+        context(ids.hrDetailRace, ids.tenantDetailRace),
+        {
+          effectiveFrom: "2027-01-01",
+          effectiveTo: "2027-12-31",
+          employmentRecordId: fixture.employmentRecordId,
+          employmentTypeCode: "race",
+          expectedCurrentVersion: 1,
+          expectedVersion: fixture.recordVersion,
+          idempotencyKey: randomUUID(),
+          organizationReference: "detail-race-successor",
+          positionReference: null,
+        },
+      );
+      versionPid = await awaitControlledSignal(
+        "employment successor connection",
+        versionControl.connected,
+        versionOperation,
+      );
+      let versionSettled = false;
+      void versionOperation.then(
+        () => {
+          versionSettled = true;
+        },
+        () => {
+          versionSettled = true;
+        },
+      );
+      expect(
+        await observeDirectBlockerUntil(observer, versionPid, detailPid, () => versionSettled),
+      ).toBe(true);
+
+      detailControl.release();
+      const detail = await detailOperation;
+      detailOperation = undefined;
+      const successor = await versionOperation;
+      versionOperation = undefined;
+      expect(detail).toMatchObject({
+        currentVersion: { version: 1 },
+        history: { items: [{ version: 1 }], nextCursor: null },
+        version: 2,
+      });
+      expect(successor.mutation).toMatchObject({
+        currentVersion: 2,
+        rootVersion: 3,
+      });
+      const current = await getAuthorizedEmploymentRecordDetail(
+        appPool,
+        context(ids.employeeDetailRace, ids.tenantDetailRace),
+        { employmentRecordId: fixture.employmentRecordId },
+      );
+      expect(current).toMatchObject({
+        currentVersion: { organizationReference: "detail-race-successor", version: 2 },
+        history: { items: [{ version: 2 }, { version: 1 }], nextCursor: null },
+        version: 3,
+      });
+      await expectBackendsIdle(observer, [detailPid, versionPid]);
+    } finally {
+      detailControl.release();
+      versionControl.release();
+      const pending: Promise<unknown>[] = [];
+      if (detailOperation) pending.push(detailOperation);
+      if (versionOperation) pending.push(versionOperation);
+      await Promise.allSettled(pending);
+      observer.release();
+    }
+  }, 15_000);
 });

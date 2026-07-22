@@ -3,7 +3,10 @@ import {
   type HrEmploymentRecordSettings,
   type HrServiceConfigureBody,
   type HrServiceControl,
+  type HrServiceMutationOperation,
+  type HrServiceMutationResponse,
   parseHrServiceControl,
+  parseHrServiceMutationResponse,
 } from "@esbla/contracts";
 import {
   appendEvidence,
@@ -50,6 +53,12 @@ export interface EmploymentServiceLifecycleInput {
 export interface EmploymentServiceControlResult {
   readonly billingState: typeof HR_EMPLOYMENT_RECORD_BILLING_STATE;
   readonly control: HrServiceControl;
+  readonly replayed: boolean;
+}
+
+export interface EmploymentServiceMutationResult {
+  readonly billingState: typeof HR_EMPLOYMENT_RECORD_BILLING_STATE;
+  readonly mutation: HrServiceMutationResponse;
   readonly replayed: boolean;
 }
 
@@ -280,6 +289,25 @@ async function readControl(
   };
 }
 
+function serviceMutationResult(
+  operation: HrServiceMutationOperation,
+  control: HrServiceControl,
+  replayed: boolean,
+): EmploymentServiceMutationResult {
+  return {
+    billingState: HR_EMPLOYMENT_RECORD_BILLING_STATE,
+    mutation: parseHrServiceMutationResponse({
+      activationState: control.activationState,
+      activationVersion: control.activationVersion,
+      controlVersion: control.version,
+      operation,
+      serviceKey: control.serviceKey,
+      settingsVersion: control.settingsVersion,
+    }),
+    replayed,
+  };
+}
+
 function lifecycleReceiptId(
   transaction: TenantTransaction,
   action: "activate_service" | "deactivate_service",
@@ -376,7 +404,7 @@ async function runLifecycle(
   input: EmploymentServiceLifecycleInput,
   action: "activate_service" | "deactivate_service",
   preflight?: () => Promise<{ current: boolean; reasons: readonly string[] }>,
-): Promise<EmploymentServiceControlResult> {
+): Promise<EmploymentServiceMutationResult> {
   const authorization = await authorizeAdminAction(transaction, action);
   if (action === "activate_service") await requireWorkforceDependency(transaction);
   const targetState = action === "activate_service" ? "active" : "inactive";
@@ -390,11 +418,7 @@ async function runLifecycle(
     targetState,
   });
   if (result.replayed) {
-    return {
-      billingState: HR_EMPLOYMENT_RECORD_BILLING_STATE,
-      control: await readLifecycleReplay(transaction, action),
-      replayed: true,
-    };
+    return serviceMutationResult(action, await readLifecycleReplay(transaction, action), true);
   }
   const snapshot = await readControl(transaction, result);
   if (!snapshot) throw controlConflict("Employment Record service control is missing");
@@ -431,11 +455,7 @@ async function runLifecycle(
     subjectType: CONTROL_RECEIPT_SUBJECT_TYPE,
   });
   if (binding.replayed) throw idempotencyConflict();
-  return {
-    billingState: HR_EMPLOYMENT_RECORD_BILLING_STATE,
-    control: snapshot.control,
-    replayed: false,
-  };
+  return serviceMutationResult(action, snapshot.control, false);
 }
 
 function semanticReadiness(mode: EmploymentActivationMode) {
@@ -475,7 +495,7 @@ async function probeActivationReplay(
   migrationReadPool: Pool,
   context: OperationContext,
   input: EmploymentServiceLifecycleInput,
-): Promise<EmploymentServiceControlResult | null> {
+): Promise<EmploymentServiceMutationResult | null> {
   const preflightRequired = new Error("Employment Record activation readiness phase is required");
   try {
     return await withTenantTransaction(
@@ -506,7 +526,7 @@ export async function activateEmploymentRecordService(
   context: OperationContext,
   input: EmploymentServiceLifecycleInput,
   mode: EmploymentActivationMode,
-): Promise<EmploymentServiceControlResult> {
+): Promise<EmploymentServiceMutationResult> {
   if (input.expectedVersion !== null)
     assertPositiveVersion(input.expectedVersion, "expectedVersion");
   const replay = await probeActivationReplay(runtimePool, migrationReadPool, context, input);
@@ -548,7 +568,7 @@ export async function deactivateEmploymentRecordService(
   runtimePool: Pool,
   context: OperationContext,
   input: EmploymentServiceLifecycleInput & { readonly expectedVersion: number },
-): Promise<EmploymentServiceControlResult> {
+): Promise<EmploymentServiceMutationResult> {
   assertPositiveVersion(input.expectedVersion, "expectedVersion");
   return await withTenantTransaction(
     runtimePool,
@@ -675,7 +695,7 @@ export async function configureEmploymentRecordService(
   runtimePool: Pool,
   context: OperationContext,
   input: HrServiceConfigureBody,
-): Promise<EmploymentServiceControlResult> {
+): Promise<EmploymentServiceMutationResult> {
   assertPositiveVersion(input.expectedSettingsVersion, "expectedSettingsVersion");
   const settings = normalizeSettings(input.settings as HrEmploymentRecordSettings);
   return await withTenantTransaction(
@@ -707,11 +727,7 @@ export async function configureEmploymentRecordService(
       });
       const replay = await readConfigureReplay(transaction, receiptId, semantics);
       if (replay) {
-        return {
-          billingState: HR_EMPLOYMENT_RECORD_BILLING_STATE,
-          control: replay,
-          replayed: true,
-        };
+        return serviceMutationResult("configure_service", replay, true);
       }
       try {
         await transaction.client.query(
@@ -772,11 +788,7 @@ export async function configureEmploymentRecordService(
         subjectType: CONTROL_RECEIPT_SUBJECT_TYPE,
       });
       if (binding.replayed) throw idempotencyConflict();
-      return {
-        billingState: HR_EMPLOYMENT_RECORD_BILLING_STATE,
-        control: snapshot.control,
-        replayed: false,
-      };
+      return serviceMutationResult("configure_service", snapshot.control, false);
     },
     {
       serviceActivationKey: HR_EMPLOYMENT_RECORD_SERVICE_KEY,

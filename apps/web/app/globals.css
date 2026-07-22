@@ -4,6 +4,7 @@
   --accent-soft: rgba(45, 169, 240, 0.12);
   --accent-strong: #0e7fd4;
   --accent-contrast: #ffffff;
+  --focus-ring: var(--accent);
   --bg-base: #f7fbff;
   --bg-grid-dot: rgba(45, 151, 230, 0.18);
   --bg-grid-line: rgba(45, 151, 230, 0.07);
@@ -77,6 +78,7 @@
   --bg-grid-line: rgba(0, 85, 145, 0.13);
   --heading-main: #111c25;
   --danger: #8a0013;
+  --focus-ring: #004c84;
   --line-mid: rgba(0, 91, 153, 0.88);
   --line-soft: rgba(0, 91, 153, 0.64);
   --shadow-soft: 0 0 0 1px rgba(0, 91, 153, 0.4);
@@ -84,6 +86,7 @@
   --surface-chrome-hover: #ffffff;
   --surface-panel: #ffffff;
   --surface-widget: #ffffff;
+  --success: #005f4b;
   --text-main: #111c25;
   --text-muted: #354d60;
   --text-soft: #243b4c;
@@ -572,6 +575,7 @@ h1 {
 
 .leave-detail-section {
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .detail-section-heading {
@@ -898,6 +902,13 @@ h1 {
   gap: 4px;
 }
 
+.success-banner > p {
+  color: var(--text-main);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 0;
+}
+
 .success-banner strong {
   color: var(--heading-main);
   font-size: 14px;
@@ -1095,7 +1106,7 @@ select:focus-visible,
 textarea:focus-visible,
 .form-error-summary:focus-visible,
 .success-banner:focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 3px;
 }
 

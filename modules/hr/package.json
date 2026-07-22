@@ -12,7 +12,14 @@
   },
   "scripts": {
     "build": "node ../../scripts/build/clean-typescript-output.mjs && tsc -p tsconfig.build.json",
-    "test": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1",
+    "test": "vitest run src/index.test.ts src/manifest-reuse.test.ts && pnpm run test:integration",
+    "test:integration": "pnpm run test:integration:activation && pnpm run test:integration:employment-readiness && pnpm run test:integration:employment && pnpm run test:integration:leave-proof && pnpm run test:integration:leave && pnpm run test:integration:workforce",
+    "test:integration:activation": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/activation.integration.test.ts",
+    "test:integration:employment-readiness": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/employment-readiness.integration.test.ts",
+    "test:integration:employment": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/employment.integration.test.ts",
+    "test:integration:leave-proof": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/leave-proof-closure.integration.test.ts",
+    "test:integration:leave": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/leave.integration.test.ts",
+    "test:integration:workforce": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/workforce.integration.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

@@ -1,5 +1,7 @@
 import type { HrWorkforceProfile, HrWorkforceStatus } from "@esbla/contracts";
 import { ArrowRight, LoaderCircle, TriangleAlert, UsersRound } from "lucide-react";
+import { loadEmploymentList } from "../../../../lib/hr-employment-record";
+import { hasEmploymentAction } from "../../../../lib/hr-employment-record-core";
 import { loadAuthorizedWorkforceList } from "../../../../lib/hr-workforce-profile-list";
 import {
   buildWorkforceListHref,
@@ -31,16 +33,23 @@ function formatDateTime(value: string) {
 
 function WorkforceRow({
   assignedAt,
+  canCreateEmployment,
   index,
   profile,
   view,
 }: Readonly<{
   assignedAt?: string;
+  canCreateEmployment: boolean;
   index: number;
   profile: HrWorkforceProfile;
   view: WorkforceListView;
 }>) {
   const label = profile.employeeNumber ?? `Workforce profile ${index + 1}`;
+  const canStartEmployment =
+    canCreateEmployment &&
+    view === "workforce" &&
+    ((profile.workforceStatus === "active" && profile.principalLinked) ||
+      (profile.workforceStatus === "draft" && !profile.principalLinked));
   return (
     <tr>
       <td data-label="Profile">{label}</td>
@@ -56,13 +65,25 @@ function WorkforceRow({
         </td>
       ) : null}
       <td data-label="Actions">
-        <a
-          className="text-command work-detail-link"
-          href={workforceListDetailHref(profile.workerProfileId, view)}
-        >
-          View details
-          <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
-        </a>
+        <div className="work-queue-actions">
+          <a
+            className="text-command work-detail-link"
+            href={workforceListDetailHref(profile.workerProfileId, view)}
+          >
+            View details
+            <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
+          </a>
+          {canStartEmployment ? (
+            <a
+              className="text-command"
+              href={`/workspace/hr/employment/admin?workerProfileId=${encodeURIComponent(
+                profile.workerProfileId,
+              )}`}
+            >
+              Start employment record
+            </a>
+          ) : null}
+        </div>
       </td>
     </tr>
   );
@@ -102,7 +123,12 @@ export async function AuthorizedWorkforceList({
   searchParams,
   view,
 }: AuthorizedWorkforceListProps) {
-  const state = await loadAuthorizedWorkforceList(searchParams, view);
+  const [state, employment] = await Promise.all([
+    loadAuthorizedWorkforceList(searchParams, view),
+    view === "workforce" ? loadEmploymentList({ pageSize: "1" }) : Promise.resolve(null),
+  ]);
+  const canCreateEmployment =
+    employment !== null && hasEmploymentAction(employment.authorizedActions, "create_record");
   if (state.status !== "success") {
     return (
       <div className="leave-list-error" role="alert">
@@ -150,6 +176,7 @@ export async function AuthorizedWorkforceList({
                 ? page.items.map((item, index) => (
                     <WorkforceRow
                       assignedAt={item.relationship.effectiveAt}
+                      canCreateEmployment={canCreateEmployment}
                       index={index}
                       key={item.profile.workerProfileId}
                       profile={item.profile}
@@ -158,6 +185,7 @@ export async function AuthorizedWorkforceList({
                   ))
                 : page.items.map((profile, index) => (
                     <WorkforceRow
+                      canCreateEmployment={canCreateEmployment}
                       index={index}
                       key={profile.workerProfileId}
                       profile={profile}

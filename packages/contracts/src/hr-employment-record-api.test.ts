@@ -6,6 +6,7 @@ import {
   hrEmploymentEndRecordBodySchema,
   hrEmploymentListQuerySchema,
   hrEmploymentListResponseSchema,
+  hrEmploymentRecordMutationResponseSchema,
   hrEmploymentRecordPathSchema,
   hrEmploymentRecordSchema,
   hrEmploymentRecordVersionSchema,
@@ -16,6 +17,7 @@ import {
   parseHrEmploymentListQuery,
   parseHrEmploymentListResponse,
   parseHrEmploymentRecord,
+  parseHrEmploymentRecordMutationResponse,
   parseHrEmploymentRecordPath,
   parseHrEmploymentRecordVersion,
 } from "./hr-employment-record-api.js";
@@ -66,6 +68,7 @@ describe("Employment Record API contracts", () => {
       hrEmploymentListQuerySchema.$id,
       hrEmploymentDetailQuerySchema.$id,
       hrEmploymentRecordVersionSchema.$id,
+      hrEmploymentRecordMutationResponseSchema.$id,
       hrEmploymentRecordSchema.$id,
       hrEmploymentListResponseSchema.$id,
     ]).toEqual([
@@ -76,6 +79,7 @@ describe("Employment Record API contracts", () => {
       "HrEmploymentListQueryV1",
       "HrEmploymentDetailQueryV1",
       "HrEmploymentRecordVersionResponseV1",
+      "HrEmploymentRecordMutationResponseV1",
       "HrEmploymentRecordResponseV1",
       "HrEmploymentListResponseV1",
     ]);
@@ -196,6 +200,46 @@ describe("Employment Record API contracts", () => {
       { ...endVersion, terminal: false },
     ]) {
       expect(() => parseHrEmploymentRecordVersion(invalid)).toThrow();
+    }
+  });
+
+  it("accepts only exact capability-minimal mutation outcomes", () => {
+    const created = {
+      currentVersion: null,
+      employmentRecordId,
+      operation: "create_record",
+      rootVersion: 1,
+      status: "draft",
+    } as const;
+    const versioned = {
+      currentVersion: 1,
+      employmentRecordId,
+      operation: "create_version",
+      rootVersion: 2,
+      status: "active",
+    } as const;
+    const ended = {
+      currentVersion: 2,
+      employmentRecordId,
+      operation: "end_record",
+      rootVersion: 3,
+      status: "ended",
+    } as const;
+    expect(parseHrEmploymentRecordMutationResponse(created)).toBe(created);
+    expect(parseHrEmploymentRecordMutationResponse(versioned)).toBe(versioned);
+    expect(parseHrEmploymentRecordMutationResponse(ended)).toBe(ended);
+    for (const invalid of [
+      { ...created, workerProfileId },
+      { ...created, history: { items: [], nextCursor: null } },
+      { ...created, currentVersion: 1 },
+      { ...created, rootVersion: 2 },
+      { ...versioned, currentVersion: null },
+      { ...versioned, rootVersion: 3 },
+      { ...versioned, status: "ended" },
+      { ...ended, operation: "create_version" },
+      { ...ended, employmentRecordId: "invalid" },
+    ]) {
+      expect(() => parseHrEmploymentRecordMutationResponse(invalid)).toThrow();
     }
   });
 

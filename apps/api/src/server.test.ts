@@ -50,15 +50,47 @@ describe("runtime probes", () => {
     expect(response.body).not.toContain("secret database detail");
   });
 
-  it("keeps the dormant Employment Record service-control prerequisite unreachable", async () => {
+  it("protects admitted Employment Record service-control routes before PostgreSQL access", async () => {
     const { query, server } = testServer();
-    for (const [method, url] of [
-      ["GET", "/v1/hr/employment-records/service-control"],
-      ["POST", "/v1/hr/employment-records/service-control/activate"],
-      ["POST", "/v1/hr/employment-records/service-control/deactivate"],
-      ["PATCH", "/v1/hr/employment-records/service-control/settings"],
+    const idempotencyKey = randomUUID();
+    for (const request of [
+      { method: "GET", url: "/v1/hr/employment-records/service-control" },
+      {
+        body: { expectedVersion: null },
+        headers: { "idempotency-key": idempotencyKey },
+        method: "POST",
+        url: "/v1/hr/employment-records/service-control/activate",
+      },
+      {
+        body: { expectedVersion: 1 },
+        headers: { "idempotency-key": idempotencyKey },
+        method: "POST",
+        url: "/v1/hr/employment-records/service-control/deactivate",
+      },
+      {
+        body: {
+          expectedSettingsVersion: 1,
+          settings: {
+            effectiveRangeOverlapAllowed: false,
+            employmentTypeCodes: "unspecified",
+          },
+        },
+        headers: { "idempotency-key": idempotencyKey },
+        method: "PATCH",
+        url: "/v1/hr/employment-records/service-control/settings",
+      },
     ] as const) {
-      expect((await server.inject({ method, url })).statusCode).toBe(404);
+      expect((await server.inject(request)).statusCode).toBe(401);
+    }
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("protects the admitted Employment Record read routes before PostgreSQL access", async () => {
+    const { query, server } = testServer();
+    for (const url of ["/v1/hr/employment-records", "/v1/hr/employment-records/service-control"]) {
+      const response = await server.inject({ method: "GET", url });
+      expect(response.statusCode).toBe(401);
+      expect(response.headers["content-type"]).toContain("application/problem+json");
     }
     expect(query).not.toHaveBeenCalled();
   });

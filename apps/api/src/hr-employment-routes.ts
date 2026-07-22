@@ -15,6 +15,7 @@ import {
   hrEmploymentEndRecordBodySchema,
   hrEmploymentListQuerySchema,
   hrEmploymentListResponseSchema,
+  hrEmploymentRecordMutationResponseSchema,
   hrEmploymentRecordPathSchema,
   hrEmploymentRecordSchema,
   parseHrEmploymentCreateRecordBody,
@@ -32,6 +33,7 @@ import {
   type HrServiceConfigureBody,
   type HrServiceControlQuery,
   type HrServiceDeactivateBody,
+  hrServiceMutationResponseSchema,
   parseHrServiceActivateBody,
   parseHrServiceConfigureBody,
   parseHrServiceControlQuery,
@@ -50,6 +52,7 @@ import {
   endEmploymentRecord,
   getAuthorizedEmploymentRecordDetail,
   getEmploymentRecordServiceControl,
+  inspectEmploymentActionAuthority,
   listAuthorizedEmploymentRecords,
 } from "@esbla/hr";
 import type { OperationContext } from "@esbla/platform-core";
@@ -88,6 +91,39 @@ function strict<T>(parse: (value: unknown) => T, value: unknown): T {
   } catch {
     throw requestContractViolation();
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function queryInteger(value: unknown): unknown {
+  return typeof value === "string" && /^[1-9]\d*$/.test(value) ? Number(value) : value;
+}
+
+function strictEmploymentListQuery(value: unknown): void {
+  if (!isRecord(value)) {
+    strict(parseHrEmploymentListQuery, value);
+    return;
+  }
+  strict(parseHrEmploymentListQuery, {
+    ...value,
+    ...(Object.hasOwn(value, "pageSize") ? { pageSize: queryInteger(value.pageSize) } : {}),
+  });
+}
+
+function strictEmploymentDetailQuery(value: unknown): void {
+  if (!isRecord(value)) {
+    strict(parseHrEmploymentDetailQuery, value);
+    return;
+  }
+  strict(parseHrEmploymentDetailQuery, {
+    ...value,
+    ...(Object.hasOwn(value, "cursorVersion")
+      ? { cursorVersion: queryInteger(value.cursorVersion) }
+      : {}),
+    ...(Object.hasOwn(value, "pageSize") ? { pageSize: queryInteger(value.pageSize) } : {}),
+  });
 }
 
 function parseEmploymentConfigureBody(value: unknown): EmploymentConfigureBody {
@@ -166,6 +202,11 @@ export function registerEmploymentRoutes({
   runtimeEnvironment,
   server,
 }: RegisterEmploymentRoutesOptions): void {
+  const attachEmploymentActions = async (request: FastifyRequest, reply: FastifyReply) => {
+    const actions = await inspectEmploymentActionAuthority(pool, operationContext(request));
+    reply.header("x-esbla-employment-actions", JSON.stringify(actions));
+  };
+
   for (const schema of [
     hrEmploymentCreateRecordBodySchema,
     hrEmploymentCreateVersionBodySchema,
@@ -174,7 +215,9 @@ export function registerEmploymentRoutes({
     hrEmploymentListQuerySchema,
     hrEmploymentDetailQuerySchema,
     hrEmploymentRecordSchema,
+    hrEmploymentRecordMutationResponseSchema,
     hrEmploymentListResponseSchema,
+    hrServiceMutationResponseSchema,
   ]) {
     server.addSchema(schema);
   }
@@ -187,6 +230,7 @@ export function registerEmploymentRoutes({
         async (request) => {
           strict(parseHrServiceControlQuery, request.query);
         },
+        attachEmploymentActions,
       ],
       schema: {
         querystring: { $ref: "HrServiceControlQueryV1#" },
@@ -213,7 +257,7 @@ export function registerEmploymentRoutes({
       schema: {
         body: { $ref: "HrServiceActivateRequestV1#" },
         response: {
-          200: { $ref: "HrServiceControlResponseV1#" },
+          200: { $ref: "HrServiceMutationResponseV1#" },
           default: { $ref: "ProblemDetails#" },
         },
       },
@@ -227,7 +271,7 @@ export function registerEmploymentRoutes({
         runtimeEnvironment === "production" ? "production" : "non_production",
       );
       reply.header("idempotent-replayed", String(result.replayed));
-      return reply.code(200).send(result.control);
+      return reply.code(200).send(result.mutation);
     },
   );
 
@@ -244,7 +288,7 @@ export function registerEmploymentRoutes({
       schema: {
         body: { $ref: "HrServiceDeactivateRequestV1#" },
         response: {
-          200: { $ref: "HrServiceControlResponseV1#" },
+          200: { $ref: "HrServiceMutationResponseV1#" },
           default: { $ref: "ProblemDetails#" },
         },
       },
@@ -256,7 +300,7 @@ export function registerEmploymentRoutes({
         request.body,
       );
       reply.header("idempotent-replayed", String(result.replayed));
-      return reply.code(200).send(result.control);
+      return reply.code(200).send(result.mutation);
     },
   );
 
@@ -273,7 +317,7 @@ export function registerEmploymentRoutes({
       schema: {
         body: { $ref: "HrServiceConfigureRequestV1#" },
         response: {
-          200: { $ref: "HrServiceControlResponseV1#" },
+          200: { $ref: "HrServiceMutationResponseV1#" },
           default: { $ref: "ProblemDetails#" },
         },
       },
@@ -285,19 +329,20 @@ export function registerEmploymentRoutes({
         request.body,
       );
       reply.header("idempotent-replayed", String(result.replayed));
-      return reply.code(200).send(result.control);
+      return reply.code(200).send(result.mutation);
     },
   );
 
   server.get<{ Querystring: HrEmploymentListQuery }>(
     "/v1/hr/employment-records",
     {
-      preHandler: [
+      preValidation: [
+        authenticate,
         async (request) => {
-          strict(parseHrEmploymentListQuery, request.query);
+          strictEmploymentListQuery(request.query);
         },
+        attachEmploymentActions,
       ],
-      preValidation: [authenticate],
       schema: {
         querystring: { $ref: "HrEmploymentListQueryV1#" },
         response: {
@@ -335,8 +380,8 @@ export function registerEmploymentRoutes({
       schema: {
         body: { $ref: "HrEmploymentCreateRecordRequestV1#" },
         response: {
-          200: { $ref: "HrEmploymentRecordResponseV1#" },
-          201: { $ref: "HrEmploymentRecordResponseV1#" },
+          200: { $ref: "HrEmploymentRecordMutationResponseV1#" },
+          201: { $ref: "HrEmploymentRecordMutationResponseV1#" },
           default: { $ref: "ProblemDetails#" },
         },
       },
@@ -347,23 +392,20 @@ export function registerEmploymentRoutes({
         idempotencyKey: idempotencyKey(request),
       });
       reply.header("idempotent-replayed", String(result.replayed));
-      return reply.code(result.replayed ? 200 : 201).send(detailResponse(result.record));
+      return reply.code(result.replayed ? 200 : 201).send(result.mutation);
     },
   );
 
   server.get<{ Params: HrEmploymentRecordPath; Querystring: HrEmploymentDetailQuery }>(
     "/v1/hr/employment-records/by-id/:employmentRecordId",
     {
-      preHandler: [
-        async (request) => {
-          strict(parseHrEmploymentDetailQuery, request.query);
-        },
-      ],
       preValidation: [
         authenticate,
         async (request) => {
           strict(parseHrEmploymentRecordPath, request.params);
+          strictEmploymentDetailQuery(request.query);
         },
+        attachEmploymentActions,
       ],
       schema: {
         params: { $ref: "HrEmploymentRecordPathV1#" },
@@ -409,8 +451,8 @@ export function registerEmploymentRoutes({
         body: { $ref: "HrEmploymentCreateVersionRequestV1#" },
         params: { $ref: "HrEmploymentRecordPathV1#" },
         response: {
-          200: { $ref: "HrEmploymentRecordResponseV1#" },
-          201: { $ref: "HrEmploymentRecordResponseV1#" },
+          200: { $ref: "HrEmploymentRecordMutationResponseV1#" },
+          201: { $ref: "HrEmploymentRecordMutationResponseV1#" },
           default: { $ref: "ProblemDetails#" },
         },
       },
@@ -422,7 +464,7 @@ export function registerEmploymentRoutes({
         idempotencyKey: idempotencyKey(request),
       });
       reply.header("idempotent-replayed", String(result.replayed));
-      return reply.code(result.replayed ? 200 : 201).send(detailResponse(result.record));
+      return reply.code(result.replayed ? 200 : 201).send(result.mutation);
     },
   );
 
@@ -441,7 +483,7 @@ export function registerEmploymentRoutes({
         body: { $ref: "HrEmploymentEndRecordRequestV1#" },
         params: { $ref: "HrEmploymentRecordPathV1#" },
         response: {
-          200: { $ref: "HrEmploymentRecordResponseV1#" },
+          200: { $ref: "HrEmploymentRecordMutationResponseV1#" },
           default: { $ref: "ProblemDetails#" },
         },
       },
@@ -453,7 +495,7 @@ export function registerEmploymentRoutes({
         idempotencyKey: idempotencyKey(request),
       });
       reply.header("idempotent-replayed", String(result.replayed));
-      return reply.code(200).send(detailResponse(result.record));
+      return reply.code(200).send(result.mutation);
     },
   );
 }

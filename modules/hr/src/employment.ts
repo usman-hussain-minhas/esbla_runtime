@@ -5,11 +5,14 @@ import {
   type HrEmploymentListCursor,
   type HrEmploymentListResponse,
   type HrEmploymentRecord,
+  type HrEmploymentRecordMutationOperation,
+  type HrEmploymentRecordMutationResponse,
   type HrEmploymentRecordStatus,
   type HrEmploymentRecordSummary,
   type HrEmploymentRecordVersion,
   type HrEmploymentRecordVersionKind,
   parseHrEmploymentRecord,
+  parseHrEmploymentRecordMutationResponse,
 } from "@esbla/contracts";
 import {
   appendEvidence,
@@ -65,6 +68,20 @@ export type EmploymentHistoryCursor = HrEmploymentHistoryCursor;
 export type EmploymentRecordListResult = HrEmploymentListResponse;
 export type EmploymentRecordDetailResult = HrEmploymentRecord;
 
+export const HR_EMPLOYMENT_AUTHORIZED_ACTIONS = Object.freeze([
+  "activate_service",
+  "configure_service",
+  "create_record",
+  "create_version",
+  "deactivate_service",
+  "end_record",
+  "list_authorized",
+  "view_detail",
+  "view_service_control",
+] as const);
+
+export type EmploymentAuthorizedAction = (typeof HR_EMPLOYMENT_AUTHORIZED_ACTIONS)[number];
+
 export interface CreateEmploymentRecordInput {
   readonly idempotencyKey: string;
   readonly workerProfileId: string;
@@ -95,7 +112,7 @@ export interface EndEmploymentRecordInput {
 
 export interface EmploymentMutationResult {
   readonly billingState: typeof HR_EMPLOYMENT_RECORD_BILLING_STATE;
-  readonly record: EmploymentRecordDetailResult;
+  readonly mutation: HrEmploymentRecordMutationResponse;
   readonly replayed: boolean;
 }
 
@@ -358,7 +375,7 @@ const RECORD_COLUMNS = `record.employment_record_id, record.worker_profile_id, r
 async function readRecord(
   transaction: TenantTransaction,
   employmentRecordId: string,
-  lock = false,
+  lock?: "share" | "update",
 ): Promise<RecordRow | null> {
   const result = await transaction.client.query<RecordRow>(
     `SELECT ${RECORD_COLUMNS}
@@ -368,7 +385,7 @@ async function readRecord(
       AND head.employment_record_id=record.employment_record_id
       AND head.employment_record_version_id=record.current_version_id
      WHERE record.tenant_id=$1 AND record.employment_record_id=$2
-     ${lock ? "FOR UPDATE OF record" : ""}`,
+     ${lock === "share" ? "FOR SHARE OF record" : lock === "update" ? "FOR UPDATE OF record" : ""}`,
     [transaction.context.tenantId, employmentRecordId],
   );
   return result.rows[0] ?? null;
@@ -473,6 +490,60 @@ async function hasCapability(
     [transaction.context.tenantId, transaction.context.actorPrincipalId, actionKey],
   );
   return result.rows.length === 1;
+}
+
+const EMPLOYMENT_ACTION_ROLES: Readonly<
+  Record<EmploymentAuthorizedAction, "employee_or_hr_operator" | "hr_operator" | "tenant_admin">
+> = Object.freeze({
+  activate_service: "tenant_admin",
+  configure_service: "tenant_admin",
+  create_record: "hr_operator",
+  create_version: "hr_operator",
+  deactivate_service: "tenant_admin",
+  end_record: "hr_operator",
+  list_authorized: "employee_or_hr_operator",
+  view_detail: "employee_or_hr_operator",
+  view_service_control: "tenant_admin",
+});
+
+function roleAllowsEmploymentAction(roleKey: string, action: EmploymentAuthorizedAction): boolean {
+  const requiredRole = EMPLOYMENT_ACTION_ROLES[action];
+  return requiredRole === "employee_or_hr_operator"
+    ? roleKey === "employee" || roleKey === "hr_operator"
+    : roleKey === requiredRole;
+}
+
+/**
+ * Projects only the actor's exact current Employment capabilities. This snapshot is suitable for
+ * advisory rendering; every action still performs its own transactional authorization.
+ */
+export async function inspectEmploymentActionAuthority(
+  pool: Pool,
+  context: OperationContext,
+): Promise<readonly EmploymentAuthorizedAction[]> {
+  return await withTenantTransaction(pool, context, async (transaction) => {
+    const capabilityIds = HR_EMPLOYMENT_AUTHORIZED_ACTIONS.map(
+      (action) => `hr.employment.${action}`,
+    );
+    const result = await transaction.client.query<{ capability_id: string }>(
+      `SELECT capability_id FROM membership_capabilities
+       WHERE tenant_id=$1 AND principal_id=$2 AND capability_id=ANY($3::text[])
+       ORDER BY capability_id`,
+      [transaction.context.tenantId, transaction.context.actorPrincipalId, capabilityIds],
+    );
+    const current = new Set(result.rows.map(({ capability_id }) => capability_id));
+    return Object.freeze(
+      HR_EMPLOYMENT_AUTHORIZED_ACTIONS.filter((action) => {
+        const actionKey = `hr.employment.${action}`;
+        const registered = hrManifest.capabilities.some(({ id }) => id === actionKey);
+        return (
+          registered &&
+          roleAllowsEmploymentAction(transaction.actor.roleKey, action) &&
+          current.has(actionKey)
+        );
+      }),
+    );
+  });
 }
 
 async function authorizeTenantAction(
@@ -792,10 +863,21 @@ async function recordMutation(
 }
 
 function mutationResult(
+  operation: HrEmploymentRecordMutationOperation,
   record: EmploymentRecordDetailResult,
   replayed: boolean,
 ): EmploymentMutationResult {
-  return { billingState: HR_EMPLOYMENT_RECORD_BILLING_STATE, record, replayed };
+  return {
+    billingState: HR_EMPLOYMENT_RECORD_BILLING_STATE,
+    mutation: parseHrEmploymentRecordMutationResponse({
+      currentVersion: record.currentVersion?.version ?? null,
+      employmentRecordId: record.employmentRecordId,
+      operation,
+      rootVersion: record.version,
+      status: record.status,
+    }),
+    replayed,
+  };
 }
 
 function translateWriteError(error: unknown): never {
@@ -837,7 +919,7 @@ export async function createEmploymentRecord(
           workerProfileId,
         });
         const replay = await readMutationReplay(transaction, receipt);
-        if (replay) return mutationResult(replay, true);
+        if (replay) return mutationResult(receipt.action, replay, true);
 
         const worker = await transaction.client.query<{
           principal_id: string | null;
@@ -865,7 +947,7 @@ export async function createEmploymentRecord(
         if (!row) throw employmentConflict();
         const record = await detailFromRow(transaction, row, "tenant");
         await recordMutation(transaction, receipt, null, null, record);
-        return mutationResult(record, false);
+        return mutationResult(receipt.action, record, false);
       },
       employmentTransactionOptions,
     );
@@ -878,6 +960,10 @@ async function assertEmploymentTypeAllowed(
   transaction: TenantTransaction,
   employmentTypeCode: string | null,
 ): Promise<void> {
+  await transaction.client.query(
+    "SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended($1::text,0))",
+    [`hr.employment_record.settings.v1:${transaction.context.tenantId}`],
+  );
   const result = await transaction.client.query<{
     settings_version: number;
     value: unknown;
@@ -938,10 +1024,10 @@ export async function createEmploymentRecordVersion(
           ...facts,
         });
         const replay = await readMutationReplay(transaction, receipt);
-        if (replay) return mutationResult(replay, true);
+        if (replay) return mutationResult(receipt.action, replay, true);
         await assertEmploymentTypeAllowed(transaction, facts.employmentTypeCode);
 
-        const beforeRow = await readRecord(transaction, employmentRecordId, true);
+        const beforeRow = await readRecord(transaction, employmentRecordId, "update");
         if (!beforeRow) throw employmentNotFound();
         const before = mapRecord(beforeRow);
         if (before.version !== input.expectedVersion || before.status === "ended") {
@@ -1017,7 +1103,7 @@ export async function createEmploymentRecordVersion(
         if (!afterRow) throw employmentConflict();
         const record = await detailFromRow(transaction, afterRow, "tenant");
         await recordMutation(transaction, receipt, before.version, before.status, record);
-        return mutationResult(record, false);
+        return mutationResult(receipt.action, record, false);
       },
       employmentTransactionOptions,
     );
@@ -1049,9 +1135,9 @@ export async function endEmploymentRecord(
           expectedVersion: input.expectedVersion,
         });
         const replay = await readMutationReplay(transaction, receipt);
-        if (replay) return mutationResult(replay, true);
+        if (replay) return mutationResult(receipt.action, replay, true);
 
-        const beforeRow = await readRecord(transaction, employmentRecordId, true);
+        const beforeRow = await readRecord(transaction, employmentRecordId, "update");
         if (!beforeRow) throw employmentNotFound();
         const before = mapRecord(beforeRow);
         const current = before.currentVersion;
@@ -1107,7 +1193,7 @@ export async function endEmploymentRecord(
         if (!afterRow) throw employmentConflict();
         const record = await detailFromRow(transaction, afterRow, "tenant");
         await recordMutation(transaction, receipt, before.version, before.status, record);
-        return mutationResult(record, false);
+        return mutationResult(receipt.action, record, false);
       },
       employmentTransactionOptions,
     );
@@ -1131,7 +1217,7 @@ async function resolveAccessScope(
   const own = await transaction.client.query<{ worker_profile_id: string }>(
     `SELECT worker_profile_id FROM hr_worker_profiles
      WHERE tenant_id=$1 AND principal_id=$2 AND workforce_status='active'
-     ORDER BY worker_profile_id LIMIT 2`,
+     ORDER BY worker_profile_id LIMIT 2 FOR SHARE`,
     [transaction.context.tenantId, transaction.context.actorPrincipalId],
   );
   if (own.rows.length !== 1 || !own.rows[0]) {
@@ -1211,13 +1297,13 @@ export async function getAuthorizedEmploymentRecordDetail(
     async (transaction) => {
       await requireDependencies(transaction);
       const authority = await resolveAccessScope(transaction, "view_detail");
-      const row = await readRecord(transaction, employmentRecordId);
+      const row = await readRecord(transaction, employmentRecordId, "share");
       if (!row) throw employmentNotFound();
       if (
         authority.workerProfileId !== null &&
         row.worker_profile_id !== authority.workerProfileId
       ) {
-        throw new PlatformError("POLICY_DENIED", "Policy decision denied the action");
+        throw employmentNotFound();
       }
       return await detailFromRow(transaction, row, authority.accessScope, limit, options.cursor);
     },
