@@ -15,6 +15,8 @@ export {
   getWorkforceProfileServiceControl,
 } from "./activation.js";
 export * from "./commands.js";
+export * from "./employment.js";
+export * from "./employment-service-control.js";
 export * from "./errors.js";
 export * from "./manifest.js";
 export * from "./queries.js";

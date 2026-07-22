@@ -1,9 +1,6 @@
 import { createHash } from "node:crypto";
 import { type HrServiceControl, parseHrServiceControl } from "@esbla/contracts";
-import type {
-  HrServiceConfigureBody,
-  HrWorkforceProfileSettings,
-} from "@esbla/contracts/hr-service-control-api";
+import type { HrWorkforceProfileSettings } from "@esbla/contracts/hr-service-control-api";
 import {
   type ActivationPreflight,
   appendEvidence,
@@ -47,7 +44,10 @@ export interface HrLeaveServiceLifecycleResult extends ServiceActivationResult {
 export interface HrWorkforceProfileServiceLifecycleInput {
   readonly expectedVersion: number | null;
 }
-export type HrWorkforceProfileServiceConfigureInput = HrServiceConfigureBody;
+export type HrWorkforceProfileServiceConfigureInput = Readonly<{
+  expectedSettingsVersion: number;
+  settings: HrWorkforceProfileSettings;
+}>;
 export type HrWorkforceProfileActivationMode = "non_production" | "production";
 export interface HrWorkforceProfileServiceControlResult {
   readonly billingState: typeof HR_WORKFORCE_PROFILE_BILLING_STATE;

@@ -86,7 +86,10 @@ beforeAll(async () => {
   );
   await migrationPool.query(
     `GRANT SELECT, INSERT, UPDATE ON service_activations, hr_worker_profiles,
-       hr_employment_record_service_control TO ${applicationRole}`,
+       hr_employment_records TO ${applicationRole}`,
+  );
+  await migrationPool.query(
+    `GRANT SELECT ON hr_employment_record_service_control TO ${applicationRole}`,
   );
   await migrationPool.query(
     `GRANT SELECT, INSERT ON evidence_events, outbox_events,
@@ -125,7 +128,7 @@ afterAll(async () => {
   await migrationPool?.end();
 });
 
-describe("dormant Employment Record readiness foundation", () => {
+describe("Employment Record execution readiness", () => {
   it("proves exact migration, catalog, and select-only membership authority", async () => {
     await expect(inspectEmploymentReadiness()).resolves.toEqual({ current: true, reasons: [] });
     const privilege = await withTenantTransaction(runtimePool, context, async ({ client }) =>
@@ -151,6 +154,27 @@ describe("dormant Employment Record readiness foundation", () => {
     await expect(inspectEmploymentReadiness()).resolves.toEqual({ current: true, reasons: [] });
   });
 
+  it("fails closed if the guarded settings function loses exact Runtime authority", async () => {
+    await migrationPool.query(
+      `REVOKE EXECUTE ON FUNCTION public.esbla_configure_hr_employment_record_settings(
+         integer, text, boolean
+       ) FROM ${applicationRole}`,
+    );
+    try {
+      await expect(inspectEmploymentReadiness()).resolves.toEqual({
+        current: false,
+        reasons: ["schema_dependencies_not_current"],
+      });
+    } finally {
+      await migrationPool.query(
+        `GRANT EXECUTE ON FUNCTION public.esbla_configure_hr_employment_record_settings(
+           integer, text, boolean
+         ) TO ${applicationRole}`,
+      );
+    }
+    await expect(inspectEmploymentReadiness()).resolves.toEqual({ current: true, reasons: [] });
+  });
+
   it("fails closed on undeclared Employment-owned catalog objects", async () => {
     await expect(inspectEmploymentReadiness()).resolves.toEqual({ current: true, reasons: [] });
     for (const { apply, restore } of [
@@ -160,7 +184,7 @@ describe("dormant Employment Record readiness foundation", () => {
       },
       {
         apply:
-          "CREATE UNIQUE INDEX audit_extra_index ON public.hr_employment_records (tenant_id, created_at)",
+          "CREATE INDEX audit_extra_index ON public.hr_employment_records (tenant_id, created_at)",
         restore: "DROP INDEX public.audit_extra_index",
       },
       {

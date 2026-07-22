@@ -13,6 +13,15 @@ describe("HR passenger manifest reuse contract", () => {
     const exposures = new Set(hrManifest.capabilities.map((capability) => capability.exposure));
     expect(exposures).toEqual(new Set(["admin", "tenant"]));
     expect(hrManifest.capabilities.map((capability) => capability.id).sort()).toEqual([
+      "hr.employment.activate_service",
+      "hr.employment.configure_service",
+      "hr.employment.create_record",
+      "hr.employment.create_version",
+      "hr.employment.deactivate_service",
+      "hr.employment.end_record",
+      "hr.employment.list_authorized",
+      "hr.employment.view_detail",
+      "hr.employment.view_service_control",
       "hr.leave.activate",
       "hr.leave.approve",
       "hr.leave.deactivate",
@@ -32,6 +41,19 @@ describe("HR passenger manifest reuse contract", () => {
       "hr.workforce.view_authorized_detail",
       "hr.workforce.view_own",
       "hr.workforce.view_service_control",
+    ]);
+    expect(
+      hrManifest.capabilities.filter((capability) => capability.id.startsWith("hr.employment.")),
+    ).toEqual([
+      { exposure: "admin", id: "hr.employment.activate_service" },
+      { exposure: "admin", id: "hr.employment.configure_service" },
+      { exposure: "tenant", id: "hr.employment.create_record" },
+      { exposure: "tenant", id: "hr.employment.create_version" },
+      { exposure: "admin", id: "hr.employment.deactivate_service" },
+      { exposure: "tenant", id: "hr.employment.end_record" },
+      { exposure: "tenant", id: "hr.employment.list_authorized" },
+      { exposure: "tenant", id: "hr.employment.view_detail" },
+      { exposure: "admin", id: "hr.employment.view_service_control" },
     ]);
     expect(
       hrManifest.capabilities.filter((capability) => capability.id.startsWith("hr.workforce.")),

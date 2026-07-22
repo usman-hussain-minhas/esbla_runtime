@@ -16,6 +16,7 @@ import {
   type HrWorkforceListQuery,
   type HrWorkforceOwnQuery,
   type HrWorkforceProfilePath,
+  type HrWorkforceProfileSettings,
   hrAssignedLeaveListQuerySchema,
   hrAssignedLeaveRequestPageSchema,
   hrAssignedLeaveRequestSchema,
@@ -105,6 +106,11 @@ import type { Pool } from "pg";
 import { AuthError, type RequestAuthenticator } from "./auth.js";
 import { sendProblem } from "./problems.js";
 
+type WorkforceConfigureBody = Extract<
+  HrServiceConfigureBody,
+  { readonly settings: HrWorkforceProfileSettings }
+>;
+
 declare module "fastify" {
   interface FastifyRequest {
     authenticatedRequestId?: string;
@@ -156,6 +162,12 @@ function assertStrictRequest<T>(parse: (value: unknown) => T, value: unknown): T
   } catch {
     throw requestContractViolation();
   }
+}
+
+function parseWorkforceConfigureBody(value: unknown): WorkforceConfigureBody {
+  const body = assertStrictRequest(parseHrServiceConfigureBody, value);
+  if (!("employeeNumberRequired" in body.settings)) throw requestContractViolation();
+  return body as WorkforceConfigureBody;
 }
 
 function pageResponse<T extends { leaveRequestId: string; submittedAt: string }>(
@@ -343,14 +355,14 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     },
   );
 
-  server.patch<{ Body: HrServiceConfigureBody }>(
+  server.patch<{ Body: WorkforceConfigureBody }>(
     "/v1/hr/workforce-profiles/service-control/settings",
     {
       preValidation: [
         authenticate,
         async (request) => {
           assertStrictMutationIdempotencyKey(request);
-          assertStrictRequest(parseHrServiceConfigureBody, request.body);
+          parseWorkforceConfigureBody(request.body);
         },
       ],
       schema: {
