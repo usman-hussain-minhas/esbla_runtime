@@ -992,6 +992,24 @@ h1 {
   margin-bottom: 0;
 }
 
+.settings-choice-row {
+  align-items: flex-start;
+  color: var(--heading-main);
+  display: flex;
+  font-size: 13px;
+  font-weight: 700;
+  gap: 10px;
+  line-height: 1.5;
+}
+
+.settings-choice-row input {
+  accent-color: var(--accent);
+  flex: 0 0 auto;
+  margin-top: 2px;
+  min-height: 18px;
+  width: 18px;
+}
+
 .form-error-summary {
   align-items: center;
   background: color-mix(in srgb, var(--danger) 8%, transparent);
@@ -1075,7 +1093,8 @@ a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
-.form-error-summary:focus-visible {
+.form-error-summary:focus-visible,
+.success-banner:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
   outline-offset: 3px;
 }

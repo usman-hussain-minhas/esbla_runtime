@@ -1,11 +1,23 @@
-import { ArrowRight, CalendarDays, UserRound, UserRoundPlus, UsersRound } from "lucide-react";
+import {
+  ArrowRight,
+  CalendarDays,
+  Settings2,
+  UserRound,
+  UserRoundPlus,
+  UsersRound,
+} from "lucide-react";
 import { loadAuthorizedWorkforceList } from "../../../lib/hr-workforce-profile-list";
+import { loadWorkforceProfileServiceControl } from "../../../lib/hr-workforce-profile-service-control";
 
 export default async function HrHubPage() {
-  const [directReports, workforceAdministration] = await Promise.all([
+  const [directReports, workforceAdministration, workforceServiceControl] = await Promise.all([
     loadAuthorizedWorkforceList({}, "direct_reports"),
     loadAuthorizedWorkforceList({}, "workforce"),
+    loadWorkforceProfileServiceControl(),
   ]);
+  const canDiscoverWorkforceSettings =
+    workforceServiceControl.status === "success" ||
+    (workforceServiceControl.status === "error" && workforceServiceControl.kind === "not_found");
   return (
     <section aria-labelledby="hr-hub-heading" className="work-surface">
       <header className="surface-heading">
@@ -48,6 +60,12 @@ export default async function HrHubPage() {
               <a className="text-command" href="/workspace/hr/profile/direct-reports">
                 <UsersRound aria-hidden="true" size={15} strokeWidth={1.8} />
                 Direct reports
+              </a>
+            ) : null}
+            {canDiscoverWorkforceSettings ? (
+              <a className="text-command" href="/workspace/hr/profile/settings">
+                <Settings2 aria-hidden="true" size={15} strokeWidth={1.8} />
+                Workforce settings
               </a>
             ) : null}
           </div>

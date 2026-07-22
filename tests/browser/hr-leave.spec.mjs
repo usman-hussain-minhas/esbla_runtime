@@ -111,6 +111,10 @@ function workforceRecordVersion(page) {
     .locator("dd");
 }
 
+function serviceControlFact(page, label) {
+  return page.locator(".leave-detail-facts > div").filter({ hasText: label }).locator("dd");
+}
+
 test("employee submits, manager approves, and employee reloads durable rendered history", async ({
   browser,
 }) => {
@@ -407,5 +411,95 @@ test("HR operator filters workforce while employee list access fails closed", as
     await expect(employee.page.getByText("BROWSER-DIRECT-001", { exact: true })).toHaveCount(0);
   } finally {
     await closeActors(employee, operator);
+  }
+});
+
+test("tenant admin configures and controls Workforce Profile without record access", async ({
+  browser,
+}) => {
+  const admin = await openActor(browser, fixture.adminOrigin, fixture.adminLabel);
+  const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
+  const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
+  try {
+    await admin.page.goto(`${admin.origin}/workspace/hr`);
+    await expect(admin.page.getByLabel("Development identity status")).toHaveText(
+      fixture.adminLabel,
+    );
+    await expect(admin.page.getByRole("link", { name: "Workforce administration" })).toHaveCount(0);
+    await expect(admin.page.getByRole("link", { name: "Direct reports" })).toHaveCount(0);
+    const settingsLink = admin.page.getByRole("link", { name: "Workforce settings" });
+    await settingsLink.focus();
+    await admin.page.keyboard.press("Enter");
+    await expect(
+      admin.page.getByRole("heading", { name: "Workforce Profile settings" }),
+    ).toBeVisible();
+    await expect(admin.page.getByText("BROWSER-DIRECT-001", { exact: true })).toHaveCount(0);
+    await expect(admin.page.locator(".leave-status")).toHaveText("Active");
+
+    const settingsVersion = Number(
+      await serviceControlFact(admin.page, "Settings version").textContent(),
+    );
+    await admin.page.getByLabel("Require an employee number").check();
+    await admin.page.getByLabel("Manager visibility").selectOption("none");
+    await admin.page.getByLabel("Allow an HR operator").uncheck();
+    const saveResponse = admin.page.waitForResponse((response) =>
+      response.url().endsWith("/workspace/hr/profile/settings/action"),
+    );
+    await admin.page.getByRole("button", { name: "Save Workforce settings" }).press("Enter");
+    expect((await saveResponse).status()).toBe(200);
+    await expect(admin.page.locator(".success-banner")).toBeFocused();
+    await expect(serviceControlFact(admin.page, "Settings version")).toHaveText(
+      String(settingsVersion + 1),
+    );
+    await admin.page.reload();
+    await expect(admin.page.getByLabel("Require an employee number")).toBeChecked();
+    await expect(admin.page.getByLabel("Manager visibility")).toHaveValue("none");
+    await expect(admin.page.getByLabel("Allow an HR operator")).not.toBeChecked();
+
+    await manager.page.goto(`${manager.origin}/workspace/hr`);
+    await expect(manager.page.getByRole("link", { name: "Direct reports" })).toHaveCount(0);
+    await manager.page.goto(`${manager.origin}/workspace/hr/profile/direct-reports`);
+    await expect(
+      manager.page.getByRole("heading", { name: "Workforce list unavailable" }),
+    ).toBeVisible();
+
+    const deactivateResponse = admin.page.waitForResponse((response) =>
+      response.url().endsWith("/workspace/hr/profile/settings/action"),
+    );
+    await admin.page.getByRole("button", { name: "Deactivate service" }).press("Enter");
+    expect((await deactivateResponse).status()).toBe(200);
+    await expect(admin.page.locator(".success-banner")).toBeFocused();
+    await expect(admin.page.locator(".leave-status")).toHaveText("Inactive");
+    await admin.page.reload();
+    await expect(admin.page.getByRole("heading", { name: "Preserved settings" })).toBeVisible();
+    await expect(admin.page.getByText("Blocked", { exact: true })).toBeVisible();
+
+    await employee.page.goto(`${employee.origin}/workspace/hr/profile`);
+    await expect(
+      employee.page.getByRole("heading", { name: "Workforce Profile inactive" }),
+    ).toBeVisible();
+    await employee.page.goto(`${employee.origin}/workspace/hr/profile/settings`);
+    await expect(
+      employee.page.getByRole("heading", { name: "Service controls unavailable" }),
+    ).toBeVisible();
+
+    const activateResponse = admin.page.waitForResponse((response) =>
+      response.url().endsWith("/workspace/hr/profile/settings/action"),
+    );
+    await admin.page.getByRole("button", { name: "Activate service" }).press("Enter");
+    expect((await activateResponse).status()).toBe(200);
+    await expect(admin.page.locator(".success-banner")).toBeFocused();
+    await expect(admin.page.locator(".leave-status")).toHaveText("Active");
+    await employee.page.goto(`${employee.origin}/workspace/hr/profile`);
+    await expect(employee.page.getByRole("heading", { name: "Current profile" })).toBeVisible();
+
+    await admin.page.setViewportSize({ height: 844, width: 390 });
+    await admin.page.getByRole("button", { name: "High contrast theme" }).click();
+    await expect(admin.page.locator("html")).toHaveAttribute("data-theme", "high-contrast");
+    expect(
+      await admin.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+  } finally {
+    await closeActors(admin, employee, manager);
   }
 });
