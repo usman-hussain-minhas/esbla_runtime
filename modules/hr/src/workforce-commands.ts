@@ -1,4 +1,5 @@
 import {
+  lockMembershipAuthority,
   type OperationContext,
   PlatformError,
   resolveSetting,
@@ -274,13 +275,12 @@ export async function linkWorkforcePrincipal(
       const replay = await readWorkforceMutationReplay(transaction, receipt);
       if (replay) return commandResult(replay, true);
 
-      const membership = await transaction.client.query<{ status: string }>(
-        `SELECT status FROM memberships
-         WHERE tenant_id = $1 AND principal_id = $2
-         FOR SHARE`,
-        [transaction.context.tenantId, principalId],
+      const membership = await lockMembershipAuthority(
+        transaction.client,
+        transaction.context,
+        principalId,
       );
-      if (membership.rows[0]?.status !== "active") {
+      if (membership?.status !== "active") {
         throw new HrWorkforceProfileError(
           "WORKFORCE_PRINCIPAL_INELIGIBLE",
           "Canonical principal is not eligible for linking",
@@ -366,13 +366,12 @@ export async function changeWorkforceStatus(
         if (!observed.principal_id) {
           throw workforceProfileConflict("Active status requires a linked principal");
         }
-        const membership = await transaction.client.query<{ status: string }>(
-          `SELECT status FROM memberships
-           WHERE tenant_id = $1 AND principal_id = $2
-           FOR SHARE`,
-          [transaction.context.tenantId, observed.principal_id],
+        const membership = await lockMembershipAuthority(
+          transaction.client,
+          transaction.context,
+          observed.principal_id,
         );
-        if (membership.rows[0]?.status !== "active") {
+        if (membership?.status !== "active") {
           throw new HrWorkforceProfileError(
             "WORKFORCE_PRINCIPAL_INELIGIBLE",
             "Linked principal is not eligible for active status",
@@ -532,15 +531,12 @@ export async function changeWorkforceReportingRelationship(
           if (manager.workforce_status !== "active" || !manager.principal_id) {
             throw workforceProfileConflict("Manager Workforce Profile must be active and linked");
           }
-          const membership = await transaction.client.query<{ role_key: string; status: string }>(
-            `SELECT role_key, status FROM memberships
-             WHERE tenant_id=$1 AND principal_id=$2 FOR SHARE`,
-            [transaction.context.tenantId, manager.principal_id],
+          const membership = await lockMembershipAuthority(
+            transaction.client,
+            transaction.context,
+            manager.principal_id,
           );
-          if (
-            membership.rows[0]?.status !== "active" ||
-            membership.rows[0]?.role_key !== "manager"
-          ) {
+          if (membership?.status !== "active" || membership.roleKey !== "manager") {
             throw workforceProfileConflict("Manager membership is not current");
           }
         }

@@ -58,6 +58,24 @@ async function seedTenantRow(
   }
 }
 
+async function setMembershipStatus(
+  tenantId: string,
+  principalId: string,
+  status: "active" | "suspended",
+): Promise<void> {
+  const client = await migrationPool.connect();
+  try {
+    await seedTenantRow(
+      client,
+      tenantId,
+      "UPDATE memberships SET status = $1 WHERE principal_id = $2",
+      [status, principalId],
+    );
+  } finally {
+    client.release();
+  }
+}
+
 function context(tenantId: string, actorPrincipalId: string, correlationId: string) {
   return { actorPrincipalId, correlationId, tenantId };
 }
@@ -205,7 +223,7 @@ beforeAll(async () => {
   await migrationPool.query(`GRANT SELECT, INSERT ON tenants, principals TO ${applicationRole}`);
   await migrationPool.query(
     `GRANT SELECT, INSERT, UPDATE, DELETE
-     ON memberships, service_activations, tenant_settings, work_items, outbox_events
+     ON service_activations, tenant_settings, work_items, outbox_events
      TO ${applicationRole}`,
   );
   await migrationPool.query(`GRANT SELECT, INSERT ON evidence_events TO ${applicationRole}`);
@@ -221,7 +239,7 @@ beforeAll(async () => {
     [ids.adminA, ids.managerA, ids.employeeA, ids.adminB],
   );
 
-  const client = await pool.connect();
+  const client = await migrationPool.connect();
   try {
     await seedTenantRow(
       client,
@@ -276,15 +294,7 @@ describe("platform enforcement primitives", () => {
       },
     );
 
-    await withTenantTransaction(
-      pool,
-      context(ids.tenantA, ids.adminA, ids.correlationActivate1),
-      async ({ client }) => {
-        await client.query("UPDATE memberships SET status = 'suspended' WHERE principal_id = $1", [
-          ids.employeeA,
-        ]);
-      },
-    );
+    await setMembershipStatus(ids.tenantA, ids.employeeA, "suspended");
     await expect(
       withTenantTransaction(
         pool,
@@ -292,15 +302,7 @@ describe("platform enforcement primitives", () => {
         async () => undefined,
       ),
     ).rejects.toMatchObject({ code: "ACTOR_NOT_ACTIVE_MEMBER" });
-    await withTenantTransaction(
-      pool,
-      context(ids.tenantA, ids.adminA, ids.correlationActivate1),
-      async ({ client }) => {
-        await client.query("UPDATE memberships SET status = 'active' WHERE principal_id = $1", [
-          ids.employeeA,
-        ]);
-      },
-    );
+    await setMembershipStatus(ids.tenantA, ids.employeeA, "active");
   });
 
   it("pins tenant transactions to trusted schemas before membership resolution", async () => {

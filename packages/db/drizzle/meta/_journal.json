@@ -92,6 +92,13 @@
       "when": 1784727430847,
       "tag": "0012_overjoyed_mentor",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1784736446030,
+      "tag": "0013_membership_authority_lock",
+      "breakpoints": true
     }
   ]
 }
