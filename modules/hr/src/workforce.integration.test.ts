@@ -83,19 +83,63 @@ async function setReplayDenial(
   return setServiceState(denied ? "inactive" : "active");
 }
 
-async function setBooleanSetting(key: string, value: boolean | null): Promise<void> {
-  await tenantQuery(
-    workforceIds.tenantA,
-    value === null
-      ? "DELETE FROM tenant_settings WHERE tenant_id = $1 AND setting_key = $2"
-      : `INSERT INTO tenant_settings (tenant_id, setting_key, value_type, value)
-         VALUES ($1, $2, 'boolean', $3::jsonb)
-         ON CONFLICT (tenant_id, setting_key) DO UPDATE
-         SET value = excluded.value, version = tenant_settings.version + 1`,
-    value === null
-      ? [workforceIds.tenantA, key]
-      : [workforceIds.tenantA, key, JSON.stringify(value)],
-  );
+async function setWorkforceSetting(
+  key: string,
+  value: boolean | "minimized" | "none" | null,
+): Promise<void> {
+  const requiredKey = "hr.workforce_profile.employee_number_required";
+  const visibilityKey = "hr.workforce_profile.manager_visibility";
+  const unlinkedKey = "hr.workforce_profile.unlinked_worker_creation_allowed";
+  if (
+    (key !== requiredKey && key !== visibilityKey && key !== unlinkedKey) ||
+    ((key === requiredKey || key === unlinkedKey) &&
+      value !== null &&
+      typeof value !== "boolean") ||
+    (key === visibilityKey && value !== null && value !== "minimized" && value !== "none")
+  ) {
+    throw new Error("Unsupported Workforce Profile setting fixture value");
+  }
+  await withWorkforceTenant(workforceIds.tenantA, async (client) => {
+    const selected = await client.query<{
+      employee_number_required: boolean;
+      manager_visibility: string;
+      settings_version: number;
+      unlinked_worker_creation_allowed: boolean;
+    }>(
+      `SELECT control.settings_version,
+              COALESCE(required.value, 'false'::jsonb) AS employee_number_required,
+              COALESCE(visibility.value, '"minimized"'::jsonb) AS manager_visibility,
+              COALESCE(unlinked.value, 'true'::jsonb) AS unlinked_worker_creation_allowed
+       FROM hr_workforce_profile_service_control control
+       LEFT JOIN tenant_settings required
+         ON required.tenant_id=control.tenant_id AND required.setting_key=$2
+       LEFT JOIN tenant_settings visibility
+         ON visibility.tenant_id=control.tenant_id AND visibility.setting_key=$3
+       LEFT JOIN tenant_settings unlinked
+         ON unlinked.tenant_id=control.tenant_id AND unlinked.setting_key=$4
+       WHERE control.tenant_id=$1 AND control.service_key='workforce_profile'`,
+      [workforceIds.tenantA, requiredKey, visibilityKey, unlinkedKey],
+    );
+    const current = selected.rows[0];
+    if (
+      !current ||
+      typeof current.employee_number_required !== "boolean" ||
+      (current.manager_visibility !== "minimized" && current.manager_visibility !== "none") ||
+      !Number.isSafeInteger(current.settings_version) ||
+      typeof current.unlinked_worker_creation_allowed !== "boolean"
+    ) {
+      throw new Error("Workforce Profile settings fixture state is invalid");
+    }
+    await client.query(
+      `SELECT public.esbla_configure_hr_workforce_profile_settings($1, $2, $3, $4)`,
+      [
+        current.settings_version,
+        key === requiredKey ? (value ?? false) : current.employee_number_required,
+        key === visibilityKey ? (value ?? "minimized") : current.manager_visibility,
+        key === unlinkedKey ? (value ?? true) : current.unlinked_worker_creation_allowed,
+      ],
+    );
+  });
 }
 
 async function createActiveReportingProfile(
@@ -518,12 +562,12 @@ describe("Workforce Profile domain", () => {
     const requiredKey = "hr.workforce_profile.employee_number_required";
     const unlinkedKey = "hr.workforce_profile.unlinked_worker_creation_allowed";
     const beforeSettings = await readWorkforceTenantSnapshot(workforceIds.tenantA);
-    await setBooleanSetting(requiredKey, true);
+    await setWorkforceSetting(requiredKey, true);
     try {
       await expect(
         createWorkforceProfile(workforcePool, context(), { idempotencyKey: randomUUID() }),
       ).rejects.toMatchObject({ code: "WORKFORCE_INPUT_INVALID" });
-      await setBooleanSetting(unlinkedKey, false);
+      await setWorkforceSetting(unlinkedKey, false);
       await expect(
         createWorkforceProfile(workforcePool, context(), {
           employeeNumber: "EMP-BLOCKED",
@@ -531,8 +575,8 @@ describe("Workforce Profile domain", () => {
         }),
       ).rejects.toMatchObject({ code: "POLICY_DENIED" });
     } finally {
-      await setBooleanSetting(requiredKey, null);
-      await setBooleanSetting(unlinkedKey, null);
+      await setWorkforceSetting(requiredKey, null);
+      await setWorkforceSetting(unlinkedKey, null);
     }
     expect(await readWorkforceTenantSnapshot(workforceIds.tenantA)).toEqual(beforeSettings);
 
@@ -859,12 +903,7 @@ describe("Workforce Profile domain", () => {
         ),
       ).rejects.toMatchObject({ code: "POLICY_DENIED" });
       await setReportingRole(manager.principalId, "manager");
-      await tenantQuery(
-        workforceIds.tenantA,
-        `INSERT INTO tenant_settings (tenant_id, setting_key, value_type, value)
-         VALUES ($1, 'hr.workforce_profile.manager_visibility', 'enum', '"none"'::jsonb)`,
-        [workforceIds.tenantA],
-      );
+      await setWorkforceSetting("hr.workforce_profile.manager_visibility", "none");
       await expect(
         listAuthorizedWorkforceProfiles(
           workforcePool,
@@ -873,12 +912,7 @@ describe("Workforce Profile domain", () => {
       ).rejects.toMatchObject({ code: "POLICY_DENIED" });
     } finally {
       await setReportingRole(manager.principalId, "manager");
-      await tenantQuery(
-        workforceIds.tenantA,
-        `DELETE FROM tenant_settings
-         WHERE tenant_id = $1 AND setting_key = 'hr.workforce_profile.manager_visibility'`,
-        [workforceIds.tenantA],
-      );
+      await setWorkforceSetting("hr.workforce_profile.manager_visibility", null);
       await tenantQuery(
         workforceIds.tenantA,
         `DELETE FROM membership_capabilities
@@ -1040,12 +1074,7 @@ describe("Workforce Profile domain", () => {
         ),
       ).rejects.toMatchObject({ code: "POLICY_DENIED" });
       await setReportingRole(manager.principalId, "manager");
-      await tenantQuery(
-        workforceIds.tenantA,
-        `INSERT INTO tenant_settings (tenant_id, setting_key, value_type, value)
-         VALUES ($1, 'hr.workforce_profile.manager_visibility', 'enum', '"none"'::jsonb)`,
-        [workforceIds.tenantA],
-      );
+      await setWorkforceSetting("hr.workforce_profile.manager_visibility", "none");
       await expect(
         getAuthorizedWorkforceProfileDetail(
           workforcePool,
@@ -1053,11 +1082,7 @@ describe("Workforce Profile domain", () => {
           { workerProfileId: report.workerProfileId },
         ),
       ).rejects.toMatchObject({ code: "POLICY_DENIED" });
-      await tenantQuery(
-        workforceIds.tenantA,
-        "DELETE FROM tenant_settings WHERE tenant_id=$1 AND setting_key='hr.workforce_profile.manager_visibility'",
-        [workforceIds.tenantA],
-      );
+      await setWorkforceSetting("hr.workforce_profile.manager_visibility", null);
       await setServiceState("inactive");
       await expect(
         getAuthorizedWorkforceProfileDetail(workforcePool, context(), {
@@ -1091,11 +1116,7 @@ describe("Workforce Profile domain", () => {
       await setServiceState("active");
       await setReportingRole(manager.principalId, "manager");
       await setReportingStatus(manager.workerProfileId, "active");
-      await tenantQuery(
-        workforceIds.tenantA,
-        "DELETE FROM tenant_settings WHERE tenant_id=$1 AND setting_key='hr.workforce_profile.manager_visibility'",
-        [workforceIds.tenantA],
-      );
+      await setWorkforceSetting("hr.workforce_profile.manager_visibility", null);
       for (const principalId of authorized) await setDetailCapability(principalId, false);
     }
     expect(await reportingSnapshot(workforceIds.tenantA, report.workerProfileId)).toEqual(before);
