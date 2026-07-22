@@ -639,6 +639,11 @@ export const HR_EMPLOYMENT_RECORD_REQUIRED_MIGRATIONS = [
     hash: "5496f5e8bda0554d90c5bb1941ea797143cb6f82c9e6ca3793cec90d6861d6be",
     id: "0012",
   },
+  {
+    createdAt: 1784748834447,
+    hash: "6e2d522aa5d285c1b08c9fc751b987bb993a2c474732d94f49a7fe1759b8d3eb",
+    id: "0014",
+  },
 ] as const;
 
 export const HR_EMPLOYMENT_RECORD_RUNTIME_TABLE_PRIVILEGES = [
@@ -647,7 +652,7 @@ export const HR_EMPLOYMENT_RECORD_RUNTIME_TABLE_PRIVILEGES = [
   runtimeTablePrivilege("public.service_activations", true),
   runtimeTablePrivilege("public.evidence_events", false, true),
   runtimeTablePrivilege("public.outbox_events", false, true),
-  runtimeTablePrivilege("public.hr_employment_record_service_control", true),
+  runtimeTablePrivilege("public.hr_employment_record_service_control"),
   runtimeTablePrivilege("public.hr_employment_records", true),
   {
     delete: false,
@@ -733,6 +738,7 @@ export const HR_EMPLOYMENT_RECORD_CATALOG_REQUIREMENTS = {
       "uq_hr_employment_record_versions_tenant_successor|hr_employment_record_versions|CREATE UNIQUE INDEX uq_hr_employment_record_versions_tenant_successor ON public.hr_employment_record_versions USING btree (tenant_id, employment_record_id, supersedes_version_id) WHERE (supersedes_version_id IS NOT NULL)|(supersedes_version_id IS NOT NULL)||0|1",
       "hr_employment_records_pkey|hr_employment_records|CREATE UNIQUE INDEX hr_employment_records_pkey ON public.hr_employment_records USING btree (employment_record_id)||p|1|1",
       "idx_hr_employment_records_tenant_cursor|hr_employment_records|CREATE INDEX idx_hr_employment_records_tenant_cursor ON public.hr_employment_records USING btree (tenant_id, worker_profile_id, created_at DESC NULLS LAST, employment_record_id DESC NULLS LAST)|||0|0",
+      "idx_hr_employment_records_tenant_order_cursor|hr_employment_records|CREATE INDEX idx_hr_employment_records_tenant_order_cursor ON public.hr_employment_records USING btree (tenant_id, created_at DESC NULLS LAST, employment_record_id DESC NULLS LAST)|||0|0",
       "idx_hr_employment_records_tenant_worker_active_head|hr_employment_records|CREATE INDEX idx_hr_employment_records_tenant_worker_active_head ON public.hr_employment_records USING btree (tenant_id, worker_profile_id, status, employment_record_id)|||0|0",
       "uq_hr_employment_records_composite_identity|hr_employment_records|CREATE UNIQUE INDEX uq_hr_employment_records_composite_identity ON public.hr_employment_records USING btree (tenant_id, employment_record_id)||u|0|1",
       "uq_hr_employment_records_tenant_worker_current|hr_employment_records|CREATE UNIQUE INDEX uq_hr_employment_records_tenant_worker_current ON public.hr_employment_records USING btree (tenant_id, worker_profile_id) WHERE (status <> 'ended'::public.hr_employment_record_status)|(status <> 'ended'::public.hr_employment_record_status)||0|1",
@@ -766,6 +772,7 @@ export const HR_EMPLOYMENT_RECORD_CATALOG_REQUIREMENTS = {
     ...[
       "hr_employment_record_service_control|hr_employment_record_service_control_enforce_state|CREATE TRIGGER hr_employment_record_service_control_enforce_state BEFORE INSERT OR DELETE OR UPDATE ON public.hr_employment_record_service_control FOR EACH ROW EXECUTE FUNCTION public.esbla_enforce_hr_employment_service_control()|esbla_enforce_hr_employment_service_control",
       "hr_employment_record_service_control|hr_employment_record_service_control_reject_truncate|CREATE TRIGGER hr_employment_record_service_control_reject_truncate BEFORE TRUNCATE ON public.hr_employment_record_service_control FOR EACH STATEMENT EXECUTE FUNCTION public.esbla_enforce_hr_employment_service_control()|esbla_enforce_hr_employment_service_control",
+      "service_activations|service_activations_sync_hr_employment_record|CREATE TRIGGER service_activations_sync_hr_employment_record AFTER INSERT OR UPDATE ON public.service_activations FOR EACH ROW EXECUTE FUNCTION public.esbla_sync_hr_employment_record_service_activation()|esbla_sync_hr_employment_record_service_activation",
       "hr_employment_record_versions|hr_employment_record_versions_enforce_state|CREATE TRIGGER hr_employment_record_versions_enforce_state BEFORE INSERT OR DELETE OR UPDATE ON public.hr_employment_record_versions FOR EACH ROW EXECUTE FUNCTION public.esbla_enforce_hr_employment_record_version()|esbla_enforce_hr_employment_record_version",
       "hr_employment_record_versions|hr_employment_record_versions_reject_truncate|CREATE TRIGGER hr_employment_record_versions_reject_truncate BEFORE TRUNCATE ON public.hr_employment_record_versions FOR EACH STATEMENT EXECUTE FUNCTION public.esbla_enforce_hr_employment_record_version()|esbla_enforce_hr_employment_record_version",
       "hr_employment_record_versions|hr_employment_record_versions_require_current_chain|CREATE CONSTRAINT TRIGGER hr_employment_record_versions_require_current_chain AFTER INSERT ON public.hr_employment_record_versions DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.esbla_require_hr_employment_record_version_chain()|esbla_require_hr_employment_record_version_chain",
@@ -812,8 +819,6 @@ export const HR_EMPLOYMENT_RECORD_CATALOG_REQUIREMENTS = {
     ...HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS.functions,
     ...[
       "esbla_enforce_hr_employment_record_root|41cfedb483f94a0dd9e1e748e4a3724cbc2989894f1e6bc90abfcb6f7c683744",
-      "esbla_enforce_hr_employment_record_version|70dbe86027189c18e3b22bf7476406b03af9ef56c351a1a0fe826a04074d981e",
-      "esbla_enforce_hr_employment_service_control|e06fe09499d4e571ce14d9fc65336413c9333854eb99ffd1a725f5255d9a488f",
       "esbla_require_hr_employment_record_version_chain|46974d0e27e7f4d91fdbcec665e3a10fa5d01e0f7a2050af7555867041b09152",
     ].map((entry) => {
       const [name, sourceSha256] = entry.split("|");
@@ -829,5 +834,35 @@ export const HR_EMPLOYMENT_RECORD_CATALOG_REQUIREMENTS = {
         volatility: "v",
       };
     }),
+    ...[
+      "esbla_enforce_hr_employment_record_version|0|69e506cd877a46b8be7a6c7560f73e6a2a2fd604543844acb1d9830f8a2ff260|search_path=pg_catalog",
+      "esbla_enforce_hr_employment_service_control|0|ab889f23fe8c4fc2d535f0b3d2dccf91b107f15aea34877dd4e592e023d02f15|search_path=pg_catalog",
+      "esbla_sync_hr_employment_record_service_activation|1|0ebe50ee1ac46094fa4c241139546a2a7552fece90362db898d05879c29ae7e6|search_path=pg_catalog,row_security=on",
+    ].map((entry) => {
+      const [name, securityDefiner, sourceSha256, config] = entry.split("|");
+      return {
+        config,
+        language: "plpgsql",
+        name,
+        ownerOnlyExecutable: true,
+        publicExecutable: false,
+        returnType: "trigger",
+        securityDefiner: securityDefiner === "1",
+        sourceSha256,
+        volatility: "v",
+      };
+    }),
+    {
+      applicationExecutable: true,
+      config: "search_path=pg_catalog,row_security=on",
+      identityArguments: "integer, text, boolean",
+      language: "plpgsql",
+      name: "esbla_configure_hr_employment_record_settings",
+      publicExecutable: false,
+      returnType: "void",
+      securityDefiner: true,
+      sourceSha256: "6114d08233f9a63d328efc88a2b87b71cda0c54ed91cbb3ab2806ee8477c2d26",
+      volatility: "v",
+    },
   ],
 };

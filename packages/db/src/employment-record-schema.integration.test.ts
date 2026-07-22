@@ -6,6 +6,9 @@ import { migrateDatabase } from "./migrate.js";
 const ids = {
   actor: "14000000-0000-4000-8000-000000000001",
   correlation: "54000000-0000-4000-8000-000000000001",
+  historicalActor: "14000000-0000-4000-8000-000000000003",
+  historicalMembership: "24000000-0000-4000-8000-000000000003",
+  historicalTenant: "06000000-0000-4000-8000-000000000003",
   membership: "24000000-0000-4000-8000-000000000001",
   otherMembership: "24000000-0000-4000-8000-000000000002",
   otherPrincipal: "14000000-0000-4000-8000-000000000002",
@@ -14,6 +17,7 @@ const ids = {
 } as const;
 
 let applicationRole: string;
+let historicalWorkerProfileId: string;
 let migrationPool: Pool;
 let pool: Pool;
 let otherWorkerProfileId: string;
@@ -86,19 +90,24 @@ beforeAll(async () => {
 
   await migrationPool.query(
     `INSERT INTO tenants (tenant_id, name) VALUES ($1, 'Employment Tenant'),
-       ($2, 'Other Employment Tenant')`,
-    [ids.tenant, ids.otherTenant],
+       ($2, 'Other Employment Tenant'), ($3, 'Historical Employment Tenant')`,
+    [ids.tenant, ids.otherTenant, ids.historicalTenant],
   );
   await migrationPool.query(
     `INSERT INTO principals (principal_id, display_name) VALUES ($1, 'Employment Actor'),
-       ($2, 'Other Employment Actor')`,
-    [ids.actor, ids.otherPrincipal],
+       ($2, 'Other Employment Actor'), ($3, 'Historical Employment Actor')`,
+    [ids.actor, ids.otherPrincipal, ids.historicalActor],
   );
   await tenantTransaction(migrationPool, ids.tenant, ids.actor, async (client) => {
     await client.query(
       `INSERT INTO memberships (membership_id, tenant_id, principal_id, role_key)
-       VALUES ($1, $2, $3, 'hr_operator')`,
+       VALUES ($1, $2, $3, 'tenant_admin')`,
       [ids.membership, ids.tenant, ids.actor],
+    );
+    await client.query(
+      `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+       VALUES ($1, $2, 'hr.employment.configure_service')`,
+      [ids.tenant, ids.actor],
     );
     await client.query(
       `INSERT INTO service_activations (tenant_id, service_key, state, version)
@@ -120,8 +129,27 @@ beforeAll(async () => {
       [ids.otherTenant],
     );
   });
+  await tenantTransaction(
+    migrationPool,
+    ids.historicalTenant,
+    ids.historicalActor,
+    async (client) => {
+      await client.query(
+        `INSERT INTO memberships (membership_id, tenant_id, principal_id, role_key)
+       VALUES ($1, $2, $3, 'hr_operator')`,
+        [ids.historicalMembership, ids.historicalTenant, ids.historicalActor],
+      );
+      await client.query(
+        `INSERT INTO service_activations (tenant_id, service_key, state, version)
+       VALUES ($1, 'workforce_profile', 'active', 1),
+              ($1, 'employment_record', 'active', 1)`,
+        [ids.historicalTenant],
+      );
+    },
+  );
   workerProfileId = await createActiveWorker(ids.tenant, ids.actor);
   otherWorkerProfileId = await createActiveWorker(ids.otherTenant, ids.otherPrincipal);
+  historicalWorkerProfileId = await createActiveWorker(ids.historicalTenant, ids.historicalActor);
 });
 
 afterAll(async () => {
@@ -168,6 +196,7 @@ describe("Employment Record persistence and immutability kernel", () => {
         [
           "idx_hr_employment_record_versions_tenant_record_cursor",
           "idx_hr_employment_records_tenant_cursor",
+          "idx_hr_employment_records_tenant_order_cursor",
           "idx_hr_employment_records_tenant_worker_active_head",
           "uq_hr_employment_record_service_control_tenant_key",
           "uq_hr_employment_record_versions_composite_identity",
@@ -180,12 +209,38 @@ describe("Employment Record persistence and immutability kernel", () => {
     expect(indexes.rows.map(({ name }) => name)).toEqual([
       "idx_hr_employment_record_versions_tenant_record_cursor",
       "idx_hr_employment_records_tenant_cursor",
+      "idx_hr_employment_records_tenant_order_cursor",
       "idx_hr_employment_records_tenant_worker_active_head",
       "uq_hr_employment_record_service_control_tenant_key",
       "uq_hr_employment_record_versions_composite_identity",
       "uq_hr_employment_record_versions_tenant_record_version",
       "uq_hr_employment_record_versions_tenant_successor",
       "uq_hr_employment_records_tenant_worker_current",
+    ]);
+
+    const cursorIndexes = await migrationPool.query<{ definition: string; name: string }>(
+      `SELECT indexname AS name, indexdef AS definition
+       FROM pg_catalog.pg_indexes
+       WHERE schemaname='public' AND indexname = ANY($1::text[])
+       ORDER BY indexname`,
+      [
+        [
+          "idx_hr_employment_records_tenant_cursor",
+          "idx_hr_employment_records_tenant_order_cursor",
+        ],
+      ],
+    );
+    expect(cursorIndexes.rows).toEqual([
+      {
+        definition:
+          "CREATE INDEX idx_hr_employment_records_tenant_cursor ON public.hr_employment_records USING btree (tenant_id, worker_profile_id, created_at DESC NULLS LAST, employment_record_id DESC NULLS LAST)",
+        name: "idx_hr_employment_records_tenant_cursor",
+      },
+      {
+        definition:
+          "CREATE INDEX idx_hr_employment_records_tenant_order_cursor ON public.hr_employment_records USING btree (tenant_id, created_at DESC NULLS LAST, employment_record_id DESC NULLS LAST)",
+        name: "idx_hr_employment_records_tenant_order_cursor",
+      },
     ]);
 
     const privileges = await migrationPool.query<{
@@ -215,11 +270,11 @@ describe("Employment Record persistence and immutability kernel", () => {
     expect(privileges.rows).toEqual([
       {
         delete: false,
-        insert: true,
+        insert: false,
         name: "hr_employment_record_service_control",
         select: true,
         truncate: false,
-        update: true,
+        update: false,
       },
       {
         delete: false,
@@ -242,11 +297,6 @@ describe("Employment Record persistence and immutability kernel", () => {
 
   it("preserves an immutable same-root version chain and exact root head", async () => {
     const chain = await tenantTransaction(pool, ids.tenant, ids.actor, async (client) => {
-      await client.query(
-        `INSERT INTO hr_employment_record_service_control (tenant_id)
-         VALUES ($1)`,
-        [ids.tenant],
-      );
       const root = await client.query<{ employment_record_id: string }>(
         `INSERT INTO hr_employment_records (tenant_id, worker_profile_id)
          VALUES ($1, $2) RETURNING employment_record_id::text`,
@@ -258,8 +308,8 @@ describe("Employment Record persistence and immutability kernel", () => {
       const first = await client.query<{ employment_record_version_id: string }>(
         `INSERT INTO hr_employment_record_versions
            (tenant_id, employment_record_id, worker_profile_id, effective_from,
-            employment_type_code, version, version_kind)
-         VALUES ($1, $2, $3, '2026-01-01', 'standard', 1, 'effective')
+            effective_to, employment_type_code, version, version_kind)
+         VALUES ($1, $2, $3, '2026-01-01', '2026-03-31', 'standard', 1, 'effective')
          RETURNING employment_record_version_id::text`,
         [ids.tenant, employmentRecordId, workerProfileId],
       );
@@ -286,11 +336,28 @@ describe("Employment Record persistence and immutability kernel", () => {
         [ids.tenant, employmentRecordId, secondVersionId],
       );
 
+      await client.query("SAVEPOINT open_ended_successor_rejection");
+      try {
+        await expectDatabaseError(
+          () =>
+            client.query(
+              `INSERT INTO hr_employment_record_versions
+                 (tenant_id, employment_record_id, worker_profile_id, effective_from,
+                  supersedes_version_id, version, version_kind)
+               VALUES ($1, $2, $3, '2026-07-01', $4, 3, 'effective')`,
+              [ids.tenant, employmentRecordId, workerProfileId, secondVersionId],
+            ),
+          { code: "55000", message: "open-ended employment record head cannot be superseded" },
+        );
+      } finally {
+        await client.query("ROLLBACK TO SAVEPOINT open_ended_successor_rejection");
+      }
+
       const ended = await client.query<{ employment_record_version_id: string }>(
         `INSERT INTO hr_employment_record_versions
            (tenant_id, employment_record_id, worker_profile_id, effective_from, effective_to,
-            supersedes_version_id, version, version_kind, terminal_version)
-         VALUES ($1, $2, $3, '2026-04-01', '2026-06-30', $4, 3, 'end', true)
+            organization_reference, supersedes_version_id, version, version_kind, terminal_version)
+         VALUES ($1, $2, $3, '2026-04-01', '2026-06-30', 'org-a', $4, 3, 'end', true)
          RETURNING employment_record_version_id::text`,
         [ids.tenant, employmentRecordId, workerProfileId, secondVersionId],
       );
@@ -374,6 +441,196 @@ describe("Employment Record persistence and immutability kernel", () => {
     expect(hidden.rows).toEqual([]);
   });
 
+  it("synchronizes activation and permits only guarded tenant-admin settings revisions", async () => {
+    const initial = await tenantTransaction(pool, ids.tenant, ids.actor, (client) =>
+      client.query(
+        `SELECT settings_version, row_version
+         FROM hr_employment_record_service_control
+         WHERE tenant_id=$1 AND service_key='employment_record'`,
+        [ids.tenant],
+      ),
+    );
+    expect(initial.rows).toEqual([{ row_version: 1, settings_version: 1 }]);
+
+    await expectDatabaseError(
+      () =>
+        tenantTransaction(pool, ids.tenant, ids.actor, (client) =>
+          client.query(
+            `UPDATE hr_employment_record_service_control SET settings_version=2, row_version=2
+             WHERE tenant_id=$1`,
+            [ids.tenant],
+          ),
+        ),
+      { code: "42501" },
+    );
+    await expectDatabaseError(
+      () =>
+        tenantTransaction(pool, ids.tenant, ids.actor, (client) =>
+          client.query(
+            "SELECT public.esbla_configure_hr_employment_record_settings(1, 'unspecified', true)",
+          ),
+        ),
+      { code: "22023" },
+    );
+    await expectDatabaseError(
+      () =>
+        tenantTransaction(pool, ids.tenant, ids.actor, (client) =>
+          client.query(
+            "SELECT public.esbla_configure_hr_employment_record_settings(1, 'unspecified,,fixed', false)",
+          ),
+        ),
+      { code: "22023" },
+    );
+    await expectDatabaseError(
+      () =>
+        tenantTransaction(pool, ids.otherTenant, ids.otherPrincipal, (client) =>
+          client.query(
+            "SELECT public.esbla_configure_hr_employment_record_settings(1, 'unspecified', false)",
+          ),
+        ),
+      { code: "42501" },
+    );
+
+    const configured = await tenantTransaction(pool, ids.tenant, ids.actor, async (client) => {
+      await client.query(
+        "SELECT public.esbla_configure_hr_employment_record_settings(1, 'unspecified,Fixed Term', false)",
+      );
+      return await client.query(
+        `SELECT control.settings_version, control.row_version,
+                jsonb_object_agg(setting.setting_key, setting.value ORDER BY setting.setting_key)
+                  AS settings
+         FROM hr_employment_record_service_control control
+         JOIN tenant_settings setting ON setting.tenant_id=control.tenant_id
+         WHERE control.tenant_id=$1 AND control.service_key='employment_record'
+           AND setting.setting_key IN (
+             'hr.employment_record.employment_type_codes',
+             'hr.employment_record.effective_range_overlap_allowed'
+           )
+         GROUP BY control.settings_version, control.row_version`,
+        [ids.tenant],
+      );
+    });
+    expect(configured.rows).toEqual([
+      {
+        row_version: 2,
+        settings: {
+          "hr.employment_record.effective_range_overlap_allowed": false,
+          "hr.employment_record.employment_type_codes": "unspecified,Fixed Term",
+        },
+        settings_version: 2,
+      },
+    ]);
+    await expectDatabaseError(
+      () =>
+        tenantTransaction(pool, ids.tenant, ids.actor, (client) =>
+          client.query(
+            "SELECT public.esbla_configure_hr_employment_record_settings(1, 'unspecified', false)",
+          ),
+        ),
+      { code: "40001" },
+    );
+
+    const lifecycle = await tenantTransaction(
+      pool,
+      ids.otherTenant,
+      ids.otherPrincipal,
+      async (client) => {
+        await client.query(
+          `UPDATE service_activations SET state='inactive', version=2
+           WHERE tenant_id=$1 AND service_key='employment_record'`,
+          [ids.otherTenant],
+        );
+        await client.query(
+          `UPDATE service_activations SET state='active', version=3
+           WHERE tenant_id=$1 AND service_key='employment_record'`,
+          [ids.otherTenant],
+        );
+        return await client.query(
+          `SELECT settings_version, row_version
+           FROM hr_employment_record_service_control
+           WHERE tenant_id=$1 AND service_key='employment_record'`,
+          [ids.otherTenant],
+        );
+      },
+    );
+    expect(lifecycle.rows).toEqual([{ row_version: 3, settings_version: 1 }]);
+  });
+
+  it("rejects a successor that overlaps any immutable pre-migration effective version", async () => {
+    let employmentRecordId = "";
+    await migrationPool.query(
+      `ALTER TABLE hr_employment_record_versions
+       DISABLE TRIGGER hr_employment_record_versions_enforce_state`,
+    );
+    try {
+      employmentRecordId = await tenantTransaction(
+        migrationPool,
+        ids.historicalTenant,
+        ids.historicalActor,
+        async (client) => {
+          const root = await client.query<{ employment_record_id: string }>(
+            `INSERT INTO hr_employment_records (tenant_id, worker_profile_id)
+             VALUES ($1,$2) RETURNING employment_record_id::text`,
+            [ids.historicalTenant, historicalWorkerProfileId],
+          );
+          const recordId = root.rows[0]?.employment_record_id ?? "";
+          const first = await client.query<{ employment_record_version_id: string }>(
+            `INSERT INTO hr_employment_record_versions
+               (tenant_id,employment_record_id,worker_profile_id,effective_from,effective_to,
+                version,version_kind)
+             VALUES ($1,$2,$3,'2026-01-01','2026-12-31',1,'effective')
+             RETURNING employment_record_version_id::text`,
+            [ids.historicalTenant, recordId, historicalWorkerProfileId],
+          );
+          await client.query(
+            `UPDATE hr_employment_records SET status='active',current_version_id=$3,row_version=2
+             WHERE tenant_id=$1 AND employment_record_id=$2`,
+            [ids.historicalTenant, recordId, first.rows[0]?.employment_record_version_id],
+          );
+          const second = await client.query<{ employment_record_version_id: string }>(
+            `INSERT INTO hr_employment_record_versions
+               (tenant_id,employment_record_id,worker_profile_id,effective_from,effective_to,
+                supersedes_version_id,version,version_kind)
+             VALUES ($1,$2,$3,'2026-02-01','2026-03-31',$4,2,'effective')
+             RETURNING employment_record_version_id::text`,
+            [
+              ids.historicalTenant,
+              recordId,
+              historicalWorkerProfileId,
+              first.rows[0]?.employment_record_version_id,
+            ],
+          );
+          await client.query(
+            `UPDATE hr_employment_records SET current_version_id=$3,row_version=3
+             WHERE tenant_id=$1 AND employment_record_id=$2`,
+            [ids.historicalTenant, recordId, second.rows[0]?.employment_record_version_id],
+          );
+          return recordId;
+        },
+      );
+    } finally {
+      await migrationPool.query(
+        `ALTER TABLE hr_employment_record_versions
+         ENABLE TRIGGER hr_employment_record_versions_enforce_state`,
+      );
+    }
+
+    await expectDatabaseError(
+      () =>
+        tenantTransaction(pool, ids.historicalTenant, ids.historicalActor, (client) =>
+          client.query(
+            `INSERT INTO hr_employment_record_versions
+               (tenant_id,employment_record_id,worker_profile_id,effective_from,effective_to,
+                supersedes_version_id,version,version_kind)
+             SELECT $1,$2,$3,'2026-04-01','2026-05-31',current_version_id,3,'effective'
+             FROM hr_employment_records WHERE tenant_id=$1 AND employment_record_id=$2`,
+            [ids.historicalTenant, employmentRecordId, historicalWorkerProfileId],
+          ),
+        ),
+      { code: "55000", message: "employment record effective ranges cannot overlap" },
+    );
+  });
+
   it("fails closed on cross-tenant roots, invalid versions, and competing successors", async () => {
     await expectDatabaseError(
       () =>
@@ -409,8 +666,8 @@ describe("Employment Record persistence and immutability kernel", () => {
         const first = await client.query<{ employment_record_version_id: string }>(
           `INSERT INTO hr_employment_record_versions
            (tenant_id, employment_record_id, worker_profile_id, effective_from,
-            version, version_kind)
-         VALUES ($1, $2, $3, '2026-01-01', 1, 'effective')
+            effective_to, version, version_kind)
+         VALUES ($1, $2, $3, '2026-01-01', '2026-01-31', 1, 'effective')
          RETURNING employment_record_version_id::text`,
           [ids.otherTenant, employmentRecordId, otherWorkerProfileId],
         );
@@ -423,6 +680,19 @@ describe("Employment Record persistence and immutability kernel", () => {
         );
         return firstVersionId ?? "";
       },
+    );
+    await expectDatabaseError(
+      () =>
+        tenantTransaction(pool, ids.otherTenant, ids.otherPrincipal, (client) =>
+          client.query(
+            `INSERT INTO hr_employment_record_versions
+               (tenant_id, employment_record_id, worker_profile_id, effective_from, effective_to,
+                supersedes_version_id, version, version_kind)
+             VALUES ($1, $2, $3, '2026-01-31', '2026-02-15', $4, 2, 'effective')`,
+            [ids.otherTenant, employmentRecordId, otherWorkerProfileId, firstVersionId],
+          ),
+        ),
+      { code: "55000", message: "employment record successor must begin after its predecessor" },
     );
     await expectDatabaseError(
       () =>

@@ -35,10 +35,15 @@ export const hrEmploymentRecordSettingsDefaults: HrEmploymentRecordSettings = Ob
   effectiveRangeOverlapAllowed: false,
   employmentTypeCodes: "unspecified",
 });
-export interface HrServiceConfigureBody {
-  readonly expectedSettingsVersion: number;
-  readonly settings: HrWorkforceProfileSettings;
-}
+export type HrServiceConfigureBody =
+  | Readonly<{
+      expectedSettingsVersion: number;
+      settings: HrWorkforceProfileSettings;
+    }>
+  | Readonly<{
+      expectedSettingsVersion: number;
+      settings: HrEmploymentRecordSettings;
+    }>;
 interface HrServiceControlBase {
   readonly activationState: "active" | "inactive";
   readonly activationVersion: number;
@@ -102,7 +107,7 @@ const employmentRecordSettingsSchema = {
   properties: {
     effectiveRangeOverlapAllowed: { const: false },
     employmentTypeCodes: {
-      pattern: "^(?=[^,]*[^\\s,])[^,]+(?:,(?=[^,]*[^\\s,])[^,]+)*$",
+      pattern: "^[^\\s,](?:[^,]*[^\\s,])?(?:,[^\\s,](?:[^,]*[^\\s,])?)*$",
       type: "string",
     },
   },
@@ -119,7 +124,7 @@ export const hrServiceConfigureBodySchema = {
   additionalProperties: false,
   properties: {
     expectedSettingsVersion: { ...positiveVersionSchema, maximum: maximumPostgresInteger },
-    settings: workforceProfileSettingsSchema,
+    settings: { oneOf: [workforceProfileSettingsSchema, employmentRecordSettingsSchema] },
   },
   required: ["expectedSettingsVersion", "settings"],
   type: "object",
@@ -229,7 +234,7 @@ function parseEmploymentRecordSettings(value: unknown, label: string): HrEmploym
   if (
     value.effectiveRangeOverlapAllowed !== false ||
     typeof value.employmentTypeCodes !== "string" ||
-    value.employmentTypeCodes.split(",").some((code) => code.trim().length === 0)
+    value.employmentTypeCodes.split(",").some((code) => code.length === 0 || code.trim() !== code)
   ) {
     throw new TypeError(`${label} is invalid`);
   }
@@ -309,7 +314,14 @@ export function parseHrServiceConfigureBody(value: unknown): HrServiceConfigureB
   if (value.expectedSettingsVersion > maximumPostgresInteger) {
     throw new TypeError("HrServiceConfigureRequestV1.expectedSettingsVersion is invalid");
   }
-  parseWorkforceProfileSettings(value.settings, "HrServiceConfigureRequestV1.settings");
+  if (!isRecord(value.settings)) {
+    throw new TypeError("HrServiceConfigureRequestV1.settings must be an object");
+  }
+  if (Object.hasOwn(value.settings, "effectiveRangeOverlapAllowed")) {
+    parseEmploymentRecordSettings(value.settings, "HrServiceConfigureRequestV1.settings");
+  } else {
+    parseWorkforceProfileSettings(value.settings, "HrServiceConfigureRequestV1.settings");
+  }
   return value as unknown as HrServiceConfigureBody;
 }
 

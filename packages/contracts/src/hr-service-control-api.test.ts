@@ -120,6 +120,22 @@ describe("shared HR service-control contracts", () => {
     }
   });
 
+  it("accepts the exact locked Employment Record settings replacement", () => {
+    const body = { expectedSettingsVersion: 3, settings: employmentRecordSettings };
+    expect(parseHrServiceConfigureBody(body)).toBe(body);
+    for (const invalid of [
+      { ...body, settings: { ...body.settings, effectiveRangeOverlapAllowed: true } },
+      { ...body, settings: { ...body.settings, employmentTypeCodes: "" } },
+      { ...body, settings: { ...body.settings, employmentTypeCodes: " unspecified" } },
+      { ...body, settings: { ...body.settings, employmentTypeCodes: "unspecified, fixed" } },
+      { ...body, settings: { ...body.settings, employmentTypeCodes: "unspecified," } },
+      { ...body, settings: { ...body.settings, extra: true } },
+      { ...body, settings: {} },
+    ]) {
+      expect(() => parseHrServiceConfigureBody(invalid)).toThrow();
+    }
+  });
+
   it("strictly parses the exact six-field response for every included service", () => {
     for (const serviceKey of hrServiceKeys) {
       const response = {
@@ -151,6 +167,8 @@ describe("shared HR service-control contracts", () => {
     for (const settings of [
       { ...employmentRecordSettings, employmentTypeCodes: "" },
       { ...employmentRecordSettings, employmentTypeCodes: "unspecified,,fixed" },
+      { ...employmentRecordSettings, employmentTypeCodes: " unspecified" },
+      { ...employmentRecordSettings, employmentTypeCodes: "unspecified, fixed" },
       { ...employmentRecordSettings, effectiveRangeOverlapAllowed: true },
       { ...employmentRecordSettings, privateSetting: true },
     ]) {
