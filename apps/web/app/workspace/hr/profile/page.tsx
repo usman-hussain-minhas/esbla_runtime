@@ -1,4 +1,4 @@
-import { BadgeCheck, LoaderCircle, UserRoundX } from "lucide-react";
+import { ArrowRight, BadgeCheck, LoaderCircle, UserRoundX } from "lucide-react";
 import { Suspense } from "react";
 import { loadOwnWorkforceProfile } from "../../../../lib/hr-workforce-profile";
 
@@ -38,6 +38,15 @@ async function ProfilePanel() {
             <dd>Connected</dd>
           </div>
         </dl>
+        <div className="work-queue-actions">
+          <a
+            className="text-command"
+            href={`/workspace/hr/profile/by-id/${encodeURIComponent(state.profile.workerProfileId)}?returnContext=own`}
+          >
+            View profile history
+            <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
+          </a>
+        </div>
       </section>
     </div>
   );
