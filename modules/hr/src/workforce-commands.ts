@@ -189,6 +189,24 @@ export async function createWorkforceProfile(
       const replay = await readWorkforceMutationReplay(transaction, receipt);
       if (replay) return commandResult(replay, true);
 
+      await transaction.client.query(
+        "SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended($1::text, 0))",
+        [`hr.workforce_profile.settings.v1:${transaction.context.tenantId}`],
+      );
+      const control = await transaction.client.query<{ settings_version: number }>(
+        `SELECT settings_version
+         FROM hr_workforce_profile_service_control
+         WHERE tenant_id=$1 AND service_key='workforce_profile'`,
+        [transaction.context.tenantId],
+      );
+      const settingsVersion = control.rows[0]?.settings_version;
+      if (
+        typeof settingsVersion !== "number" ||
+        !Number.isSafeInteger(settingsVersion) ||
+        settingsVersion < 1
+      ) {
+        throw workforceProfileConflict("Workforce Profile settings control is missing");
+      }
       const required = await resolveSetting(
         transaction,
         workforceProfileSettings.employeeNumberRequired,
@@ -197,6 +215,19 @@ export async function createWorkforceProfile(
         transaction,
         workforceProfileSettings.unlinkedWorkerCreationAllowed,
       );
+      const settingsCurrent =
+        settingsVersion === 1
+          ? required.source === "registered_default" &&
+            required.version === null &&
+            unlinkedAllowed.source === "registered_default" &&
+            unlinkedAllowed.version === null
+          : required.source === "tenant_override" &&
+            required.version === settingsVersion - 1 &&
+            unlinkedAllowed.source === "tenant_override" &&
+            unlinkedAllowed.version === settingsVersion - 1;
+      if (!settingsCurrent) {
+        throw workforceProfileConflict("Workforce Profile settings are not current");
+      }
       if (required.value && employeeNumber === null) {
         throw workforceInputInvalid("Employee number is required by tenant policy");
       }

@@ -68,10 +68,16 @@ import {
   workspaceTaskSchema,
 } from "@esbla/contracts";
 import {
+  type HrServiceConfigureBody,
+  hrServiceConfigureBodySchema,
+  parseHrServiceConfigureBody,
+} from "@esbla/contracts/hr-service-control-api";
+import {
   activateWorkforceProfileService,
   approveLeaveRequest,
   changeWorkforceReportingRelationship,
   changeWorkforceStatus,
+  configureWorkforceProfileService,
   createWorkforceProfile,
   deactivateWorkforceProfileService,
   getAuthorizedWorkforceProfileDetail,
@@ -96,7 +102,7 @@ import {
 } from "@esbla/workspace";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import type { Pool } from "pg";
-import type { RequestAuthenticator } from "./auth.js";
+import { AuthError, type RequestAuthenticator } from "./auth.js";
 import { sendProblem } from "./problems.js";
 
 declare module "fastify" {
@@ -124,6 +130,18 @@ function idempotencyKey(request: FastifyRequest): string {
   const key = Array.isArray(value) ? value[0] : value;
   if (!key) throw new Error("authenticated idempotency key is missing");
   return key;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function assertStrictMutationIdempotencyKey(request: FastifyRequest): void {
+  const value = request.headers["idempotency-key"];
+  if (Array.isArray(value) || !value) {
+    throw new AuthError("AUTH_REQUIRED", "A UUID Idempotency-Key is required for mutations");
+  }
+  if (!UUID_PATTERN.test(value)) {
+    throw new AuthError("AUTH_INVALID", "The Idempotency-Key is invalid");
+  }
 }
 
 function requestContractViolation(): Error & { readonly validation: readonly unknown[] } {
@@ -180,6 +198,7 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     hrSubmitLeaveRequestBodySchema,
     hrServiceControlQuerySchema,
     hrServiceActivateBodySchema,
+    hrServiceConfigureBodySchema,
     hrServiceDeactivateBodySchema,
     hrServiceControlSchema,
     hrWorkforceCreateProfileBodySchema,
@@ -319,6 +338,35 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
         operationContext(request),
         request.body,
       );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(result.control);
+    },
+  );
+
+  server.patch<{ Body: HrServiceConfigureBody }>(
+    "/v1/hr/workforce-profiles/service-control/settings",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictMutationIdempotencyKey(request);
+          assertStrictRequest(parseHrServiceConfigureBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrServiceConfigureRequestV1#" },
+        response: {
+          200: { $ref: "HrServiceControlResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = {
+        ...operationContext(request),
+        correlationId: idempotencyKey(request).toLowerCase(),
+      };
+      const result = await configureWorkforceProfileService(options.pool, context, request.body);
       reply.header("idempotent-replayed", String(result.replayed));
       return reply.code(200).send(result.control);
     },

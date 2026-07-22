@@ -15,6 +15,7 @@ export const hrManifest = defineModuleManifest({
     Object.freeze({ exposure: "tenant", id: "hr.workforce.change_reporting_relationship" }),
     Object.freeze({ exposure: "tenant", id: "hr.workforce.change_status" }),
     Object.freeze({ exposure: "tenant", id: "hr.workforce.create_profile" }),
+    Object.freeze({ exposure: "admin", id: "hr.workforce.configure_service" }),
     Object.freeze({ exposure: "admin", id: "hr.workforce.deactivate_service" }),
     Object.freeze({ exposure: "tenant", id: "hr.workforce.link_principal" }),
     Object.freeze({ exposure: "tenant", id: "hr.workforce.list_authorized" }),

@@ -31,6 +31,13 @@ function context(
 ) {
   return workforceContext(tenantId, actorPrincipalId, randomUUID());
 }
+function withSettingProof<T extends QueryResultRow>(before: T, mutations: number): T {
+  return {
+    ...before,
+    evidence: Number(before.evidence) + mutations * 2,
+    outbox: Number(before.outbox) + mutations,
+  };
+}
 
 async function tenantQuery<Row extends QueryResultRow>(
   tenantId: string,
@@ -100,6 +107,15 @@ async function setWorkforceSetting(
     throw new Error("Unsupported Workforce Profile setting fixture value");
   }
   await withWorkforceTenant(workforceIds.tenantA, async (client) => {
+    await client.query(
+      "SELECT set_config('app.actor_principal_id',$1,true), set_config('app.correlation_id',$2,true)",
+      [workforceIds.tenantAdminA, randomUUID()],
+    );
+    await client.query(
+      `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+       VALUES ($1,$2,'hr.workforce.configure_service') ON CONFLICT DO NOTHING`,
+      [workforceIds.tenantA, workforceIds.tenantAdminA],
+    );
     const selected = await client.query<{
       employee_number_required: boolean;
       manager_visibility: string;
@@ -578,7 +594,9 @@ describe("Workforce Profile domain", () => {
       await setWorkforceSetting(requiredKey, null);
       await setWorkforceSetting(unlinkedKey, null);
     }
-    expect(await readWorkforceTenantSnapshot(workforceIds.tenantA)).toEqual(beforeSettings);
+    expect(await readWorkforceTenantSnapshot(workforceIds.tenantA)).toEqual(
+      withSettingProof(beforeSettings, 4),
+    );
 
     const idempotencyKey = randomUUID();
     await createWorkforceProfile(workforcePool, context(), {
@@ -924,7 +942,9 @@ describe("Workforce Profile domain", () => {
         ],
       );
     }
-    expect(await readWorkforceTenantSnapshot(workforceIds.tenantA)).toEqual(before);
+    expect(await readWorkforceTenantSnapshot(workforceIds.tenantA)).toEqual(
+      withSettingProof(before, 2),
+    );
   });
   it("reads one atomic privacy-minimized detail snapshot through current role-scoped authority", async () => {
     const previousManager = await createActiveReportingProfile("manager");
@@ -1119,7 +1139,9 @@ describe("Workforce Profile domain", () => {
       await setWorkforceSetting("hr.workforce_profile.manager_visibility", null);
       for (const principalId of authorized) await setDetailCapability(principalId, false);
     }
-    expect(await reportingSnapshot(workforceIds.tenantA, report.workerProfileId)).toEqual(before);
+    expect(await reportingSnapshot(workforceIds.tenantA, report.workerProfileId)).toEqual(
+      withSettingProof(before, 3),
+    );
   });
   it("table-drives authority, activation, manager-eligibility, and tenant denials", async () => {
     const report = await createActiveReportingProfile("employee");

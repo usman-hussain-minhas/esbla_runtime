@@ -372,14 +372,14 @@ beforeAll(async () => {
   await migrationPool.query(`GRANT SELECT, INSERT ON tenants, principals TO ${applicationRole}`);
   await migrationPool.query(
     `GRANT SELECT, INSERT, UPDATE, DELETE
-     ON memberships, service_activations, tenant_settings, work_items,
+     ON memberships, service_activations, work_items,
         outbox_events, hr_leave_requests
      TO ${applicationRole}`,
   );
   await migrationPool.query(`GRANT SELECT, INSERT ON evidence_events TO ${applicationRole}`);
   await migrationPool.query(
     `GRANT SELECT
-     ON hr_workforce_profile_service_control, membership_capabilities,
+     ON hr_workforce_profile_service_control, membership_capabilities, tenant_settings,
         hr_workforce_status_history
      TO ${applicationRole}`,
   );
@@ -1121,7 +1121,7 @@ describe("Workforce Profile service-control API boundary", () => {
     });
     expect(activated.response.statusCode).toBe(200);
     expect(activated.response.headers["idempotent-replayed"]).toBe("false");
-    expect(activated.response.json()).toEqual({
+    expect(activated.response.json()).toMatchObject({
       activationState: "active",
       activationVersion: 1,
       serviceKey: "workforce_profile",

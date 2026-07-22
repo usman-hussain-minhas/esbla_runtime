@@ -78,6 +78,13 @@
       "when": 1784706016430,
       "tag": "0010_workforce_profile_settings_persistence",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1784709676857,
+      "tag": "0011_workforce_profile_settings_runtime_grant",
+      "breakpoints": true
     }
   ]
 }

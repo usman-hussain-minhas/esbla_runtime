@@ -147,6 +147,11 @@ export const HR_WORKFORCE_PROFILE_REQUIRED_MIGRATIONS = [
     hash: "b2801c3ade245a891ba0b5be587b62693f6566f1e5e1e81250d6237e736d4b55",
     id: "0010",
   },
+  {
+    createdAt: 1784709676857,
+    hash: "eea34bff2286a27ba496aca130be891c5088c3ee91506b244834ae5e9c547e95",
+    id: "0011",
+  },
 ] as const;
 const runtimeTablePrivilege = (name: string, writable = false) => ({
   delete: false,
@@ -159,6 +164,7 @@ const runtimeTablePrivilege = (name: string, writable = false) => ({
   update: writable,
 });
 export const HR_WORKFORCE_PROFILE_RUNTIME_TABLE_PRIVILEGES = [
+  runtimeTablePrivilege("public.tenant_settings"),
   runtimeTablePrivilege("public.hr_workforce_profile_service_control"),
   runtimeTablePrivilege("public.membership_capabilities"),
   runtimeTablePrivilege("public.hr_worker_profiles", true),
@@ -594,13 +600,13 @@ export const HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS = {
     {
       config: "search_path=pg_catalog, public",
       identityArguments: "integer, boolean, text, boolean",
+      applicationExecutable: true,
       language: "plpgsql",
       name: "esbla_configure_hr_workforce_profile_settings",
-      ownerOnlyExecutable: true,
       publicExecutable: false,
       returnType: "void",
       securityDefiner: true,
-      sourceSha256: "435771e4d37af26d5c22e03878aa12c60e9c3a824c4891ffef4ae765c28097fe",
+      sourceSha256: "0189ff52261e59c6135407dc6185c19cce339984926df358795bd1f839a58d7e",
       volatility: "v",
     },
   ],

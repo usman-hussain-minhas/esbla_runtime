@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   hrServiceActivateBodySchema,
+  hrServiceConfigureBodySchema,
   hrServiceControlQuerySchema,
   hrServiceControlSchema,
   hrServiceDeactivateBodySchema,
   hrServiceKeys,
   parseHrServiceActivateBody,
+  parseHrServiceConfigureBody,
   parseHrServiceControl,
   parseHrServiceControlQuery,
   parseHrServiceDeactivateBody,
@@ -15,6 +17,11 @@ const serviceControl = {
   activationState: "active",
   activationVersion: 3,
   serviceKey: "workforce_profile",
+  settings: {
+    employeeNumberRequired: false,
+    managerVisibility: "minimized",
+    unlinkedWorkerCreationAllowed: true,
+  },
   settingsVersion: 2,
   updatedAt: "2026-07-21T08:30:00.000Z",
   version: 4,
@@ -25,11 +32,13 @@ describe("shared HR service-control contracts", () => {
     expect([
       hrServiceControlQuerySchema.$id,
       hrServiceActivateBodySchema.$id,
+      hrServiceConfigureBodySchema.$id,
       hrServiceDeactivateBodySchema.$id,
       hrServiceControlSchema.$id,
     ]).toEqual([
       "HrServiceControlQueryV1",
       "HrServiceActivateRequestV1",
+      "HrServiceConfigureRequestV1",
       "HrServiceDeactivateRequestV1",
       "HrServiceControlResponseV1",
     ]);
@@ -86,9 +95,32 @@ describe("shared HR service-control contracts", () => {
     }
   });
 
+  it("accepts only an exact full Workforce Profile settings replacement", () => {
+    const body = { expectedSettingsVersion: 2, settings: serviceControl.settings };
+    expect(parseHrServiceConfigureBody(body)).toBe(body);
+    for (const invalid of [
+      {},
+      { ...body, extra: true },
+      { ...body, expectedSettingsVersion: 0 },
+      { ...body, expectedSettingsVersion: 2_147_483_648 },
+      { ...body, settings: { ...body.settings, managerVisibility: "all" } },
+      { ...body, settings: { ...body.settings, employeeNumberRequired: "true" } },
+      {
+        ...body,
+        settings: { ...body.settings, unlinkedWorkerCreationAllowed: false, extra: true },
+      },
+    ]) {
+      expect(() => parseHrServiceConfigureBody(invalid)).toThrow();
+    }
+  });
+
   it("strictly parses the exact six-field response for every included service", () => {
     for (const serviceKey of hrServiceKeys) {
-      const response = { ...serviceControl, serviceKey };
+      const response = {
+        ...serviceControl,
+        serviceKey,
+        settings: serviceKey === "workforce_profile" ? serviceControl.settings : {},
+      };
       expect(parseHrServiceControl(response)).toBe(response);
     }
   });
@@ -99,6 +131,9 @@ describe("shared HR service-control contracts", () => {
       missingVersion,
       { ...serviceControl, privateDetail: "secret" },
       { ...serviceControl, serviceKey: "leave_request" },
+      { ...serviceControl, serviceKey: "attendance" },
+      { ...serviceControl, settings: {} },
+      { ...serviceControl, settings: { ...serviceControl.settings, privateSetting: true } },
       { ...serviceControl, activationState: "enabled" },
       { ...serviceControl, activationVersion: "3" },
       { ...serviceControl, settingsVersion: 1.5 },
