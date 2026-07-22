@@ -8,6 +8,7 @@ import {
   type HrServiceControlQuery,
   type HrServiceDeactivateBody,
   type HrSubmitLeaveRequestBody,
+  type HrWorkforceChangeReportingRelationshipBody,
   type HrWorkforceChangeStatusBody,
   type HrWorkforceCreateProfileBody,
   type HrWorkforceLinkPrincipalBody,
@@ -24,11 +25,13 @@ import {
   hrLeaveRequestPageSchema,
   hrLeaveRequestPathSchema,
   hrLeaveRequestSchema,
+  hrReportingRelationshipSchema,
   hrServiceActivateBodySchema,
   hrServiceControlQuerySchema,
   hrServiceControlSchema,
   hrServiceDeactivateBodySchema,
   hrSubmitLeaveRequestBodySchema,
+  hrWorkforceChangeReportingRelationshipBodySchema,
   hrWorkforceChangeStatusBodySchema,
   hrWorkforceCreateProfileBodySchema,
   hrWorkforceLinkPrincipalBodySchema,
@@ -38,6 +41,7 @@ import {
   parseHrServiceActivateBody,
   parseHrServiceControlQuery,
   parseHrServiceDeactivateBody,
+  parseHrWorkforceChangeReportingRelationshipBody,
   parseHrWorkforceChangeStatusBody,
   parseHrWorkforceCreateProfileBody,
   parseHrWorkforceLinkPrincipalBody,
@@ -59,6 +63,7 @@ import {
 import {
   activateWorkforceProfileService,
   approveLeaveRequest,
+  changeWorkforceReportingRelationship,
   changeWorkforceStatus,
   createWorkforceProfile,
   deactivateWorkforceProfileService,
@@ -171,9 +176,11 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     hrWorkforceCreateProfileBodySchema,
     hrWorkforceLinkPrincipalBodySchema,
     hrWorkforceOwnQuerySchema,
+    hrWorkforceChangeReportingRelationshipBodySchema,
     hrWorkforceChangeStatusBodySchema,
     hrWorkforceProfilePathSchema,
     hrWorkforceProfileSchema,
+    hrReportingRelationshipSchema,
     hrDecideLeaveRequestBodySchema,
     hrLeaveRequestPathSchema,
     hrLeaveListQuerySchema,
@@ -416,6 +423,44 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
       });
       reply.header("idempotent-replayed", String(result.replayed));
       return reply.code(200).send(result.profile);
+    },
+  );
+
+  server.post<{
+    Body: HrWorkforceChangeReportingRelationshipBody;
+    Params: HrWorkforceProfilePath;
+  }>(
+    "/v1/hr/workforce-profiles/:workerProfileId/reporting-relationships",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictRequest(parseHrWorkforceProfilePath, request.params);
+          assertStrictRequest(parseHrWorkforceChangeReportingRelationshipBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrWorkforceChangeReportingRelationshipRequestV1#" },
+        params: { $ref: "HrWorkforceProfilePathV1#" },
+        response: {
+          200: { $ref: "HrReportingRelationshipResponseV1#" },
+          201: { $ref: "HrReportingRelationshipResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await changeWorkforceReportingRelationship(
+        options.pool,
+        operationContext(request),
+        {
+          ...request.body,
+          idempotencyKey: idempotencyKey(request),
+          workerProfileId: request.params.workerProfileId,
+        },
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(result.replayed ? 200 : 201).send(result.relationship);
     },
   );
 

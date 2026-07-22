@@ -22,6 +22,7 @@ describe("HR passenger manifest reuse contract", () => {
       "hr.leave.submit",
       "hr.leave.view",
       "hr.workforce.activate_service",
+      "hr.workforce.change_reporting_relationship",
       "hr.workforce.change_status",
       "hr.workforce.create_profile",
       "hr.workforce.deactivate_service",
@@ -33,6 +34,7 @@ describe("HR passenger manifest reuse contract", () => {
       hrManifest.capabilities.filter((capability) => capability.id.startsWith("hr.workforce.")),
     ).toEqual([
       { exposure: "admin", id: "hr.workforce.activate_service" },
+      { exposure: "tenant", id: "hr.workforce.change_reporting_relationship" },
       { exposure: "tenant", id: "hr.workforce.change_status" },
       { exposure: "tenant", id: "hr.workforce.create_profile" },
       { exposure: "admin", id: "hr.workforce.deactivate_service" },

@@ -1,9 +1,12 @@
 export const HR_WORKFORCE_PROFILE_BILLING_STATE = "non_billable" as const;
+export const HR_WORKFORCE_REPORTING_RELATIONSHIP_SUBJECT_TYPE =
+  "hr.workforce_profile.reporting_relationship" as const;
 export const HR_WORKFORCE_PROFILE_SERVICE_KEY = "workforce_profile" as const;
 export const HR_WORKFORCE_PROFILE_SUBJECT_TYPE = "hr.workforce_profile" as const;
 
 export type WorkforceStatus = "active" | "draft" | "suspended" | "terminated";
 export type WorkforceStatusTarget = Exclude<WorkforceStatus, "draft">;
+export type ReportingRelationshipStatus = "assigned" | "unassigned";
 
 export interface WorkforceProfileView {
   readonly employeeNumber: string | null;
@@ -32,8 +35,33 @@ export interface ChangeWorkforceStatusInput {
   readonly workerProfileId: string;
 }
 
+export interface ChangeWorkforceReportingRelationshipInput {
+  readonly expectedVersion: number;
+  readonly idempotencyKey: string;
+  readonly managerWorkerProfileId: string | null;
+  readonly relationshipStatus: ReportingRelationshipStatus;
+  readonly workerProfileId: string;
+}
+
+export interface ReportingRelationshipView {
+  readonly effectiveAt: string;
+  readonly managerWorkerProfileId: string | null;
+  readonly relationshipStatus: ReportingRelationshipStatus;
+  readonly relationshipVersion: number;
+  readonly reportingRelationshipId: string;
+  readonly supersedesReportingRelationshipId: string | null;
+  readonly workerProfileId: string;
+  readonly workerProfileVersion: number;
+}
+
 export interface WorkforceProfileCommandResult {
   readonly billingState: typeof HR_WORKFORCE_PROFILE_BILLING_STATE;
   readonly profile: WorkforceProfileView;
+  readonly replayed: boolean;
+}
+
+export interface WorkforceReportingRelationshipCommandResult {
+  readonly billingState: typeof HR_WORKFORCE_PROFILE_BILLING_STATE;
+  readonly relationship: ReportingRelationshipView;
   readonly replayed: boolean;
 }

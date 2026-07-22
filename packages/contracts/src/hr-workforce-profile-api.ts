@@ -4,9 +4,11 @@ const uuidExpression = new RegExp(uuidPattern);
 
 export const hrWorkforceStatuses = ["active", "draft", "suspended", "terminated"] as const;
 export const hrWorkforceStatusTargets = ["active", "suspended", "terminated"] as const;
+export const hrReportingRelationshipStatuses = ["assigned", "unassigned"] as const;
 
 export type HrWorkforceStatus = (typeof hrWorkforceStatuses)[number];
 export type HrWorkforceStatusTarget = (typeof hrWorkforceStatusTargets)[number];
+export type HrReportingRelationshipStatus = (typeof hrReportingRelationshipStatuses)[number];
 
 export interface HrWorkforceCreateProfileBody {
   readonly employeeNumber?: string | null;
@@ -22,6 +24,12 @@ export interface HrWorkforceChangeStatusBody {
   readonly status: HrWorkforceStatusTarget;
 }
 
+export interface HrWorkforceChangeReportingRelationshipBody {
+  readonly expectedVersion: number;
+  readonly managerWorkerProfileId: string | null;
+  readonly relationshipStatus: HrReportingRelationshipStatus;
+}
+
 export interface HrWorkforceProfilePath {
   readonly workerProfileId: string;
 }
@@ -34,6 +42,17 @@ export interface HrWorkforceProfile {
   readonly version: number;
   readonly workerProfileId: string;
   readonly workforceStatus: HrWorkforceStatus;
+}
+
+export interface HrReportingRelationship {
+  readonly effectiveAt: string;
+  readonly managerWorkerProfileId: string | null;
+  readonly relationshipStatus: HrReportingRelationshipStatus;
+  readonly relationshipVersion: number;
+  readonly reportingRelationshipId: string;
+  readonly supersedesReportingRelationshipId: string | null;
+  readonly workerProfileId: string;
+  readonly workerProfileVersion: number;
 }
 
 const positiveVersionSchema = {
@@ -82,6 +101,34 @@ export const hrWorkforceChangeStatusBodySchema = {
   type: "object",
 } as const;
 
+export const hrWorkforceChangeReportingRelationshipBodySchema = {
+  $id: "HrWorkforceChangeReportingRelationshipRequestV1",
+  additionalProperties: false,
+  oneOf: [
+    {
+      properties: {
+        managerWorkerProfileId: uuidSchema,
+        relationshipStatus: { const: "assigned" },
+      },
+      type: "object",
+    },
+    {
+      properties: {
+        managerWorkerProfileId: { type: "null" },
+        relationshipStatus: { const: "unassigned" },
+      },
+      type: "object",
+    },
+  ],
+  properties: {
+    expectedVersion: positiveVersionSchema,
+    managerWorkerProfileId: { pattern: uuidPattern, type: ["string", "null"] },
+    relationshipStatus: { enum: hrReportingRelationshipStatuses },
+  },
+  required: ["expectedVersion", "managerWorkerProfileId", "relationshipStatus"],
+  type: "object",
+} as const;
+
 export const hrWorkforceProfilePathSchema = {
   $id: "HrWorkforceProfilePathV1",
   additionalProperties: false,
@@ -101,6 +148,48 @@ export const hrWorkforceProfileSchema = {
     workforceStatus: { enum: hrWorkforceStatuses },
   },
   required: ["employeeNumber", "principalLinked", "version", "workerProfileId", "workforceStatus"],
+  type: "object",
+} as const;
+
+export const hrReportingRelationshipSchema = {
+  $id: "HrReportingRelationshipResponseV1",
+  additionalProperties: false,
+  oneOf: [
+    {
+      properties: {
+        managerWorkerProfileId: uuidSchema,
+        relationshipStatus: { const: "assigned" },
+      },
+      type: "object",
+    },
+    {
+      properties: {
+        managerWorkerProfileId: { type: "null" },
+        relationshipStatus: { const: "unassigned" },
+      },
+      type: "object",
+    },
+  ],
+  properties: {
+    effectiveAt: { format: "date-time", type: "string" },
+    managerWorkerProfileId: { pattern: uuidPattern, type: ["string", "null"] },
+    relationshipStatus: { enum: hrReportingRelationshipStatuses },
+    relationshipVersion: positiveVersionSchema,
+    reportingRelationshipId: uuidSchema,
+    supersedesReportingRelationshipId: { pattern: uuidPattern, type: ["string", "null"] },
+    workerProfileId: uuidSchema,
+    workerProfileVersion: positiveVersionSchema,
+  },
+  required: [
+    "effectiveAt",
+    "managerWorkerProfileId",
+    "relationshipStatus",
+    "relationshipVersion",
+    "reportingRelationshipId",
+    "supersedesReportingRelationshipId",
+    "workerProfileId",
+    "workerProfileVersion",
+  ],
   type: "object",
 } as const;
 
@@ -125,6 +214,20 @@ function assertUuid(value: unknown, label: string): asserts value is string {
 function assertPositiveSafeInteger(value: unknown, label: string): asserts value is number {
   if (!Number.isSafeInteger(value) || (value as number) < 1) {
     throw new TypeError(`${label} must be a positive safe integer`);
+  }
+}
+
+function assertNullableUuid(value: unknown, label: string): asserts value is string | null {
+  if (value !== null) assertUuid(value, label);
+}
+
+function assertIsoDateTime(value: unknown, label: string): asserts value is string {
+  if (
+    typeof value !== "string" ||
+    Number.isNaN(Date.parse(value)) ||
+    new Date(value).toISOString() !== value
+  ) {
+    throw new TypeError(`${label} must be a canonical ISO date-time`);
   }
 }
 
@@ -173,6 +276,38 @@ export function parseHrWorkforceChangeStatusBody(value: unknown): HrWorkforceCha
   return value as unknown as HrWorkforceChangeStatusBody;
 }
 
+export function parseHrWorkforceChangeReportingRelationshipBody(
+  value: unknown,
+): HrWorkforceChangeReportingRelationshipBody {
+  if (!isRecord(value)) {
+    throw new TypeError("HrWorkforceChangeReportingRelationshipRequestV1 must be an object");
+  }
+  assertExactKeys(
+    value,
+    ["expectedVersion", "managerWorkerProfileId", "relationshipStatus"],
+    "HrWorkforceChangeReportingRelationshipRequestV1",
+  );
+  assertPositiveSafeInteger(
+    value.expectedVersion,
+    "HrWorkforceChangeReportingRelationshipRequestV1.expectedVersion",
+  );
+  if (!(hrReportingRelationshipStatuses as readonly unknown[]).includes(value.relationshipStatus)) {
+    throw new TypeError(
+      "HrWorkforceChangeReportingRelationshipRequestV1.relationshipStatus is invalid",
+    );
+  }
+  assertNullableUuid(
+    value.managerWorkerProfileId,
+    "HrWorkforceChangeReportingRelationshipRequestV1.managerWorkerProfileId",
+  );
+  if ((value.relationshipStatus === "assigned") !== (value.managerWorkerProfileId !== null)) {
+    throw new TypeError(
+      "HrWorkforceChangeReportingRelationshipRequestV1 manager and status conflict",
+    );
+  }
+  return value as unknown as HrWorkforceChangeReportingRelationshipBody;
+}
+
 export function parseHrWorkforceProfilePath(value: unknown): HrWorkforceProfilePath {
   if (!isRecord(value)) throw new TypeError("HrWorkforceProfilePathV1 must be an object");
   assertExactKeys(value, ["workerProfileId"], "HrWorkforceProfilePathV1");
@@ -199,4 +334,51 @@ export function parseHrWorkforceProfile(value: unknown): HrWorkforceProfile {
     throw new TypeError("HrWorkforceProfileResponseV1.workforceStatus is invalid");
   }
   return value as unknown as HrWorkforceProfile;
+}
+
+export function parseHrReportingRelationship(value: unknown): HrReportingRelationship {
+  if (!isRecord(value)) throw new TypeError("HrReportingRelationshipResponseV1 must be an object");
+  assertExactKeys(
+    value,
+    [
+      "effectiveAt",
+      "managerWorkerProfileId",
+      "relationshipStatus",
+      "relationshipVersion",
+      "reportingRelationshipId",
+      "supersedesReportingRelationshipId",
+      "workerProfileId",
+      "workerProfileVersion",
+    ],
+    "HrReportingRelationshipResponseV1",
+  );
+  assertIsoDateTime(value.effectiveAt, "HrReportingRelationshipResponseV1.effectiveAt");
+  assertNullableUuid(
+    value.managerWorkerProfileId,
+    "HrReportingRelationshipResponseV1.managerWorkerProfileId",
+  );
+  if (!(hrReportingRelationshipStatuses as readonly unknown[]).includes(value.relationshipStatus)) {
+    throw new TypeError("HrReportingRelationshipResponseV1.relationshipStatus is invalid");
+  }
+  if ((value.relationshipStatus === "assigned") !== (value.managerWorkerProfileId !== null)) {
+    throw new TypeError("HrReportingRelationshipResponseV1 manager and status conflict");
+  }
+  assertPositiveSafeInteger(
+    value.relationshipVersion,
+    "HrReportingRelationshipResponseV1.relationshipVersion",
+  );
+  assertUuid(
+    value.reportingRelationshipId,
+    "HrReportingRelationshipResponseV1.reportingRelationshipId",
+  );
+  assertNullableUuid(
+    value.supersedesReportingRelationshipId,
+    "HrReportingRelationshipResponseV1.supersedesReportingRelationshipId",
+  );
+  assertUuid(value.workerProfileId, "HrReportingRelationshipResponseV1.workerProfileId");
+  assertPositiveSafeInteger(
+    value.workerProfileVersion,
+    "HrReportingRelationshipResponseV1.workerProfileVersion",
+  );
+  return value as unknown as HrReportingRelationship;
 }

@@ -56,6 +56,9 @@ export {
   parseHrServiceDeactivateBody,
 } from "./hr-service-control-api.js";
 export {
+  type HrReportingRelationship,
+  type HrReportingRelationshipStatus,
+  type HrWorkforceChangeReportingRelationshipBody,
   type HrWorkforceChangeStatusBody,
   type HrWorkforceCreateProfileBody,
   type HrWorkforceLinkPrincipalBody,
@@ -64,6 +67,9 @@ export {
   type HrWorkforceProfilePath,
   type HrWorkforceStatus,
   type HrWorkforceStatusTarget,
+  hrReportingRelationshipSchema,
+  hrReportingRelationshipStatuses,
+  hrWorkforceChangeReportingRelationshipBodySchema,
   hrWorkforceChangeStatusBodySchema,
   hrWorkforceCreateProfileBodySchema,
   hrWorkforceLinkPrincipalBodySchema,
@@ -72,6 +78,8 @@ export {
   hrWorkforceProfileSchema,
   hrWorkforceStatuses,
   hrWorkforceStatusTargets,
+  parseHrReportingRelationship,
+  parseHrWorkforceChangeReportingRelationshipBody,
   parseHrWorkforceChangeStatusBody,
   parseHrWorkforceCreateProfileBody,
   parseHrWorkforceLinkPrincipalBody,

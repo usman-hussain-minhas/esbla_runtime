@@ -13,11 +13,13 @@ import {
   workforcePool,
 } from "./workforce.integration-fixture.js";
 import {
+  changeWorkforceReportingRelationship,
   changeWorkforceStatus,
   createWorkforceProfile,
   linkWorkforcePrincipal,
 } from "./workforce-commands.js";
 import { getOwnWorkforceProfile } from "./workforce-queries.js";
+import type { ChangeWorkforceReportingRelationshipInput } from "./workforce-types.js";
 
 function context(
   tenantId: string = workforceIds.tenantA,
@@ -67,6 +69,15 @@ async function setServiceState(state: "active" | "inactive"): Promise<void> {
     [workforceIds.tenantA, state],
   );
 }
+async function setReplayDenial(
+  state: "actor" | "capability" | "service",
+  denied: boolean,
+): Promise<void> {
+  if (state === "actor") return setActorState(denied ? "employee" : "hr_operator");
+  if (state === "capability")
+    return setCapability("hr.workforce.change_reporting_relationship", !denied);
+  return setServiceState(denied ? "inactive" : "active");
+}
 
 async function setBooleanSetting(key: string, value: boolean | null): Promise<void> {
   await tenantQuery(
@@ -83,6 +94,95 @@ async function setBooleanSetting(key: string, value: boolean | null): Promise<vo
   );
 }
 
+async function createActiveReportingProfile(
+  roleKey: "employee" | "manager",
+  tenantId: string = workforceIds.tenantA,
+  actorPrincipalId: string = workforceIds.hrOperatorA,
+) {
+  const principalId = randomUUID();
+  await workforceMigrationPool.query(
+    "INSERT INTO principals (principal_id, display_name) VALUES ($1, 'Synthetic reporting actor')",
+    [principalId],
+  );
+  await tenantQuery(
+    tenantId,
+    `INSERT INTO memberships (membership_id, tenant_id, principal_id, role_key)
+     VALUES ($1, $2, $3, $4)`,
+    [randomUUID(), tenantId, principalId, roleKey],
+  );
+  const actorContext = () => context(tenantId, actorPrincipalId);
+  const created = await createWorkforceProfile(workforcePool, actorContext(), {
+    idempotencyKey: randomUUID(),
+  });
+  const linked = await linkWorkforcePrincipal(workforcePool, actorContext(), {
+    expectedVersion: created.profile.version,
+    idempotencyKey: randomUUID(),
+    principalId,
+    workerProfileId: created.profile.workerProfileId,
+  });
+  const active = await changeWorkforceStatus(workforcePool, actorContext(), {
+    expectedVersion: linked.profile.version,
+    idempotencyKey: randomUUID(),
+    status: "active",
+    workerProfileId: created.profile.workerProfileId,
+  });
+  return { principalId, workerProfileId: active.profile.workerProfileId };
+}
+function reportingInput(
+  workerProfileId: string,
+  expectedVersion: number,
+  managerWorkerProfileId: string | null,
+  relationshipStatus: "assigned" | "unassigned" = "assigned",
+  idempotencyKey: string = randomUUID(),
+): ChangeWorkforceReportingRelationshipInput {
+  return {
+    expectedVersion,
+    idempotencyKey,
+    managerWorkerProfileId,
+    relationshipStatus,
+    workerProfileId,
+  };
+}
+function changeReporting(
+  input: ChangeWorkforceReportingRelationshipInput,
+  operationContext = context(),
+) {
+  return changeWorkforceReportingRelationship(workforcePool, operationContext, input);
+}
+async function setReportingRole(principalId: string, role: string, status = "active") {
+  await tenantQuery(
+    workforceIds.tenantA,
+    "UPDATE memberships SET role_key=$3, status=$4 WHERE tenant_id=$1 AND principal_id=$2",
+    [workforceIds.tenantA, principalId, role, status],
+  );
+}
+async function setReportingStatus(workerProfileId: string, workforceStatus: string): Promise<void> {
+  await withWorkforceTenant(workforceIds.tenantA, async (client) => {
+    await client.query(
+      "SELECT set_config('app.actor_principal_id',$1,true), set_config('app.correlation_id',$2,true)",
+      [workforceIds.hrOperatorA, randomUUID()],
+    );
+    await client.query(
+      "UPDATE hr_worker_profiles SET workforce_status=$3, row_version=row_version+1 WHERE tenant_id=$1 AND worker_profile_id=$2",
+      [workforceIds.tenantA, workerProfileId, workforceStatus],
+    );
+  });
+}
+async function reportingSnapshot(tenantId: string, workerProfileId: string) {
+  const [state] = await tenantQuery(
+    tenantId,
+    `SELECT current_reporting_relationship_id AS head, row_version AS version,
+       (SELECT count(*)::int FROM hr_reporting_relationships WHERE tenant_id=$1 AND worker_profile_id=$2) relationships,
+       (SELECT count(*)::int FROM hr_workforce_status_history WHERE tenant_id=$1 AND worker_profile_id=$2) history,
+       (SELECT count(*)::int FROM evidence_events WHERE tenant_id=$1) evidence,
+       (SELECT count(*)::int FROM outbox_events WHERE tenant_id=$1) outbox,
+       (SELECT count(*)::int FROM work_items WHERE tenant_id=$1) work
+     FROM hr_worker_profiles WHERE tenant_id=$1 AND worker_profile_id=$2`,
+    [tenantId, workerProfileId],
+  );
+  if (!state) throw new Error("Reporting profile snapshot was unavailable");
+  return state;
+}
 describe("Workforce Profile domain", () => {
   beforeAll(setupWorkforceIntegration);
   afterAll(teardownWorkforceIntegration);
@@ -484,5 +584,218 @@ describe("Workforce Profile domain", () => {
       );
     }
     expect(await readWorkforceTenantSnapshot(workforceIds.tenantA)).toEqual(before);
+  });
+  it("appends and replays one immutable assign/unassign chain with minimized proof", async () => {
+    const report = await createActiveReportingProfile("employee");
+    const manager = await createActiveReportingProfile("manager");
+    const before = await reportingSnapshot(workforceIds.tenantA, report.workerProfileId);
+    const assign = reportingInput(report.workerProfileId, before.version, manager.workerProfileId);
+    const assigned = await changeReporting(assign);
+    expect(assigned).toMatchObject({
+      billingState: "non_billable",
+      replayed: false,
+      relationship: {
+        effectiveAt: expect.any(String),
+        managerWorkerProfileId: manager.workerProfileId,
+        relationshipStatus: "assigned",
+        relationshipVersion: 1,
+        reportingRelationshipId: expect.any(String),
+        supersedesReportingRelationshipId: null,
+        workerProfileId: report.workerProfileId,
+        workerProfileVersion: before.version + 1,
+      },
+    });
+    expect(await changeReporting(assign)).toEqual({ ...assigned, replayed: true });
+    const replayBaseline = await reportingSnapshot(workforceIds.tenantA, report.workerProfileId);
+    for (const [state, code] of [
+      ["actor", "POLICY_DENIED"],
+      ["capability", "POLICY_DENIED"],
+      ["service", "WORKFORCE_SERVICE_INACTIVE"],
+    ] as const) {
+      await setReplayDenial(state, true);
+      try {
+        await expect(changeReporting(assign)).rejects.toMatchObject({ code });
+      } finally {
+        await setReplayDenial(state, false);
+      }
+      expect(await reportingSnapshot(workforceIds.tenantA, report.workerProfileId)).toEqual(
+        replayBaseline,
+      );
+    }
+    await expect(
+      changeReporting({
+        ...assign,
+        expectedVersion: before.version + 1,
+        idempotencyKey: randomUUID(),
+      }),
+    ).rejects.toMatchObject({ code: "WORKFORCE_PROFILE_CONFLICT" });
+    expect(await reportingSnapshot(workforceIds.tenantA, report.workerProfileId)).toEqual(
+      replayBaseline,
+    );
+    await expect(
+      changeReporting({
+        ...assign,
+        relationshipStatus: "unassigned",
+        managerWorkerProfileId: null,
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    const unassigned = await changeReporting(
+      reportingInput(report.workerProfileId, before.version + 1, null, "unassigned"),
+    );
+    expect(unassigned.relationship).toMatchObject({
+      managerWorkerProfileId: null,
+      relationshipStatus: "unassigned",
+      relationshipVersion: 2,
+      supersedesReportingRelationshipId: assigned.relationship.reportingRelationshipId,
+      workerProfileVersion: before.version + 2,
+    });
+    const after = await reportingSnapshot(workforceIds.tenantA, report.workerProfileId);
+    expect(after).toEqual({
+      ...before,
+      evidence: before.evidence + 4,
+      head: unassigned.relationship.reportingRelationshipId,
+      outbox: before.outbox + 2,
+      relationships: before.relationships + 2,
+      version: before.version + 2,
+    });
+    const proof = await tenantQuery<{ identity: string; payload: Record<string, unknown> }>(
+      workforceIds.tenantA,
+      `SELECT concat_ws('|', evidence.subject_id, evidence.subject_type, outbox.aggregate_id,
+                        outbox.aggregate_type, outbox.aggregate_version,
+                        (evidence.correlation_id=outbox.correlation_id)::text) identity,
+              outbox.payload
+       FROM evidence_events evidence JOIN outbox_events outbox
+         ON outbox.tenant_id=evidence.tenant_id AND outbox.event_type=evidence.event_type
+        AND outbox.aggregate_type=evidence.subject_type AND outbox.aggregate_id=evidence.subject_id
+        AND outbox.correlation_id=evidence.correlation_id
+       WHERE evidence.tenant_id=$1
+         AND evidence.event_type='hr.workforce_profile.change_reporting_relationship'
+         AND evidence.subject_type='hr.workforce_profile.reporting_relationship'
+         AND evidence.subject_id=ANY($2::uuid[])`,
+      [
+        workforceIds.tenantA,
+        [
+          assigned.relationship.reportingRelationshipId,
+          unassigned.relationship.reportingRelationshipId,
+        ],
+      ],
+    );
+    const proofIdentity = (relationship: typeof assigned.relationship) =>
+      `${relationship.reportingRelationshipId}|hr.workforce_profile.reporting_relationship|${relationship.reportingRelationshipId}|hr.workforce_profile.reporting_relationship|${relationship.relationshipVersion}|true`;
+    expect(proof.map(({ identity }) => identity).sort()).toEqual(
+      [proofIdentity(assigned.relationship), proofIdentity(unassigned.relationship)].sort(),
+    );
+    const proofKeys =
+      "action afterVersion beforeVersion managerAssigned receiptId relationshipStatus reportingRelationshipId workerProfileId workerProfileVersion";
+    for (const { payload } of proof)
+      expect(Object.keys(payload).sort()).toEqual(proofKeys.split(" "));
+  });
+  it("table-drives authority, activation, manager-eligibility, and tenant denials", async () => {
+    const report = await createActiveReportingProfile("employee");
+    const manager = await createActiveReportingProfile("manager");
+    const foreign = await createActiveReportingProfile(
+      "employee",
+      workforceIds.tenantB,
+      workforceIds.hrOperatorB,
+    );
+    const foreignBefore = await reportingSnapshot(workforceIds.tenantB, foreign.workerProfileId);
+    const before = await reportingSnapshot(workforceIds.tenantA, report.workerProfileId);
+    const cases = [
+      ["capability", "POLICY_DENIED", manager.workerProfileId],
+      ["service", "WORKFORCE_SERVICE_INACTIVE", manager.workerProfileId],
+      ["manager", "WORKFORCE_PROFILE_CONFLICT", manager.workerProfileId],
+      ["manager-membership", "WORKFORCE_PROFILE_CONFLICT", manager.workerProfileId],
+      ["manager-profile", "WORKFORCE_PROFILE_CONFLICT", manager.workerProfileId],
+      ["tenant", "WORKFORCE_PROFILE_NOT_FOUND", foreign.workerProfileId],
+    ] as const;
+    for (const [state, code, managerId] of cases) {
+      if (state === "capability")
+        await setCapability("hr.workforce.change_reporting_relationship", false);
+      if (state === "service") await setServiceState("inactive");
+      if (state === "manager") await setReportingRole(manager.principalId, "employee");
+      if (state === "manager-membership")
+        await setReportingRole(manager.principalId, "manager", "suspended");
+      if (state === "manager-profile")
+        await setReportingStatus(manager.workerProfileId, "suspended");
+      try {
+        await expect(
+          changeReporting(reportingInput(report.workerProfileId, before.version, managerId)),
+        ).rejects.toMatchObject({ code });
+      } finally {
+        if (state === "capability")
+          await setCapability("hr.workforce.change_reporting_relationship", true);
+        if (state === "service") await setServiceState("active");
+        if (state === "manager") await setReportingRole(manager.principalId, "manager");
+        if (state === "manager-membership") await setReportingRole(manager.principalId, "manager");
+        if (state === "manager-profile")
+          await setReportingStatus(manager.workerProfileId, "active");
+      }
+      expect(await reportingSnapshot(workforceIds.tenantA, report.workerProfileId)).toEqual(before);
+    }
+    expect(await reportingSnapshot(workforceIds.tenantB, foreign.workerProfileId)).toEqual(
+      foreignBefore,
+    );
+  });
+  it("rejects self/indirect cycles and serializes reciprocal assignments", async () => {
+    const [a, b, c, m1, m2] = await Promise.all([
+      createActiveReportingProfile("manager"),
+      createActiveReportingProfile("manager"),
+      createActiveReportingProfile("manager"),
+      createActiveReportingProfile("manager"),
+      createActiveReportingProfile("manager"),
+    ]);
+    await expect(
+      changeReporting(reportingInput(a.workerProfileId, 3, a.workerProfileId)),
+    ).rejects.toMatchObject({ code: "WORKFORCE_PROFILE_CONFLICT" });
+    await changeReporting(reportingInput(a.workerProfileId, 3, b.workerProfileId));
+    await changeReporting(reportingInput(b.workerProfileId, 3, c.workerProfileId));
+    const c0 = await reportingSnapshot(workforceIds.tenantA, c.workerProfileId);
+    await expect(
+      changeReporting(reportingInput(c.workerProfileId, c0.version, a.workerProfileId)),
+    ).rejects.toMatchObject({ code: "WORKFORCE_PROFILE_CONFLICT" });
+    expect(await reportingSnapshot(workforceIds.tenantA, c.workerProfileId)).toEqual(c0);
+    const before = await readWorkforceTenantSnapshot(workforceIds.tenantA);
+    const results = await Promise.allSettled([
+      changeReporting(reportingInput(m1.workerProfileId, 3, m2.workerProfileId)),
+      changeReporting(reportingInput(m2.workerProfileId, 3, m1.workerProfileId)),
+    ]);
+    expect(results.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    expect(results.find(({ status }) => status === "rejected")).toMatchObject({
+      status: "rejected",
+      reason: { code: "WORKFORCE_PROFILE_CONFLICT" },
+    });
+    const heads = await tenantQuery<{ head: string | null; version: number }>(
+      workforceIds.tenantA,
+      `SELECT current_reporting_relationship_id head, row_version version
+       FROM hr_worker_profiles WHERE tenant_id=$1 AND worker_profile_id=ANY($2::uuid[])`,
+      [workforceIds.tenantA, [m1.workerProfileId, m2.workerProfileId]],
+    );
+    expect(heads.map(({ version }) => version).sort()).toEqual([3, 4]);
+    expect(heads.filter(({ head }) => head !== null)).toHaveLength(1);
+    expect(await readWorkforceTenantSnapshot(workforceIds.tenantA)).toEqual({
+      ...before,
+      evidence: before.evidence + 2,
+      outbox: before.outbox + 1,
+    });
+  });
+  it("rolls the relationship head and all proof back when outbox insert fails", async () => {
+    const report = await createActiveReportingProfile("employee");
+    const manager = await createActiveReportingProfile("manager");
+    const before = await reportingSnapshot(workforceIds.tenantA, report.workerProfileId);
+    await workforceMigrationPool.query(
+      `REVOKE INSERT ON outbox_events FROM ${workforceApplicationRole}`,
+    );
+    try {
+      await expect(
+        changeReporting(
+          reportingInput(report.workerProfileId, before.version, manager.workerProfileId),
+        ),
+      ).rejects.toMatchObject({ code: "42501" });
+    } finally {
+      await workforceMigrationPool.query(
+        `GRANT INSERT ON outbox_events TO ${workforceApplicationRole}`,
+      );
+    }
+    expect(await reportingSnapshot(workforceIds.tenantA, report.workerProfileId)).toEqual(before);
   });
 });

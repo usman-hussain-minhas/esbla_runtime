@@ -12,6 +12,7 @@ export const hrManifest = defineModuleManifest({
     Object.freeze({ exposure: "tenant", id: "hr.leave.submit" }),
     Object.freeze({ exposure: "tenant", id: "hr.leave.view" }),
     Object.freeze({ exposure: "admin", id: "hr.workforce.activate_service" }),
+    Object.freeze({ exposure: "tenant", id: "hr.workforce.change_reporting_relationship" }),
     Object.freeze({ exposure: "tenant", id: "hr.workforce.change_status" }),
     Object.freeze({ exposure: "tenant", id: "hr.workforce.create_profile" }),
     Object.freeze({ exposure: "admin", id: "hr.workforce.deactivate_service" }),
