@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   HrWorkforceProfileDetail,
   HrWorkforceRelationshipHistory,
@@ -11,6 +12,8 @@ import {
   type WorkforceDetailNavigation,
   workforceDetailReturnLink,
 } from "../../../../../../lib/hr-workforce-profile-detail-core";
+import { loadAuthorizedWorkforceList } from "../../../../../../lib/hr-workforce-profile-list";
+import { WorkforceProfileMaintenance } from "./workforce-profile-maintenance";
 
 interface WorkforceProfileDetailPageProps {
   readonly params: Promise<{ workerProfileId: string }>;
@@ -138,6 +141,10 @@ export default async function WorkforceProfileDetailPage({
     return <FailureState message={state.message} returnLink={returnLink} title={state.title} />;
   }
   const { detail, navigation } = state;
+  const maintenanceAdmission = await loadAuthorizedWorkforceList(
+    { status: detail.workforceStatus },
+    "workforce",
+  );
   return (
     <section
       aria-labelledby="workforce-detail-heading"
@@ -157,6 +164,15 @@ export default async function WorkforceProfileDetailPage({
         </div>
         <span className="leave-status">{statusLabels[detail.workforceStatus]}</span>
       </header>
+      {maintenanceAdmission.status === "success" ? (
+        <WorkforceProfileMaintenance
+          idempotencyKeys={{ reporting: randomUUID(), status: randomUUID() }}
+          initialStatus={detail.workforceStatus}
+          initialVersion={detail.version}
+          key={`${detail.workerProfileId}:${detail.version}`}
+          workerProfileId={detail.workerProfileId}
+        />
+      ) : null}
       <div className="leave-detail-layout">
         <section aria-labelledby="workforce-facts-heading" className="leave-detail-section">
           <div className="detail-section-heading">

@@ -116,6 +116,7 @@ export async function seedHrLeaveFixture() {
         `GRANT SELECT ON membership_capabilities, hr_workforce_profile_service_control,
           hr_workforce_status_history, hr_reporting_relationships TO ${applicationRole}`,
       );
+      await client.query(`GRANT INSERT ON hr_reporting_relationships TO ${applicationRole}`);
       await client.query(
         `GRANT SELECT, INSERT, UPDATE ON work_items, hr_leave_requests,
           hr_worker_profiles TO ${applicationRole}`,
@@ -163,6 +164,7 @@ export async function seedHrLeaveFixture() {
                 ($1, $3, 'hr.workforce.create_profile'),
                 ($1, $3, 'hr.workforce.link_principal'),
                 ($1, $3, 'hr.workforce.change_status'),
+                ($1, $3, 'hr.workforce.change_reporting_relationship'),
                 ($1, $4, 'hr.workforce.view_authorized_detail'),
                 ($1, $3, 'hr.workforce.view_authorized_detail'),
                 ($1, $4, 'hr.workforce.list_authorized'),

@@ -1,10 +1,17 @@
 import { signDevelopmentPrincipal } from "@esbla/contracts/development-principal";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   prepareDevelopmentRequest,
   readDevelopmentSessionConfig,
   summarizeDevelopmentSession,
 } from "./development-session-core";
+
+vi.mock("server-only", () => ({}));
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 const tenantId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const principalId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -98,5 +105,25 @@ describe("server-only development session boundary", () => {
     expect(() =>
       prepareDevelopmentRequest(config, { body: {}, method: "GET", path: "/health" }),
     ).toThrow("must not include a body");
+  });
+
+  it("refuses redirects for signed server requests", async () => {
+    for (const [name, value] of Object.entries(environment())) {
+      if (value !== undefined) vi.stubEnv(name, value);
+    }
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    const { fetchDevelopmentApi } = await import("./development-session");
+    await fetchDevelopmentApi({
+      body: {},
+      idempotencyKey,
+      method: "POST",
+      path: "/v1/hr/leave-requests",
+    });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://127.0.0.1:3001/v1/hr/leave-requests",
+      expect.objectContaining({ redirect: "error" }),
+    );
   });
 });

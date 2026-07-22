@@ -231,9 +231,12 @@ export function isSameOriginSubmission(
   if (!origin || (fetchSite !== null && fetchSite !== "same-origin")) return false;
   try {
     const originUrl = new URL(origin);
-    return (
-      originUrl.origin === new URL(requestUrl).origin || originUrl.host === host?.toLowerCase()
-    );
+    const directUrl = new URL(requestUrl);
+    if (originUrl.origin === directUrl.origin) return true;
+    if (!host || !["http:", "https:"].includes(directUrl.protocol)) return false;
+    const normalizedHost = host.toLowerCase();
+    const effectiveUrl = new URL(`${directUrl.protocol}//${normalizedHost}`);
+    return effectiveUrl.host === normalizedHost && originUrl.origin === effectiveUrl.origin;
   } catch {
     return false;
   }
