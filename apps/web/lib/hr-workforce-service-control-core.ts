@@ -268,7 +268,13 @@ function alreadyAppliedReplayMatches(
   expectation: Extract<WorkforceServiceControlApiExpectation, { operation: "mutate" }>,
 ): boolean {
   const { action, before } = expectation;
-  if (before?.serviceKey !== "workforce_profile" || !sameControl(control, before)) return false;
+  if (
+    control.serviceKey !== "workforce_profile" ||
+    before?.serviceKey !== "workforce_profile" ||
+    !sameControl(control, before)
+  ) {
+    return false;
+  }
   if (action.operation === "configure") {
     return (
       control.activationState === "active" &&
