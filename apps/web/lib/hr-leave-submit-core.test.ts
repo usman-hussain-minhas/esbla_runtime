@@ -159,7 +159,7 @@ describe("HR leave submission boundary", () => {
   it("requires same-origin transport and strictly decodes its response", () => {
     expect(
       isSameOriginSubmission(
-        "http://127.0.0.1:3000/workspace/hr/leave/new/submit",
+        "http://localhost:3000/workspace/hr/leave/new/submit",
         "http://127.0.0.1:3000",
         "same-origin",
         "127.0.0.1:3000",
@@ -168,8 +168,8 @@ describe("HR leave submission boundary", () => {
     expect(
       isSameOriginSubmission(
         "http://127.0.0.1:3000/workspace/hr/leave/new/submit",
-        "https://attacker.example",
-        "cross-site",
+        "https://127.0.0.1:3000",
+        null,
         "127.0.0.1:3000",
       ),
     ).toBe(false);

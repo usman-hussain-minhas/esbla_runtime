@@ -104,6 +104,13 @@ async function expectHistory(actor, status, states) {
   await expect(actor.page.locator(".leave-history-item strong")).toHaveText(states);
 }
 
+function workforceRecordVersion(page) {
+  return page
+    .locator(".leave-detail-facts > div")
+    .filter({ hasText: "Record version" })
+    .locator("dd");
+}
+
 test("employee submits, manager approves, and employee reloads durable rendered history", async ({
   browser,
 }) => {
@@ -293,7 +300,15 @@ test("current manager browses direct reports and returns from persistent detail"
     ).toBeVisible();
     await expect(manager.page.getByRole("heading", { name: "Reporting history" })).toBeVisible();
     await expect(manager.page.getByText("Manager assigned", { exact: true })).toBeVisible();
+    await expect(manager.page.getByRole("heading", { name: "Profile maintenance" })).toHaveCount(0);
+    const managerDetailPath = new URL(manager.page.url()).pathname;
+    await manager.page.goto(`${manager.origin}${managerDetailPath}?returnContext=admin`);
+    await expect(
+      manager.page.getByRole("heading", { name: "Employee BROWSER-DIRECT-001" }),
+    ).toBeVisible();
+    await expect(manager.page.getByRole("heading", { name: "Profile maintenance" })).toHaveCount(0);
 
+    await manager.page.goto(`${manager.origin}${managerDetailPath}?returnContext=direct-reports`);
     const back = manager.page.getByRole("link", { name: "Back to direct reports" });
     await back.focus();
     await manager.page.keyboard.press("Enter");
@@ -323,11 +338,53 @@ test("HR operator filters workforce while employee list access fails closed", as
     await operator.page.getByRole("link", { name: "Workforce administration" }).click();
     await expect(operator.page.getByRole("heading", { name: "Workforce directory" })).toBeVisible();
     await expect(operator.page.getByText("BROWSER-MANAGER-001", { exact: true })).toBeVisible();
-    const activeRow = operator.page.locator("tbody tr").filter({ hasText: "BROWSER-MANAGER-001" });
+    const activeRow = operator.page.locator("tbody tr").filter({ hasText: "BROWSER-DIRECT-001" });
     await activeRow.getByRole("link", { name: "View details" }).click();
     await expect(
-      operator.page.getByRole("heading", { name: "Employee BROWSER-MANAGER-001" }),
+      operator.page.getByRole("heading", { name: "Employee BROWSER-DIRECT-001" }),
     ).toBeVisible();
+    await expect(operator.page.getByRole("heading", { name: "Profile maintenance" })).toBeVisible();
+
+    const detailPath = new URL(operator.page.url()).pathname;
+    const initialVersion = Number(await workforceRecordVersion(operator.page).textContent());
+    const reportingResponse = operator.page.waitForResponse(
+      (response) => new URL(response.url()).pathname === `${detailPath}/action`,
+    );
+    const removeManager = operator.page.getByRole("button", { name: "Remove manager" });
+    await expect(removeManager).toBeEnabled();
+    await removeManager.press("Enter");
+    expect((await reportingResponse).status()).toBe(200);
+    await expect(workforceRecordVersion(operator.page)).toHaveText(String(initialVersion + 1));
+    await expect(
+      operator.page.locator(
+        'ol[aria-labelledby="relationship-history-heading"] .leave-history-item strong',
+      ),
+    ).toHaveText(["Manager unassigned", "Manager assigned"]);
+    await operator.page.reload();
+    await expect(workforceRecordVersion(operator.page)).toHaveText(String(initialVersion + 1));
+
+    const statusResponse = operator.page.waitForResponse(
+      (response) => new URL(response.url()).pathname === `${detailPath}/action`,
+    );
+    await operator.page.getByLabel("Workforce status").selectOption("suspended");
+    const updateStatus = operator.page.getByRole("button", { name: "Update status" });
+    await expect(updateStatus).toBeEnabled();
+    await updateStatus.press("Enter");
+    expect((await statusResponse).status()).toBe(200);
+    await expect(workforceRecordVersion(operator.page)).toHaveText(String(initialVersion + 2));
+    await expect(operator.page.locator(".leave-detail-heading .leave-status")).toHaveText(
+      "Suspended",
+    );
+    await expect(
+      operator.page.locator(
+        'ol[aria-labelledby="status-history-heading"] .leave-history-item strong',
+      ),
+    ).toHaveText(["Suspended", "Active", "Draft"]);
+    await operator.page.reload();
+    await expect(workforceRecordVersion(operator.page)).toHaveText(String(initialVersion + 2));
+    await expect(operator.page.locator(".leave-detail-heading .leave-status")).toHaveText(
+      "Suspended",
+    );
     await operator.page.getByRole("link", { name: "Back to workforce administration" }).click();
 
     const draft = operator.page.getByRole("link", { name: "Draft" });

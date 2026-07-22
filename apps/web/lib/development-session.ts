@@ -18,5 +18,6 @@ export async function fetchDevelopmentApi(input: DevelopmentRequestInput): Promi
     cache: "no-store",
     headers: request.headers,
     method: request.method,
+    redirect: "error",
   });
 }
