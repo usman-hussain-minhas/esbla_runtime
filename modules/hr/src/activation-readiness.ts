@@ -24,6 +24,11 @@ export const HR_LEAVE_REQUIRED_MIGRATIONS = [
     hash: "9e360ba35e62b22ddb9b993a9af007ecec92777c4623e805c439fceeee17197f",
     id: "0005",
   },
+  {
+    createdAt: 1784736446030,
+    hash: "14223482833b47ee8ad054e94694054990b1c6486b564cbbc66bca6d640164c1",
+    id: "0013",
+  },
 ] as const;
 export const HR_LEAVE_CATALOG_REQUIREMENTS = {
   enums: [
@@ -112,13 +117,28 @@ export const HR_LEAVE_CATALOG_REQUIREMENTS = {
     return { definition, name, parent, type };
   }),
   functions: [
-    "esbla_current_tenant_id|sql|uuid|s|search_path=pg_catalog|72cc22b496ef68e600155e2487691eaa80d6c1f94207242933f1b7cdcb4e4c89",
-    "esbla_reject_evidence_mutation|plpgsql|trigger|v||30fa45fd4e7b290856e6776f2ca0e376335461622705a01f8b19b30683cdf53b",
-    "esbla_enforce_hr_leave_state|plpgsql|trigger|v||a383d1d6ec766115a6a4742b2fd4ee92c07e42dc9fe5a95d2adabafa5a504e7f",
-  ].map((row) => {
-    const [name, language, returnType, volatility, config, sourceSha256] = row.split("|");
-    return { config, language, name, returnType, sourceSha256, volatility };
-  }),
+    ...[
+      "esbla_current_tenant_id|sql|uuid|s|search_path=pg_catalog|72cc22b496ef68e600155e2487691eaa80d6c1f94207242933f1b7cdcb4e4c89",
+      "esbla_reject_evidence_mutation|plpgsql|trigger|v||30fa45fd4e7b290856e6776f2ca0e376335461622705a01f8b19b30683cdf53b",
+      "esbla_enforce_hr_leave_state|plpgsql|trigger|v||a383d1d6ec766115a6a4742b2fd4ee92c07e42dc9fe5a95d2adabafa5a504e7f",
+    ].map((row) => {
+      const [name, language, returnType, volatility, config, sourceSha256] = row.split("|");
+      return { config, language, name, returnType, sourceSha256, volatility };
+    }),
+    {
+      applicationExecutable: true,
+      config: "search_path=pg_catalog,row_security=on",
+      identityArguments:
+        "expected_tenant_id uuid, expected_actor_principal_id uuid, subject_principal_id uuid",
+      language: "plpgsql",
+      name: "esbla_lock_membership_authority",
+      publicExecutable: false,
+      returnType: "jsonb",
+      securityDefiner: true,
+      sourceSha256: "917b3c6562f9c66396fe497defff14140a7acaef70fbe861f498f8fc15a4849a",
+      volatility: "v",
+    },
+  ],
 };
 export const HR_WORKFORCE_PROFILE_REQUIRED_MIGRATIONS = [
   ...HR_LEAVE_REQUIRED_MIGRATIONS.filter(({ id }) => id !== "0003"),
@@ -579,14 +599,14 @@ export const HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS = {
       "esbla_enforce_hr_workforce_profile_service_control|0|46946221929617cdfdc79444e75953c12455444a2001e9c027b9408364497659",
       "esbla_sync_hr_workforce_profile_service_activation|1|275ac8efc9ea68d97a5eb51fbabb38723c205bd3da1737bd98a1f52f9596c24b",
       "esbla_guard_membership_capability_authority|1|ffc08b59c0bedd3ee08cba3106cd2f46bcec595866500b97cbc428740c2e450f",
-      "esbla_enforce_hr_workforce_profile_state|0|1bb62849aab79018daac18ff26fdf17bf000cc1fe8f226b01d7f96151ee64b64",
-      "esbla_enforce_hr_reporting_relationship_state|0|d2a1053d4cf8be46686b1c361fba71ab53c2a3107d565bae325918abc42a51d5",
+      "esbla_enforce_hr_workforce_profile_state|1|1bb62849aab79018daac18ff26fdf17bf000cc1fe8f226b01d7f96151ee64b64|search_path=pg_catalog,row_security=on",
+      "esbla_enforce_hr_reporting_relationship_state|1|d2a1053d4cf8be46686b1c361fba71ab53c2a3107d565bae325918abc42a51d5|search_path=pg_catalog,row_security=on",
       "esbla_append_hr_workforce_status_history|1|a456011a8b02c413d4d0b9f8c02d4e3b3b0a29d65fc0eae53a9be95ca29ab936",
       "esbla_reject_hr_workforce_status_history_mutation|0|03f1a1287d355179ec62f8d74f744c998f2fe42057378c729e1cc91761eff793",
     ].map((row) => {
-      const [name, securityDefiner, sourceSha256] = row.split("|");
+      const [name, securityDefiner, sourceSha256, config] = row.split("|");
       return {
-        config: "search_path=pg_catalog, public",
+        config: config ?? "search_path=pg_catalog, public",
         language: "plpgsql",
         name,
         ownerOnlyExecutable: true,

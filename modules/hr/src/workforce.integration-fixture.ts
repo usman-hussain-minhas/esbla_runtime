@@ -99,7 +99,7 @@ export async function setupWorkforceIntegration(): Promise<void> {
      TO ${applicationRole}`,
   );
   await workforceMigrationPool.query(
-    `GRANT SELECT, UPDATE ON memberships, service_activations TO ${applicationRole}`,
+    `GRANT SELECT, UPDATE ON service_activations TO ${applicationRole}`,
   );
   await workforceMigrationPool.query(
     `GRANT SELECT, INSERT, UPDATE ON hr_worker_profiles TO ${applicationRole}`,

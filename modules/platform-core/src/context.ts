@@ -15,6 +15,11 @@ export interface TenantActor {
   readonly roleKey: string;
 }
 
+export interface MembershipAuthority {
+  readonly roleKey: string;
+  readonly status: "active" | "suspended";
+}
+
 export interface TenantTransaction {
   readonly actor: TenantActor;
   readonly client: PoolClient;
@@ -44,6 +49,51 @@ function assertOperationContext(context: OperationContext): void {
       invalidFields,
     });
   }
+}
+
+function invalidMembershipAuthority(): PlatformError {
+  return new PlatformError("POLICY_DENIED", "Membership authority could not be verified");
+}
+
+function parseMembershipAuthority(value: unknown): MembershipAuthority {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw invalidMembershipAuthority();
+  }
+  const authority = value as Record<string, unknown>;
+  const keys = Object.keys(authority).sort();
+  if (keys.length !== 2 || keys[0] !== "roleKey" || keys[1] !== "status") {
+    throw invalidMembershipAuthority();
+  }
+  if (
+    typeof authority.roleKey !== "string" ||
+    authority.roleKey.length === 0 ||
+    authority.roleKey.trim() !== authority.roleKey ||
+    (authority.status !== "active" && authority.status !== "suspended")
+  ) {
+    throw invalidMembershipAuthority();
+  }
+  return { roleKey: authority.roleKey, status: authority.status };
+}
+
+export async function lockMembershipAuthority(
+  client: PoolClient,
+  context: OperationContext,
+  subjectPrincipalId: string,
+): Promise<MembershipAuthority | null> {
+  assertOperationContext(context);
+  if (!UUID_PATTERN.test(subjectPrincipalId)) {
+    throw new PlatformError("INVALID_OPERATION_CONTEXT", "Operation context must contain UUIDs", {
+      invalidFields: ["subjectPrincipalId"],
+    });
+  }
+  const result = await client.query<{ authority: unknown }>(
+    `SELECT public.esbla_lock_membership_authority($1, $2, $3) AS authority`,
+    [context.tenantId, context.actorPrincipalId, subjectPrincipalId],
+  );
+  if (result.rows.length !== 1) throw invalidMembershipAuthority();
+  const authority = result.rows[0]?.authority;
+  if (authority === null) return null;
+  return parseMembershipAuthority(authority);
 }
 
 export async function withTenantTransaction<T>(
@@ -104,15 +154,8 @@ export async function withTenantTransaction<T>(
       );
     }
 
-    const membership = await client.query<{ role_key: string; status: string }>(
-      `SELECT role_key, status
-       FROM memberships
-       WHERE tenant_id = $1 AND principal_id = $2
-       FOR SHARE`,
-      [context.tenantId, context.actorPrincipalId],
-    );
-    const actor = membership.rows[0];
-    if (actor?.status !== "active") {
+    const actorAuthority = await lockMembershipAuthority(client, context, context.actorPrincipalId);
+    if (actorAuthority?.status !== "active") {
       throw new PlatformError(
         "ACTOR_NOT_ACTIVE_MEMBER",
         "Actor is not an active member of the tenant",
@@ -121,7 +164,7 @@ export async function withTenantTransaction<T>(
     }
 
     const transactionBase = {
-      actor: { principalId: context.actorPrincipalId, roleKey: actor.role_key },
+      actor: { principalId: context.actorPrincipalId, roleKey: actorAuthority.roleKey },
       client,
       context,
     };
