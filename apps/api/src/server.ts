@@ -283,7 +283,13 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     runtimeEnvironment: options.runtimeEnvironment ?? "production",
     server,
   });
-  registerShiftAssignmentRoutes({ authenticate, pool: options.pool, server });
+  registerShiftAssignmentRoutes({
+    authenticate,
+    migrationReadPool: options.migrationReadPool ?? options.pool,
+    pool: options.pool,
+    runtimeEnvironment: options.runtimeEnvironment ?? "production",
+    server,
+  });
 
   server.get<{ Querystring: HrServiceControlQuery }>(
     "/v1/hr/workforce-profiles/service-control",

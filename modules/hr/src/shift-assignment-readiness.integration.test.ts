@@ -4,6 +4,7 @@ import { type OperationContext, withTenantTransaction } from "@esbla/platform-co
 import type { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { inspectActivationReadiness } from "./activation.js";
+import { restoreShiftRuntimeTableAuthority } from "./shift-assignment.integration-fixture.js";
 import {
   HR_SHIFT_ASSIGNMENT_CATALOG_REQUIREMENTS,
   HR_SHIFT_ASSIGNMENT_REQUIRED_MIGRATIONS,
@@ -22,44 +23,6 @@ const context: OperationContext = {
 let applicationRole = "";
 let migrationPool: Pool;
 let runtimePool: Pool;
-
-async function restoreShiftRuntimeAuthority() {
-  for (const required of HR_SHIFT_ASSIGNMENT_RUNTIME_TABLE_PRIVILEGES) {
-    if (!/^public\.[a-z_][a-z0-9_]*$/.test(required.name)) {
-      throw new Error("Shift readiness contains an unsafe table identity");
-    }
-    const columns = await migrationPool.query<{ value: string | null }>(
-      `SELECT string_agg(quote_ident(attribute.attname), ', ' ORDER BY attribute.attnum) AS value
-       FROM pg_attribute attribute
-       WHERE attribute.attrelid = $1::regclass
-         AND attribute.attnum > 0 AND NOT attribute.attisdropped`,
-      [required.name],
-    );
-    const columnList = columns.rows[0]?.value;
-    if (!columnList) throw new Error("Shift readiness table columns are unavailable");
-
-    await migrationPool.query(
-      `REVOKE ALL PRIVILEGES ON TABLE ${required.name} FROM ${applicationRole}`,
-    );
-    await migrationPool.query(
-      `REVOKE SELECT (${columnList}), INSERT (${columnList}), UPDATE (${columnList}),
-              REFERENCES (${columnList}) ON ${required.name} FROM ${applicationRole}`,
-    );
-    const grants: string[] = [];
-    if (required.select) grants.push("SELECT");
-    if (required.insert) grants.push("INSERT");
-    if (required.update) grants.push("UPDATE");
-    if (required.delete) grants.push("DELETE");
-    if (required.truncate) grants.push("TRUNCATE");
-    if (required.references) grants.push("REFERENCES");
-    if (required.trigger) grants.push("TRIGGER");
-    if (grants.length > 0) {
-      await migrationPool.query(
-        `GRANT ${grants.join(", ")} ON TABLE ${required.name} TO ${applicationRole}`,
-      );
-    }
-  }
-}
 
 async function inspectShiftStructuralReadiness() {
   return await withTenantTransaction(runtimePool, context, async (transaction) => {
@@ -82,7 +45,7 @@ beforeAll(async () => {
   migrationPool = createDatabasePool(migrationUrl, { max: 2 });
   await migrateDatabase(createDatabase(migrationPool));
   await migrationPool.query(`GRANT USAGE ON SCHEMA public TO ${applicationRole}`);
-  await restoreShiftRuntimeAuthority();
+  await restoreShiftRuntimeTableAuthority(migrationPool, applicationRole);
   await migrationPool.query("INSERT INTO tenants (tenant_id,name) VALUES ($1,'Shift Ready')", [
     tenantId,
   ]);
@@ -109,7 +72,7 @@ beforeAll(async () => {
   runtimePool = createDatabasePool(runtimeUrl, { max: 2 });
 });
 
-beforeEach(restoreShiftRuntimeAuthority);
+beforeEach(async () => await restoreShiftRuntimeTableAuthority(migrationPool, applicationRole));
 
 afterAll(async () => {
   await runtimePool?.end();
@@ -117,7 +80,7 @@ afterAll(async () => {
 });
 
 describe("Shift Assignment structural readiness", () => {
-  it("proves exact dormant structure while execution eligibility stays fail-closed", async () => {
+  it("proves exact structure and non-production semantic eligibility", async () => {
     await expect(inspectShiftStructuralReadiness()).resolves.toEqual({
       current: true,
       reasons: [],
@@ -125,14 +88,11 @@ describe("Shift Assignment structural readiness", () => {
     await expect(
       inspectShiftAssignmentEnvironment(migrationPool, "non_production"),
     ).resolves.toEqual({ current: true, reasons: [] });
-    const query = vi.fn();
+    const query = vi.fn().mockResolvedValue({ rows: [{ current: true }] });
     await expect(
       inspectShiftAssignmentSemanticReadiness({ query } as never, "non_production"),
-    ).resolves.toEqual({
-      current: false,
-      reasons: ["service_not_eligible"],
-    });
-    expect(query).not.toHaveBeenCalled();
+    ).resolves.toEqual({ current: true, reasons: [] });
+    expect(query).toHaveBeenCalledOnce();
   }, 15_000);
 
   it("fails closed on production retention or unavailable timezone evidence", async () => {
@@ -162,7 +122,7 @@ describe("Shift Assignment structural readiness", () => {
         reasons: ["runtime_projection_privileges_not_current"],
       });
     } finally {
-      await restoreShiftRuntimeAuthority();
+      await restoreShiftRuntimeTableAuthority(migrationPool, applicationRole);
     }
     await expect(inspectShiftStructuralReadiness()).resolves.toEqual({
       current: true,

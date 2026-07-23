@@ -23,6 +23,7 @@ export * from "./queries.js";
 export * from "./settings.js";
 export * from "./shift-assignment.js";
 export * from "./shift-assignment-queries.js";
+export * from "./shift-assignment-service-control.js";
 export * from "./types.js";
 export * from "./workforce-commands.js";
 export * from "./workforce-errors.js";
