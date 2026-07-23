@@ -116,6 +116,11 @@ export const hrEmploymentRecords = pgTable(
       table.createdAt.desc(),
       table.employmentRecordId.desc(),
     ),
+    index("idx_hr_employment_records_tenant_order_cursor").on(
+      table.tenantId,
+      table.createdAt.desc(),
+      table.employmentRecordId.desc(),
+    ),
     index("idx_hr_employment_records_tenant_worker_active_head").on(
       table.tenantId,
       table.workerProfileId,
