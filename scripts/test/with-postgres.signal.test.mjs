@@ -470,6 +470,21 @@ test("with-postgres deletes the root only after foreground close", {
   });
 });
 
+test("with-postgres allows a bounded cooperative fast shutdown before emergency escalation", {
+  timeout: 20_000,
+}, async () => {
+  const subject = await fixture({ shutdownDelayMs: 2_500 });
+  const run = launch(subject);
+  await verifyWithCleanup(subject, run, async () => {
+    assert.deepEqual(await closeWithin(run), { code: 0, signal: null });
+    const proof = await receipt(subject);
+    assert.match(proof, /postgres:SIGINT\npostgres:close\n/);
+    assert.doesNotMatch(proof, /postgres:SIGQUIT/);
+    assertSanitized(run, subject);
+    assert.deepEqual(await readdir(subject.wrapperTemp), []);
+  });
+});
+
 test("fake database closes itself after exact wrapper ownership is lost", {
   timeout: 20_000,
 }, async () => {

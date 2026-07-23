@@ -12,7 +12,7 @@ if (!command) {
 
 const setupForceAfterMs = 2_000;
 const readinessTimeoutMs = 15_000;
-const fastShutdownTimeoutMs = 2_000;
+const fastShutdownTimeoutMs = 5_000;
 const immediateShutdownTimeoutMs = 2_000;
 const hardShutdownTimeoutMs = 1_000;
 
