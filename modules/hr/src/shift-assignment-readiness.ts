@@ -16,6 +16,11 @@ export const HR_SHIFT_ASSIGNMENT_REQUIRED_MIGRATIONS = [
     hash: "ffd2e673f8bcab33194d23480660c94928781fd6b3d33f03bb33109c011c9a7c",
     id: "0015",
   },
+  {
+    createdAt: 1784818108090,
+    hash: "dad6f17ed1f127315b711af9bdf74b01c13a99975fc6b8ada666724f6f09f9df",
+    id: "0016",
+  },
 ] as const;
 
 const runtimeTablePrivilege = (name: string, update = false, insert = update) => ({
@@ -108,6 +113,7 @@ export const HR_SHIFT_ASSIGNMENT_CATALOG_REQUIREMENTS = {
       "hr_shift_roster_versions_pkey|hr_shift_roster_versions|CREATE UNIQUE INDEX hr_shift_roster_versions_pkey ON public.hr_shift_roster_versions USING btree (roster_version_id)||p|1|1",
       "uq_hr_shift_roster_versions_composite_identity|hr_shift_roster_versions|CREATE UNIQUE INDEX uq_hr_shift_roster_versions_composite_identity ON public.hr_shift_roster_versions USING btree (tenant_id, roster_version_id)||u|0|1",
       "uq_hr_shift_roster_versions_tenant_period_version|hr_shift_roster_versions|CREATE UNIQUE INDEX uq_hr_shift_roster_versions_tenant_period_version ON public.hr_shift_roster_versions USING btree (tenant_id, period_start, period_end, version)|||0|1",
+      "uq_hr_shift_rosters_tenant_period_draft|hr_shift_roster_versions|CREATE UNIQUE INDEX uq_hr_shift_rosters_tenant_period_draft ON public.hr_shift_roster_versions USING btree (tenant_id, period_start, period_end, status) WHERE (status = 'draft'::public.hr_shift_roster_status)|(status = 'draft'::public.hr_shift_roster_status)||0|1",
       "uq_hr_shift_rosters_tenant_period_published|hr_shift_roster_versions|CREATE UNIQUE INDEX uq_hr_shift_rosters_tenant_period_published ON public.hr_shift_roster_versions USING btree (tenant_id, period_start, period_end, status) WHERE (status = 'published'::public.hr_shift_roster_status)|(status = 'published'::public.hr_shift_roster_status)||0|1",
       "uq_hr_shift_rosters_tenant_period_successor|hr_shift_roster_versions|CREATE UNIQUE INDEX uq_hr_shift_rosters_tenant_period_successor ON public.hr_shift_roster_versions USING btree (tenant_id, period_start, period_end, supersedes_roster_version_id) WHERE (supersedes_roster_version_id IS NOT NULL)|(supersedes_roster_version_id IS NOT NULL)||0|1",
     ].map((entry) => {
