@@ -31,9 +31,17 @@ export interface HrEmploymentRecordSettings {
   readonly effectiveRangeOverlapAllowed: false;
   readonly employmentTypeCodes: string;
 }
+export interface HrShiftAssignmentSettings {
+  readonly overlapAllowed: false;
+  readonly rosterHorizonDays: number;
+}
 export const hrEmploymentRecordSettingsDefaults: HrEmploymentRecordSettings = Object.freeze({
   effectiveRangeOverlapAllowed: false,
   employmentTypeCodes: "unspecified",
+});
+export const hrShiftAssignmentSettingsDefaults: HrShiftAssignmentSettings = Object.freeze({
+  overlapAllowed: false,
+  rosterHorizonDays: 14,
 });
 export type HrServiceConfigureBody =
   | Readonly<{
@@ -43,6 +51,10 @@ export type HrServiceConfigureBody =
   | Readonly<{
       expectedSettingsVersion: number;
       settings: HrEmploymentRecordSettings;
+    }>
+  | Readonly<{
+      expectedSettingsVersion: number;
+      settings: HrShiftAssignmentSettings;
     }>;
 interface HrServiceControlBase {
   readonly activationState: "active" | "inactive";
@@ -55,8 +67,12 @@ export type HrServiceControl = HrServiceControlBase &
   (
     | { readonly serviceKey: "workforce_profile"; readonly settings: HrWorkforceProfileSettings }
     | { readonly serviceKey: "employment_record"; readonly settings: HrEmploymentRecordSettings }
+    | { readonly serviceKey: "shift_assignment"; readonly settings: HrShiftAssignmentSettings }
     | {
-        readonly serviceKey: Exclude<HrServiceKey, "employment_record" | "workforce_profile">;
+        readonly serviceKey: Exclude<
+          HrServiceKey,
+          "employment_record" | "shift_assignment" | "workforce_profile"
+        >;
         readonly settings: Readonly<Record<string, never>>;
       }
   );
@@ -128,6 +144,15 @@ const employmentRecordSettingsSchema = {
   required: ["effectiveRangeOverlapAllowed", "employmentTypeCodes"],
   type: "object",
 } as const;
+const shiftAssignmentSettingsSchema = {
+  additionalProperties: false,
+  properties: {
+    overlapAllowed: { const: false },
+    rosterHorizonDays: { maximum: 31, minimum: 1, type: "integer" },
+  },
+  required: ["overlapAllowed", "rosterHorizonDays"],
+  type: "object",
+} as const;
 const emptyServiceSettingsSchema = {
   additionalProperties: false,
   properties: {},
@@ -138,7 +163,13 @@ export const hrServiceConfigureBodySchema = {
   additionalProperties: false,
   properties: {
     expectedSettingsVersion: { ...positiveVersionSchema, maximum: maximumPostgresInteger },
-    settings: { oneOf: [workforceProfileSettingsSchema, employmentRecordSettingsSchema] },
+    settings: {
+      oneOf: [
+        workforceProfileSettingsSchema,
+        employmentRecordSettingsSchema,
+        shiftAssignmentSettingsSchema,
+      ],
+    },
   },
   required: ["expectedSettingsVersion", "settings"],
   type: "object",
@@ -164,7 +195,16 @@ export const hrServiceControlSchema = {
     },
     {
       properties: {
-        serviceKey: { not: { enum: ["employment_record", "workforce_profile"] } },
+        serviceKey: { const: "shift_assignment" },
+        settings: shiftAssignmentSettingsSchema,
+      },
+      type: "object",
+    },
+    {
+      properties: {
+        serviceKey: {
+          not: { enum: ["employment_record", "shift_assignment", "workforce_profile"] },
+        },
         settings: emptyServiceSettingsSchema,
       },
       type: "object",
@@ -178,6 +218,7 @@ export const hrServiceControlSchema = {
       anyOf: [
         workforceProfileSettingsSchema,
         employmentRecordSettingsSchema,
+        shiftAssignmentSettingsSchema,
         emptyServiceSettingsSchema,
       ],
     },
@@ -321,6 +362,20 @@ function parseEmploymentRecordSettings(value: unknown, label: string): HrEmploym
   return value as unknown as HrEmploymentRecordSettings;
 }
 
+function parseShiftAssignmentSettings(value: unknown, label: string): HrShiftAssignmentSettings {
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(value, ["overlapAllowed", "rosterHorizonDays"], label);
+  if (
+    value.overlapAllowed !== false ||
+    !Number.isSafeInteger(value.rosterHorizonDays) ||
+    (value.rosterHorizonDays as number) < 1 ||
+    (value.rosterHorizonDays as number) > 31
+  ) {
+    throw new TypeError(`${label} is invalid`);
+  }
+  return value as unknown as HrShiftAssignmentSettings;
+}
+
 function assertDateTime(value: unknown, label: string): asserts value is string {
   if (typeof value !== "string") throw new TypeError(`${label} must be an ISO date-time`);
   const match = dateTimePattern.exec(value);
@@ -399,6 +454,11 @@ export function parseHrServiceConfigureBody(value: unknown): HrServiceConfigureB
   }
   if (Object.hasOwn(value.settings, "effectiveRangeOverlapAllowed")) {
     parseEmploymentRecordSettings(value.settings, "HrServiceConfigureRequestV1.settings");
+  } else if (
+    Object.hasOwn(value.settings, "overlapAllowed") ||
+    Object.hasOwn(value.settings, "rosterHorizonDays")
+  ) {
+    parseShiftAssignmentSettings(value.settings, "HrServiceConfigureRequestV1.settings");
   } else {
     parseWorkforceProfileSettings(value.settings, "HrServiceConfigureRequestV1.settings");
   }
@@ -418,6 +478,8 @@ export function parseHrServiceControl(value: unknown): HrServiceControl {
     parseWorkforceProfileSettings(value.settings, "HrServiceControlResponseV1.settings");
   } else if (value.serviceKey === "employment_record") {
     parseEmploymentRecordSettings(value.settings, "HrServiceControlResponseV1.settings");
+  } else if (value.serviceKey === "shift_assignment") {
+    parseShiftAssignmentSettings(value.settings, "HrServiceControlResponseV1.settings");
   } else {
     if (!isRecord(value.settings)) {
       throw new TypeError("HrServiceControlResponseV1.settings must be an object");

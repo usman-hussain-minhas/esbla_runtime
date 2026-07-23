@@ -70,6 +70,9 @@ describe("HR passenger manifest reuse contract", () => {
       { exposure: "tenant", id: "hr.workforce.view_own" },
       { exposure: "admin", id: "hr.workforce.view_service_control" },
     ]);
+    expect(
+      hrManifest.capabilities.filter((capability) => capability.id.startsWith("hr.shift.")),
+    ).toEqual([]);
     expect(hrManifest.capabilities).not.toContainEqual({
       exposure: "integration",
       id: expect.any(String),

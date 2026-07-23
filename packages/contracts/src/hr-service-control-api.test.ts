@@ -8,6 +8,7 @@ import {
   hrServiceDeactivateBodySchema,
   hrServiceKeys,
   hrServiceMutationResponseSchema,
+  hrShiftAssignmentSettingsDefaults,
   parseHrServiceActivateBody,
   parseHrServiceConfigureBody,
   parseHrServiceControl,
@@ -33,6 +34,11 @@ const serviceControl = {
 const employmentRecordSettings = {
   effectiveRangeOverlapAllowed: false,
   employmentTypeCodes: "unspecified,Fixed Term",
+} as const;
+
+const shiftAssignmentSettings = {
+  overlapAllowed: false,
+  rosterHorizonDays: 14,
 } as const;
 
 describe("shared HR service-control contracts", () => {
@@ -140,6 +146,67 @@ describe("shared HR service-control contracts", () => {
     }
   });
 
+  it("accepts only the exact locked Shift Assignment settings replacement", () => {
+    expect(hrShiftAssignmentSettingsDefaults).toEqual(shiftAssignmentSettings);
+    expect(Object.isFrozen(hrShiftAssignmentSettingsDefaults)).toBe(true);
+    const body = { expectedSettingsVersion: 4, settings: shiftAssignmentSettings };
+    expect(parseHrServiceConfigureBody(body)).toBe(body);
+    for (const invalid of [
+      { ...body, settings: { ...body.settings, overlapAllowed: true } },
+      { ...body, settings: { ...body.settings, rosterHorizonDays: 0 } },
+      { ...body, settings: { ...body.settings, rosterHorizonDays: 32 } },
+      { ...body, settings: { ...body.settings, rosterHorizonDays: 1.5 } },
+      { ...body, settings: { ...body.settings, rosterHorizonDays: "14" } },
+      { ...body, settings: { overlapAllowed: false } },
+      { ...body, settings: { rosterHorizonDays: 14 } },
+      { ...body, settings: { ...body.settings, extra: true } },
+      {
+        ...body,
+        settings: { ...body.settings, employeeNumberRequired: false },
+      },
+      {
+        ...body,
+        settings: { ...body.settings, employmentTypeCodes: "unspecified" },
+      },
+    ]) {
+      expect(() => parseHrServiceConfigureBody(invalid)).toThrow();
+    }
+  });
+
+  it("publishes Shift settings consistently in configure and control schemas", () => {
+    const settingsSchema = {
+      additionalProperties: false,
+      properties: {
+        overlapAllowed: { const: false },
+        rosterHorizonDays: { maximum: 31, minimum: 1, type: "integer" },
+      },
+      required: ["overlapAllowed", "rosterHorizonDays"],
+      type: "object",
+    };
+    expect(hrServiceConfigureBodySchema.properties.settings.oneOf).toContainEqual(settingsSchema);
+    expect(hrServiceControlSchema.properties.settings.anyOf).toContainEqual(settingsSchema);
+    expect(hrServiceControlSchema.oneOf).toContainEqual({
+      properties: {
+        serviceKey: { const: "shift_assignment" },
+        settings: settingsSchema,
+      },
+      type: "object",
+    });
+    expect(hrServiceControlSchema.oneOf).toContainEqual({
+      properties: {
+        serviceKey: {
+          not: { enum: ["employment_record", "shift_assignment", "workforce_profile"] },
+        },
+        settings: {
+          additionalProperties: false,
+          properties: {},
+          type: "object",
+        },
+      },
+      type: "object",
+    });
+  });
+
   it("strictly parses the exact six-field response for every included service", () => {
     for (const serviceKey of hrServiceKeys) {
       const response = {
@@ -150,10 +217,43 @@ describe("shared HR service-control contracts", () => {
             ? serviceControl.settings
             : serviceKey === "employment_record"
               ? employmentRecordSettings
-              : {},
+              : serviceKey === "shift_assignment"
+                ? shiftAssignmentSettings
+                : {},
       };
       expect(parseHrServiceControl(response)).toBe(response);
     }
+  });
+
+  it("rejects invalid or foreign settings for a Shift Assignment control response", () => {
+    const response = {
+      ...serviceControl,
+      serviceKey: "shift_assignment",
+      settings: shiftAssignmentSettings,
+    } as const;
+    expect(parseHrServiceControl(response)).toBe(response);
+    for (const settings of [
+      {},
+      { overlapAllowed: true, rosterHorizonDays: 14 },
+      { overlapAllowed: false, rosterHorizonDays: 0 },
+      { overlapAllowed: false, rosterHorizonDays: 32 },
+      { overlapAllowed: false, rosterHorizonDays: 1.5 },
+      { overlapAllowed: false, rosterHorizonDays: "14" },
+      { overlapAllowed: false },
+      { rosterHorizonDays: 14 },
+      { ...shiftAssignmentSettings, extra: true },
+      serviceControl.settings,
+      employmentRecordSettings,
+    ]) {
+      expect(() => parseHrServiceControl({ ...response, settings })).toThrow();
+    }
+    expect(() =>
+      parseHrServiceControl({
+        ...serviceControl,
+        serviceKey: "attendance",
+        settings: shiftAssignmentSettings,
+      }),
+    ).toThrow();
   });
 
   it("accepts only exact capability-minimal service mutation outcomes", () => {
