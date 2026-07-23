@@ -9,10 +9,17 @@ import {
   createShiftRoster,
   publishShiftRoster,
 } from "./shift-assignment.js";
+import {
+  getAuthorizedShiftAssignmentDetail,
+  listAuthorizedShiftAssignments,
+} from "./shift-assignment-queries.js";
+import { changeWorkforceReportingRelationship } from "./workforce-commands.js";
 
 const ids = {
   actor: "a6000000-0000-4000-8000-000000000001",
   actorMembership: "26000000-0000-4000-8000-000000000001",
+  manager: "d6000000-0000-4000-8000-000000000004",
+  managerMembership: "26000000-0000-4000-8000-000000000004",
   missingTenant: "c8000000-0000-4000-8000-000000000003",
   otherActor: "b6000000-0000-4000-8000-000000000002",
   otherMembership: "26000000-0000-4000-8000-000000000002",
@@ -25,6 +32,7 @@ const ids = {
 let applicationRole = "";
 let migrationPool: Pool;
 let pool: Pool;
+let managerProfileId = "";
 let workerProfileId = "";
 function context(
   correlationId: string = randomUUID(),
@@ -121,6 +129,7 @@ beforeAll(async () => {
   pool = createDatabasePool(runtimeUrl, { max: 8 });
   await migrationPool.query(
     `GRANT SELECT ON membership_capabilities,tenant_settings TO ${applicationRole};
+     GRANT SELECT,INSERT ON hr_reporting_relationships TO ${applicationRole};
      GRANT SELECT,UPDATE ON service_activations,hr_worker_profiles TO ${applicationRole};
      GRANT SELECT,INSERT ON evidence_events,outbox_events TO ${applicationRole}`,
   );
@@ -132,8 +141,9 @@ beforeAll(async () => {
   );
   await migrationPool.query(
     `INSERT INTO principals (principal_id,display_name)
-     VALUES ($1,'Shift Operator'),($2,'Other Operator'),($3,'Shift Worker')`,
-    [ids.actor, ids.otherActor, ids.worker],
+     VALUES ($1,'Shift Operator'),($2,'Other Operator'),($3,'Shift Worker'),
+            ($4,'Shift Manager')`,
+    [ids.actor, ids.otherActor, ids.worker, ids.manager],
   );
   for (const [tenantId, actorId, membershipId] of [
     [ids.tenant, ids.actor, ids.actorMembership],
@@ -151,7 +161,15 @@ beforeAll(async () => {
         [
           tenantId,
           actorId,
-          ["hr.shift.assign", "hr.shift.cancel", "hr.shift.create_roster", "hr.shift.publish"],
+          [
+            "hr.shift.assign",
+            "hr.shift.cancel",
+            "hr.shift.create_roster",
+            "hr.shift.list_roster",
+            "hr.shift.publish",
+            "hr.shift.view_detail",
+            "hr.workforce.change_reporting_relationship",
+          ],
         ],
       );
       await client.query(
@@ -164,8 +182,15 @@ beforeAll(async () => {
   await tenantTransaction(migrationPool, ids.tenant, ids.actor, async (client) => {
     await client.query(
       `INSERT INTO memberships (membership_id,tenant_id,principal_id,role_key)
-       VALUES ($1,$2,$3,'employee')`,
-      [ids.workerMembership, ids.tenant, ids.worker],
+       VALUES ($1,$2,$3,'employee'),($4,$2,$5,'manager')`,
+      [ids.workerMembership, ids.tenant, ids.worker, ids.managerMembership, ids.manager],
+    );
+    await client.query(
+      `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+       SELECT $1,principal_id,capability
+       FROM unnest($2::uuid[]) principal_id
+       CROSS JOIN unnest($3::text[]) capability`,
+      [ids.tenant, [ids.worker, ids.manager], ["hr.shift.list_roster", "hr.shift.view_detail"]],
     );
     const worker = await client.query<{ worker_profile_id: string }>(
       `INSERT INTO hr_worker_profiles (tenant_id)
@@ -183,6 +208,35 @@ beforeAll(async () => {
        WHERE tenant_id=$1 AND worker_profile_id=$2`,
       [ids.tenant, workerProfileId],
     );
+    const manager = await client.query<{ worker_profile_id: string }>(
+      `INSERT INTO hr_worker_profiles (tenant_id)
+       VALUES ($1) RETURNING worker_profile_id::text`,
+      [ids.tenant],
+    );
+    managerProfileId = manager.rows[0]?.worker_profile_id ?? "";
+    await client.query(
+      `UPDATE hr_worker_profiles SET principal_id=$3,row_version=2
+       WHERE tenant_id=$1 AND worker_profile_id=$2`,
+      [ids.tenant, managerProfileId, ids.manager],
+    );
+    await client.query(
+      `UPDATE hr_worker_profiles SET workforce_status='active',row_version=3
+       WHERE tenant_id=$1 AND worker_profile_id=$2`,
+      [ids.tenant, managerProfileId],
+    );
+    const relationship = await client.query<{ reporting_relationship_id: string }>(
+      `INSERT INTO hr_reporting_relationships
+         (tenant_id,worker_profile_id,manager_worker_profile_id,relationship_status,
+          relationship_version)
+       VALUES ($1,$2,$3,'assigned',1)
+       RETURNING reporting_relationship_id::text`,
+      [ids.tenant, workerProfileId, managerProfileId],
+    );
+    await client.query(
+      `UPDATE hr_worker_profiles SET current_reporting_relationship_id=$3,row_version=4
+       WHERE tenant_id=$1 AND worker_profile_id=$2`,
+      [ids.tenant, workerProfileId, relationship.rows[0]?.reporting_relationship_id],
+    );
   });
 });
 
@@ -192,6 +246,246 @@ afterAll(async () => {
 });
 
 describe("Shift Assignment mutation lifecycle", () => {
+  it("lists only published authorized shifts and returns evidence-backed detail", async () => {
+    const draft = (
+      await createShiftRoster(pool, context(), rosterInput("2028-01-01", "2028-01-14"))
+    ).roster;
+    const assigned = await assignShift(
+      pool,
+      context(),
+      assignmentInput(draft.rosterVersionId, "2028-01-03T04:00:00Z", "2028-01-03T12:00:00Z"),
+    );
+    await tenantTransaction(migrationPool, ids.tenant, ids.actor, (client) =>
+      client.query(
+        `INSERT INTO hr_shift_assignments
+           (tenant_id,roster_version_id,worker_profile_id,starts_at,ends_at,iana_timezone)
+         SELECT $1,$2,$3,$4::timestamptz + slot * interval '4 hours',
+                $4::timestamptz + slot * interval '4 hours' + interval '3 hours',$5
+         FROM generate_series(0,49) slot`,
+        [
+          ids.tenant,
+          draft.rosterVersionId,
+          workerProfileId,
+          "2028-01-04T00:00:00Z",
+          "Asia/Karachi",
+        ],
+      ),
+    );
+    expect(
+      await listAuthorizedShiftAssignments(pool, context(randomUUID(), ids.tenant, ids.worker), {
+        mode: "own",
+        rangeEnd: "2028-02-01T00:00:00Z",
+        rangeStart: "2028-01-01T00:00:00Z",
+      }),
+    ).toMatchObject({ accessScope: "own", items: [] });
+    await publishShiftRoster(pool, context(), {
+      expectedVersion: draft.version,
+      idempotencyKey: randomUUID(),
+      rosterVersionId: draft.rosterVersionId,
+    });
+
+    const own = await listAuthorizedShiftAssignments(
+      pool,
+      context(randomUUID(), ids.tenant, ids.worker),
+      {
+        mode: "own",
+        pageSize: 50,
+        rangeEnd: "2028-02-01T00:00:00Z",
+        rangeStart: "2028-01-01T00:00:00Z",
+      },
+    );
+    expect(own.accessScope).toBe("own");
+    expect(own.items[0]).toMatchObject({
+      shiftAssignmentId: assigned.assignment.shiftAssignmentId,
+      status: "active",
+    });
+    expect(own.items).toHaveLength(50);
+    expect(own.nextCursor).not.toBeNull();
+    const nextCursor = own.nextCursor;
+    if (!nextCursor) throw new Error("Expected a full-page Shift cursor");
+    const tail = await listAuthorizedShiftAssignments(
+      pool,
+      context(randomUUID(), ids.tenant, ids.worker),
+      {
+        cursor: nextCursor,
+        mode: "own",
+        pageSize: 50,
+        rangeEnd: "2028-02-01T00:00:00Z",
+        rangeStart: "2028-01-01T00:00:00Z",
+      },
+    );
+    expect(tail).toMatchObject({ accessScope: "own", nextCursor: null });
+    expect(tail.items).toHaveLength(1);
+    const detail = await getAuthorizedShiftAssignmentDetail(
+      pool,
+      context(randomUUID(), ids.tenant, ids.worker),
+      assigned.assignment.shiftAssignmentId,
+    );
+    expect(detail).toMatchObject({
+      assignment: { shiftAssignmentId: assigned.assignment.shiftAssignmentId, status: "active" },
+      history: [
+        {
+          eventType: "hr.shift_assignment.assign_shift",
+          newState: "active",
+          priorState: null,
+        },
+      ],
+    });
+  }, 20_000);
+
+  it("re-reads manager relationship and role while HR keeps tenant-scoped roster access", async () => {
+    const draft = (
+      await createShiftRoster(pool, context(), rosterInput("2028-02-01", "2028-02-14"))
+    ).roster;
+    const assigned = await assignShift(
+      pool,
+      context(),
+      assignmentInput(draft.rosterVersionId, "2028-02-03T04:00:00Z", "2028-02-03T12:00:00Z"),
+    );
+    const managerContext = () => context(randomUUID(), ids.tenant, ids.manager);
+    await expect(
+      listAuthorizedShiftAssignments(pool, managerContext(), {
+        mode: "roster",
+        rosterVersionId: draft.rosterVersionId,
+        status: "active",
+      }),
+    ).rejects.toMatchObject({ code: "SHIFT_NOT_FOUND" });
+    await publishShiftRoster(pool, context(), {
+      expectedVersion: draft.version,
+      idempotencyKey: randomUUID(),
+      rosterVersionId: draft.rosterVersionId,
+    });
+    expect(
+      await listAuthorizedShiftAssignments(pool, managerContext(), {
+        mode: "roster",
+        rosterVersionId: draft.rosterVersionId,
+        status: "active",
+      }),
+    ).toMatchObject({
+      accessScope: "assigned",
+      items: [{ shiftAssignmentId: assigned.assignment.shiftAssignmentId }],
+    });
+    expect(
+      await listAuthorizedShiftAssignments(pool, context(), {
+        mode: "roster",
+        rosterVersionId: draft.rosterVersionId,
+        status: "active",
+      }),
+    ).toMatchObject({ accessScope: "tenant", items: [{ workerProfileId }] });
+    const emptyDraft = (
+      await createShiftRoster(pool, context(), rosterInput("2028-02-15", "2028-02-28"))
+    ).roster;
+    await publishShiftRoster(pool, context(), {
+      expectedVersion: emptyDraft.version,
+      idempotencyKey: randomUUID(),
+      rosterVersionId: emptyDraft.rosterVersionId,
+    });
+    expect(
+      await listAuthorizedShiftAssignments(pool, managerContext(), {
+        mode: "roster",
+        rosterVersionId: emptyDraft.rosterVersionId,
+        status: "active",
+      }),
+    ).toMatchObject({ accessScope: "assigned", items: [], nextCursor: null });
+
+    await changeWorkforceReportingRelationship(pool, context(), {
+      expectedVersion: 4,
+      idempotencyKey: randomUUID(),
+      managerWorkerProfileId: null,
+      relationshipStatus: "unassigned",
+      workerProfileId,
+    });
+    await expect(
+      getAuthorizedShiftAssignmentDetail(
+        pool,
+        managerContext(),
+        assigned.assignment.shiftAssignmentId,
+      ),
+    ).rejects.toMatchObject({ code: "SHIFT_NOT_FOUND" });
+    await expect(
+      listAuthorizedShiftAssignments(pool, managerContext(), {
+        mode: "roster",
+        rosterVersionId: draft.rosterVersionId,
+        status: "active",
+      }),
+    ).rejects.toMatchObject({ code: "SHIFT_NOT_FOUND" });
+    await changeWorkforceReportingRelationship(pool, context(), {
+      expectedVersion: 5,
+      idempotencyKey: randomUUID(),
+      managerWorkerProfileId: managerProfileId,
+      relationshipStatus: "assigned",
+      workerProfileId,
+    });
+    await tenantTransaction(migrationPool, ids.tenant, ids.actor, (client) =>
+      client.query(
+        `UPDATE memberships SET role_key='employee'
+         WHERE tenant_id=$1 AND principal_id=$2`,
+        [ids.tenant, ids.manager],
+      ),
+    );
+    await expect(
+      getAuthorizedShiftAssignmentDetail(
+        pool,
+        managerContext(),
+        assigned.assignment.shiftAssignmentId,
+      ),
+    ).rejects.toMatchObject({ code: "SHIFT_NOT_FOUND" });
+    await tenantTransaction(migrationPool, ids.tenant, ids.actor, (client) =>
+      client.query(
+        `UPDATE memberships SET role_key='manager'
+         WHERE tenant_id=$1 AND principal_id=$2`,
+        [ids.tenant, ids.manager],
+      ),
+    );
+    await tenantTransaction(migrationPool, ids.tenant, ids.actor, (client) =>
+      client.query(
+        `DELETE FROM membership_capabilities
+         WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='hr.shift.view_detail'`,
+        [ids.tenant, ids.manager],
+      ),
+    );
+    for (const shiftAssignmentId of [assigned.assignment.shiftAssignmentId, randomUUID()]) {
+      await expect(
+        getAuthorizedShiftAssignmentDetail(pool, managerContext(), shiftAssignmentId),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+    }
+    await tenantTransaction(migrationPool, ids.tenant, ids.actor, (client) =>
+      client.query(
+        `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+         VALUES ($1,$2,'hr.shift.view_detail')`,
+        [ids.tenant, ids.manager],
+      ),
+    );
+    await tenantTransaction(migrationPool, ids.tenant, ids.actor, (client) =>
+      client.query(
+        `UPDATE hr_worker_profiles
+         SET workforce_status='suspended',row_version=row_version+1
+         WHERE tenant_id=$1 AND worker_profile_id=$2`,
+        [ids.tenant, managerProfileId],
+      ),
+    );
+    for (const shiftAssignmentId of [assigned.assignment.shiftAssignmentId, randomUUID()]) {
+      await expect(
+        getAuthorizedShiftAssignmentDetail(pool, managerContext(), shiftAssignmentId),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+    }
+    await tenantTransaction(migrationPool, ids.tenant, ids.actor, (client) =>
+      client.query(
+        `UPDATE hr_worker_profiles
+         SET workforce_status='active',row_version=row_version+1
+         WHERE tenant_id=$1 AND worker_profile_id=$2`,
+        [ids.tenant, managerProfileId],
+      ),
+    );
+    await expect(
+      getAuthorizedShiftAssignmentDetail(
+        pool,
+        context(randomUUID(), ids.otherTenant, ids.otherActor),
+        assigned.assignment.shiftAssignmentId,
+      ),
+    ).rejects.toMatchObject({ code: "SHIFT_NOT_FOUND" });
+  });
+
   it("creates a distant bounded roster once and replays without duplicate proof", async () => {
     const key = randomUUID();
     const input = rosterInput("2099-01-01", "2099-01-14", key);
@@ -378,6 +672,16 @@ describe("Shift Assignment mutation lifecycle", () => {
       shiftAssignmentId: firstAssignment.assignment.shiftAssignmentId,
     });
     expect(cancelled.assignment).toMatchObject({ status: "cancelled", version: 2 });
+    expect(
+      await getAuthorizedShiftAssignmentDetail(
+        pool,
+        context(),
+        firstAssignment.assignment.shiftAssignmentId,
+      ),
+    ).toMatchObject({
+      assignment: { status: "cancelled", version: 2 },
+      history: [{ newState: "active" }, { newState: "cancelled", priorState: "active" }],
+    });
     expect(await assignShift(pool, context(), firstAssignmentInput)).toEqual({
       ...firstAssignment,
       replayed: true,
@@ -401,7 +705,7 @@ describe("Shift Assignment mutation lifecycle", () => {
   it("rechecks authority and dependencies before replay and rolls proof failures back", async () => {
     const key = randomUUID();
     const input = rosterInput("2099-03-01", "2099-03-14", key);
-    await createShiftRoster(pool, context(), input);
+    const seeded = await createShiftRoster(pool, context(), input);
     await tenantTransaction(migrationPool, ids.tenant, ids.actor, (client) =>
       client.query(
         `UPDATE memberships SET role_key='employee'
@@ -421,9 +725,39 @@ describe("Shift Assignment mutation lifecycle", () => {
     );
     await setActivation(ids.tenant, ids.actor, "workforce_profile", "inactive");
     await expect(
+      listAuthorizedShiftAssignments(pool, context(), {
+        mode: "roster",
+        rosterVersionId: seeded.roster.rosterVersionId,
+        status: "active",
+      }),
+    ).rejects.toMatchObject({ code: "SHIFT_DEPENDENCY_INACTIVE" });
+    await expect(
       createShiftRoster(pool, context(), rosterInput("2099-04-01", "2099-04-14")),
     ).rejects.toMatchObject({ code: "SHIFT_DEPENDENCY_INACTIVE" });
     await setActivation(ids.tenant, ids.actor, "workforce_profile", "active");
+    const activationBlocker = await migrationPool.connect();
+    try {
+      await activationBlocker.query("BEGIN");
+      await activationBlocker.query("SELECT set_config('app.tenant_id',$1,true)", [ids.tenant]);
+      await activationBlocker.query(
+        `SELECT service_key FROM service_activations
+         WHERE tenant_id=$1 AND service_key='workforce_profile' FOR UPDATE`,
+        [ids.tenant],
+      );
+      await expect(
+        listAuthorizedShiftAssignments(pool, context(), {
+          mode: "roster",
+          rosterVersionId: seeded.roster.rosterVersionId,
+          status: "active",
+        }),
+      ).rejects.toMatchObject({
+        code: "SHIFT_VERSION_CONFLICT",
+        message: "Shift Assignment read currentness check failed",
+      });
+    } finally {
+      await activationBlocker.query("ROLLBACK").catch(() => undefined);
+      activationBlocker.release();
+    }
 
     const beforeProofFailure = await shiftCounts("2099-05-01");
     await migrationPool.query(`REVOKE INSERT ON outbox_events FROM ${applicationRole}`);
@@ -446,6 +780,13 @@ describe("Shift Assignment mutation lifecycle", () => {
       ).rejects.toMatchObject({ code: "ACTOR_NOT_ACTIVE_MEMBER" });
     await denyAbsentActor(ids.otherTenant);
     await setActivation(ids.otherTenant, ids.otherActor, "shift_assignment", "inactive");
+    await expect(
+      getAuthorizedShiftAssignmentDetail(
+        pool,
+        context(randomUUID(), ids.otherTenant, ids.otherActor),
+        randomUUID(),
+      ),
+    ).rejects.toMatchObject({ code: "SHIFT_SERVICE_INACTIVE" });
     await expect(
       createShiftRoster(
         pool,
