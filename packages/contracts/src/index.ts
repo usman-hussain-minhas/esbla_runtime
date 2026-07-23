@@ -109,6 +109,7 @@ export {
   parseHrServiceDeactivateBody,
   parseHrServiceMutationResponse,
 } from "./hr-service-control-api.js";
+export * from "./hr-shift-assignment-api.js";
 export {
   type HrDirectReportsCursor,
   type HrDirectReportsPage,
