@@ -1,7 +1,8 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { promises as fs } from "node:fs";
 import { chmod, lstat, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import {
   createDatabase,
   createDatabasePool,
@@ -106,6 +107,252 @@ export async function closePrivatePlaywrightRoot(rootPromise, playwright) {
   if (playwright && !playwright.receipt) throw new Error("Missing Playwright close receipt");
   const root = rootPromise ? await rootPromise : undefined;
   await removePrivatePlaywrightRoot(root, playwright?.receipt);
+}
+
+const nextRuntimePersonas = ["admin", "employee", "manager", "operator"];
+const maxNextBuildFiles = 2_000;
+const maxNextBuildEntries = 4_000;
+const maxNextBuildFileBytes = 16 * 1_024 * 1_024;
+const maxNextBuildTotalBytes = 128 * 1_024 * 1_024;
+const maxNextBuildDepth = 32;
+const nextRuntimeRequiredFiles = [
+  "BUILD_ID",
+  "required-server-files.json",
+  join("server", "app-paths-manifest.json"),
+];
+
+async function lstatIfPresent(path) {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
+
+function isOwnedPrivateDirectory(identity) {
+  return (
+    identity?.isDirectory() &&
+    !identity.isSymbolicLink() &&
+    identity.uid === process.getuid?.() &&
+    (identity.mode & 0o777) === 0o700
+  );
+}
+
+async function inspectPhysicalTree(root) {
+  const hash = createHash("sha256");
+  let entryCount = 0;
+  let fileCount = 0;
+  let totalBytes = 0;
+  const visit = async (directory, depth) => {
+    if (depth > maxNextBuildDepth) throw new Error("Next build exceeds private-copy depth");
+    const entries = [];
+    for await (const entry of await fs.opendir(directory)) {
+      entryCount += 1;
+      if (entryCount > maxNextBuildEntries) {
+        throw new Error("Next build exceeds private-copy entry limit");
+      }
+      entries.push(entry);
+    }
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      const path = join(directory, entry.name);
+      const name = relative(root, path);
+      if (entry.isDirectory()) {
+        hash.update(`directory\0${name}\0`);
+        await visit(path, depth + 1);
+      } else if (entry.isFile()) {
+        const identity = await lstat(path);
+        fileCount += 1;
+        totalBytes += identity.size;
+        if (
+          !identity.isFile() ||
+          fileCount > maxNextBuildFiles ||
+          identity.size > maxNextBuildFileBytes ||
+          totalBytes > maxNextBuildTotalBytes
+        ) {
+          throw new Error("Next build exceeds private-copy limits");
+        }
+        const bytes = await fs.readFile(path);
+        if (bytes.length !== identity.size) throw new Error("Next build changed during inspection");
+        hash.update(`file\0${name}\0${identity.size}\0`).update(bytes);
+      } else {
+        throw new Error("Next build contains an unsupported entry");
+      }
+    }
+  };
+  await visit(root, 0);
+  return { fileCount, sha256: hash.digest("hex"), totalBytes };
+}
+
+async function fileReceipt(path) {
+  const identity = await lstat(path);
+  if (!identity.isFile()) throw new Error("Invalid Next build file");
+  if (identity.size > maxNextBuildFileBytes) throw new Error("Next build file exceeds limit");
+  const bytes = await fs.readFile(path);
+  return {
+    device: identity.dev,
+    inode: identity.ino,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    size: identity.size,
+  };
+}
+
+async function captureNextBuild(nextRoot) {
+  const canonicalPath = await realpath(nextRoot);
+  const identity = await lstat(nextRoot);
+  if (canonicalPath !== resolve(nextRoot) || !identity.isDirectory())
+    throw new Error("Invalid Next build root");
+  const files = {};
+  for (const name of nextRuntimeRequiredFiles)
+    files[name] = await fileReceipt(join(nextRoot, name));
+  return {
+    device: identity.dev,
+    files,
+    inode: identity.ino,
+    path: canonicalPath,
+    shape: await inspectPhysicalTree(canonicalPath),
+  };
+}
+
+export async function createPrivateNextRuntimeRoots(webRootInput) {
+  let path;
+  let rootIdentity;
+  try {
+    const webRoot = await realpath(webRootInput);
+    if (webRoot !== resolve(webRootInput)) throw new Error("Invalid web root");
+    const sourceNextRoot = join(webRoot, ".next");
+    const source = await captureNextBuild(sourceNextRoot);
+    const nodeModules = await realpath(join(webRoot, "node_modules"));
+
+    path = await mkdtemp(join(tmpdir(), "esbla-next-runtime-"));
+    await chmod(path, 0o700);
+    const createdIdentity = await lstat(path);
+    const canonicalPath = await realpath(path);
+    path = canonicalPath;
+    rootIdentity = await lstat(canonicalPath);
+    if (
+      !isOwnedPrivateDirectory(createdIdentity) ||
+      createdIdentity.dev !== rootIdentity.dev ||
+      createdIdentity.ino !== rootIdentity.ino ||
+      !isOwnedPrivateDirectory(rootIdentity)
+    ) {
+      throw new Error("Invalid private Next runtime root");
+    }
+
+    const projects = {};
+    const criticalCopies = new Set();
+    for (const persona of nextRuntimePersonas) {
+      const project = join(canonicalPath, persona);
+      await fs.mkdir(project, { mode: 0o700 });
+      const canonicalProject = await realpath(project);
+      if (!canonicalProject.startsWith(`${canonicalPath}${sep}`)) {
+        throw new Error("Invalid private Next project root");
+      }
+
+      await Promise.all([
+        fs.copyFile(join(webRoot, "package.json"), join(canonicalProject, "package.json")),
+        fs.copyFile(join(webRoot, "next.config.ts"), join(canonicalProject, "next.config.ts")),
+      ]);
+      await fs.symlink(nodeModules, join(canonicalProject, "node_modules"), "dir");
+      if ((await realpath(join(canonicalProject, "node_modules"))) !== nodeModules) {
+        throw new Error("Invalid private Next dependency link");
+      }
+
+      const destinationNextRoot = join(canonicalProject, ".next");
+      await fs.cp(sourceNextRoot, destinationNextRoot, {
+        errorOnExist: true,
+        force: false,
+        recursive: true,
+      });
+      const destination = await captureNextBuild(destinationNextRoot);
+      if (JSON.stringify(destination.shape) !== JSON.stringify(source.shape)) {
+        throw new Error("Next build copy validation failed");
+      }
+      for (const name of nextRuntimeRequiredFiles) {
+        const sourceFile = source.files[name];
+        const destinationFile = destination.files[name];
+        const destinationIdentity = `${destinationFile.device}:${destinationFile.inode}`;
+        if (
+          sourceFile.sha256 !== destinationFile.sha256 ||
+          sourceFile.size !== destinationFile.size ||
+          `${sourceFile.device}:${sourceFile.inode}` === destinationIdentity ||
+          criticalCopies.has(destinationIdentity)
+        ) {
+          throw new Error("Next build copy isolation failed");
+        }
+        criticalCopies.add(destinationIdentity);
+      }
+      projects[persona] = canonicalProject;
+    }
+
+    if (JSON.stringify(source) !== JSON.stringify(await captureNextBuild(sourceNextRoot))) {
+      throw new Error("Source Next build changed during private copy creation");
+    }
+    return {
+      device: rootIdentity.dev,
+      inode: rootIdentity.ino,
+      mode: rootIdentity.mode,
+      owner: rootIdentity.uid,
+      path: canonicalPath,
+      projects: Object.freeze(projects),
+      source,
+    };
+  } catch {
+    let cleanupFailed = false;
+    const identity = path ? await lstatIfPresent(path) : undefined;
+    if (
+      isOwnedPrivateDirectory(identity) &&
+      (!rootIdentity || (identity.dev === rootIdentity.dev && identity.ino === rootIdentity.ino))
+    ) {
+      try {
+        await rm(path, { force: false, recursive: true });
+        cleanupFailed = Boolean(await lstatIfPresent(path));
+      } catch {
+        cleanupFailed = true;
+      }
+    } else if (identity) {
+      cleanupFailed = true;
+    }
+    if (cleanupFailed) throw new Error("Unable to clean failed private Next runtime roots");
+    throw new Error("Unable to create private Next runtime roots");
+  }
+}
+
+async function removePrivateNextRuntimeRoots(root, webProcesses) {
+  if (!root) return;
+  let failed = webProcesses.some((processRecord) => !processRecord.receipt);
+  try {
+    if (JSON.stringify(root.source) !== JSON.stringify(await captureNextBuild(root.source.path))) {
+      failed = true;
+    }
+  } catch {
+    failed = true;
+  }
+  try {
+    const canonicalPath = await realpath(root.path);
+    const identity = await lstat(root.path);
+    if (
+      canonicalPath !== root.path ||
+      identity.isSymbolicLink() ||
+      !identity.isDirectory() ||
+      identity.dev !== root.device ||
+      identity.ino !== root.inode ||
+      identity.mode !== root.mode ||
+      identity.uid !== root.owner
+    ) {
+      throw new Error("Private Next runtime root identity changed");
+    }
+    await rm(root.path, { force: false, recursive: true });
+    if (await lstatIfPresent(root.path)) throw new Error("Private Next runtime root remains");
+  } catch {
+    failed = true;
+  }
+  if (failed) throw new Error("Private Next runtime cleanup failed");
+}
+
+export async function closePrivateNextRuntimeRoots(rootPromise, webProcesses) {
+  const root = rootPromise ? await rootPromise : undefined;
+  await removePrivateNextRuntimeRoots(root, webProcesses);
 }
 
 export async function seedHrLeaveFixture() {
