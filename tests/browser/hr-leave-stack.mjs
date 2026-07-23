@@ -7,8 +7,10 @@ import { createDevelopmentAuthenticator } from "../../apps/api/dist/auth.js";
 import { createServer } from "../../apps/api/dist/server.js";
 import { createDatabasePool } from "../../packages/db/dist/index.js";
 import {
+  closePrivateNextRuntimeRoots,
   closePrivatePlaywrightRoot,
   createFixtureEnvironment,
+  createPrivateNextRuntimeRoots,
   createPrivatePlaywrightRoot,
   fixture,
   ports,
@@ -75,10 +77,14 @@ server.addHook("onClose", async () => {
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const webRoot = fileURLToPath(new URL("../../apps/web/", import.meta.url));
+const nextCli = fileURLToPath(
+  new URL("../../apps/web/node_modules/next/dist/bin/next", import.meta.url),
+);
 const children = [];
 let closing;
 let interrupted = false;
 let listening;
+let nextRuntimeRootPromise;
 let playwrightRootPromise;
 
 async function closeApi() {
@@ -100,7 +106,11 @@ async function close() {
     }
     const childReceipts = await Promise.all(children.map((processRecord) => processRecord.closed));
     const infrastructureReceipts = await Promise.allSettled([closeApi()]);
-    const rootReceipt = await Promise.allSettled([
+    const rootReceipts = await Promise.allSettled([
+      closePrivateNextRuntimeRoots(
+        nextRuntimeRootPromise,
+        children.filter((processRecord) => processRecord.name !== "playwright"),
+      ),
       closePrivatePlaywrightRoot(
         playwrightRootPromise,
         children.find((processRecord) => processRecord.name === "playwright"),
@@ -121,7 +131,7 @@ async function close() {
     });
     if (
       abnormalChild ||
-      [...infrastructureReceipts, ...rootReceipt].some((receipt) => receipt.status === "rejected")
+      [...infrastructureReceipts, ...rootReceipts].some((receipt) => receipt.status === "rejected")
     ) {
       throw new Error("Browser stack cleanup failed");
     }
@@ -160,13 +170,13 @@ function startChild(name, command, args, options, unexpectedExit) {
   return record;
 }
 
-function startWeb(origin, principalId, label) {
+function startWeb(origin, principalId, label, projectRoot) {
   return startChild(
     label,
     process.execPath,
-    ["node_modules/next/dist/bin/next", "start", "--hostname", "127.0.0.1", "--port", origin.port],
+    [nextCli, "start", projectRoot, "--hostname", "127.0.0.1", "--port", origin.port],
     {
-      cwd: webRoot,
+      cwd: projectRoot,
       env: {
         ...childRuntimeEnvironment,
         ...fixtureEnvironment,
@@ -211,25 +221,32 @@ try {
     await listening;
   }
   if (!closing) {
+    nextRuntimeRootPromise = createPrivateNextRuntimeRoots(webRoot);
+    const nextRuntimeRoot = await nextRuntimeRootPromise;
+    if (closing) throw new Error("Browser stack closing before web startup");
     const employee = startWeb(
       new URL(fixture.employeeOrigin),
       fixture.employeePrincipalId,
       fixture.employeeLabel,
+      nextRuntimeRoot.projects.employee,
     );
     const manager = startWeb(
       new URL(fixture.managerOrigin),
       fixture.managerPrincipalId,
       fixture.managerLabel,
+      nextRuntimeRoot.projects.manager,
     );
     const operator = startWeb(
       new URL(fixture.operatorOrigin),
       fixture.operatorPrincipalId,
       fixture.operatorLabel,
+      nextRuntimeRoot.projects.operator,
     );
     const admin = startWeb(
       new URL(fixture.adminOrigin),
       fixture.adminPrincipalId,
       fixture.adminLabel,
+      nextRuntimeRoot.projects.admin,
     );
     await Promise.all([
       requireActorReady(new URL(fixture.employeeOrigin), fixture.employeeLabel, employee),
