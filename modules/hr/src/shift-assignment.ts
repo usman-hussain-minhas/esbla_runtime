@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { HrShiftAssignmentHistoryEvent } from "@esbla/contracts";
 import {
   appendEvidence,
   assertPolicyAllowed,
@@ -86,7 +87,10 @@ interface MutationResult {
 }
 export type ShiftRosterMutationResult = MutationResult & Readonly<{ roster: HrShiftRoster }>;
 export type ShiftAssignmentMutationResult = MutationResult &
-  Readonly<{ assignment: HrShiftAssignment }>;
+  Readonly<{
+    assignment: HrShiftAssignment;
+    history: readonly HrShiftAssignmentHistoryEvent[];
+  }>;
 
 interface ActivationRow {
   readonly service_key: string;
@@ -112,6 +116,13 @@ interface AssignmentRow {
   readonly starts_at: Date | string;
   readonly status: "active" | "cancelled";
   readonly worker_profile_id: string;
+}
+interface AssignmentHistoryRow {
+  readonly aggregate_version: number;
+  readonly event_type: "hr.shift_assignment.assign_shift" | "hr.shift_assignment.cancel_assignment";
+  readonly new_state: "active" | "cancelled";
+  readonly occurred_at: Date | string;
+  readonly prior_state: "active" | null;
 }
 interface Receipt {
   readonly action: ShiftAction;
@@ -502,6 +513,87 @@ async function recordResult(
   if (binding.replayed) throw idempotencyConflict();
 }
 
+async function assignmentHistory(
+  transaction: TenantTransaction,
+  assignment: HrShiftAssignment,
+): Promise<readonly HrShiftAssignmentHistoryEvent[]> {
+  if (assignment.version !== 1 && assignment.version !== 2) {
+    throw conflict("Stored Shift assignment history is invalid");
+  }
+  const result = await transaction.client.query<AssignmentHistoryRow>(
+    `SELECT outbox.aggregate_version,evidence.event_type,evidence.prior_state,
+            evidence.new_state,evidence.occurred_at
+     FROM evidence_events evidence
+     JOIN outbox_events outbox
+       ON outbox.tenant_id=evidence.tenant_id
+      AND outbox.event_type=evidence.event_type
+      AND outbox.aggregate_type=evidence.subject_type
+      AND outbox.aggregate_id=evidence.subject_id
+      AND outbox.correlation_id=evidence.correlation_id
+     WHERE evidence.tenant_id=$1 AND evidence.subject_type=$2 AND evidence.subject_id=$3
+       AND evidence.event_type=ANY($4::text[]) AND outbox.aggregate_version<=$5
+     ORDER BY outbox.aggregate_version,evidence.occurred_at,evidence.evidence_event_id
+     LIMIT 3`,
+    [
+      transaction.context.tenantId,
+      SUBJECT_ASSIGNMENT,
+      assignment.shiftAssignmentId,
+      ["hr.shift_assignment.assign_shift", "hr.shift_assignment.cancel_assignment"],
+      assignment.version,
+    ],
+  );
+  const rows = result.rows;
+  const valid =
+    assignment.status === (assignment.version === 1 ? "active" : "cancelled") &&
+    rows.length === assignment.version &&
+    rows[0]?.aggregate_version === 1 &&
+    rows[0].event_type === "hr.shift_assignment.assign_shift" &&
+    rows[0].prior_state === null &&
+    rows[0].new_state === "active" &&
+    (assignment.version === 1 ||
+      (rows[1]?.aggregate_version === 2 &&
+        rows[1].event_type === "hr.shift_assignment.cancel_assignment" &&
+        rows[1].prior_state === "active" &&
+        rows[1].new_state === "cancelled"));
+  if (!valid) throw conflict("Stored Shift assignment history is invalid");
+  const history = rows.map(
+    (row): HrShiftAssignmentHistoryEvent =>
+      row.event_type === "hr.shift_assignment.assign_shift"
+        ? {
+            eventType: "hr.shift_assignment.assign_shift",
+            newState: "active",
+            occurredAt: iso(row.occurred_at),
+            priorState: null,
+          }
+        : {
+            eventType: "hr.shift_assignment.cancel_assignment",
+            newState: "cancelled",
+            occurredAt: iso(row.occurred_at),
+            priorState: "active",
+          },
+  );
+  if (
+    history.some(({ occurredAt }) => !Number.isFinite(Date.parse(occurredAt))) ||
+    (history[1] && history[0] && history[1].occurredAt < history[0].occurredAt)
+  ) {
+    throw conflict("Stored Shift assignment history is invalid");
+  }
+  return history;
+}
+
+async function assignmentResult(
+  transaction: TenantTransaction,
+  assignment: HrShiftAssignment,
+  replayed: boolean,
+): Promise<ShiftAssignmentMutationResult> {
+  return {
+    assignment,
+    billingState: HR_SHIFT_ASSIGNMENT_BILLING_STATE,
+    history: await assignmentHistory(transaction, assignment),
+    replayed,
+  };
+}
+
 async function resolveSettings(transaction: TenantTransaction): Promise<ShiftSettings> {
   const snapshot = await transaction.client.query<{
     setting_key: string | null;
@@ -669,11 +761,7 @@ export async function assignShift(
       ]);
       const replay = (await readReplay(transaction, receipt)) as HrShiftAssignment | null;
       if (replay) {
-        return {
-          assignment: replay,
-          billingState: HR_SHIFT_ASSIGNMENT_BILLING_STATE,
-          replayed: true,
-        };
+        return await assignmentResult(transaction, replay, true);
       }
       await resolveSettings(transaction);
       const roster = await transaction.client.query<RosterRow>(
@@ -758,11 +846,7 @@ export async function assignShift(
         assignment,
         { afterVersion: assignment.version, beforeVersion: null },
       );
-      return {
-        assignment,
-        billingState: HR_SHIFT_ASSIGNMENT_BILLING_STATE,
-        replayed: false,
-      };
+      return await assignmentResult(transaction, assignment, false);
     });
   } catch (error) {
     return translateWriteError(error);
@@ -924,11 +1008,7 @@ export async function cancelShiftAssignment(
       ]);
       const replay = (await readReplay(transaction, receipt)) as HrShiftAssignment | null;
       if (replay) {
-        return {
-          assignment: replay,
-          billingState: HR_SHIFT_ASSIGNMENT_BILLING_STATE,
-          replayed: true,
-        };
+        return await assignmentResult(transaction, replay, true);
       }
       const selected = await transaction.client.query<AssignmentRow>(
         `SELECT ${ASSIGNMENT_COLUMNS} FROM hr_shift_assignments
@@ -960,11 +1040,7 @@ export async function cancelShiftAssignment(
         assignment,
         { afterVersion: assignment.version, beforeVersion: input.expectedVersion },
       );
-      return {
-        assignment,
-        billingState: HR_SHIFT_ASSIGNMENT_BILLING_STATE,
-        replayed: false,
-      };
+      return await assignmentResult(transaction, assignment, false);
     });
   } catch (error) {
     return translateWriteError(error);

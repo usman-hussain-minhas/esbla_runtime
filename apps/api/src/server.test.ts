@@ -95,7 +95,7 @@ describe("runtime probes", () => {
     expect(query).not.toHaveBeenCalled();
   });
 
-  it("protects Shift reads while keeping mutation and control routes dormant", async () => {
+  it("protects admitted Shift routes while keeping service-control routes dormant", async () => {
     const { query, server } = testServer();
     const rosterVersionId = randomUUID();
     const shiftAssignmentId = randomUUID();
@@ -121,6 +121,10 @@ describe("runtime probes", () => {
         method: "POST",
         url: `/v1/hr/shift-assignments/${shiftAssignmentId}/cancel`,
       },
+    ] as const) {
+      expect((await server.inject(request)).statusCode).toBe(401);
+    }
+    for (const request of [
       { method: "GET", url: "/v1/hr/shift-rosters/service-control" },
       {
         method: "POST",

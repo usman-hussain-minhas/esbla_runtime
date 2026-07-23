@@ -105,7 +105,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import type { Pool } from "pg";
 import { AuthError, type RequestAuthenticator } from "./auth.js";
 import { registerEmploymentRoutes } from "./hr-employment-routes.js";
-import { registerShiftAssignmentReadRoutes } from "./hr-shift-assignment-routes.js";
+import { registerShiftAssignmentRoutes } from "./hr-shift-assignment-routes.js";
 import { sendProblem } from "./problems.js";
 
 type WorkforceConfigureBody = Extract<
@@ -283,7 +283,7 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     runtimeEnvironment: options.runtimeEnvironment ?? "production",
     server,
   });
-  registerShiftAssignmentReadRoutes({ authenticate, pool: options.pool, server });
+  registerShiftAssignmentRoutes({ authenticate, pool: options.pool, server });
 
   server.get<{ Querystring: HrServiceControlQuery }>(
     "/v1/hr/workforce-profiles/service-control",
