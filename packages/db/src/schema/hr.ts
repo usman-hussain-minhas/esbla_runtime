@@ -40,6 +40,15 @@ export const hrEmploymentRecordStatus = pgEnum("hr_employment_record_status", [
   "ended",
 ]);
 export const hrEmploymentVersionKind = pgEnum("hr_employment_version_kind", ["effective", "end"]);
+export const hrShiftRosterStatus = pgEnum("hr_shift_roster_status", [
+  "draft",
+  "published",
+  "superseded",
+]);
+export const hrShiftAssignmentStatus = pgEnum("hr_shift_assignment_status", [
+  "active",
+  "cancelled",
+]);
 
 type PgTableExtras = PgTableExtraConfigValue[];
 
@@ -220,6 +229,146 @@ export const hrEmploymentRecordVersions = pgTable(
     ),
     check("hr_employment_record_versions_version_positive", sql`${table.version} > 0`),
     check("hr_employment_record_versions_row_version_fixed", sql`${table.rowVersion} = 1`),
+  ],
+).enableRLS();
+
+export const hrShiftAssignmentServiceControl = pgTable(
+  "hr_shift_assignment_service_control",
+  {
+    serviceControlId: uuid("service_control_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    serviceKey: text("service_key").default("shift_assignment").notNull(),
+    settingsVersion: integer("settings_version").default(1).notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.serviceKey],
+      foreignColumns: [serviceActivations.tenantId, serviceActivations.serviceKey],
+      name: "hr_shift_assignment_service_control_activation_fk",
+    }).onDelete("restrict"),
+    uniqueIndex("uq_hr_shift_assignment_service_control_tenant_key").on(
+      table.tenantId,
+      table.serviceKey,
+    ),
+    check(
+      "hr_shift_assignment_service_control_key_exact",
+      sql`${table.serviceKey} = 'shift_assignment'`,
+    ),
+    check(
+      "hr_shift_assignment_service_control_settings_version_positive",
+      sql`${table.settingsVersion} > 0`,
+    ),
+    check("hr_shift_assignment_service_control_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const hrShiftRosterVersions = pgTable(
+  "hr_shift_roster_versions",
+  {
+    rosterVersionId: uuid("roster_version_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    periodEnd: date("period_end", { mode: "string" }).notNull(),
+    status: hrShiftRosterStatus("status").default("draft").notNull(),
+    version: integer("version").notNull(),
+    supersedesRosterVersionId: uuid("supersedes_roster_version_id"),
+    publishedAt: timestamp("published_at", { mode: "date", withTimezone: true }),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table): PgTableExtras => [
+    unique("uq_hr_shift_roster_versions_composite_identity").on(
+      table.tenantId,
+      table.rosterVersionId,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.supersedesRosterVersionId],
+      foreignColumns: [table.tenantId, table.rosterVersionId],
+      name: "hr_shift_roster_versions_predecessor_same_tenant_fk",
+    }).onDelete("restrict"),
+    uniqueIndex("uq_hr_shift_roster_versions_tenant_period_version").on(
+      table.tenantId,
+      table.periodStart,
+      table.periodEnd,
+      table.version,
+    ),
+    uniqueIndex("uq_hr_shift_rosters_tenant_period_published")
+      .on(table.tenantId, table.periodStart, table.periodEnd, table.status)
+      .where(sql`${table.status} = 'published'`),
+    uniqueIndex("uq_hr_shift_rosters_tenant_period_successor")
+      .on(table.tenantId, table.periodStart, table.periodEnd, table.supersedesRosterVersionId)
+      .where(sql`${table.supersedesRosterVersionId} IS NOT NULL`),
+    check("hr_shift_roster_versions_period_valid", sql`${table.periodEnd} >= ${table.periodStart}`),
+    check(
+      "hr_shift_roster_versions_publication_consistent",
+      sql`(${table.status} = 'draft' AND ${table.publishedAt} IS NULL
+             AND ${table.supersedesRosterVersionId} IS NULL)
+          OR (${table.status} IN ('published', 'superseded') AND ${table.publishedAt} IS NOT NULL)`,
+    ),
+    check("hr_shift_roster_versions_version_positive", sql`${table.version} > 0`),
+    check("hr_shift_roster_versions_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const hrShiftAssignments = pgTable(
+  "hr_shift_assignments",
+  {
+    shiftAssignmentId: uuid("shift_assignment_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    rosterVersionId: uuid("roster_version_id").notNull(),
+    workerProfileId: uuid("worker_profile_id").notNull(),
+    startsAt: timestamp("starts_at", { mode: "date", withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { mode: "date", withTimezone: true }).notNull(),
+    ianaTimezone: text("iana_timezone").notNull(),
+    status: hrShiftAssignmentStatus("status").default("active").notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table): PgTableExtras => [
+    unique("uq_hr_shift_assignments_composite_identity").on(
+      table.tenantId,
+      table.shiftAssignmentId,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.rosterVersionId],
+      foreignColumns: [hrShiftRosterVersions.tenantId, hrShiftRosterVersions.rosterVersionId],
+      name: "hr_shift_assignments_roster_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.workerProfileId],
+      foreignColumns: [hrWorkforceProfiles.tenantId, hrWorkforceProfiles.workerProfileId],
+      name: "hr_shift_assignments_worker_same_tenant_fk",
+    }).onDelete("restrict"),
+    index("idx_hr_shift_assignments_tenant_worker_start").on(
+      table.tenantId,
+      table.workerProfileId,
+      table.startsAt,
+      table.shiftAssignmentId,
+    ),
+    index("idx_hr_shift_assignments_tenant_roster_status_start").on(
+      table.tenantId,
+      table.rosterVersionId,
+      table.status,
+      table.startsAt,
+      table.shiftAssignmentId,
+    ),
+    index("idx_hr_shift_assignments_tenant_worker_overlap").on(
+      table.tenantId,
+      table.workerProfileId,
+      table.status,
+      table.startsAt,
+      table.shiftAssignmentId,
+    ),
+    check("hr_shift_assignments_time_range_valid", sql`${table.endsAt} > ${table.startsAt}`),
+    check(
+      "hr_shift_assignments_iana_timezone_not_blank",
+      sql`char_length(trim(${table.ianaTimezone})) > 0`,
+    ),
+    check("hr_shift_assignments_row_version_positive", sql`${table.rowVersion} > 0`),
   ],
 ).enableRLS();
 
