@@ -95,6 +95,48 @@ describe("runtime probes", () => {
     expect(query).not.toHaveBeenCalled();
   });
 
+  it("keeps every Shift Assignment route dormant without touching PostgreSQL", async () => {
+    const { query, server } = testServer();
+    const rosterVersionId = randomUUID();
+    const shiftAssignmentId = randomUUID();
+    for (const request of [
+      { method: "POST", url: "/v1/hr/shift-rosters" },
+      {
+        method: "POST",
+        url: `/v1/hr/shift-rosters/${rosterVersionId}/assignments`,
+      },
+      {
+        method: "POST",
+        url: `/v1/hr/shift-rosters/${rosterVersionId}/publish`,
+      },
+      {
+        method: "POST",
+        url: `/v1/hr/shift-assignments/${shiftAssignmentId}/cancel`,
+      },
+      {
+        method: "GET",
+        url: `/v1/hr/shift-assignments/by-id/${shiftAssignmentId}`,
+      },
+      { method: "GET", url: "/v1/hr/shift-assignments" },
+      { method: "GET", url: "/v1/hr/shift-rosters/service-control" },
+      {
+        method: "POST",
+        url: "/v1/hr/shift-rosters/service-control/activate",
+      },
+      {
+        method: "POST",
+        url: "/v1/hr/shift-rosters/service-control/deactivate",
+      },
+      {
+        method: "PATCH",
+        url: "/v1/hr/shift-rosters/service-control/settings",
+      },
+    ] as const) {
+      expect((await server.inject(request)).statusCode).toBe(404);
+    }
+    expect(query).not.toHaveBeenCalled();
+  });
+
   it("turns unexpected API failures into opaque problem details", async () => {
     const requestId = randomUUID();
     const principalId = randomUUID();
