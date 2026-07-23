@@ -720,6 +720,7 @@ test("tenant admin configures and controls Employment without record access", as
   const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
   const longOrganizationReference = `org-${"opaque".repeat(80)}`;
   try {
+    await admin.page.emulateMedia({ colorScheme: "dark" });
     await admin.page.goto(`${admin.origin}/workspace/hr`);
     await expect(admin.page.getByRole("link", { name: "Employment administration" })).toHaveCount(
       0,
@@ -732,6 +733,10 @@ test("tenant admin configures and controls Employment without record access", as
     ).toBeVisible();
     await expect(admin.page.locator(".leave-status")).toHaveText("Active");
     await expect(admin.page.getByText("BROWSER-EMPLOYMENT-001", { exact: true })).toHaveCount(0);
+    await expect(admin.page.getByRole("button", { name: "Dark theme" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     await admin.page.getByRole("button", { name: "High contrast theme" }).click();
     await expect(admin.page.locator("html")).toHaveAttribute("data-theme", "high-contrast");
 
