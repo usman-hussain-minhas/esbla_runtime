@@ -33,7 +33,9 @@ describe("HR passenger manifest reuse contract", () => {
       "hr.shift.assign",
       "hr.shift.cancel",
       "hr.shift.create_roster",
+      "hr.shift.list_roster",
       "hr.shift.publish",
+      "hr.shift.view_detail",
       "hr.workforce.activate_service",
       "hr.workforce.change_reporting_relationship",
       "hr.workforce.change_status",
@@ -80,7 +82,9 @@ describe("HR passenger manifest reuse contract", () => {
       { exposure: "tenant", id: "hr.shift.assign" },
       { exposure: "tenant", id: "hr.shift.cancel" },
       { exposure: "tenant", id: "hr.shift.create_roster" },
+      { exposure: "tenant", id: "hr.shift.list_roster" },
       { exposure: "tenant", id: "hr.shift.publish" },
+      { exposure: "tenant", id: "hr.shift.view_detail" },
     ]);
     expect(hrManifest.capabilities).not.toContainEqual({
       exposure: "integration",
