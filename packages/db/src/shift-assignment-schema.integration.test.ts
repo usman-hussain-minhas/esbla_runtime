@@ -141,6 +141,41 @@ afterAll(async () => {
 });
 
 describe("Shift Assignment persistence kernel", () => {
+  it("permits only one draft for a tenant and exact roster period", async () => {
+    await tenantTransaction(pool, ids.tenant, ids.actor, (client) =>
+      client.query(
+        `INSERT INTO hr_shift_roster_versions
+           (tenant_id,period_start,period_end,version)
+         VALUES ($1,'2027-01-01','2027-01-14',1)`,
+        [ids.tenant],
+      ),
+    );
+
+    await databaseError(
+      () =>
+        tenantTransaction(pool, ids.tenant, ids.actor, (client) =>
+          client.query(
+            `INSERT INTO hr_shift_roster_versions
+               (tenant_id,period_start,period_end,version)
+             VALUES ($1,'2027-01-01','2027-01-14',2)`,
+            [ids.tenant],
+          ),
+        ),
+      { code: "23505", constraint: "uq_hr_shift_rosters_tenant_period_draft" },
+    );
+
+    const drafts = await tenantTransaction(pool, ids.tenant, ids.actor, (client) =>
+      client.query<{ count: string }>(
+        `SELECT count(*)::text
+         FROM hr_shift_roster_versions
+         WHERE tenant_id=$1 AND period_start='2027-01-01'
+           AND period_end='2027-01-14' AND status='draft'`,
+        [ids.tenant],
+      ),
+    );
+    expect(drafts.rows).toEqual([{ count: "1" }]);
+  });
+
   it("installs exact tenant-owned storage, query indexes, forced RLS, and least privilege", async () => {
     const tables = await migrationPool.query<{ force_rls: boolean; name: string; rls: boolean }>(
       `SELECT relname AS name,relrowsecurity AS rls,relforcerowsecurity AS force_rls
@@ -178,6 +213,7 @@ describe("Shift Assignment persistence kernel", () => {
           "idx_hr_shift_assignments_tenant_worker_start",
           "uq_hr_shift_assignment_service_control_tenant_key",
           "uq_hr_shift_roster_versions_tenant_period_version",
+          "uq_hr_shift_rosters_tenant_period_draft",
           "uq_hr_shift_rosters_tenant_period_published",
           "uq_hr_shift_rosters_tenant_period_successor",
         ],
@@ -189,6 +225,7 @@ describe("Shift Assignment persistence kernel", () => {
       "idx_hr_shift_assignments_tenant_worker_start",
       "uq_hr_shift_assignment_service_control_tenant_key",
       "uq_hr_shift_roster_versions_tenant_period_version",
+      "uq_hr_shift_rosters_tenant_period_draft",
       "uq_hr_shift_rosters_tenant_period_published",
       "uq_hr_shift_rosters_tenant_period_successor",
     ]);

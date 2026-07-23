@@ -298,6 +298,9 @@ export const hrShiftRosterVersions = pgTable(
     uniqueIndex("uq_hr_shift_rosters_tenant_period_published")
       .on(table.tenantId, table.periodStart, table.periodEnd, table.status)
       .where(sql`${table.status} = 'published'`),
+    uniqueIndex("uq_hr_shift_rosters_tenant_period_draft")
+      .on(table.tenantId, table.periodStart, table.periodEnd, table.status)
+      .where(sql`${table.status} = 'draft'`),
     uniqueIndex("uq_hr_shift_rosters_tenant_period_successor")
       .on(table.tenantId, table.periodStart, table.periodEnd, table.supersedesRosterVersionId)
       .where(sql`${table.supersedesRosterVersionId} IS NOT NULL`),

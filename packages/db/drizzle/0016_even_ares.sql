@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "uq_hr_shift_rosters_tenant_period_draft" ON "hr_shift_roster_versions" USING btree ("tenant_id","period_start","period_end","status") WHERE "hr_shift_roster_versions"."status" = 'draft';
