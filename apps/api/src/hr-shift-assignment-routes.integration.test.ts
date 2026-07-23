@@ -1,0 +1,484 @@
+import { randomUUID } from "node:crypto";
+import { createDatabase, createDatabasePool, migrateDatabase } from "@esbla/db";
+import { assignShift, createShiftRoster, publishShiftRoster } from "@esbla/hr";
+import type { FastifyInstance, InjectOptions } from "fastify";
+import type { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createDevelopmentAuthenticator, signDevelopmentPrincipal } from "./auth.js";
+import { createServer } from "./server.js";
+
+const secret = "esbla-shift-read-api-integration-secret-v1";
+const ids = {
+  employee: "81000000-0000-4000-8000-000000000003",
+  employeeMembership: "82000000-0000-4000-8000-000000000003",
+  manager: "81000000-0000-4000-8000-000000000004",
+  managerMembership: "82000000-0000-4000-8000-000000000004",
+  operator: "81000000-0000-4000-8000-000000000001",
+  operatorMembership: "82000000-0000-4000-8000-000000000001",
+  otherTenant: "80000000-0000-4000-8000-000000000002",
+  tenant: "80000000-0000-4000-8000-000000000001",
+} as const;
+interface SignedRequestOptions {
+  readonly principalId: string;
+  readonly tenantId?: string;
+  readonly url: string;
+}
+interface PersistenceCounts {
+  readonly assignments: number;
+  readonly evidence: number;
+  readonly outbox: number;
+  readonly work: number;
+}
+let assignmentId = "";
+let migrationPool: Pool;
+let pool: Pool;
+let rosterVersionId = "";
+let server: FastifyInstance;
+let workerProfileId = "";
+async function tenantTransaction<T>(
+  client: PoolClient,
+  tenantId: string,
+  actorPrincipalId: string,
+  operation: (tenantClient: PoolClient) => Promise<T>,
+): Promise<T> {
+  await client.query("BEGIN");
+  try {
+    await client.query(
+      `SELECT set_config('app.tenant_id',$1,true),
+              set_config('app.actor_principal_id',$2,true),
+              set_config('app.correlation_id',$3,true)`,
+      [tenantId, actorPrincipalId, randomUUID()],
+    );
+    const result = await operation(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+async function tenantQuery<Row extends QueryResultRow = QueryResultRow>(
+  client: PoolClient,
+  tenantId: string,
+  actorPrincipalId: string,
+  query: string,
+  values: readonly unknown[],
+): Promise<QueryResult<Row>> {
+  return await tenantTransaction(client, tenantId, actorPrincipalId, (tenantClient) =>
+    tenantClient.query<Row>(query, [...values]),
+  );
+}
+async function signedGet({ principalId, tenantId = ids.tenant, url }: SignedRequestOptions) {
+  const requestId = randomUUID();
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const headers = {
+    "x-esbla-auth-signature": signDevelopmentPrincipal(secret, {
+      method: "GET",
+      principalId,
+      requestId,
+      tenantId,
+      timestamp,
+      url,
+    }),
+    "x-esbla-auth-timestamp": timestamp,
+    "x-esbla-principal-id": principalId,
+    "x-esbla-request-id": requestId,
+    "x-esbla-tenant-id": tenantId,
+  };
+  const request: InjectOptions = { headers, method: "GET", url };
+  return { requestId, response: await server.inject(request) };
+}
+async function setActivation(
+  serviceKey: "shift_assignment" | "workforce_profile",
+  state: "active" | "inactive",
+): Promise<void> {
+  const client = await migrationPool.connect();
+  try {
+    await tenantQuery(
+      client,
+      ids.tenant,
+      ids.operator,
+      `UPDATE service_activations SET state=$3,version=version+1
+       WHERE tenant_id=$1 AND service_key=$2`,
+      [ids.tenant, serviceKey, state],
+    );
+  } finally {
+    client.release();
+  }
+}
+async function replaceReadCapabilities(
+  principalId: string,
+  capabilities: readonly string[],
+): Promise<void> {
+  const client = await migrationPool.connect();
+  try {
+    await tenantQuery(
+      client,
+      ids.tenant,
+      principalId,
+      `DELETE FROM membership_capabilities
+       WHERE tenant_id=$1 AND principal_id=$2 AND capability_id LIKE 'hr.shift.%'`,
+      [ids.tenant, principalId],
+    );
+    if (capabilities.length > 0) {
+      await tenantQuery(
+        client,
+        ids.tenant,
+        principalId,
+        `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+         SELECT $1,$2,capability FROM unnest($3::text[]) capability`,
+        [ids.tenant, principalId, capabilities],
+      );
+    }
+  } finally {
+    client.release();
+  }
+}
+async function persistenceCounts(): Promise<PersistenceCounts> {
+  const result = await migrationPool.query<{
+    assignments: string;
+    evidence: string;
+    outbox: string;
+    work: string;
+  }>(
+    `SELECT
+       (SELECT count(*) FROM hr_shift_assignments WHERE tenant_id=$1)::text assignments,
+       (SELECT count(*) FROM evidence_events WHERE tenant_id=$1)::text evidence,
+       (SELECT count(*) FROM outbox_events WHERE tenant_id=$1)::text outbox,
+       (SELECT count(*) FROM work_items WHERE tenant_id=$1)::text work`,
+    [ids.tenant],
+  );
+  const row = result.rows[0];
+  if (!row) throw new Error("Shift read persistence counts are unavailable");
+  return {
+    assignments: Number(row.assignments),
+    evidence: Number(row.evidence),
+    outbox: Number(row.outbox),
+    work: Number(row.work),
+  };
+}
+function expectProblem(
+  result: Awaited<ReturnType<typeof signedGet>>,
+  status: number,
+  code: string,
+): void {
+  expect(result.response.statusCode, result.response.body).toBe(status);
+  expect(result.response.headers["content-type"]).toContain("application/problem+json");
+  expect(result.response.json()).toMatchObject({ code, requestId: result.requestId, status });
+  expect(Object.keys(result.response.json()).sort()).toEqual(
+    ["code", "detail", "instance", "requestId", "status", "title", "type"].sort(),
+  );
+}
+beforeAll(async () => {
+  const runtimeUrl = process.env.DATABASE_URL;
+  const migrationUrl = process.env.DATABASE_MIGRATION_URL;
+  const applicationRole = process.env.ESBLA_TEST_APPLICATION_ROLE ?? "";
+  if (!runtimeUrl || !migrationUrl || !/^[a-z_][a-z0-9_]*$/.test(applicationRole)) {
+    throw new Error("PostgreSQL Shift read API harness is unavailable");
+  }
+  migrationPool = createDatabasePool(migrationUrl, { max: 3 });
+  await migrateDatabase(createDatabase(migrationPool));
+  pool = createDatabasePool(runtimeUrl, { max: 8 });
+  await migrationPool.query(
+    `GRANT SELECT ON membership_capabilities,tenant_settings TO ${applicationRole};
+     GRANT SELECT,INSERT ON hr_reporting_relationships TO ${applicationRole};
+     GRANT SELECT,UPDATE ON service_activations,hr_worker_profiles TO ${applicationRole};
+     GRANT SELECT,INSERT ON evidence_events,outbox_events TO ${applicationRole}`,
+  );
+  await migrationPool.query(`INSERT INTO tenants (tenant_id,name) VALUES ($1,'Shift API Tenant')`, [
+    ids.tenant,
+  ]);
+  await migrationPool.query(
+    `INSERT INTO principals (principal_id,display_name)
+     VALUES ($1,'Shift Operator'),($2,'Shift Employee'),($3,'Shift Manager')`,
+    [ids.operator, ids.employee, ids.manager],
+  );
+  const client = await migrationPool.connect();
+  try {
+    await tenantTransaction(client, ids.tenant, ids.operator, async (tenantClient) => {
+      await tenantClient.query(
+        `INSERT INTO memberships (membership_id,tenant_id,principal_id,role_key)
+         VALUES ($1,$2,$3,'hr_operator'),($4,$2,$5,'employee'),($6,$2,$7,'manager')`,
+        [
+          ids.operatorMembership,
+          ids.tenant,
+          ids.operator,
+          ids.employeeMembership,
+          ids.employee,
+          ids.managerMembership,
+          ids.manager,
+        ],
+      );
+      await tenantClient.query(
+        `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+         SELECT $1,principal_id,capability FROM unnest($2::uuid[]) principal_id
+         CROSS JOIN unnest($3::text[]) capability`,
+        [ids.tenant, [ids.employee, ids.manager], ["hr.shift.list_roster", "hr.shift.view_detail"]],
+      );
+      await tenantClient.query(
+        `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+         SELECT $1,$2,capability FROM unnest($3::text[]) capability`,
+        [
+          ids.tenant,
+          ids.operator,
+          [
+            "hr.shift.assign",
+            "hr.shift.create_roster",
+            "hr.shift.list_roster",
+            "hr.shift.publish",
+            "hr.shift.view_detail",
+          ],
+        ],
+      );
+      await tenantClient.query(
+        `INSERT INTO service_activations (tenant_id,service_key,state,version)
+         VALUES ($1,'workforce_profile','active',1),($1,'shift_assignment','active',1)`,
+        [ids.tenant],
+      );
+      const worker = await tenantClient.query<{ worker_profile_id: string }>(
+        `INSERT INTO hr_worker_profiles (tenant_id)
+         VALUES ($1) RETURNING worker_profile_id::text`,
+        [ids.tenant],
+      );
+      workerProfileId = worker.rows[0]?.worker_profile_id ?? "";
+      await tenantClient.query(
+        `UPDATE hr_worker_profiles SET principal_id=$3,row_version=2
+         WHERE tenant_id=$1 AND worker_profile_id=$2`,
+        [ids.tenant, workerProfileId, ids.employee],
+      );
+      await tenantClient.query(
+        `UPDATE hr_worker_profiles SET workforce_status='active',row_version=3
+         WHERE tenant_id=$1 AND worker_profile_id=$2`,
+        [ids.tenant, workerProfileId],
+      );
+      const manager = await tenantClient.query<{ worker_profile_id: string }>(
+        `INSERT INTO hr_worker_profiles (tenant_id)
+         VALUES ($1) RETURNING worker_profile_id::text`,
+        [ids.tenant],
+      );
+      const managerProfileId = manager.rows[0]?.worker_profile_id ?? "";
+      await tenantClient.query(
+        `UPDATE hr_worker_profiles SET principal_id=$3,row_version=2
+         WHERE tenant_id=$1 AND worker_profile_id=$2`,
+        [ids.tenant, managerProfileId, ids.manager],
+      );
+      await tenantClient.query(
+        `UPDATE hr_worker_profiles SET workforce_status='active',row_version=3
+         WHERE tenant_id=$1 AND worker_profile_id=$2`,
+        [ids.tenant, managerProfileId],
+      );
+      const relationship = await tenantClient.query<{ reporting_relationship_id: string }>(
+        `INSERT INTO hr_reporting_relationships
+           (tenant_id,worker_profile_id,manager_worker_profile_id,relationship_status,
+            relationship_version)
+         VALUES ($1,$2,$3,'assigned',1)
+         RETURNING reporting_relationship_id::text`,
+        [ids.tenant, workerProfileId, managerProfileId],
+      );
+      await tenantClient.query(
+        `UPDATE hr_worker_profiles SET current_reporting_relationship_id=$3,row_version=4
+         WHERE tenant_id=$1 AND worker_profile_id=$2`,
+        [ids.tenant, workerProfileId, relationship.rows[0]?.reporting_relationship_id],
+      );
+    });
+  } finally {
+    client.release();
+  }
+  const roster = await createShiftRoster(
+    pool,
+    { actorPrincipalId: ids.operator, correlationId: randomUUID(), tenantId: ids.tenant },
+    {
+      idempotencyKey: randomUUID(),
+      periodEnd: "2028-08-14",
+      periodStart: "2028-08-01",
+    },
+  );
+  rosterVersionId = roster.roster.rosterVersionId;
+  const assignment = await assignShift(
+    pool,
+    { actorPrincipalId: ids.operator, correlationId: randomUUID(), tenantId: ids.tenant },
+    {
+      endsAt: "2028-08-03T12:00:00Z",
+      ianaTimezone: "Asia/Karachi",
+      idempotencyKey: randomUUID(),
+      rosterVersionId,
+      startsAt: "2028-08-03T04:00:00Z",
+      workerProfileId,
+    },
+  );
+  assignmentId = assignment.assignment.shiftAssignmentId;
+  await publishShiftRoster(
+    pool,
+    { actorPrincipalId: ids.operator, correlationId: randomUUID(), tenantId: ids.tenant },
+    {
+      expectedVersion: roster.roster.version,
+      idempotencyKey: randomUUID(),
+      rosterVersionId,
+    },
+  );
+  server = createServer({
+    authenticate: createDevelopmentAuthenticator({ secret }),
+    logger: false,
+    pool,
+    runtimeEnvironment: "test",
+  });
+}, 30_000);
+afterAll(async () => {
+  await server?.close();
+  await pool?.end();
+  await migrationPool?.end();
+});
+describe("Shift Assignment authorized read APIs", () => {
+  it("serves strict employee, manager and HR reads without mutating persistence", async () => {
+    const before = await persistenceCounts();
+    const ownQuery = new URLSearchParams({
+      mode: "own",
+      pageSize: "1",
+      rangeEnd: "2028-09-01T00:00:00Z",
+      rangeStart: "2028-08-01T00:00:00Z",
+    });
+    const own = await signedGet({
+      principalId: ids.employee,
+      url: `/v1/hr/shift-assignments?${ownQuery}`,
+    });
+    expect(own.response.statusCode, own.response.body).toBe(200);
+    expect(own.response.json()).toMatchObject({
+      accessScope: "own",
+      items: [{ shiftAssignmentId: assignmentId, status: "active", workerProfileId }],
+    });
+    const ownCursor = own.response.json().nextCursor as {
+      shiftAssignmentId: string;
+      startsAt: string;
+    };
+    expect(ownCursor).toEqual({
+      shiftAssignmentId: assignmentId,
+      startsAt: "2028-08-03T04:00:00.000Z",
+    });
+    const tailQuery = new URLSearchParams({
+      cursorShiftAssignmentId: ownCursor.shiftAssignmentId,
+      cursorStartsAt: ownCursor.startsAt,
+      mode: "own",
+      pageSize: "1",
+      rangeEnd: "2028-09-01T00:00:00Z",
+      rangeStart: "2028-08-01T00:00:00Z",
+    });
+    expect(
+      (
+        await signedGet({
+          principalId: ids.employee,
+          url: `/v1/hr/shift-assignments?${tailQuery}`,
+        })
+      ).response.json(),
+    ).toEqual({ accessScope: "own", items: [], nextCursor: null });
+
+    for (const [principalId, accessScope] of [
+      [ids.manager, "assigned"],
+      [ids.operator, "tenant"],
+    ] as const) {
+      const rosterQuery = new URLSearchParams({
+        mode: "roster",
+        rosterVersionId,
+        status: "active",
+      });
+      const result = await signedGet({
+        principalId,
+        url: `/v1/hr/shift-assignments?${rosterQuery}`,
+      });
+      expect(result.response.statusCode, result.response.body).toBe(200);
+      expect(result.response.json()).toMatchObject({
+        accessScope,
+        items: [{ shiftAssignmentId: assignmentId }],
+        nextCursor: null,
+      });
+    }
+
+    for (const principalId of [ids.employee, ids.manager, ids.operator]) {
+      const detail = await signedGet({
+        principalId,
+        url: `/v1/hr/shift-assignments/by-id/${assignmentId}`,
+      });
+      expect(detail.response.statusCode, detail.response.body).toBe(200);
+      expect(detail.response.json()).toMatchObject({
+        assignment: { shiftAssignmentId: assignmentId, status: "active" },
+        history: [
+          {
+            eventType: "hr.shift_assignment.assign_shift",
+            newState: "active",
+            priorState: null,
+          },
+        ],
+      });
+    }
+    expect(await persistenceCounts()).toEqual(before);
+  }, 20_000);
+  it("authenticates first and rejects malformed or authority-bearing input", async () => {
+    const unauthenticated = await server.inject({
+      method: "GET",
+      url: "/v1/hr/shift-assignments/by-id/not-a-uuid?tenantId=foreign",
+    });
+    expect(unauthenticated.statusCode).toBe(401);
+    for (const url of [
+      "/v1/hr/shift-assignments?mode=own&rangeStart=2028-08-01T00%3A00%3A00Z",
+      `/v1/hr/shift-assignments?mode=roster&rosterVersionId=${rosterVersionId}&status=active&cursorShiftAssignmentId=${assignmentId}`,
+      `/v1/hr/shift-assignments?mode=roster&rosterVersionId=${rosterVersionId}&status=active&pageSize=51`,
+      `/v1/hr/shift-assignments?mode=roster&rosterVersionId=${rosterVersionId}&status=active&tenantId=${ids.otherTenant}`,
+      `/v1/hr/shift-assignments/by-id/${assignmentId}?mode=own`,
+      "/v1/hr/shift-assignments/by-id/not-a-uuid",
+    ]) {
+      expectProblem(
+        await signedGet({ principalId: ids.operator, url }),
+        400,
+        "REQUEST_VALIDATION_FAILED",
+      );
+    }
+  });
+  it("fails closed for missing authority, cross-tenant access and inactive services", async () => {
+    const detailUrl = `/v1/hr/shift-assignments/by-id/${assignmentId}`;
+    await replaceReadCapabilities(ids.employee, []);
+    try {
+      const denied = await signedGet({ principalId: ids.employee, url: detailUrl });
+      expectProblem(denied, 403, "POLICY_DENIED");
+      expect(denied.response.body).not.toContain(ids.employee);
+      expect(denied.response.body).not.toContain(ids.tenant);
+    } finally {
+      await replaceReadCapabilities(ids.employee, ["hr.shift.list_roster", "hr.shift.view_detail"]);
+    }
+    expectProblem(
+      await signedGet({
+        principalId: ids.employee,
+        tenantId: ids.otherTenant,
+        url: detailUrl,
+      }),
+      403,
+      "ACTOR_NOT_ACTIVE_MEMBER",
+    );
+    await setActivation("shift_assignment", "inactive");
+    try {
+      expectProblem(
+        await signedGet({ principalId: ids.employee, url: detailUrl }),
+        503,
+        "SHIFT_SERVICE_INACTIVE",
+      );
+    } finally {
+      await setActivation("shift_assignment", "active");
+    }
+    await setActivation("workforce_profile", "inactive");
+    try {
+      expectProblem(
+        await signedGet({ principalId: ids.employee, url: detailUrl }),
+        503,
+        "SHIFT_DEPENDENCY_INACTIVE",
+      );
+    } finally {
+      await setActivation("workforce_profile", "active");
+    }
+    expectProblem(
+      await signedGet({
+        principalId: ids.operator,
+        url: `/v1/hr/shift-assignments/by-id/${randomUUID()}`,
+      }),
+      404,
+      "SHIFT_NOT_FOUND",
+    );
+  }, 20_000);
+});

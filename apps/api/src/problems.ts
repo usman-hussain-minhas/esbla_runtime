@@ -1,4 +1,9 @@
-import { EmploymentError, HrLeaveError, HrWorkforceProfileError } from "@esbla/hr";
+import {
+  EmploymentError,
+  HrLeaveError,
+  HrShiftAssignmentError,
+  HrWorkforceProfileError,
+} from "@esbla/hr";
 import { PlatformError } from "@esbla/platform-core";
 import { WorkspaceTaskError } from "@esbla/workspace";
 import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
@@ -91,6 +96,14 @@ function statusForError(error: Error): number {
     if (error.code === "WORKFORCE_SERVICE_INACTIVE") return 503;
     return 409;
   }
+  if (error instanceof HrShiftAssignmentError) {
+    if (error.code === "SHIFT_INPUT_INVALID") return 400;
+    if (error.code === "SHIFT_NOT_FOUND") return 404;
+    if (error.code === "SHIFT_DEPENDENCY_INACTIVE" || error.code === "SHIFT_SERVICE_INACTIVE") {
+      return 503;
+    }
+    return 409;
+  }
   if (error instanceof WorkspaceTaskError) {
     if (error.code === "WORKSPACE_TASK_INPUT_INVALID") return 400;
     if (error.code === "WORKSPACE_TASK_NOT_FOUND") return 404;
@@ -116,6 +129,7 @@ function codeForError(error: Error): string {
     error instanceof AuthError ||
     error instanceof EmploymentError ||
     error instanceof HrLeaveError ||
+    error instanceof HrShiftAssignmentError ||
     error instanceof HrWorkforceProfileError ||
     error instanceof WorkspaceTaskError ||
     error instanceof PlatformError

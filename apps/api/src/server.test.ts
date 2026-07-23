@@ -95,10 +95,18 @@ describe("runtime probes", () => {
     expect(query).not.toHaveBeenCalled();
   });
 
-  it("keeps every Shift Assignment route dormant without touching PostgreSQL", async () => {
+  it("protects Shift reads while keeping mutation and control routes dormant", async () => {
     const { query, server } = testServer();
     const rosterVersionId = randomUUID();
     const shiftAssignmentId = randomUUID();
+    for (const url of [
+      `/v1/hr/shift-assignments/by-id/${shiftAssignmentId}`,
+      "/v1/hr/shift-assignments",
+    ]) {
+      const response = await server.inject({ method: "GET", url });
+      expect(response.statusCode).toBe(401);
+      expect(response.headers["content-type"]).toContain("application/problem+json");
+    }
     for (const request of [
       { method: "POST", url: "/v1/hr/shift-rosters" },
       {
@@ -113,11 +121,6 @@ describe("runtime probes", () => {
         method: "POST",
         url: `/v1/hr/shift-assignments/${shiftAssignmentId}/cancel`,
       },
-      {
-        method: "GET",
-        url: `/v1/hr/shift-assignments/by-id/${shiftAssignmentId}`,
-      },
-      { method: "GET", url: "/v1/hr/shift-assignments" },
       { method: "GET", url: "/v1/hr/shift-rosters/service-control" },
       {
         method: "POST",

@@ -8,9 +8,10 @@
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
     "test": "vitest run src/server.test.ts src/workforce-detail-routes.test.ts src/workforce-list-routes.test.ts src/workforce-reporting-routes.test.ts && pnpm run test:integration",
-    "test:integration": "pnpm run test:integration:employment && pnpm run test:integration:hr && pnpm run test:integration:workforce-settings && pnpm run test:integration:workspace",
+    "test:integration": "pnpm run test:integration:employment && pnpm run test:integration:hr && pnpm run test:integration:shift-read && pnpm run test:integration:workforce-settings && pnpm run test:integration:workspace",
     "test:integration:employment": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/employment-routes.integration.test.ts",
     "test:integration:hr": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/hr-routes.integration.test.ts",
+    "test:integration:shift-read": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/hr-shift-assignment-routes.integration.test.ts",
     "test:integration:workforce-settings": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/workforce-service-settings.integration.test.ts",
     "test:integration:workspace": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/workspace-routes.integration.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
