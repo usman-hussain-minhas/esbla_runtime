@@ -1,4 +1,4 @@
-import { HrLeaveError, HrWorkforceProfileError } from "@esbla/hr";
+import { EmploymentError, HrLeaveError, HrWorkforceProfileError } from "@esbla/hr";
 import { PlatformError } from "@esbla/platform-core";
 import { WorkspaceTaskError } from "@esbla/workspace";
 import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
@@ -63,6 +63,22 @@ function statusForError(error: Error): number {
     if (error.code === "LEAVE_SERVICE_INACTIVE") return 503;
     return 409;
   }
+  if (error instanceof EmploymentError) {
+    if (error.code === "EMPLOYMENT_INPUT_INVALID") return 400;
+    if (
+      error.code === "EMPLOYMENT_NOT_FOUND" ||
+      error.code === "EMPLOYMENT_SERVICE_CONTROL_NOT_FOUND"
+    ) {
+      return 404;
+    }
+    if (
+      error.code === "EMPLOYMENT_DEPENDENCY_INACTIVE" ||
+      error.code === "EMPLOYMENT_SERVICE_INACTIVE"
+    ) {
+      return 503;
+    }
+    return 409;
+  }
   if (error instanceof HrWorkforceProfileError) {
     if (error.code === "WORKFORCE_INPUT_INVALID") return 400;
     if (
@@ -98,6 +114,7 @@ function codeForError(error: Error): string {
   if ((error as FastifyError).validation) return "REQUEST_VALIDATION_FAILED";
   if (
     error instanceof AuthError ||
+    error instanceof EmploymentError ||
     error instanceof HrLeaveError ||
     error instanceof HrWorkforceProfileError ||
     error instanceof WorkspaceTaskError ||

@@ -13,6 +13,11 @@ export const ports = {
   admin: 41_904,
   api: 41_900,
   employee: 41_901,
+  employmentActionAdmin: 41_907,
+  employmentActionOperator: 41_906,
+  employmentEmployee: 41_905,
+  employmentListOperator: 41_909,
+  employmentViewAdmin: 41_908,
   manager: 41_902,
   operator: 41_903,
 };
@@ -24,6 +29,22 @@ export const fixture = {
   employeeLabel: "Browser Employee session",
   employeeOrigin: `http://127.0.0.1:${ports.employee}`,
   employeePrincipalId: "10000000-0000-4000-8000-000000000004",
+  employmentActionAdminLabel: "Browser Employment Action Admin session",
+  employmentActionAdminOrigin: `http://127.0.0.1:${ports.employmentActionAdmin}`,
+  employmentActionAdminPrincipalId: "10000000-0000-4000-8000-000000000016",
+  employmentActionAdminTenantId: "00000000-0000-4000-8000-000000000002",
+  employmentActionOperatorLabel: "Browser Employment Action Operator session",
+  employmentActionOperatorOrigin: `http://127.0.0.1:${ports.employmentActionOperator}`,
+  employmentActionOperatorPrincipalId: "10000000-0000-4000-8000-000000000014",
+  employmentEmployeeLabel: "Browser Employment Employee session",
+  employmentEmployeeOrigin: `http://127.0.0.1:${ports.employmentEmployee}`,
+  employmentEmployeePrincipalId: "10000000-0000-4000-8000-000000000012",
+  employmentListOperatorLabel: "Browser Employment List Operator session",
+  employmentListOperatorOrigin: `http://127.0.0.1:${ports.employmentListOperator}`,
+  employmentListOperatorPrincipalId: "10000000-0000-4000-8000-000000000020",
+  employmentViewAdminLabel: "Browser Employment View Admin session",
+  employmentViewAdminOrigin: `http://127.0.0.1:${ports.employmentViewAdmin}`,
+  employmentViewAdminPrincipalId: "10000000-0000-4000-8000-000000000018",
   managerLabel: "Browser Manager session",
   managerOrigin: `http://127.0.0.1:${ports.manager}`,
   managerPrincipalId: "10000000-0000-4000-8000-000000000002",
@@ -109,7 +130,17 @@ export async function closePrivatePlaywrightRoot(rootPromise, playwright) {
   await removePrivatePlaywrightRoot(root, playwright?.receipt);
 }
 
-const nextRuntimePersonas = ["admin", "employee", "manager", "operator"];
+const nextRuntimePersonas = [
+  "admin",
+  "employee",
+  "employmentActionAdmin",
+  "employmentActionOperator",
+  "employmentEmployee",
+  "employmentListOperator",
+  "employmentViewAdmin",
+  "manager",
+  "operator",
+];
 const maxNextBuildFiles = 2_000;
 const maxNextBuildEntries = 4_000;
 const maxNextBuildFileBytes = 16 * 1_024 * 1_024;
@@ -359,14 +390,16 @@ export async function seedHrLeaveFixture() {
   const applicationRole = requiredEnvironment("ESBLA_TEST_APPLICATION_ROLE");
   if (!/^[a-z_][a-z0-9_]*$/.test(applicationRole)) throw new Error("Unsafe application role");
   const pool = createDatabasePool(requiredEnvironment("DATABASE_MIGRATION_URL"), { max: 2 });
+  let employmentActionWorkerProfileId;
   try {
     await migrateDatabase(createDatabase(pool));
     const client = await pool.connect();
     try {
       await client.query(`GRANT USAGE ON SCHEMA public TO ${applicationRole}`);
       await client.query(`GRANT SELECT ON principals, tenant_settings TO ${applicationRole}`);
+      await client.query(`GRANT SELECT ON memberships TO ${applicationRole}`);
       await client.query(
-        `GRANT SELECT, UPDATE ON memberships, service_activations TO ${applicationRole}`,
+        `GRANT SELECT, INSERT, UPDATE ON service_activations TO ${applicationRole}`,
       );
       await client.query(
         `GRANT SELECT ON membership_capabilities, hr_workforce_profile_service_control,
@@ -375,7 +408,13 @@ export async function seedHrLeaveFixture() {
       await client.query(`GRANT INSERT ON hr_reporting_relationships TO ${applicationRole}`);
       await client.query(
         `GRANT SELECT, INSERT, UPDATE ON work_items, hr_leave_requests,
-          hr_worker_profiles TO ${applicationRole}`,
+          hr_worker_profiles, hr_employment_records TO ${applicationRole}`,
+      );
+      await client.query(
+        `GRANT SELECT ON hr_employment_record_service_control TO ${applicationRole}`,
+      );
+      await client.query(
+        `GRANT SELECT, INSERT ON hr_employment_record_versions TO ${applicationRole}`,
       );
       await client.query(
         `GRANT SELECT, INSERT ON evidence_events, outbox_events TO ${applicationRole}`,
@@ -402,6 +441,21 @@ export async function seedHrLeaveFixture() {
         ],
       );
       await client.query(
+        `INSERT INTO principals (principal_id, display_name)
+         VALUES ($1, 'Browser Employment Employee'),
+                ($2, 'Browser Employment Action Operator'),
+                ($3, 'Browser Employment Action Admin'),
+                ($4, 'Browser Employment View Admin'),
+                ($5, 'Browser Employment List Operator')`,
+        [
+          fixture.employmentEmployeePrincipalId,
+          fixture.employmentActionOperatorPrincipalId,
+          fixture.employmentActionAdminPrincipalId,
+          fixture.employmentViewAdminPrincipalId,
+          fixture.employmentListOperatorPrincipalId,
+        ],
+      );
+      await client.query(
         `INSERT INTO memberships
            (membership_id, tenant_id, principal_id, role_key, manager_principal_id)
          VALUES ('20000000-0000-4000-8000-000000000002', $1, $2, 'manager', NULL),
@@ -416,6 +470,21 @@ export async function seedHrLeaveFixture() {
           fixture.operatorPrincipalId,
           fixture.reportPrincipalId,
           fixture.adminPrincipalId,
+        ],
+      );
+      await client.query(
+        `INSERT INTO memberships
+           (membership_id, tenant_id, principal_id, role_key, manager_principal_id)
+         VALUES ('20000000-0000-4000-8000-000000000012', $1, $2, 'employee', NULL),
+                ('20000000-0000-4000-8000-000000000014', $1, $3, 'hr_operator', NULL),
+                ('20000000-0000-4000-8000-000000000018', $1, $4, 'tenant_admin', NULL),
+                ('20000000-0000-4000-8000-000000000020', $1, $5, 'hr_operator', NULL)`,
+        [
+          fixture.tenantId,
+          fixture.employmentEmployeePrincipalId,
+          fixture.employmentActionOperatorPrincipalId,
+          fixture.employmentViewAdminPrincipalId,
+          fixture.employmentListOperatorPrincipalId,
         ],
       );
       await client.query(
@@ -442,9 +511,38 @@ export async function seedHrLeaveFixture() {
         ],
       );
       await client.query(
+        `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+         VALUES ($1, $2, 'hr.employment.list_authorized'),
+                ($1, $2, 'hr.employment.view_detail'),
+                ($1, $3, 'hr.employment.create_record'),
+                ($1, $3, 'hr.employment.create_version'),
+                ($1, $3, 'hr.employment.end_record'),
+                ($1, $3, 'hr.employment.list_authorized'),
+                ($1, $3, 'hr.employment.view_detail'),
+                ($1, $4, 'hr.employment.activate_service'),
+                ($1, $4, 'hr.employment.configure_service'),
+                ($1, $4, 'hr.employment.deactivate_service'),
+                ($1, $4, 'hr.employment.view_service_control'),
+                ($1, $5, 'hr.employment.create_record'),
+                ($1, $5, 'hr.employment.create_version'),
+                ($1, $5, 'hr.employment.end_record'),
+                ($1, $6, 'hr.employment.view_service_control'),
+                ($1, $7, 'hr.employment.list_authorized')`,
+        [
+          fixture.tenantId,
+          fixture.employmentEmployeePrincipalId,
+          fixture.operatorPrincipalId,
+          fixture.adminPrincipalId,
+          fixture.employmentActionOperatorPrincipalId,
+          fixture.employmentViewAdminPrincipalId,
+          fixture.employmentListOperatorPrincipalId,
+        ],
+      );
+      await client.query(
         `INSERT INTO service_activations (tenant_id, service_key, state, version)
          VALUES ($1, 'hr.leave_request', 'active', 1),
-                ($1, 'workforce_profile', 'active', 1)`,
+                ($1, 'workforce_profile', 'active', 1),
+                ($1, 'employment_record', 'active', 1)`,
         [fixture.tenantId],
       );
       await client.query(
@@ -480,9 +578,21 @@ export async function seedHrLeaveFixture() {
         "BROWSER-DIRECT-001",
         fixture.reportPrincipalId,
       );
+      await createActiveProfile("BROWSER-EMPLOYMENT-001", fixture.employmentEmployeePrincipalId);
+      const actionWorker = await client.query(
+        `INSERT INTO hr_worker_profiles (worker_profile_id, tenant_id, employee_number)
+         VALUES (gen_random_uuid(), $1, 'BROWSER-EMPLOYMENT-ACTION-001')
+         RETURNING worker_profile_id`,
+        [fixture.tenantId],
+      );
+      employmentActionWorkerProfileId = actionWorker.rows[0]?.worker_profile_id;
+      if (typeof employmentActionWorkerProfileId !== "string") {
+        throw new Error("Employment action fixture insert failed");
+      }
       await client.query(
         `INSERT INTO hr_worker_profiles (tenant_id, employee_number)
-         VALUES ($1, 'BROWSER-DRAFT-001')`,
+         VALUES ($1, 'BROWSER-DRAFT-001'),
+                ($1, 'BROWSER-EMPLOYMENT-CONTROL-001')`,
         [fixture.tenantId],
       );
       const relationship = await client.query(
@@ -497,6 +607,31 @@ export async function seedHrLeaveFixture() {
          WHERE tenant_id=$1 AND worker_profile_id=$2`,
         [fixture.tenantId, reportWorkerProfileId, relationship.rows[0]?.reporting_relationship_id],
       );
+      await client.query("SELECT set_config('app.tenant_id', $1, true)", [
+        fixture.employmentActionAdminTenantId,
+      ]);
+      await client.query(
+        "INSERT INTO tenants (tenant_id, name) VALUES($1,'Browser Employment Action Tenant')",
+        [fixture.employmentActionAdminTenantId],
+      );
+      await client.query(
+        `INSERT INTO memberships
+           (membership_id, tenant_id, principal_id, role_key, manager_principal_id)
+         VALUES ('20000000-0000-4000-8000-000000000016', $1, $2, 'tenant_admin', NULL)`,
+        [fixture.employmentActionAdminTenantId, fixture.employmentActionAdminPrincipalId],
+      );
+      await client.query(
+        `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+         VALUES ($1, $2, 'hr.employment.activate_service'),
+                ($1, $2, 'hr.employment.configure_service'),
+                ($1, $2, 'hr.employment.deactivate_service')`,
+        [fixture.employmentActionAdminTenantId, fixture.employmentActionAdminPrincipalId],
+      );
+      await client.query(
+        `INSERT INTO service_activations (tenant_id, service_key, state, version)
+         VALUES ($1, 'workforce_profile', 'active', 1)`,
+        [fixture.employmentActionAdminTenantId],
+      );
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
@@ -507,4 +642,5 @@ export async function seedHrLeaveFixture() {
   } finally {
     await pool.end();
   }
+  return Object.freeze({ employmentActionWorkerProfileId });
 }

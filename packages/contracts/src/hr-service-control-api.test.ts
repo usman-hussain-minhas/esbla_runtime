@@ -7,11 +7,13 @@ import {
   hrServiceControlSchema,
   hrServiceDeactivateBodySchema,
   hrServiceKeys,
+  hrServiceMutationResponseSchema,
   parseHrServiceActivateBody,
   parseHrServiceConfigureBody,
   parseHrServiceControl,
   parseHrServiceControlQuery,
   parseHrServiceDeactivateBody,
+  parseHrServiceMutationResponse,
 } from "./hr-service-control-api.js";
 
 const serviceControl = {
@@ -41,12 +43,14 @@ describe("shared HR service-control contracts", () => {
       hrServiceConfigureBodySchema.$id,
       hrServiceDeactivateBodySchema.$id,
       hrServiceControlSchema.$id,
+      hrServiceMutationResponseSchema.$id,
     ]).toEqual([
       "HrServiceControlQueryV1",
       "HrServiceActivateRequestV1",
       "HrServiceConfigureRequestV1",
       "HrServiceDeactivateRequestV1",
       "HrServiceControlResponseV1",
+      "HrServiceMutationResponseV1",
     ]);
     expect(hrServiceKeys).toEqual([
       "attendance",
@@ -149,6 +153,38 @@ describe("shared HR service-control contracts", () => {
               : {},
       };
       expect(parseHrServiceControl(response)).toBe(response);
+    }
+  });
+
+  it("accepts only exact capability-minimal service mutation outcomes", () => {
+    const activated = {
+      activationState: "active",
+      activationVersion: 3,
+      controlVersion: 4,
+      operation: "activate_service",
+      serviceKey: "employment_record",
+      settingsVersion: 2,
+    } as const;
+    const configured = { ...activated, operation: "configure_service" } as const;
+    const deactivated = {
+      ...activated,
+      activationState: "inactive",
+      operation: "deactivate_service",
+    } as const;
+    expect(parseHrServiceMutationResponse(activated)).toBe(activated);
+    expect(parseHrServiceMutationResponse(configured)).toBe(configured);
+    expect(parseHrServiceMutationResponse(deactivated)).toBe(deactivated);
+    for (const invalid of [
+      { ...activated, settings: employmentRecordSettings },
+      { ...activated, updatedAt: serviceControl.updatedAt },
+      { ...activated, activationState: "inactive" },
+      { ...deactivated, activationState: "active" },
+      { ...configured, controlVersion: 5 },
+      { ...configured, operation: "view_service_control" },
+      { ...configured, serviceKey: "leave_request" },
+      { ...configured, settingsVersion: 0 },
+    ]) {
+      expect(() => parseHrServiceMutationResponse(invalid)).toThrow();
     }
   });
 

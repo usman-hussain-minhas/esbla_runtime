@@ -104,6 +104,7 @@ import {
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import type { Pool } from "pg";
 import { AuthError, type RequestAuthenticator } from "./auth.js";
+import { registerEmploymentRoutes } from "./hr-employment-routes.js";
 import { sendProblem } from "./problems.js";
 
 type WorkforceConfigureBody = Extract<
@@ -272,6 +273,14 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     } catch {
       return reply.code(503).send({ status: "not_ready" });
     }
+  });
+
+  registerEmploymentRoutes({
+    authenticate,
+    migrationReadPool: options.migrationReadPool ?? options.pool,
+    pool: options.pool,
+    runtimeEnvironment: options.runtimeEnvironment ?? "production",
+    server,
   });
 
   server.get<{ Querystring: HrServiceControlQuery }>(
