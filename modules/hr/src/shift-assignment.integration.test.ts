@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { parseHrShiftAssignmentResponse } from "@esbla/contracts";
 import { createDatabase, createDatabasePool, migrateDatabase } from "@esbla/db";
 import { type OperationContext, PlatformError } from "@esbla/platform-core";
 import type { Pool, PoolClient } from "pg";
@@ -591,6 +592,114 @@ describe("Shift Assignment mutation lifecycle", () => {
         ),
       ),
     ).rejects.toMatchObject({ code: "SHIFT_INPUT_INVALID" });
+  });
+
+  it("returns version-bounded assignment history and replays without duplicate semantics", async () => {
+    const roster = (
+      await createShiftRoster(pool, context(), rosterInput("2099-08-01", "2099-08-14"))
+    ).roster;
+    const assignInput = assignmentInput(
+      roster.rosterVersionId,
+      "2099-08-03T04:00:00Z",
+      "2099-08-03T12:00:00Z",
+    );
+    const assigned = await assignShift(pool, context(), assignInput);
+    const assignedResponse = parseHrShiftAssignmentResponse(
+      await getAuthorizedShiftAssignmentDetail(
+        pool,
+        context(),
+        assigned.assignment.shiftAssignmentId,
+      ),
+    );
+    expect(assignedResponse).toMatchObject({
+      assignment: { status: "active", version: 1 },
+      history: [
+        {
+          eventType: "hr.shift_assignment.assign_shift",
+          newState: "active",
+          priorState: null,
+        },
+      ],
+    });
+    expect.soft(assigned).toEqual({
+      ...assigned,
+      assignment: assignedResponse.assignment,
+      history: assignedResponse.history,
+    });
+
+    const cancelInput = {
+      expectedVersion: 1,
+      idempotencyKey: randomUUID(),
+      shiftAssignmentId: assigned.assignment.shiftAssignmentId,
+    };
+    const cancelled = await cancelShiftAssignment(pool, context(), cancelInput);
+    const cancelledResponse = parseHrShiftAssignmentResponse(
+      await getAuthorizedShiftAssignmentDetail(
+        pool,
+        context(),
+        assigned.assignment.shiftAssignmentId,
+      ),
+    );
+    expect(cancelledResponse).toMatchObject({
+      assignment: { status: "cancelled", version: 2 },
+      history: [
+        { eventType: "hr.shift_assignment.assign_shift", newState: "active", priorState: null },
+        {
+          eventType: "hr.shift_assignment.cancel_assignment",
+          newState: "cancelled",
+          priorState: "active",
+        },
+      ],
+    });
+    expect.soft(cancelled).toEqual({
+      ...cancelled,
+      assignment: cancelledResponse.assignment,
+      history: cancelledResponse.history,
+    });
+
+    const semanticCounts = async () =>
+      await tenantTransaction(migrationPool, ids.tenant, ids.actor, async (client) => {
+        const result = await client.query<{
+          assignments: number;
+          billing: number;
+          evidence: number;
+          outbox: number;
+          rosters: number;
+          work: number;
+        }>(
+          `SELECT
+             (SELECT count(*) FROM hr_shift_assignments
+              WHERE tenant_id=$1 AND roster_version_id=$2)::integer assignments,
+             (SELECT count(*) FROM hr_shift_roster_versions
+              WHERE tenant_id=$1 AND roster_version_id=$2)::integer rosters,
+             (SELECT count(*) FROM evidence_events
+              WHERE tenant_id=$1 AND event_type LIKE 'hr.shift_assignment.%')::integer evidence,
+             (SELECT count(*) FROM outbox_events
+              WHERE tenant_id=$1 AND event_type LIKE 'hr.shift_assignment.%')::integer outbox,
+             (SELECT count(*) FROM work_items WHERE tenant_id=$1)::integer work,
+             (SELECT count(*) FROM outbox_events
+              WHERE tenant_id=$1 AND event_type LIKE 'hr.shift_assignment.%'
+                AND payload->>'billingState'='non_billable')::integer billing`,
+          [ids.tenant, roster.rosterVersionId],
+        );
+        return result.rows[0];
+      });
+    const beforeReplays = await semanticCounts();
+    const assignReplay = await assignShift(pool, context(), assignInput);
+    const cancelReplay = await cancelShiftAssignment(pool, context(), cancelInput);
+    expect.soft(assignReplay).toEqual({
+      ...assigned,
+      assignment: assignedResponse.assignment,
+      history: assignedResponse.history,
+      replayed: true,
+    });
+    expect.soft(cancelReplay).toEqual({
+      ...cancelled,
+      assignment: cancelledResponse.assignment,
+      history: cancelledResponse.history,
+      replayed: true,
+    });
+    expect(await semanticCounts()).toEqual(beforeReplays);
   });
 
   it("publishes and atomically supersedes the exact predecessor before cancellation", async () => {

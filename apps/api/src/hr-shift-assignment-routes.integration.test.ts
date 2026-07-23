@@ -23,6 +23,10 @@ interface SignedRequestOptions {
   readonly tenantId?: string;
   readonly url: string;
 }
+interface SignedMutationOptions extends SignedRequestOptions {
+  readonly body: NonNullable<InjectOptions["payload"]>;
+  readonly idempotencyKey?: string;
+}
 interface PersistenceCounts {
   readonly assignments: number;
   readonly evidence: number;
@@ -86,6 +90,35 @@ async function signedGet({ principalId, tenantId = ids.tenant, url }: SignedRequ
     "x-esbla-tenant-id": tenantId,
   };
   const request: InjectOptions = { headers, method: "GET", url };
+  return { requestId, response: await server.inject(request) };
+}
+async function signedPost({
+  body,
+  idempotencyKey,
+  principalId,
+  tenantId = ids.tenant,
+  url,
+}: SignedMutationOptions) {
+  const requestId = randomUUID();
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const headers: Record<string, string> = {
+    "x-esbla-auth-signature": signDevelopmentPrincipal(secret, {
+      body,
+      method: "POST",
+      principalId,
+      requestId,
+      tenantId,
+      timestamp,
+      url,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    }),
+    "x-esbla-auth-timestamp": timestamp,
+    "x-esbla-principal-id": principalId,
+    "x-esbla-request-id": requestId,
+    "x-esbla-tenant-id": tenantId,
+  };
+  if (idempotencyKey) headers["idempotency-key"] = idempotencyKey;
+  const request: InjectOptions = { headers, method: "POST", payload: body, url };
   return { requestId, response: await server.inject(request) };
 }
 async function setActivation(
@@ -223,6 +256,7 @@ beforeAll(async () => {
           ids.operator,
           [
             "hr.shift.assign",
+            "hr.shift.cancel",
             "hr.shift.create_roster",
             "hr.shift.list_roster",
             "hr.shift.publish",
@@ -481,4 +515,176 @@ describe("Shift Assignment authorized read APIs", () => {
       "SHIFT_NOT_FOUND",
     );
   }, 20_000);
+});
+describe("Shift Assignment authorized lifecycle APIs", () => {
+  it("creates, assigns, publishes and cancels with strict replay-safe responses", async () => {
+    const createUrl = "/v1/hr/shift-rosters";
+    const createBody = { periodEnd: "2028-09-14", periodStart: "2028-09-01" };
+    const createKey = randomUUID();
+    const created = await signedPost({
+      body: createBody,
+      idempotencyKey: createKey,
+      principalId: ids.operator,
+      url: createUrl,
+    });
+    expect(created.response.statusCode, created.response.body).toBe(201);
+    expect(created.response.headers["idempotent-replayed"]).toBe("false");
+    const roster = created.response.json();
+    expect(roster).toEqual({
+      ...createBody,
+      periodVersion: 1,
+      publishedAt: null,
+      rosterVersionId: expect.any(String),
+      status: "draft",
+      supersedesRosterVersionId: null,
+      version: 1,
+    });
+    const createReplay = await signedPost({
+      body: createBody,
+      idempotencyKey: createKey,
+      principalId: ids.operator,
+      url: createUrl,
+    });
+    expect(createReplay.response.statusCode, createReplay.response.body).toBe(200);
+    expect(createReplay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(createReplay.response.json()).toEqual(roster);
+
+    const assignUrl = `/v1/hr/shift-rosters/${roster.rosterVersionId}/assignments`;
+    const assignBody = {
+      endsAt: "2028-09-03T12:00:00Z",
+      ianaTimezone: "Asia/Karachi",
+      startsAt: "2028-09-03T04:00:00Z",
+      workerProfileId,
+    };
+    const assignKey = randomUUID();
+    const assigned = await signedPost({
+      body: assignBody,
+      idempotencyKey: assignKey,
+      principalId: ids.operator,
+      url: assignUrl,
+    });
+    expect(assigned.response.statusCode, assigned.response.body).toBe(201);
+    expect(assigned.response.headers["idempotent-replayed"]).toBe("false");
+    const assignmentResponse = assigned.response.json();
+    expect(assignmentResponse).toEqual({
+      assignment: {
+        ...assignBody,
+        endsAt: "2028-09-03T12:00:00.000Z",
+        rosterVersionId: roster.rosterVersionId,
+        shiftAssignmentId: expect.any(String),
+        startsAt: "2028-09-03T04:00:00.000Z",
+        status: "active",
+        version: 1,
+      },
+      history: [
+        {
+          eventType: "hr.shift_assignment.assign_shift",
+          newState: "active",
+          occurredAt: expect.any(String),
+          priorState: null,
+        },
+      ],
+    });
+    const publishUrl = `/v1/hr/shift-rosters/${roster.rosterVersionId}/publish`;
+    const publishBody = { expectedVersion: roster.version };
+    const publishKey = randomUUID();
+    const published = await signedPost({
+      body: publishBody,
+      idempotencyKey: publishKey,
+      principalId: ids.operator,
+      url: publishUrl,
+    });
+    expect(published.response.statusCode, published.response.body).toBe(200);
+    expect(published.response.headers["idempotent-replayed"]).toBe("false");
+    const publishedRoster = published.response.json();
+    expect(publishedRoster).toEqual({
+      ...roster,
+      publishedAt: expect.any(String),
+      status: "published",
+      version: 2,
+    });
+    const publishReplay = await signedPost({
+      body: publishBody,
+      idempotencyKey: publishKey,
+      principalId: ids.operator,
+      url: publishUrl,
+    });
+    expect(publishReplay.response.statusCode, publishReplay.response.body).toBe(200);
+    expect(publishReplay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(publishReplay.response.json()).toEqual(publishedRoster);
+
+    const assignmentId = assignmentResponse.assignment.shiftAssignmentId;
+    const cancelUrl = `/v1/hr/shift-assignments/${assignmentId}/cancel`;
+    const cancelBody = { expectedVersion: assignmentResponse.assignment.version };
+    const cancelKey = randomUUID();
+    const cancelled = await signedPost({
+      body: cancelBody,
+      idempotencyKey: cancelKey,
+      principalId: ids.operator,
+      url: cancelUrl,
+    });
+    expect(cancelled.response.statusCode, cancelled.response.body).toBe(200);
+    expect(cancelled.response.headers["idempotent-replayed"]).toBe("false");
+    expect(cancelled.response.json()).toEqual({
+      assignment: { ...assignmentResponse.assignment, status: "cancelled", version: 2 },
+      history: [
+        assignmentResponse.history[0],
+        {
+          eventType: "hr.shift_assignment.cancel_assignment",
+          newState: "cancelled",
+          occurredAt: expect.any(String),
+          priorState: "active",
+        },
+      ],
+    });
+    const cancelReplay = await signedPost({
+      body: cancelBody,
+      idempotencyKey: cancelKey,
+      principalId: ids.operator,
+      url: cancelUrl,
+    });
+    expect(cancelReplay.response.statusCode, cancelReplay.response.body).toBe(200);
+    expect(cancelReplay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(cancelReplay.response.json()).toEqual(cancelled.response.json());
+
+    const assignReplay = await signedPost({
+      body: assignBody,
+      idempotencyKey: assignKey,
+      principalId: ids.operator,
+      url: assignUrl,
+    });
+    expect(assignReplay.response.statusCode, assignReplay.response.body).toBe(200);
+    expect(assignReplay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(assignReplay.response.json()).toEqual(assignmentResponse);
+  }, 20_000);
+
+  it("authenticates before validation and rejects unusable mutation keys without domain access", async () => {
+    const before = await persistenceCounts();
+    const unauthenticated = await server.inject({
+      method: "POST",
+      payload: { unexpected: true },
+      url: "/v1/hr/shift-rosters/not-a-uuid/assignments",
+    });
+    expect(unauthenticated.statusCode).toBe(401);
+    for (const idempotencyKey of [undefined, "not-a-uuid"]) {
+      const result = await signedPost({
+        body: { unexpected: true },
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+        principalId: ids.operator,
+        url: "/v1/hr/shift-rosters",
+      });
+      const problem = result.response.json();
+      expect(result.response.statusCode, result.response.body).toBe(401);
+      expect(problem).toMatchObject({
+        code: "AUTH_REQUIRED",
+        requestId: expect.any(String),
+        status: 401,
+      });
+      expect(problem.requestId).not.toBe(result.requestId);
+      expect(Object.keys(problem).sort()).toEqual(
+        ["code", "detail", "instance", "requestId", "status", "title", "type"].sort(),
+      );
+    }
+    expect(await persistenceCounts()).toEqual(before);
+  });
 });
