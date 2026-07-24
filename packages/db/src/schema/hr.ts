@@ -54,6 +54,13 @@ export const hrAttendanceObservationKind = pgEnum("hr_attendance_observation_kin
   "presence_end",
 ]);
 export const hrAttendanceSourceKind = pgEnum("hr_attendance_source_kind", ["manual", "synthetic"]);
+export const hrTimesheetStatus = pgEnum("hr_timesheet_status", [
+  "draft",
+  "submitted",
+  "approved",
+  "rejected",
+]);
+export const hrTimesheetDecision = pgEnum("hr_timesheet_decision", ["approved", "rejected"]);
 
 type PgTableExtras = PgTableExtraConfigValue[];
 
@@ -733,6 +740,227 @@ export const hrWorkforceStatusHistory = pgTable(
           (${table.previousStatus} = 'draft' AND ${table.newStatus} = 'active') OR
           (${table.previousStatus} = 'active' AND ${table.newStatus} IN ('suspended', 'terminated')) OR
           (${table.previousStatus} = 'suspended' AND ${table.newStatus} IN ('active', 'terminated'))) IS TRUE`,
+    ),
+  ],
+).enableRLS();
+
+export const hrTimesheetServiceControl = pgTable(
+  "hr_timesheet_service_control",
+  {
+    serviceControlId: uuid("service_control_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    serviceKey: text("service_key").default("timesheet").notNull(),
+    settingsVersion: integer("settings_version").default(1).notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.serviceKey],
+      foreignColumns: [serviceActivations.tenantId, serviceActivations.serviceKey],
+      name: "hr_timesheet_service_control_activation_fk",
+    }).onDelete("restrict"),
+    uniqueIndex("uq_hr_timesheet_service_control_tenant_key").on(table.tenantId, table.serviceKey),
+    check("hr_timesheet_service_control_key_exact", sql`${table.serviceKey} = 'timesheet'`),
+    check(
+      "hr_timesheet_service_control_settings_version_positive",
+      sql`${table.settingsVersion} > 0`,
+    ),
+    check("hr_timesheet_service_control_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const hrTimesheets = pgTable(
+  "hr_timesheets",
+  {
+    timesheetId: uuid("timesheet_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    workerProfileId: uuid("worker_profile_id").notNull(),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    periodEnd: date("period_end", { mode: "string" }).notNull(),
+    currentVersionId: uuid("current_version_id").notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table): PgTableExtras => [
+    unique("uq_hr_timesheets_composite_identity").on(table.tenantId, table.timesheetId),
+    foreignKey({
+      columns: [table.tenantId, table.workerProfileId],
+      foreignColumns: [hrWorkforceProfiles.tenantId, hrWorkforceProfiles.workerProfileId],
+      name: "hr_timesheets_worker_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.timesheetId, table.currentVersionId],
+      foreignColumns: [
+        hrTimesheetVersions.tenantId,
+        hrTimesheetVersions.timesheetId,
+        hrTimesheetVersions.timesheetVersionId,
+      ],
+      name: "hr_timesheets_current_version_same_root_fk",
+    }).onDelete("restrict"),
+    index("idx_hr_timesheets_tenant_worker_period_cursor").on(
+      table.tenantId,
+      table.workerProfileId,
+      table.periodStart.desc(),
+      table.timesheetId.desc(),
+    ),
+    uniqueIndex("uq_hr_timesheets_tenant_worker_period").on(
+      table.tenantId,
+      table.workerProfileId,
+      table.periodStart,
+      table.periodEnd,
+    ),
+    check("hr_timesheets_period_valid", sql`${table.periodEnd} >= ${table.periodStart}`),
+    check("hr_timesheets_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const hrTimesheetVersions = pgTable(
+  "hr_timesheet_versions",
+  {
+    timesheetVersionId: uuid("timesheet_version_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    timesheetId: uuid("timesheet_id").notNull(),
+    supersedesVersionId: uuid("supersedes_version_id"),
+    version: integer("version").notNull(),
+    status: hrTimesheetStatus("status").default("draft").notNull(),
+    assignedApproverWorkerProfileId: uuid("assigned_approver_worker_profile_id"),
+    submittedAt: timestamp("submitted_at", { mode: "date", withTimezone: true }),
+    totalMinutes: integer("total_minutes").default(0).notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table): PgTableExtras => [
+    foreignKey({
+      columns: [table.tenantId, table.timesheetId],
+      foreignColumns: [hrTimesheets.tenantId, hrTimesheets.timesheetId],
+      name: "hr_timesheet_versions_timesheet_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.timesheetId, table.supersedesVersionId],
+      foreignColumns: [table.tenantId, table.timesheetId, table.timesheetVersionId],
+      name: "hr_timesheet_versions_predecessor_same_root_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.assignedApproverWorkerProfileId],
+      foreignColumns: [hrWorkforceProfiles.tenantId, hrWorkforceProfiles.workerProfileId],
+      name: "hr_timesheet_versions_approver_same_tenant_fk",
+    }).onDelete("restrict"),
+    unique("uq_hr_timesheet_versions_composite_identity").on(
+      table.tenantId,
+      table.timesheetId,
+      table.timesheetVersionId,
+    ),
+    unique("uq_hr_timesheet_versions_tenant_identity").on(table.tenantId, table.timesheetVersionId),
+    uniqueIndex("uq_hr_timesheet_versions_tenant_number").on(
+      table.tenantId,
+      table.timesheetId,
+      table.version,
+    ),
+    uniqueIndex("uq_hr_timesheet_versions_tenant_successor")
+      .on(table.tenantId, table.timesheetId, table.supersedesVersionId)
+      .where(sql`${table.supersedesVersionId} IS NOT NULL`),
+    index("idx_hr_timesheet_versions_tenant_approver_submitted").on(
+      table.tenantId,
+      table.assignedApproverWorkerProfileId,
+      table.status,
+      table.submittedAt,
+      table.timesheetVersionId,
+    ),
+    index("idx_hr_timesheet_versions_tenant_timesheet_cursor").on(
+      table.tenantId,
+      table.timesheetId,
+      table.version.desc(),
+      table.timesheetVersionId.desc(),
+    ),
+    check(
+      "hr_timesheet_versions_predecessor_version_consistent",
+      sql`(${table.version} = 1 AND ${table.supersedesVersionId} IS NULL)
+          OR (${table.version} > 1 AND ${table.supersedesVersionId} IS NOT NULL)`,
+    ),
+    check(
+      "hr_timesheet_versions_submission_consistent",
+      sql`(${table.status} = 'draft'
+            AND ${table.assignedApproverWorkerProfileId} IS NULL
+            AND ${table.submittedAt} IS NULL)
+          OR (${table.status} IN ('submitted', 'approved', 'rejected')
+            AND ${table.assignedApproverWorkerProfileId} IS NOT NULL
+            AND ${table.submittedAt} IS NOT NULL)`,
+    ),
+    check("hr_timesheet_versions_total_minutes_valid", sql`${table.totalMinutes} >= 0`),
+    check("hr_timesheet_versions_version_positive", sql`${table.version} > 0`),
+    check("hr_timesheet_versions_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const hrTimesheetEntries = pgTable(
+  "hr_timesheet_entries",
+  {
+    timesheetEntryId: uuid("timesheet_entry_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    timesheetVersionId: uuid("timesheet_version_id").notNull(),
+    entryDate: date("entry_date", { mode: "string" }).notNull(),
+    minutes: integer("minutes").notNull(),
+    description: text("description"),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.timesheetVersionId],
+      foreignColumns: [hrTimesheetVersions.tenantId, hrTimesheetVersions.timesheetVersionId],
+      name: "hr_timesheet_entries_version_same_tenant_fk",
+    }).onDelete("restrict"),
+    index("idx_hr_timesheet_entries_tenant_version_date").on(
+      table.tenantId,
+      table.timesheetVersionId,
+      table.entryDate,
+      table.timesheetEntryId,
+    ),
+    check("hr_timesheet_entries_minutes_valid", sql`${table.minutes} BETWEEN 1 AND 1440`),
+    check(
+      "hr_timesheet_entries_description_valid",
+      sql`${table.description} IS NULL
+          OR char_length(trim(${table.description})) BETWEEN 1 AND 500`,
+    ),
+    check("hr_timesheet_entries_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const hrTimesheetApprovals = pgTable(
+  "hr_timesheet_approvals",
+  {
+    timesheetApprovalId: uuid("timesheet_approval_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    timesheetVersionId: uuid("timesheet_version_id").notNull(),
+    approverWorkerProfileId: uuid("approver_worker_profile_id").notNull(),
+    decision: hrTimesheetDecision("decision").notNull(),
+    decisionNote: text("decision_note"),
+    decidedAt: timestamp("decided_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    correlationId: uuid("correlation_id").notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.timesheetVersionId],
+      foreignColumns: [hrTimesheetVersions.tenantId, hrTimesheetVersions.timesheetVersionId],
+      name: "hr_timesheet_approvals_version_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.approverWorkerProfileId],
+      foreignColumns: [hrWorkforceProfiles.tenantId, hrWorkforceProfiles.workerProfileId],
+      name: "hr_timesheet_approvals_approver_same_tenant_fk",
+    }).onDelete("restrict"),
+    uniqueIndex("uq_hr_timesheet_approvals_tenant_version").on(
+      table.tenantId,
+      table.timesheetVersionId,
+    ),
+    check(
+      "hr_timesheet_approvals_note_valid",
+      sql`${table.decisionNote} IS NULL
+          OR char_length(trim(${table.decisionNote})) BETWEEN 1 AND 2000`,
     ),
   ],
 ).enableRLS();
