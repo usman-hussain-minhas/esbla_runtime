@@ -10,6 +10,7 @@ import {
   hrServiceKeys,
   hrServiceMutationResponseSchema,
   hrShiftAssignmentSettingsDefaults,
+  hrTimesheetSettingsDefaults,
   parseHrServiceActivateBody,
   parseHrServiceConfigureBody,
   parseHrServiceControl,
@@ -45,6 +46,12 @@ const shiftAssignmentSettings = {
 const attendanceSettings = {
   correctionNoteRequired: true,
   manualObservationKinds: "presence_start,presence_end",
+} as const;
+
+const timesheetSettings = {
+  maxDailyMinutes: 1440,
+  periodCadence: "weekly",
+  rejectionNoteRequired: true,
 } as const;
 
 describe("shared HR service-control contracts", () => {
@@ -205,6 +212,32 @@ describe("shared HR service-control contracts", () => {
     expect(() => parseHrServiceControl({ ...response, settings: {} })).toThrow();
   });
 
+  it("accepts only the exact bounded Timesheet settings replacement", () => {
+    expect(hrTimesheetSettingsDefaults).toEqual(timesheetSettings);
+    expect(Object.isFrozen(hrTimesheetSettingsDefaults)).toBe(true);
+    const body = { expectedSettingsVersion: 2, settings: timesheetSettings };
+    expect(parseHrServiceConfigureBody(body)).toBe(body);
+    const response = {
+      ...serviceControl,
+      serviceKey: "timesheet",
+      settings: timesheetSettings,
+    } as const;
+    expect(parseHrServiceControl(response)).toBe(response);
+    for (const settings of [
+      { ...timesheetSettings, periodCadence: "monthly" },
+      { ...timesheetSettings, maxDailyMinutes: 0 },
+      { ...timesheetSettings, maxDailyMinutes: 1441 },
+      { ...timesheetSettings, maxDailyMinutes: 1.5 },
+      { ...timesheetSettings, maxDailyMinutes: "720" },
+      { ...timesheetSettings, rejectionNoteRequired: "true" },
+      { maxDailyMinutes: 1440, periodCadence: "weekly" },
+      { ...timesheetSettings, projectRequired: true },
+    ]) {
+      expect(() => parseHrServiceConfigureBody({ ...body, settings })).toThrow();
+      expect(() => parseHrServiceControl({ ...response, settings })).toThrow();
+    }
+  });
+
   it("publishes Shift settings consistently in configure and control schemas", () => {
     const settingsSchema = {
       additionalProperties: false,
@@ -228,7 +261,13 @@ describe("shared HR service-control contracts", () => {
       properties: {
         serviceKey: {
           not: {
-            enum: ["attendance", "employment_record", "shift_assignment", "workforce_profile"],
+            enum: [
+              "attendance",
+              "employment_record",
+              "shift_assignment",
+              "timesheet",
+              "workforce_profile",
+            ],
           },
         },
         settings: {
@@ -255,7 +294,9 @@ describe("shared HR service-control contracts", () => {
                 ? employmentRecordSettings
                 : serviceKey === "shift_assignment"
                   ? shiftAssignmentSettings
-                  : {},
+                  : serviceKey === "timesheet"
+                    ? timesheetSettings
+                    : {},
       };
       expect(parseHrServiceControl(response)).toBe(response);
     }

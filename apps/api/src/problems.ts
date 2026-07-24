@@ -3,6 +3,7 @@ import {
   HrAttendanceError,
   HrLeaveError,
   HrShiftAssignmentError,
+  HrTimesheetError,
   HrWorkforceProfileError,
 } from "@esbla/hr";
 import { PlatformError } from "@esbla/platform-core";
@@ -124,6 +125,17 @@ function statusForError(error: Error): number {
     }
     return 409;
   }
+  if (error instanceof HrTimesheetError) {
+    if (error.code === "TIMESHEET_INPUT_INVALID") return 400;
+    if (error.code === "TIMESHEET_SERVICE_CONTROL_NOT_FOUND") return 404;
+    if (
+      error.code === "TIMESHEET_DEPENDENCY_INACTIVE" ||
+      error.code === "TIMESHEET_SERVICE_INACTIVE"
+    ) {
+      return 503;
+    }
+    return 409;
+  }
   if (error instanceof WorkspaceTaskError) {
     if (error.code === "WORKSPACE_TASK_INPUT_INVALID") return 400;
     if (error.code === "WORKSPACE_TASK_NOT_FOUND") return 404;
@@ -151,6 +163,7 @@ function codeForError(error: Error): string {
     error instanceof HrAttendanceError ||
     error instanceof HrLeaveError ||
     error instanceof HrShiftAssignmentError ||
+    error instanceof HrTimesheetError ||
     error instanceof HrWorkforceProfileError ||
     error instanceof WorkspaceTaskError ||
     error instanceof PlatformError

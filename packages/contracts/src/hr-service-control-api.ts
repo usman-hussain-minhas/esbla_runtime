@@ -43,6 +43,11 @@ export interface HrShiftAssignmentSettings {
   readonly overlapAllowed: false;
   readonly rosterHorizonDays: number;
 }
+export interface HrTimesheetSettings {
+  readonly maxDailyMinutes: number;
+  readonly periodCadence: "weekly";
+  readonly rejectionNoteRequired: boolean;
+}
 export const hrEmploymentRecordSettingsDefaults: HrEmploymentRecordSettings = Object.freeze({
   effectiveRangeOverlapAllowed: false,
   employmentTypeCodes: "unspecified",
@@ -54,6 +59,11 @@ export const hrAttendanceSettingsDefaults: HrAttendanceSettings = Object.freeze(
 export const hrShiftAssignmentSettingsDefaults: HrShiftAssignmentSettings = Object.freeze({
   overlapAllowed: false,
   rosterHorizonDays: 14,
+});
+export const hrTimesheetSettingsDefaults: HrTimesheetSettings = Object.freeze({
+  maxDailyMinutes: 1440,
+  periodCadence: "weekly",
+  rejectionNoteRequired: true,
 });
 export type HrServiceConfigureBody =
   | Readonly<{
@@ -71,6 +81,10 @@ export type HrServiceConfigureBody =
   | Readonly<{
       expectedSettingsVersion: number;
       settings: HrShiftAssignmentSettings;
+    }>
+  | Readonly<{
+      expectedSettingsVersion: number;
+      settings: HrTimesheetSettings;
     }>;
 interface HrServiceControlBase {
   readonly activationState: "active" | "inactive";
@@ -85,10 +99,15 @@ export type HrServiceControl = HrServiceControlBase &
     | { readonly serviceKey: "workforce_profile"; readonly settings: HrWorkforceProfileSettings }
     | { readonly serviceKey: "employment_record"; readonly settings: HrEmploymentRecordSettings }
     | { readonly serviceKey: "shift_assignment"; readonly settings: HrShiftAssignmentSettings }
+    | { readonly serviceKey: "timesheet"; readonly settings: HrTimesheetSettings }
     | {
         readonly serviceKey: Exclude<
           HrServiceKey,
-          "attendance" | "employment_record" | "shift_assignment" | "workforce_profile"
+          | "attendance"
+          | "employment_record"
+          | "shift_assignment"
+          | "timesheet"
+          | "workforce_profile"
         >;
         readonly settings: Readonly<Record<string, never>>;
       }
@@ -181,6 +200,16 @@ const shiftAssignmentSettingsSchema = {
   required: ["overlapAllowed", "rosterHorizonDays"],
   type: "object",
 } as const;
+const timesheetSettingsSchema = {
+  additionalProperties: false,
+  properties: {
+    maxDailyMinutes: { maximum: 1440, minimum: 1, type: "integer" },
+    periodCadence: { const: "weekly" },
+    rejectionNoteRequired: { type: "boolean" },
+  },
+  required: ["maxDailyMinutes", "periodCadence", "rejectionNoteRequired"],
+  type: "object",
+} as const;
 const emptyServiceSettingsSchema = {
   additionalProperties: false,
   properties: {},
@@ -197,6 +226,7 @@ export const hrServiceConfigureBodySchema = {
         workforceProfileSettingsSchema,
         employmentRecordSettingsSchema,
         shiftAssignmentSettingsSchema,
+        timesheetSettingsSchema,
       ],
     },
   },
@@ -238,9 +268,22 @@ export const hrServiceControlSchema = {
     },
     {
       properties: {
+        serviceKey: { const: "timesheet" },
+        settings: timesheetSettingsSchema,
+      },
+      type: "object",
+    },
+    {
+      properties: {
         serviceKey: {
           not: {
-            enum: ["attendance", "employment_record", "shift_assignment", "workforce_profile"],
+            enum: [
+              "attendance",
+              "employment_record",
+              "shift_assignment",
+              "timesheet",
+              "workforce_profile",
+            ],
           },
         },
         settings: emptyServiceSettingsSchema,
@@ -258,6 +301,7 @@ export const hrServiceControlSchema = {
         workforceProfileSettingsSchema,
         employmentRecordSettingsSchema,
         shiftAssignmentSettingsSchema,
+        timesheetSettingsSchema,
         emptyServiceSettingsSchema,
       ],
     },
@@ -430,6 +474,21 @@ function parseShiftAssignmentSettings(value: unknown, label: string): HrShiftAss
   return value as unknown as HrShiftAssignmentSettings;
 }
 
+function parseTimesheetSettings(value: unknown, label: string): HrTimesheetSettings {
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(value, ["maxDailyMinutes", "periodCadence", "rejectionNoteRequired"], label);
+  if (
+    !Number.isSafeInteger(value.maxDailyMinutes) ||
+    (value.maxDailyMinutes as number) < 1 ||
+    (value.maxDailyMinutes as number) > 1440 ||
+    value.periodCadence !== "weekly" ||
+    typeof value.rejectionNoteRequired !== "boolean"
+  ) {
+    throw new TypeError(`${label} is invalid`);
+  }
+  return value as unknown as HrTimesheetSettings;
+}
+
 function assertDateTime(value: unknown, label: string): asserts value is string {
   if (typeof value !== "string") throw new TypeError(`${label} must be an ISO date-time`);
   const match = dateTimePattern.exec(value);
@@ -515,6 +574,12 @@ export function parseHrServiceConfigureBody(value: unknown): HrServiceConfigureB
     Object.hasOwn(value.settings, "rosterHorizonDays")
   ) {
     parseShiftAssignmentSettings(value.settings, "HrServiceConfigureRequestV1.settings");
+  } else if (
+    Object.hasOwn(value.settings, "maxDailyMinutes") ||
+    Object.hasOwn(value.settings, "periodCadence") ||
+    Object.hasOwn(value.settings, "rejectionNoteRequired")
+  ) {
+    parseTimesheetSettings(value.settings, "HrServiceConfigureRequestV1.settings");
   } else {
     parseWorkforceProfileSettings(value.settings, "HrServiceConfigureRequestV1.settings");
   }
@@ -538,6 +603,8 @@ export function parseHrServiceControl(value: unknown): HrServiceControl {
     parseEmploymentRecordSettings(value.settings, "HrServiceControlResponseV1.settings");
   } else if (value.serviceKey === "shift_assignment") {
     parseShiftAssignmentSettings(value.settings, "HrServiceControlResponseV1.settings");
+  } else if (value.serviceKey === "timesheet") {
+    parseTimesheetSettings(value.settings, "HrServiceControlResponseV1.settings");
   } else {
     if (!isRecord(value.settings)) {
       throw new TypeError("HrServiceControlResponseV1.settings must be an object");
