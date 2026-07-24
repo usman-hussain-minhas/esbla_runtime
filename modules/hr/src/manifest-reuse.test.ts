@@ -14,7 +14,10 @@ describe("HR passenger manifest reuse contract", () => {
     expect(exposures).toEqual(new Set(["admin", "tenant"]));
     expect(hrManifest.capabilities.map((capability) => capability.id).sort()).toEqual([
       "hr.attendance.correct",
+      "hr.attendance.list_own",
+      "hr.attendance.list_reports",
       "hr.attendance.record_manual",
+      "hr.attendance.view_detail",
       "hr.employment.activate_service",
       "hr.employment.configure_service",
       "hr.employment.create_record",

@@ -443,6 +443,11 @@ export const hrAttendanceObservations = pgTable(
       table.observedAt.desc(),
       table.attendanceObservationId.desc(),
     ),
+    index("idx_hr_attendance_observations_tenant_observed").on(
+      table.tenantId,
+      table.observedAt.desc(),
+      table.attendanceObservationId.desc(),
+    ),
     check("hr_attendance_observations_row_version_fixed", sql`${table.rowVersion} = 1`),
   ],
 ).enableRLS();

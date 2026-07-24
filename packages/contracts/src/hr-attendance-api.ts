@@ -48,9 +48,100 @@ export interface HrAttendanceCorrection {
   readonly version: number;
 }
 
+export interface HrAttendanceObservationCursor {
+  readonly attendanceObservationId: string;
+  readonly observedAt: string;
+}
+
+export interface HrAttendanceCorrectionCursor {
+  readonly attendanceCorrectionId: string;
+  readonly version: number;
+}
+
+export interface HrAttendanceListQuery {
+  readonly cursorAttendanceObservationId?: string;
+  readonly cursorObservedAt?: string;
+  readonly pageSize?: number;
+  readonly rangeEnd: string;
+  readonly rangeStart: string;
+}
+
+export type HrAttendanceOwnListQuery = HrAttendanceListQuery;
+export type HrAttendanceReportsListQuery = HrAttendanceListQuery;
+
+export interface HrAttendanceDetailQuery {
+  readonly cursorAttendanceCorrectionId?: string;
+  readonly cursorCorrectionVersion?: number;
+  readonly pageSize?: number;
+}
+
+export interface HrAttendanceCorrectionPage {
+  readonly items: readonly HrAttendanceCorrection[];
+  readonly nextCursor: HrAttendanceCorrectionCursor | null;
+}
+
+export type HrAttendanceAccessScope = "assigned" | "own" | "tenant";
+
+export interface HrAttendanceListResponse {
+  readonly accessScope: HrAttendanceAccessScope;
+  readonly items: readonly HrAttendanceObservation[];
+  readonly nextCursor: HrAttendanceObservationCursor | null;
+}
+
+export type HrAttendanceObservationResponse =
+  | HrAttendanceObservation
+  | (HrAttendanceObservation & { readonly corrections: HrAttendanceCorrectionPage });
+
 const uuidSchema = { pattern: uuidPattern, type: "string" } as const;
 const instantSchema = { format: "date-time", pattern: instantPattern, type: "string" } as const;
 const observationKindSchema = { enum: hrAttendanceObservationKinds } as const;
+const observationCursorSchema = {
+  additionalProperties: false,
+  properties: {
+    attendanceObservationId: uuidSchema,
+    observedAt: instantSchema,
+  },
+  required: ["attendanceObservationId", "observedAt"],
+  type: "object",
+} as const;
+const correctionCursorSchema = {
+  additionalProperties: false,
+  properties: {
+    attendanceCorrectionId: uuidSchema,
+    version: { maximum: 2_147_483_647, minimum: 1, type: "integer" },
+  },
+  required: ["attendanceCorrectionId", "version"],
+  type: "object",
+} as const;
+const listQueryProperties = {
+  cursorAttendanceObservationId: uuidSchema,
+  cursorObservedAt: instantSchema,
+  pageSize: { maximum: 50, minimum: 1, type: "integer" },
+  rangeEnd: instantSchema,
+  rangeStart: instantSchema,
+} as const;
+const observationResponseProperties = {
+  attendanceObservationId: uuidSchema,
+  observationKind: observationKindSchema,
+  observedAt: instantSchema,
+  sourceKind: { enum: hrAttendanceSourceKinds },
+  version: { const: 1 },
+  workerProfileId: uuidSchema,
+} as const;
+const observationResponseRequired = [
+  "attendanceObservationId",
+  "observationKind",
+  "observedAt",
+  "sourceKind",
+  "version",
+  "workerProfileId",
+] as const;
+const attendanceObservationListItemSchema = {
+  additionalProperties: false,
+  properties: observationResponseProperties,
+  required: observationResponseRequired,
+  type: "object",
+} as const;
 
 export const hrAttendanceRecordManualBodySchema = {
   $id: "HrAttendanceRecordManualRequestV1",
@@ -68,21 +159,62 @@ export const hrAttendanceObservationResponseSchema = {
   $id: "HrAttendanceObservationResponseV1",
   additionalProperties: false,
   properties: {
-    attendanceObservationId: uuidSchema,
-    observationKind: observationKindSchema,
-    observedAt: instantSchema,
-    sourceKind: { enum: hrAttendanceSourceKinds },
-    version: { const: 1 },
-    workerProfileId: uuidSchema,
+    ...observationResponseProperties,
+    corrections: {
+      additionalProperties: false,
+      properties: {
+        items: {
+          items: { $ref: "HrAttendanceCorrectionResponseV1#" },
+          maxItems: 50,
+          type: "array",
+        },
+        nextCursor: { anyOf: [correctionCursorSchema, { type: "null" }] },
+      },
+      required: ["items", "nextCursor"],
+      type: "object",
+    },
   },
-  required: [
-    "attendanceObservationId",
-    "observationKind",
-    "observedAt",
-    "sourceKind",
-    "version",
-    "workerProfileId",
-  ],
+  required: [...observationResponseRequired],
+  type: "object",
+} as const;
+
+export const hrAttendanceOwnListQuerySchema = {
+  $id: "HrAttendanceOwnListQueryV1",
+  additionalProperties: false,
+  properties: listQueryProperties,
+  required: ["rangeEnd", "rangeStart"],
+  type: "object",
+} as const;
+
+export const hrAttendanceReportsListQuerySchema = {
+  ...hrAttendanceOwnListQuerySchema,
+  $id: "HrAttendanceReportsListQueryV1",
+} as const;
+
+export const hrAttendanceDetailQuerySchema = {
+  $id: "HrAttendanceDetailQueryV1",
+  additionalProperties: false,
+  properties: {
+    cursorAttendanceCorrectionId: uuidSchema,
+    cursorCorrectionVersion: { maximum: 2_147_483_647, minimum: 1, type: "integer" },
+    pageSize: { maximum: 50, minimum: 1, type: "integer" },
+  },
+  type: "object",
+} as const;
+
+export const hrAttendanceListResponseSchema = {
+  $id: "HrAttendanceListResponseV1",
+  additionalProperties: false,
+  properties: {
+    accessScope: { enum: ["assigned", "own", "tenant"] },
+    items: {
+      items: attendanceObservationListItemSchema,
+      maxItems: 50,
+      type: "array",
+    },
+    nextCursor: { anyOf: [observationCursorSchema, { type: "null" }] },
+  },
+  required: ["accessScope", "items", "nextCursor"],
   type: "object",
 } as const;
 
@@ -233,6 +365,11 @@ function assertPositiveInteger(value: unknown, label: string): asserts value is 
   }
 }
 
+function assertPageSize(value: unknown, label: string): asserts value is number {
+  assertPositiveInteger(value, label);
+  if (value > 50) throw new TypeError(`${label} must not exceed 50`);
+}
+
 function assertReason(value: unknown, label: string, canonical: boolean): asserts value is string {
   if (
     typeof value !== "string" ||
@@ -278,6 +415,67 @@ export function parseHrAttendanceObservation(value: unknown): HrAttendanceObserv
   }
   if (value.version !== 1) throw new TypeError(`${label}.version is invalid`);
   return value as unknown as HrAttendanceObservation;
+}
+
+function parseListQuery(value: unknown, label: string): HrAttendanceListQuery {
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  const allowed = [
+    "cursorAttendanceObservationId",
+    "cursorObservedAt",
+    "pageSize",
+    "rangeEnd",
+    "rangeStart",
+  ];
+  if (
+    !Object.hasOwn(value, "rangeStart") ||
+    !Object.hasOwn(value, "rangeEnd") ||
+    Object.keys(value).some((key) => !allowed.includes(key))
+  ) {
+    throw new TypeError(`${label} has unexpected or missing fields`);
+  }
+  assertInstant(value.rangeStart, `${label}.rangeStart`, true);
+  assertInstant(value.rangeEnd, `${label}.rangeEnd`, true);
+  if (Date.parse(value.rangeEnd) <= Date.parse(value.rangeStart)) {
+    throw new TypeError(`${label} rangeEnd must follow rangeStart`);
+  }
+  const hasTimestamp = Object.hasOwn(value, "cursorObservedAt");
+  const hasId = Object.hasOwn(value, "cursorAttendanceObservationId");
+  if (hasTimestamp !== hasId) throw new TypeError(`${label} cursor must be paired`);
+  if (hasTimestamp) {
+    assertInstant(value.cursorObservedAt, `${label}.cursorObservedAt`, true);
+    assertUuid(value.cursorAttendanceObservationId, `${label}.cursorAttendanceObservationId`);
+  }
+  if (Object.hasOwn(value, "pageSize")) assertPageSize(value.pageSize, `${label}.pageSize`);
+  return value as unknown as HrAttendanceListQuery;
+}
+
+export function parseHrAttendanceOwnListQuery(value: unknown): HrAttendanceOwnListQuery {
+  return parseListQuery(value, "HrAttendanceOwnListQueryV1");
+}
+
+export function parseHrAttendanceReportsListQuery(value: unknown): HrAttendanceReportsListQuery {
+  return parseListQuery(value, "HrAttendanceReportsListQueryV1");
+}
+
+export function parseHrAttendanceDetailQuery(value: unknown): HrAttendanceDetailQuery {
+  const label = "HrAttendanceDetailQueryV1";
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  const allowed = ["cursorAttendanceCorrectionId", "cursorCorrectionVersion", "pageSize"];
+  if (Object.keys(value).some((key) => !allowed.includes(key))) {
+    throw new TypeError(`${label} has unexpected fields`);
+  }
+  const hasVersion = Object.hasOwn(value, "cursorCorrectionVersion");
+  const hasId = Object.hasOwn(value, "cursorAttendanceCorrectionId");
+  if (hasVersion !== hasId) throw new TypeError(`${label} cursor must be paired`);
+  if (hasVersion) {
+    assertPositiveInteger(value.cursorCorrectionVersion, `${label}.cursorCorrectionVersion`);
+    if (value.cursorCorrectionVersion > 2_147_483_647) {
+      throw new TypeError(`${label}.cursorCorrectionVersion is too large`);
+    }
+    assertUuid(value.cursorAttendanceCorrectionId, `${label}.cursorAttendanceCorrectionId`);
+  }
+  if (Object.hasOwn(value, "pageSize")) assertPageSize(value.pageSize, `${label}.pageSize`);
+  return value as unknown as HrAttendanceDetailQuery;
 }
 
 export function parseHrAttendanceCorrectionBody(value: unknown): HrAttendanceCorrectionBody {
@@ -345,4 +543,78 @@ export function parseHrAttendanceCorrection(value: unknown): HrAttendanceCorrect
   }
   assertPositiveInteger(value.version, `${label}.version`);
   return value as unknown as HrAttendanceCorrection;
+}
+
+function parseCorrectionCursor(value: unknown, label: string): HrAttendanceCorrectionCursor {
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(value, ["attendanceCorrectionId", "version"], label);
+  assertUuid(value.attendanceCorrectionId, `${label}.attendanceCorrectionId`);
+  assertPositiveInteger(value.version, `${label}.version`);
+  if (value.version > 2_147_483_647) throw new TypeError(`${label}.version is too large`);
+  return value as unknown as HrAttendanceCorrectionCursor;
+}
+
+function parseObservationCursor(value: unknown, label: string): HrAttendanceObservationCursor {
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(value, ["attendanceObservationId", "observedAt"], label);
+  assertUuid(value.attendanceObservationId, `${label}.attendanceObservationId`);
+  assertInstant(value.observedAt, `${label}.observedAt`, true);
+  return value as unknown as HrAttendanceObservationCursor;
+}
+
+export function parseHrAttendanceObservationResponse(
+  value: unknown,
+): HrAttendanceObservationResponse {
+  if (!isRecord(value) || !Object.hasOwn(value, "corrections")) {
+    return parseHrAttendanceObservation(value);
+  }
+  const label = "HrAttendanceObservationResponseV1";
+  assertExactKeys(
+    value,
+    [
+      "attendanceObservationId",
+      "corrections",
+      "observationKind",
+      "observedAt",
+      "sourceKind",
+      "version",
+      "workerProfileId",
+    ],
+    label,
+  );
+  parseHrAttendanceObservation({
+    attendanceObservationId: value.attendanceObservationId,
+    observationKind: value.observationKind,
+    observedAt: value.observedAt,
+    sourceKind: value.sourceKind,
+    version: value.version,
+    workerProfileId: value.workerProfileId,
+  });
+  if (!isRecord(value.corrections)) throw new TypeError(`${label}.corrections is invalid`);
+  assertExactKeys(value.corrections, ["items", "nextCursor"], `${label}.corrections`);
+  if (!Array.isArray(value.corrections.items) || value.corrections.items.length > 50) {
+    throw new TypeError(`${label}.corrections.items is invalid`);
+  }
+  value.corrections.items.forEach(parseHrAttendanceCorrection);
+  if (value.corrections.nextCursor !== null) {
+    parseCorrectionCursor(value.corrections.nextCursor, `${label}.corrections.nextCursor`);
+  }
+  return value as unknown as HrAttendanceObservationResponse;
+}
+
+export function parseHrAttendanceListResponse(value: unknown): HrAttendanceListResponse {
+  const label = "HrAttendanceListResponseV1";
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(value, ["accessScope", "items", "nextCursor"], label);
+  if (!["assigned", "own", "tenant"].includes(String(value.accessScope))) {
+    throw new TypeError(`${label}.accessScope is invalid`);
+  }
+  if (!Array.isArray(value.items) || value.items.length > 50) {
+    throw new TypeError(`${label}.items is invalid`);
+  }
+  value.items.forEach(parseHrAttendanceObservation);
+  if (value.nextCursor !== null) {
+    parseObservationCursor(value.nextCursor, `${label}.nextCursor`);
+  }
+  return value as unknown as HrAttendanceListResponse;
 }
