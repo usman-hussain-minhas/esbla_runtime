@@ -1,6 +1,8 @@
 import {
   assignedWorkspaceTaskPageSchema,
   assignedWorkspaceTaskSchema,
+  type HrAttendanceCorrectionBody,
+  type HrAttendanceCorrectionPath,
   type HrAttendanceRecordManualBody,
   type HrDecideLeaveRequestBody,
   type HrLeaveListQuery,
@@ -21,6 +23,9 @@ import {
   hrAssignedLeaveListQuerySchema,
   hrAssignedLeaveRequestPageSchema,
   hrAssignedLeaveRequestSchema,
+  hrAttendanceCorrectionBodySchema,
+  hrAttendanceCorrectionPathSchema,
+  hrAttendanceCorrectionResponseSchema,
   hrAttendanceObservationResponseSchema,
   hrAttendanceRecordManualBodySchema,
   hrDecideLeaveRequestBodySchema,
@@ -47,6 +52,9 @@ import {
   hrWorkforceOwnQuerySchema,
   hrWorkforceProfilePathSchema,
   hrWorkforceProfileSchema,
+  parseHrAttendanceCorrection,
+  parseHrAttendanceCorrectionBody,
+  parseHrAttendanceCorrectionPath,
   parseHrAttendanceObservation,
   parseHrAttendanceRecordManualBody,
   parseHrServiceActivateBody,
@@ -80,6 +88,7 @@ import {
 } from "@esbla/contracts/hr-service-control-api";
 import {
   activateWorkforceProfileService,
+  appendAttendanceCorrection,
   approveLeaveRequest,
   changeWorkforceReportingRelationship,
   changeWorkforceStatus,
@@ -215,6 +224,9 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     logger: options.logger ?? true,
   });
   for (const schema of [
+    hrAttendanceCorrectionBodySchema,
+    hrAttendanceCorrectionPathSchema,
+    hrAttendanceCorrectionResponseSchema,
     hrAttendanceRecordManualBodySchema,
     hrAttendanceObservationResponseSchema,
     hrSubmitLeaveRequestBodySchema,
@@ -331,6 +343,45 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
       return reply
         .code(result.replayed ? 200 : 201)
         .send(parseHrAttendanceObservation(result.observation));
+    },
+  );
+
+  server.post<{ Body: HrAttendanceCorrectionBody; Params: HrAttendanceCorrectionPath }>(
+    "/v1/hr/attendance-observations/:observationId/corrections",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictMutationIdempotencyKey(request);
+          assertStrictRequest(parseHrAttendanceCorrectionPath, request.params);
+          assertStrictRequest(parseHrAttendanceCorrectionBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrAttendanceCorrectionRequestV1#" },
+        params: { $ref: "HrAttendanceCorrectionPathV1#" },
+        response: {
+          200: { $ref: "HrAttendanceCorrectionResponseV1#" },
+          201: { $ref: "HrAttendanceCorrectionResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = {
+        ...operationContext(request),
+        correlationId: idempotencyKey(request).toLowerCase(),
+      };
+      const path = assertStrictRequest(parseHrAttendanceCorrectionPath, request.params);
+      const result = await appendAttendanceCorrection(options.pool, context, {
+        ...assertStrictRequest(parseHrAttendanceCorrectionBody, request.body),
+        idempotencyKey: context.correlationId,
+        observationId: path.observationId,
+      });
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply
+        .code(result.replayed ? 200 : 201)
+        .send(parseHrAttendanceCorrection(result.correction));
     },
   );
 

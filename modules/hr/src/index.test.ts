@@ -6,6 +6,7 @@ describe("hrManifest", () => {
     expect(hrManifest.activation).toBe("inactive_by_default");
     expect(hrManifest.capabilities.map((capability) => capability.id)).toEqual([
       "hr.attendance.record_manual",
+      "hr.attendance.correct",
       "hr.leave.activate",
       "hr.leave.approve",
       "hr.leave.deactivate",

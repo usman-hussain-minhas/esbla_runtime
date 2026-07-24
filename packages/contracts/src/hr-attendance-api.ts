@@ -25,6 +25,29 @@ export interface HrAttendanceObservation {
   readonly workerProfileId: string;
 }
 
+export interface HrAttendanceCorrectionBody {
+  readonly correctedObservationKind: HrAttendanceObservationKind;
+  readonly correctedObservedAt: string;
+  readonly expectedCurrentCorrectionId: string | null;
+  readonly expectedCurrentCorrectionVersion: number | null;
+  readonly reason: string;
+}
+
+export interface HrAttendanceCorrectionPath {
+  readonly observationId: string;
+}
+
+export interface HrAttendanceCorrection {
+  readonly attendanceCorrectionId: string;
+  readonly attendanceObservationId: string;
+  readonly correctedObservationKind: HrAttendanceObservationKind;
+  readonly correctedObservedAt: string;
+  readonly createdAt: string;
+  readonly reason: string;
+  readonly supersedesAttendanceCorrectionId: string | null;
+  readonly version: number;
+}
+
 const uuidSchema = { pattern: uuidPattern, type: "string" } as const;
 const instantSchema = { format: "date-time", pattern: instantPattern, type: "string" } as const;
 const observationKindSchema = { enum: hrAttendanceObservationKinds } as const;
@@ -59,6 +82,76 @@ export const hrAttendanceObservationResponseSchema = {
     "sourceKind",
     "version",
     "workerProfileId",
+  ],
+  type: "object",
+} as const;
+
+export const hrAttendanceCorrectionBodySchema = {
+  $id: "HrAttendanceCorrectionRequestV1",
+  additionalProperties: false,
+  oneOf: [
+    {
+      properties: {
+        expectedCurrentCorrectionId: { type: "null" },
+        expectedCurrentCorrectionVersion: { type: "null" },
+      },
+    },
+    {
+      properties: {
+        expectedCurrentCorrectionId: uuidSchema,
+        expectedCurrentCorrectionVersion: { minimum: 1, type: "integer" },
+      },
+    },
+  ],
+  properties: {
+    correctedObservationKind: observationKindSchema,
+    correctedObservedAt: instantSchema,
+    expectedCurrentCorrectionId: { anyOf: [uuidSchema, { type: "null" }] },
+    expectedCurrentCorrectionVersion: {
+      anyOf: [{ minimum: 1, type: "integer" }, { type: "null" }],
+    },
+    reason: { maxLength: 2000, minLength: 1, type: "string" },
+  },
+  required: [
+    "correctedObservationKind",
+    "correctedObservedAt",
+    "expectedCurrentCorrectionId",
+    "expectedCurrentCorrectionVersion",
+    "reason",
+  ],
+  type: "object",
+} as const;
+
+export const hrAttendanceCorrectionPathSchema = {
+  $id: "HrAttendanceCorrectionPathV1",
+  additionalProperties: false,
+  properties: { observationId: uuidSchema },
+  required: ["observationId"],
+  type: "object",
+} as const;
+
+export const hrAttendanceCorrectionResponseSchema = {
+  $id: "HrAttendanceCorrectionResponseV1",
+  additionalProperties: false,
+  properties: {
+    attendanceCorrectionId: uuidSchema,
+    attendanceObservationId: uuidSchema,
+    correctedObservationKind: observationKindSchema,
+    correctedObservedAt: instantSchema,
+    createdAt: instantSchema,
+    reason: { maxLength: 2000, minLength: 1, type: "string" },
+    supersedesAttendanceCorrectionId: { anyOf: [uuidSchema, { type: "null" }] },
+    version: { minimum: 1, type: "integer" },
+  },
+  required: [
+    "attendanceCorrectionId",
+    "attendanceObservationId",
+    "correctedObservationKind",
+    "correctedObservedAt",
+    "createdAt",
+    "reason",
+    "supersedesAttendanceCorrectionId",
+    "version",
   ],
   type: "object",
 } as const;
@@ -134,6 +227,23 @@ function assertObservationKind(
   }
 }
 
+function assertPositiveInteger(value: unknown, label: string): asserts value is number {
+  if (!Number.isSafeInteger(value) || Number(value) < 1) {
+    throw new TypeError(`${label} must be a positive integer`);
+  }
+}
+
+function assertReason(value: unknown, label: string, canonical: boolean): asserts value is string {
+  if (
+    typeof value !== "string" ||
+    value.trim().length < 1 ||
+    value.length > 2000 ||
+    (canonical && value !== value.trim())
+  ) {
+    throw new TypeError(`${label} must be a bounded correction reason`);
+  }
+}
+
 export function parseHrAttendanceRecordManualBody(value: unknown): HrAttendanceRecordManualBody {
   const label = "HrAttendanceRecordManualRequestV1";
   if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
@@ -168,4 +278,71 @@ export function parseHrAttendanceObservation(value: unknown): HrAttendanceObserv
   }
   if (value.version !== 1) throw new TypeError(`${label}.version is invalid`);
   return value as unknown as HrAttendanceObservation;
+}
+
+export function parseHrAttendanceCorrectionBody(value: unknown): HrAttendanceCorrectionBody {
+  const label = "HrAttendanceCorrectionRequestV1";
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(
+    value,
+    [
+      "correctedObservationKind",
+      "correctedObservedAt",
+      "expectedCurrentCorrectionId",
+      "expectedCurrentCorrectionVersion",
+      "reason",
+    ],
+    label,
+  );
+  assertObservationKind(value.correctedObservationKind, `${label}.correctedObservationKind`);
+  assertInstant(value.correctedObservedAt, `${label}.correctedObservedAt`, false);
+  assertReason(value.reason, `${label}.reason`, false);
+  const firstCorrection =
+    value.expectedCurrentCorrectionId === null && value.expectedCurrentCorrectionVersion === null;
+  if (!firstCorrection) {
+    assertUuid(value.expectedCurrentCorrectionId, `${label}.expectedCurrentCorrectionId`);
+    assertPositiveInteger(
+      value.expectedCurrentCorrectionVersion,
+      `${label}.expectedCurrentCorrectionVersion`,
+    );
+  }
+  return value as unknown as HrAttendanceCorrectionBody;
+}
+
+export function parseHrAttendanceCorrectionPath(value: unknown): HrAttendanceCorrectionPath {
+  const label = "HrAttendanceCorrectionPathV1";
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(value, ["observationId"], label);
+  assertUuid(value.observationId, `${label}.observationId`);
+  return value as unknown as HrAttendanceCorrectionPath;
+}
+
+export function parseHrAttendanceCorrection(value: unknown): HrAttendanceCorrection {
+  const label = "HrAttendanceCorrectionResponseV1";
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(
+    value,
+    [
+      "attendanceCorrectionId",
+      "attendanceObservationId",
+      "correctedObservationKind",
+      "correctedObservedAt",
+      "createdAt",
+      "reason",
+      "supersedesAttendanceCorrectionId",
+      "version",
+    ],
+    label,
+  );
+  assertUuid(value.attendanceCorrectionId, `${label}.attendanceCorrectionId`);
+  assertUuid(value.attendanceObservationId, `${label}.attendanceObservationId`);
+  assertObservationKind(value.correctedObservationKind, `${label}.correctedObservationKind`);
+  assertInstant(value.correctedObservedAt, `${label}.correctedObservedAt`, true);
+  assertInstant(value.createdAt, `${label}.createdAt`, true);
+  assertReason(value.reason, `${label}.reason`, true);
+  if (value.supersedesAttendanceCorrectionId !== null) {
+    assertUuid(value.supersedesAttendanceCorrectionId, `${label}.supersedesAttendanceCorrectionId`);
+  }
+  assertPositiveInteger(value.version, `${label}.version`);
+  return value as unknown as HrAttendanceCorrection;
 }

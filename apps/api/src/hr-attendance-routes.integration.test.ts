@@ -24,6 +24,7 @@ interface SignedPostOptions {
   readonly idempotencyKey?: string;
   readonly principalId?: string;
   readonly tenantId?: string;
+  readonly url?: string;
 }
 let migrationPool: Pool;
 let pool: Pool;
@@ -71,11 +72,11 @@ async function signedPost({
   idempotencyKey,
   principalId = ids.operator,
   tenantId = ids.tenant,
+  url = "/v1/hr/attendance-observations",
 }: SignedPostOptions) {
   const method = "POST";
   const requestId = randomUUID();
   const timestamp = String(Math.floor(Date.now() / 1_000));
-  const url = "/v1/hr/attendance-observations";
   const headers: Record<string, string> = {
     "x-esbla-auth-signature": signDevelopmentPrincipal(secret, {
       body,
@@ -96,6 +97,39 @@ async function signedPost({
   return {
     requestId,
     response: await server.inject({ headers, method, payload: body, url }),
+  };
+}
+async function correctionCounts(tenantId: string = ids.tenant) {
+  const result = await governed(
+    (client) =>
+      client.query<{
+        corrections: string;
+        evidence: string;
+        observations: string;
+        outbox: string;
+        work: string;
+      }>(
+        `SELECT
+       (SELECT count(*) FROM hr_attendance_observations WHERE tenant_id=$1)::text observations,
+       (SELECT count(*) FROM hr_attendance_corrections WHERE tenant_id=$1)::text corrections,
+       (SELECT count(*) FROM evidence_events
+        WHERE tenant_id=$1 AND event_type LIKE 'hr.attendance.%')::text evidence,
+       (SELECT count(*) FROM outbox_events
+        WHERE tenant_id=$1 AND event_type LIKE 'hr.attendance.%')::text outbox,
+       (SELECT count(*) FROM work_items WHERE tenant_id=$1)::text work`,
+        [tenantId],
+      ),
+    tenantId === ids.otherTenant ? ids.otherOperator : ids.operator,
+    tenantId,
+  );
+  const row = result.rows[0];
+  if (!row) throw new Error("Attendance correction counts are unavailable");
+  return {
+    corrections: Number(row.corrections),
+    evidence: Number(row.evidence),
+    observations: Number(row.observations),
+    outbox: Number(row.outbox),
+    work: Number(row.work),
   };
 }
 async function counts(tenantId: string = ids.tenant) {
@@ -138,6 +172,21 @@ const body = (observationKind: "presence_end" | "presence_start" = "presence_sta
   observedAt: "2026-07-24T08:30:00+05:00",
   workerProfileId,
 });
+const correctionBody = (
+  expectedCurrentCorrectionId: string | null = null,
+  expectedCurrentCorrectionVersion: number | null = null,
+) => ({
+  correctedObservationKind: "presence_end",
+  correctedObservedAt: "2026-07-24T08:45:00+05:00",
+  expectedCurrentCorrectionId,
+  expectedCurrentCorrectionVersion,
+  reason: "Clock corrected",
+});
+async function createObservation() {
+  const result = await signedPost({ body: body(), idempotencyKey: randomUUID() });
+  expect(result.response.statusCode, result.response.body).toBe(201);
+  return result.response.json() as { attendanceObservationId: string };
+}
 beforeAll(async () => {
   const runtimeUrl = process.env.DATABASE_URL;
   const migrationUrl = process.env.DATABASE_MIGRATION_URL;
@@ -150,7 +199,7 @@ beforeAll(async () => {
   await migrationPool.query(
     `GRANT SELECT ON membership_capabilities,tenant_settings,hr_attendance_service_control TO ${applicationRole};
      GRANT SELECT,UPDATE ON hr_worker_profiles,service_activations TO ${applicationRole};
-     GRANT SELECT,INSERT ON hr_attendance_observations,evidence_events,outbox_events TO ${applicationRole}`,
+     GRANT SELECT,INSERT ON hr_attendance_corrections,hr_attendance_observations,evidence_events,outbox_events TO ${applicationRole}`,
   );
   pool = createDatabasePool(runtimeUrl, { max: 8 });
   await migrationPool.query(
@@ -183,6 +232,7 @@ beforeAll(async () => {
       await tenantClient.query(
         `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
          VALUES ($1,$2,'hr.attendance.record_manual'),
+                ($1,$2,'hr.attendance.correct'),
                 ($1,$3,'hr.attendance.configure_service')`,
         [ids.tenant, ids.operator, ids.admin],
       );
@@ -215,7 +265,8 @@ beforeAll(async () => {
       );
       await tenantClient.query(
         `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
-         VALUES ($1,$2,'hr.attendance.record_manual')`,
+         VALUES ($1,$2,'hr.attendance.record_manual'),
+                ($1,$2,'hr.attendance.correct')`,
         [ids.otherTenant, ids.otherOperator],
       );
       await tenantClient.query(
@@ -427,5 +478,275 @@ describe("Attendance manual observation API", () => {
       400,
       "REQUEST_VALIDATION_FAILED",
     );
+  });
+});
+describe("Attendance correction API", () => {
+  it("appends one immutable correction with atomic proof and semantic replay", async () => {
+    const observation = await createObservation();
+    const url = `/v1/hr/attendance-observations/${observation.attendanceObservationId}/corrections`;
+    const baseline = await correctionCounts();
+    const key = randomUUID();
+    const first = await signedPost({ body: correctionBody(), idempotencyKey: key, url });
+    expect(first.response.statusCode, first.response.body).toBe(201);
+    expect(first.response.headers["idempotent-replayed"]).toBe("false");
+    expect(first.response.json()).toMatchObject({
+      attendanceObservationId: observation.attendanceObservationId,
+      correctedObservationKind: "presence_end",
+      correctedObservedAt: "2026-07-24T03:45:00.000Z",
+      reason: "Clock corrected",
+      supersedesAttendanceCorrectionId: null,
+      version: 1,
+    });
+    expect(Object.keys(first.response.json()).sort()).toEqual([
+      "attendanceCorrectionId",
+      "attendanceObservationId",
+      "correctedObservationKind",
+      "correctedObservedAt",
+      "createdAt",
+      "reason",
+      "supersedesAttendanceCorrectionId",
+      "version",
+    ]);
+    const replay = await signedPost({ body: correctionBody(), idempotencyKey: key, url });
+    expect(replay.response.statusCode, replay.response.body).toBe(200);
+    expect(replay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(replay.response.json()).toEqual(first.response.json());
+    expect(await correctionCounts()).toEqual({
+      corrections: baseline.corrections + 1,
+      evidence: baseline.evidence + 2,
+      observations: baseline.observations,
+      outbox: baseline.outbox + 1,
+      work: baseline.work,
+    });
+    const stored = await governed((client) =>
+      client.query(
+        `SELECT correction.actor_principal_id::text,correction.correction_version,
+                correction.supersedes_attendance_correction_id,
+                observation.observed_at,observation.observation_kind,observation.row_version
+         FROM hr_attendance_corrections correction
+         JOIN hr_attendance_observations observation
+           ON observation.tenant_id=correction.tenant_id
+          AND observation.attendance_observation_id=correction.attendance_observation_id
+         WHERE correction.tenant_id=$1 AND correction.attendance_correction_id=$2`,
+        [ids.tenant, first.response.json().attendanceCorrectionId],
+      ),
+    );
+    expect(stored.rows[0]).toMatchObject({
+      actor_principal_id: ids.operator,
+      correction_version: 1,
+      observation_kind: "presence_start",
+      row_version: 1,
+      supersedes_attendance_correction_id: null,
+    });
+    const proof = await governed((client) =>
+      client.query(
+        `SELECT evidence.prior_state,evidence.new_state,
+                outbox.aggregate_version,outbox.payload
+         FROM evidence_events evidence
+         JOIN outbox_events outbox USING (tenant_id,correlation_id)
+         WHERE evidence.tenant_id=$1
+           AND evidence.event_type='hr.attendance.correct'
+           AND evidence.subject_id=$2`,
+        [ids.tenant, first.response.json().attendanceCorrectionId],
+      ),
+    );
+    expect(proof.rows[0]).toMatchObject({
+      aggregate_version: 1,
+      new_state: "recorded",
+      prior_state: null,
+      payload: {
+        action: "correct",
+        beforeVersion: null,
+        billingState: "non_billable",
+      },
+    });
+    const conflict = await signedPost({
+      body: { ...correctionBody(), reason: "Different correction" },
+      idempotencyKey: key,
+      url,
+    });
+    expectProblem(conflict, 409, "IDEMPOTENCY_CONFLICT");
+    expect(await correctionCounts()).toEqual({
+      corrections: baseline.corrections + 1,
+      evidence: baseline.evidence + 2,
+      observations: baseline.observations,
+      outbox: baseline.outbox + 1,
+      work: baseline.work,
+    });
+  });
+  it("serializes one successor and rejects a concurrent stale correction unchanged", async () => {
+    const observation = await createObservation();
+    const url = `/v1/hr/attendance-observations/${observation.attendanceObservationId}/corrections`;
+    const first = await signedPost({
+      body: correctionBody(),
+      idempotencyKey: randomUUID(),
+      url,
+    });
+    expect(first.response.statusCode, first.response.body).toBe(201);
+    const predecessor = String(first.response.json().attendanceCorrectionId);
+    const baseline = await correctionCounts();
+    const inputs = ["First concurrent successor", "Second concurrent successor"].map((reason) =>
+      signedPost({
+        body: { ...correctionBody(predecessor, 1), reason },
+        idempotencyKey: randomUUID(),
+        url,
+      }),
+    );
+    const results = await Promise.all(inputs);
+    expect(results.map(({ response }) => response.statusCode).sort()).toEqual([201, 409]);
+    const denied = results.find(({ response }) => response.statusCode === 409);
+    expectProblem(denied as Awaited<ReturnType<typeof signedPost>>, 409, "ATTENDANCE_CONFLICT");
+    const winner = results.find(({ response }) => response.statusCode === 201);
+    expect(winner?.response.json()).toMatchObject({
+      supersedesAttendanceCorrectionId: predecessor,
+      version: 2,
+    });
+    expect(await correctionCounts()).toEqual({
+      corrections: baseline.corrections + 1,
+      evidence: baseline.evidence + 2,
+      observations: baseline.observations,
+      outbox: baseline.outbox + 1,
+      work: baseline.work,
+    });
+    const chain = await governed((client) =>
+      client.query(
+        `SELECT attendance_correction_id::text,correction_version,
+                supersedes_attendance_correction_id::text
+         FROM hr_attendance_corrections
+         WHERE tenant_id=$1 AND attendance_observation_id=$2
+         ORDER BY correction_version`,
+        [ids.tenant, observation.attendanceObservationId],
+      ),
+    );
+    expect(chain.rows).toMatchObject([
+      { attendance_correction_id: predecessor, correction_version: 1 },
+      {
+        correction_version: 2,
+        supersedes_attendance_correction_id: predecessor,
+      },
+    ]);
+  });
+  it("fails current authority, tenant, activation and strict input closed without movement", async () => {
+    const observation = await createObservation();
+    const url = `/v1/hr/attendance-observations/${observation.attendanceObservationId}/corrections`;
+    const baseline = await correctionCounts();
+    await governedMutation(
+      "UPDATE memberships SET role_key='employee' WHERE tenant_id=$1 AND principal_id=$2",
+      [ids.tenant, ids.operator],
+    );
+    expectProblem(
+      await signedPost({ body: correctionBody(), idempotencyKey: randomUUID(), url }),
+      403,
+      "POLICY_DENIED",
+    );
+    await governedMutation(
+      "UPDATE memberships SET role_key='hr_operator' WHERE tenant_id=$1 AND principal_id=$2",
+      [ids.tenant, ids.operator],
+    );
+    await governedMutation(
+      "UPDATE memberships SET status='suspended' WHERE tenant_id=$1 AND principal_id=$2",
+      [ids.tenant, ids.operator],
+    );
+    expectProblem(
+      await signedPost({ body: correctionBody(), idempotencyKey: randomUUID(), url }),
+      403,
+      "ACTOR_NOT_ACTIVE_MEMBER",
+    );
+    await governedMutation(
+      "UPDATE memberships SET status='active' WHERE tenant_id=$1 AND principal_id=$2",
+      [ids.tenant, ids.operator],
+    );
+    await governedMutation(
+      `DELETE FROM membership_capabilities
+       WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='hr.attendance.correct'`,
+      [ids.tenant, ids.operator],
+    );
+    expectProblem(
+      await signedPost({ body: correctionBody(), idempotencyKey: randomUUID(), url }),
+      403,
+      "POLICY_DENIED",
+    );
+    await governedMutation(
+      `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+       VALUES ($1,$2,'hr.attendance.correct'),($1,$3,'hr.attendance.correct')`,
+      [ids.tenant, ids.operator, ids.admin],
+    );
+    expectProblem(
+      await signedPost({
+        body: correctionBody(),
+        idempotencyKey: randomUUID(),
+        principalId: ids.admin,
+        url,
+      }),
+      403,
+      "POLICY_DENIED",
+    );
+    expectProblem(
+      await signedPost({
+        body: correctionBody(),
+        idempotencyKey: randomUUID(),
+        principalId: ids.otherOperator,
+        tenantId: ids.otherTenant,
+        url,
+      }),
+      404,
+      "ATTENDANCE_OBSERVATION_NOT_FOUND",
+    );
+    await governedMutation(
+      `UPDATE service_activations SET state='inactive',version=version+1
+       WHERE tenant_id=$1 AND service_key='attendance'`,
+      [ids.tenant],
+    );
+    expectProblem(
+      await signedPost({ body: correctionBody(), idempotencyKey: randomUUID(), url }),
+      503,
+      "ATTENDANCE_SERVICE_INACTIVE",
+    );
+    await governedMutation(
+      `UPDATE service_activations SET state='active',version=version+1
+       WHERE tenant_id=$1 AND service_key='attendance'`,
+      [ids.tenant],
+    );
+    await governedMutation(
+      `UPDATE service_activations SET state='inactive',version=version+1
+       WHERE tenant_id=$1 AND service_key='workforce_profile'`,
+      [ids.tenant],
+    );
+    expectProblem(
+      await signedPost({ body: correctionBody(), idempotencyKey: randomUUID(), url }),
+      503,
+      "ATTENDANCE_DEPENDENCY_INACTIVE",
+    );
+    await governedMutation(
+      `UPDATE service_activations SET state='active',version=version+1
+       WHERE tenant_id=$1 AND service_key='workforce_profile'`,
+      [ids.tenant],
+    );
+    for (const injected of [
+      { actorPrincipalId: ids.admin },
+      { providerPayload: "forbidden" },
+      { sourceKind: "synthetic" },
+      { tenantId: ids.otherTenant },
+    ]) {
+      expectProblem(
+        await signedPost({
+          body: { ...correctionBody(), ...injected },
+          idempotencyKey: randomUUID(),
+          url,
+        }),
+        400,
+        "REQUEST_VALIDATION_FAILED",
+      );
+    }
+    const missing = await signedPost({ body: correctionBody(), url });
+    expect(missing.response.json()).toMatchObject({ code: "AUTH_REQUIRED", status: 401 });
+    expect(await correctionCounts()).toEqual(baseline);
+    expect(await correctionCounts(ids.otherTenant)).toEqual({
+      corrections: 0,
+      evidence: 0,
+      observations: 0,
+      outbox: 0,
+      work: 0,
+    });
   });
 });
