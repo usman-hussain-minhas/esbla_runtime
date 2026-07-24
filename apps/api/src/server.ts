@@ -142,6 +142,7 @@ import type { Pool } from "pg";
 import { AuthError, type RequestAuthenticator } from "./auth.js";
 import { registerEmploymentRoutes } from "./hr-employment-routes.js";
 import { registerShiftAssignmentRoutes } from "./hr-shift-assignment-routes.js";
+import { registerTimesheetRoutes } from "./hr-timesheet-routes.js";
 import { sendProblem } from "./problems.js";
 
 type WorkforceConfigureBody = Extract<
@@ -357,6 +358,13 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     server,
   });
   registerShiftAssignmentRoutes({
+    authenticate,
+    migrationReadPool: options.migrationReadPool ?? options.pool,
+    pool: options.pool,
+    runtimeEnvironment: options.runtimeEnvironment ?? "production",
+    server,
+  });
+  registerTimesheetRoutes({
     authenticate,
     migrationReadPool: options.migrationReadPool ?? options.pool,
     pool: options.pool,
