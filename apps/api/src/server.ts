@@ -94,19 +94,24 @@ import {
   workspaceTaskSchema,
 } from "@esbla/contracts";
 import {
+  type HrAttendanceSettings,
   type HrServiceConfigureBody,
   hrServiceConfigureBodySchema,
   parseHrServiceConfigureBody,
 } from "@esbla/contracts/hr-service-control-api";
 import {
+  activateAttendanceService,
   activateWorkforceProfileService,
   appendAttendanceCorrection,
   approveLeaveRequest,
   changeWorkforceReportingRelationship,
   changeWorkforceStatus,
+  configureAttendanceService,
   configureWorkforceProfileService,
   createWorkforceProfile,
+  deactivateAttendanceService,
   deactivateWorkforceProfileService,
+  getAttendanceServiceControl,
   getAuthorizedAttendanceObservation,
   getAuthorizedWorkforceProfileDetail,
   getLeaveRequestDetail,
@@ -142,6 +147,10 @@ import { sendProblem } from "./problems.js";
 type WorkforceConfigureBody = Extract<
   HrServiceConfigureBody,
   { readonly settings: HrWorkforceProfileSettings }
+>;
+type AttendanceConfigureBody = Extract<
+  HrServiceConfigureBody,
+  { readonly settings: HrAttendanceSettings }
 >;
 
 declare module "fastify" {
@@ -219,6 +228,12 @@ function parseWorkforceConfigureBody(value: unknown): WorkforceConfigureBody {
   const body = assertStrictRequest(parseHrServiceConfigureBody, value);
   if (!("employeeNumberRequired" in body.settings)) throw requestContractViolation();
   return body as WorkforceConfigureBody;
+}
+
+function parseAttendanceConfigureBody(value: unknown): AttendanceConfigureBody {
+  const body = assertStrictRequest(parseHrServiceConfigureBody, value);
+  if (!("correctionNoteRequired" in body.settings)) throw requestContractViolation();
+  return body as AttendanceConfigureBody;
 }
 
 function pageResponse<T extends { leaveRequestId: string; submittedAt: string }>(
@@ -535,6 +550,126 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
             ),
           ),
         );
+    },
+  );
+
+  server.get<{ Querystring: HrServiceControlQuery }>(
+    "/v1/hr/attendance-observations/service-control",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictRequest(parseHrServiceControlQuery, request.query);
+        },
+        attachAttendanceActions,
+      ],
+      schema: {
+        querystring: { $ref: "HrServiceControlQueryV1#" },
+        response: {
+          200: { $ref: "HrServiceControlResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request) =>
+      (await getAttendanceServiceControl(options.pool, operationContext(request))).control,
+  );
+
+  server.post<{ Body: HrServiceActivateBody }>(
+    "/v1/hr/attendance-observations/service-control/activate",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictMutationIdempotencyKey(request);
+          assertStrictRequest(parseHrServiceActivateBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrServiceActivateRequestV1#" },
+        response: {
+          200: { $ref: "HrServiceControlResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = {
+        ...operationContext(request),
+        correlationId: idempotencyKey(request).toLowerCase(),
+      };
+      const result = await activateAttendanceService(
+        options.pool,
+        context,
+        assertStrictRequest(parseHrServiceActivateBody, request.body),
+        options.runtimeEnvironment === "production" ? "production" : "non_production",
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(result.control);
+    },
+  );
+
+  server.post<{ Body: HrServiceDeactivateBody }>(
+    "/v1/hr/attendance-observations/service-control/deactivate",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictMutationIdempotencyKey(request);
+          assertStrictRequest(parseHrServiceDeactivateBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrServiceDeactivateRequestV1#" },
+        response: {
+          200: { $ref: "HrServiceControlResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = {
+        ...operationContext(request),
+        correlationId: idempotencyKey(request).toLowerCase(),
+      };
+      const result = await deactivateAttendanceService(options.pool, context, {
+        ...assertStrictRequest(parseHrServiceDeactivateBody, request.body),
+      });
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(result.control);
+    },
+  );
+
+  server.patch<{ Body: AttendanceConfigureBody }>(
+    "/v1/hr/attendance-observations/service-control/settings",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictMutationIdempotencyKey(request);
+          parseAttendanceConfigureBody(request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrServiceConfigureRequestV1#" },
+        response: {
+          200: { $ref: "HrServiceControlResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = {
+        ...operationContext(request),
+        correlationId: idempotencyKey(request).toLowerCase(),
+      };
+      const result = await configureAttendanceService(
+        options.pool,
+        context,
+        parseAttendanceConfigureBody(request.body),
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(result.control);
     },
   );
 

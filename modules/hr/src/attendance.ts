@@ -34,11 +34,15 @@ const ACTION_LIST_OWN = "hr.attendance.list_own";
 const ACTION_LIST_REPORTS = "hr.attendance.list_reports";
 const ACTION_VIEW_DETAIL = "hr.attendance.view_detail";
 export const HR_ATTENDANCE_AUTHORIZED_ACTIONS = Object.freeze([
+  "activate_service",
+  "configure_service",
   "correct",
+  "deactivate_service",
   "list_own",
   "list_reports",
   "record_manual",
   "view_detail",
+  "view_service_control",
 ] as const);
 export type HrAttendanceAuthorizedAction = (typeof HR_ATTENDANCE_AUTHORIZED_ACTIONS)[number];
 const EVENT_RECORD_MANUAL = ACTION_RECORD_MANUAL;
@@ -53,7 +57,9 @@ type AttendanceErrorCode =
   | "ATTENDANCE_DEPENDENCY_INACTIVE"
   | "ATTENDANCE_INPUT_INVALID"
   | "ATTENDANCE_OBSERVATION_NOT_FOUND"
+  | "ATTENDANCE_SERVICE_CONTROL_NOT_FOUND"
   | "ATTENDANCE_SERVICE_INACTIVE"
+  | "ATTENDANCE_VERSION_CONFLICT"
   | "ATTENDANCE_WORKER_UNAVAILABLE";
 
 export class HrAttendanceError extends Error {
@@ -390,11 +396,15 @@ async function authorizeRead(
 
 const ATTENDANCE_ACTION_ROLES: Readonly<Record<HrAttendanceAuthorizedAction, readonly string[]>> =
   Object.freeze({
+    activate_service: Object.freeze(["tenant_admin"]),
+    configure_service: Object.freeze(["tenant_admin"]),
     correct: Object.freeze(["hr_operator"]),
+    deactivate_service: Object.freeze(["tenant_admin"]),
     list_own: Object.freeze(["employee"]),
     list_reports: Object.freeze(["hr_operator", "manager"]),
     record_manual: Object.freeze(["hr_operator"]),
     view_detail: Object.freeze(["employee", "hr_operator", "manager"]),
+    view_service_control: Object.freeze(["tenant_admin"]),
   });
 
 /**

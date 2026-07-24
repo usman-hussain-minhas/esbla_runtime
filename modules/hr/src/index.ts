@@ -15,6 +15,7 @@ export {
   getWorkforceProfileServiceControl,
 } from "./activation.js";
 export * from "./attendance.js";
+export * from "./attendance-service-control.js";
 export * from "./commands.js";
 export * from "./employment.js";
 export * from "./employment-service-control.js";
