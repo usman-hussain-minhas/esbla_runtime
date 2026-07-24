@@ -9,7 +9,11 @@ import {
 } from "lucide-react";
 import { loadEmploymentList } from "../../../lib/hr-employment-record";
 import { hasEmploymentAction } from "../../../lib/hr-employment-record-core";
-import { loadOwnShifts, loadRosterShifts } from "../../../lib/hr-shift-assignment";
+import {
+  loadOwnShifts,
+  loadRosterShifts,
+  loadShiftServiceControl,
+} from "../../../lib/hr-shift-assignment";
 import { hasShiftAction } from "../../../lib/hr-shift-assignment-core";
 import { loadAuthorizedWorkforceList } from "../../../lib/hr-workforce-profile-list";
 import { loadWorkforceProfileServiceControl } from "../../../lib/hr-workforce-profile-service-control";
@@ -22,6 +26,7 @@ export default async function HrHubPage() {
     employmentRecords,
     shifts,
     shiftReports,
+    shiftServiceControl,
   ] = await Promise.all([
     loadAuthorizedWorkforceList({}, "direct_reports"),
     loadAuthorizedWorkforceList({}, "workforce"),
@@ -32,6 +37,7 @@ export default async function HrHubPage() {
       rosterVersionId: "00000000-0000-4000-8000-000000000000",
       status: "active",
     }),
+    loadShiftServiceControl(),
   ]);
   const canDiscoverWorkforceSettings =
     workforceServiceControl.status === "success" ||
@@ -61,6 +67,9 @@ export default async function HrHubPage() {
     [canViewOwnShifts, "/workspace/hr/shifts", "My shifts"],
     [canViewReportShifts, "/workspace/hr/shifts/reports", "Report shifts"],
   ].filter(([visible]) => visible);
+  const canControlShifts = (
+    ["activate_service", "configure_service", "deactivate_service", "view_service_control"] as const
+  ).some((action) => hasShiftAction(shiftServiceControl.authorizedActions, action));
   return (
     <section aria-labelledby="hr-hub-heading" className="work-surface">
       <header className="surface-heading">
@@ -149,7 +158,7 @@ export default async function HrHubPage() {
             </div>
           </li>
         ) : null}
-        {shiftActions.length > 0 ? (
+        {shiftActions.length > 0 || shiftServiceControl.authorizedActions.length > 0 ? (
           <li className="work-queue-item">
             <div className="work-queue-primary">
               <div>
@@ -163,6 +172,12 @@ export default async function HrHubPage() {
                   {label}
                 </a>
               ))}
+              {canControlShifts ? (
+                <a className="text-command" href="/workspace/hr/shifts/settings">
+                  <Settings2 aria-hidden="true" size={15} strokeWidth={1.8} />
+                  Shift settings
+                </a>
+              ) : null}
             </div>
           </li>
         ) : null}

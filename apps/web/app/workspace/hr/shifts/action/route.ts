@@ -1,13 +1,17 @@
 import { isSameOriginSubmission } from "../../../../../lib/hr-leave-submit-core";
 import {
   executeShiftAction,
+  executeShiftServiceAction,
   SHIFT_MUTATION_RECEIPT_COOKIE,
   SHIFT_MUTATION_RECEIPT_MAX_AGE_SECONDS,
   sealShiftMutationReceipt,
+  sealShiftServiceReceipt,
 } from "../../../../../lib/hr-shift-assignment";
 import {
+  isShiftServiceOperation,
   shiftStateForError,
   validateShiftAction,
+  validateShiftServiceAction,
 } from "../../../../../lib/hr-shift-assignment-core";
 
 export const dynamic = "force-dynamic";
@@ -28,12 +32,13 @@ function redirect(
   requestUrl: string,
   extra: Record<string, string> = {},
   sealed?: string,
+  destination = "/workspace/hr/shifts/reports",
 ): Response {
   const query = new URLSearchParams({ ...extra, result });
   return new Response(null, {
     headers: {
       ...headers,
-      location: `/workspace/hr/shifts/reports?${query}#shift-result`,
+      location: `${destination}?${query}#shift-result`,
       "set-cookie": receiptCookie(requestUrl, sealed),
     },
     status: 303,
@@ -73,6 +78,35 @@ export async function POST(request: Request): Promise<Response> {
     }
   } catch {
     return redirect("validation", request.url);
+  }
+  if (isShiftServiceOperation(value.operation)) {
+    const validation = validateShiftServiceAction(value);
+    if (!validation.ok)
+      return redirect(
+        validation.state.kind,
+        request.url,
+        {},
+        undefined,
+        "/workspace/hr/shifts/settings",
+      );
+    try {
+      const result = await executeShiftServiceAction(validation.value);
+      return redirect(
+        "success",
+        request.url,
+        {},
+        sealShiftServiceReceipt(validation.value, result),
+        "/workspace/hr/shifts/settings",
+      );
+    } catch (error) {
+      return redirect(
+        shiftStateForError(error).kind,
+        request.url,
+        {},
+        undefined,
+        "/workspace/hr/shifts/settings",
+      );
+    }
   }
   const validation = validateShiftAction(value);
   if (!validation.ok) return redirect(validation.state.kind, request.url);

@@ -11,6 +11,7 @@ import { readDevelopmentSessionConfig } from "./development-session-core";
 import {
   decodeShiftMutation,
   decodeShiftRead,
+  decodeShiftServiceControl,
   hasShiftAction,
   parseShiftActions,
   type ShiftAction,
@@ -18,6 +19,9 @@ import {
   type ShiftFailureState,
   type ShiftMutationResult,
   type ShiftOperation,
+  type ShiftServiceAction,
+  type ShiftServiceControl,
+  type ShiftServiceOperation,
   ShiftUiError,
   shiftStateForError,
 } from "./hr-shift-assignment-core";
@@ -28,9 +32,12 @@ export type ShiftListState = Authority &
   ({ readonly page: HrShiftListResponse; readonly status: "success" } | ShiftFailureState);
 export type ShiftDetailState = Authority &
   ({ readonly detail: HrShiftAssignmentResponse; readonly status: "success" } | ShiftFailureState);
+export type ShiftServiceControlState = Authority &
+  ({ readonly control: ShiftServiceControl; readonly status: "success" } | ShiftFailureState);
 
 const NO_ACTIONS: readonly ShiftAuthorizedAction[] = Object.freeze([]);
 const RECEIPT_DOMAIN = "esbla-shift-roster-mutation-receipt-v1\0";
+const SERVICE_RECEIPT_DOMAIN = "esbla-shift-service-control-receipt-v1\0";
 const RECEIPT_TTL_MS = 5 * 60 * 1_000;
 const RECEIPT_CLOCK_SKEW_MS = 5_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -44,6 +51,13 @@ export interface ShiftMutationReceipt {
   readonly rosterVersionId: string;
   readonly status: "active" | "cancelled" | "draft" | "published";
   readonly version: number;
+}
+export interface ShiftServiceReceipt {
+  readonly activationState: "active" | "inactive";
+  readonly activationVersion: number;
+  readonly controlVersion: number;
+  readonly operation: ShiftServiceOperation;
+  readonly settingsVersion: number;
 }
 
 function positive(value: unknown): value is number {
@@ -87,10 +101,10 @@ function receiptFor(action: ShiftAction, result: ShiftMutationResult): ShiftMuta
     version: roster.version,
   };
 }
-function sign(body: string): string {
+function sign(domain: string, body: string): string {
   const session = readDevelopmentSessionConfig(process.env);
   return createHmac("sha256", session.secret)
-    .update(RECEIPT_DOMAIN)
+    .update(domain)
     .update(session.tenantId)
     .update("\0")
     .update(session.principalId)
@@ -117,7 +131,7 @@ export function sealShiftMutationReceipt(
     receipt.status,
   ];
   const body = Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
-  return `${body}.${sign(body)}`;
+  return `${body}.${sign(RECEIPT_DOMAIN, body)}`;
 }
 export function readShiftMutationReceipt(
   sealed: string | undefined,
@@ -136,7 +150,7 @@ export function readShiftMutationReceipt(
       return null;
     const body = Buffer.from(parts[0], "base64url");
     const actual = Buffer.from(parts[1], "base64url");
-    const expected = Buffer.from(sign(parts[0]), "base64url");
+    const expected = Buffer.from(sign(RECEIPT_DOMAIN, parts[0]), "base64url");
     if (
       body.toString("base64url") !== parts[0] ||
       actual.toString("base64url") !== parts[1] ||
@@ -179,6 +193,123 @@ export function readShiftMutationReceipt(
       rosterVersionId: value[5].toLowerCase(),
       status,
       version: value[6],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function serviceReceiptFor(
+  action: ShiftServiceAction,
+  result: ShiftServiceControl,
+): ShiftServiceReceipt {
+  const controlVersion = result.activationVersion + result.settingsVersion - 1;
+  const expectedActivationVersion =
+    action.operation === "configure_service" ? null : (action.body.expectedVersion ?? 0) + 1;
+  const validTransition =
+    action.operation === "activate_service"
+      ? result.activationState === "active" &&
+        result.activationVersion === expectedActivationVersion &&
+        (action.body.expectedVersion !== null ||
+          (result.version === 1 && result.settingsVersion === 1))
+      : action.operation === "deactivate_service"
+        ? result.activationState === "inactive" &&
+          result.activationVersion === expectedActivationVersion
+        : result.activationState === "active" &&
+          result.settingsVersion === action.body.expectedSettingsVersion + 1 &&
+          result.settings.overlapAllowed === action.body.settings.overlapAllowed &&
+          result.settings.rosterHorizonDays === action.body.settings.rosterHorizonDays;
+  if (
+    result.serviceKey !== "shift_assignment" ||
+    !validTransition ||
+    !positive(controlVersion) ||
+    result.version !== controlVersion
+  )
+    throw new ShiftUiError("operational_error");
+  return {
+    activationState: result.activationState,
+    activationVersion: result.activationVersion,
+    controlVersion,
+    operation: action.operation,
+    settingsVersion: result.settingsVersion,
+  };
+}
+
+export function sealShiftServiceReceipt(
+  action: ShiftServiceAction,
+  result: ShiftServiceControl,
+  now = Date.now(),
+): string {
+  if (!Number.isSafeInteger(now) || now < 0 || now > Number.MAX_SAFE_INTEGER - RECEIPT_TTL_MS)
+    throw new ShiftUiError("operational_error");
+  const receipt = serviceReceiptFor(action, result);
+  const value = [
+    1,
+    now,
+    now + RECEIPT_TTL_MS,
+    receipt.operation,
+    receipt.activationState,
+    receipt.activationVersion,
+    receipt.settingsVersion,
+    receipt.controlVersion,
+  ];
+  const body = Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+  return `${body}.${sign(SERVICE_RECEIPT_DOMAIN, body)}`;
+}
+
+export function readShiftServiceReceipt(
+  sealed: string | undefined,
+  now = Date.now(),
+): ShiftServiceReceipt | null {
+  try {
+    if (!sealed || sealed.length > 768 || !Number.isSafeInteger(now) || now < 0) return null;
+    const parts = sealed.split(".");
+    if (
+      parts.length !== 2 ||
+      !parts[0] ||
+      !parts[1] ||
+      !/^[A-Za-z0-9_-]+$/.test(parts[0]) ||
+      !/^[A-Za-z0-9_-]{43}$/.test(parts[1])
+    )
+      return null;
+    const body = Buffer.from(parts[0], "base64url");
+    const actual = Buffer.from(parts[1], "base64url");
+    const expected = Buffer.from(sign(SERVICE_RECEIPT_DOMAIN, parts[0]), "base64url");
+    if (
+      body.toString("base64url") !== parts[0] ||
+      actual.toString("base64url") !== parts[1] ||
+      actual.length !== expected.length ||
+      !timingSafeEqual(actual, expected)
+    )
+      return null;
+    const value: unknown = JSON.parse(body.toString("utf8"));
+    if (
+      !Array.isArray(value) ||
+      value.length !== 8 ||
+      value[0] !== 1 ||
+      !Number.isSafeInteger(value[1]) ||
+      !Number.isSafeInteger(value[2]) ||
+      (value[1] as number) < 0 ||
+      (value[1] as number) > now + RECEIPT_CLOCK_SKEW_MS ||
+      value[2] !== (value[1] as number) + RECEIPT_TTL_MS ||
+      (value[2] as number) <= now ||
+      !["activate_service", "configure_service", "deactivate_service"].includes(String(value[3])) ||
+      !["active", "inactive"].includes(String(value[4])) ||
+      !positive(value[5]) ||
+      !positive(value[6]) ||
+      !positive(value[7]) ||
+      value[7] !== (value[5] as number) + (value[6] as number) - 1 ||
+      (value[3] === "activate_service" && value[4] !== "active") ||
+      (value[3] === "configure_service" && value[4] !== "active") ||
+      (value[3] === "deactivate_service" && value[4] !== "inactive")
+    )
+      return null;
+    return {
+      activationState: value[4] as ShiftServiceReceipt["activationState"],
+      activationVersion: value[5],
+      controlVersion: value[7],
+      operation: value[3] as ShiftServiceOperation,
+      settingsVersion: value[6],
     };
   } catch {
     return null;
@@ -296,6 +427,26 @@ export async function loadShiftDetail(id: string): Promise<ShiftDetailState> {
   }
 }
 
+export async function loadShiftServiceControl(): Promise<ShiftServiceControlState> {
+  let authorizedActions = NO_ACTIONS;
+  try {
+    const response = await fetchDevelopmentApi({
+      method: "GET",
+      path: "/v1/hr/shift-rosters/service-control",
+    });
+    authorizedActions = parseShiftActions(response);
+    if (response.status === 200 && !hasShiftAction(authorizedActions, "view_service_control"))
+      throw new ShiftUiError("operational_error");
+    return {
+      authorizedActions,
+      control: await decodeShiftServiceControl(response),
+      status: "success",
+    };
+  } catch (error) {
+    return { ...shiftStateForError(error), authorizedActions };
+  }
+}
+
 export async function executeShiftAction(action: ShiftAction): Promise<ShiftMutationResult> {
   let path: string;
   if (action.operation === "create_roster") path = "/v1/hr/shift-rosters";
@@ -314,5 +465,22 @@ export async function executeShiftAction(action: ShiftAction): Promise<ShiftMuta
       path,
     }),
     action.operation,
+  );
+}
+
+export async function executeShiftServiceAction(
+  action: ShiftServiceAction,
+): Promise<ShiftServiceControl> {
+  const operation = action.operation.replace("_service", "");
+  return await decodeShiftServiceControl(
+    await fetchDevelopmentApi({
+      body: action.body,
+      idempotencyKey: action.idempotencyKey,
+      method: action.operation === "configure_service" ? "PATCH" : "POST",
+      path: `/v1/hr/shift-rosters/service-control/${
+        operation === "configure" ? "settings" : operation
+      }`,
+    }),
+    true,
   );
 }

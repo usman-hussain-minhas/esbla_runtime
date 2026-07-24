@@ -505,7 +505,11 @@ export async function seedHrLeaveFixture() {
                 ($1, $5, 'hr.workforce.activate_service'),
                 ($1, $5, 'hr.workforce.configure_service'),
                 ($1, $5, 'hr.workforce.deactivate_service'),
-                ($1, $5, 'hr.workforce.view_service_control')`,
+                ($1, $5, 'hr.workforce.view_service_control'),
+                ($1, $5, 'hr.shift.activate_service'),
+                ($1, $5, 'hr.shift.configure_service'),
+                ($1, $5, 'hr.shift.deactivate_service'),
+                ($1, $5, 'hr.shift.view_service_control')`,
         [
           fixture.tenantId,
           fixture.employeePrincipalId,
@@ -650,12 +654,14 @@ export async function seedHrLeaveFixture() {
         `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
          VALUES ($1, $2, 'hr.employment.activate_service'),
                 ($1, $2, 'hr.employment.configure_service'),
-                ($1, $2, 'hr.employment.deactivate_service')`,
+                ($1, $2, 'hr.employment.deactivate_service'),
+                ($1, $2, 'hr.shift.configure_service')`,
         [fixture.employmentActionAdminTenantId, fixture.employmentActionAdminPrincipalId],
       );
       await client.query(
         `INSERT INTO service_activations (tenant_id, service_key, state, version)
-         VALUES ($1, 'workforce_profile', 'active', 1)`,
+         VALUES ($1, 'workforce_profile', 'active', 1),
+                ($1, 'shift_assignment', 'active', 1)`,
         [fixture.employmentActionAdminTenantId],
       );
       await client.query("COMMIT");
