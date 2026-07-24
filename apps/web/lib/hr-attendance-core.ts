@@ -7,12 +7,15 @@ import {
   type HrAttendanceObservation,
   type HrAttendanceObservationResponse,
   type HrAttendanceRecordManualBody,
+  type HrServiceControl,
   parseApiProblemDetails,
   parseHrAttendanceCorrection,
   parseHrAttendanceListResponse,
   parseHrAttendanceObservation,
   parseHrAttendanceObservationResponse,
+  parseHrServiceControl,
 } from "@esbla/contracts";
+import type { HrAttendanceSettings } from "@esbla/contracts/hr-service-control-api";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -20,13 +23,21 @@ const MAX_INTEGER = 2_147_483_647;
 type Search = Readonly<Record<string, string | string[] | undefined>>;
 
 export const ATTENDANCE_AUTHORIZED_ACTIONS = Object.freeze([
+  "activate_service",
+  "configure_service",
   "correct",
+  "deactivate_service",
   "list_own",
   "list_reports",
   "record_manual",
   "view_detail",
+  "view_service_control",
 ] as const);
 export type AttendanceAuthorizedAction = (typeof ATTENDANCE_AUTHORIZED_ACTIONS)[number];
+export type AttendanceServiceControl = Extract<
+  HrServiceControl,
+  { readonly serviceKey: "attendance" }
+>;
 export type AttendanceDetail = HrAttendanceObservation & {
   readonly corrections: HrAttendanceCorrectionPage;
 };
@@ -45,6 +56,29 @@ export interface AttendanceFailureState {
   readonly title: string;
 }
 export type AttendanceOperation = "correct" | "record_manual";
+export type AttendanceServiceOperation =
+  | "activate_service"
+  | "configure_service"
+  | "deactivate_service";
+export type AttendanceServiceAction =
+  | Readonly<{
+      body: Readonly<{ expectedVersion: number | null }>;
+      idempotencyKey: string;
+      operation: "activate_service";
+    }>
+  | Readonly<{
+      body: Readonly<{
+        expectedSettingsVersion: number;
+        settings: HrAttendanceSettings;
+      }>;
+      idempotencyKey: string;
+      operation: "configure_service";
+    }>
+  | Readonly<{
+      body: Readonly<{ expectedVersion: number }>;
+      idempotencyKey: string;
+      operation: "deactivate_service";
+    }>;
 export type AttendanceAction =
   | Readonly<{
       body: HrAttendanceCorrectionBody;
@@ -125,12 +159,23 @@ export function canRenderAttendanceAction(
   return status === "success" && hasAttendanceAction(actions, action);
 }
 
+export function isAttendanceServiceActionOnlyFallback(
+  failureKind: AttendanceFailureKind | undefined,
+  hasAction: boolean,
+): boolean {
+  return hasAction && failureKind === "denied";
+}
+
 function problemError(problem: ApiProblemDetails): AttendanceUiError {
   if (problem.status === 403 && ["ACTOR_NOT_ACTIVE_MEMBER", "POLICY_DENIED"].includes(problem.code))
     return new AttendanceUiError("denied", 403);
   if (
     problem.status === 404 &&
-    ["ATTENDANCE_OBSERVATION_NOT_FOUND", "ATTENDANCE_WORKER_UNAVAILABLE"].includes(problem.code)
+    [
+      "ATTENDANCE_OBSERVATION_NOT_FOUND",
+      "ATTENDANCE_SERVICE_CONTROL_NOT_FOUND",
+      "ATTENDANCE_WORKER_UNAVAILABLE",
+    ].includes(problem.code)
   )
     return new AttendanceUiError("not_found", 404);
   if (problem.status === 503 && problem.code === "ATTENDANCE_SERVICE_INACTIVE")
@@ -147,7 +192,12 @@ function problemError(problem: ApiProblemDetails): AttendanceUiError {
     return new AttendanceUiError("validation", 400);
   if (
     problem.status === 409 &&
-    ["ATTENDANCE_CONFLICT", "IDEMPOTENCY_CONFLICT"].includes(problem.code)
+    [
+      "ACTIVATION_CONFLICT",
+      "ATTENDANCE_CONFLICT",
+      "ATTENDANCE_VERSION_CONFLICT",
+      "IDEMPOTENCY_CONFLICT",
+    ].includes(problem.code)
   )
     return new AttendanceUiError("conflict", 409);
   return new AttendanceUiError("operational_error");
@@ -208,6 +258,50 @@ export async function decodeAttendanceMutation(
   } catch {
     throw new AttendanceUiError("operational_error");
   }
+}
+
+export async function decodeAttendanceServiceControl(
+  response: Response,
+): Promise<AttendanceServiceControl> {
+  const value = await json(response, response.status === 200);
+  try {
+    const control = parseHrServiceControl(value);
+    if (
+      control.serviceKey !== "attendance" ||
+      control.version !== control.activationVersion + control.settingsVersion - 1
+    )
+      throw 0;
+    return control as AttendanceServiceControl;
+  } catch {
+    throw new AttendanceUiError("operational_error");
+  }
+}
+
+export async function decodeAttendanceServiceMutation(
+  response: Response,
+  action: AttendanceServiceAction,
+): Promise<AttendanceServiceControl> {
+  const replay = response.headers.get("idempotent-replayed");
+  if (response.status !== 200) return await decodeAttendanceServiceControl(response);
+  if (!["false", "true"].includes(replay ?? "")) throw new AttendanceUiError("operational_error");
+  const control = await decodeAttendanceServiceControl(response);
+  const expectedActivationVersion =
+    action.operation === "configure_service" ? null : (action.body.expectedVersion ?? 0) + 1;
+  const valid =
+    action.operation === "activate_service"
+      ? control.activationState === "active" &&
+        control.activationVersion === expectedActivationVersion &&
+        (action.body.expectedVersion !== null ||
+          (control.version === 1 && control.settingsVersion === 1))
+      : action.operation === "deactivate_service"
+        ? control.activationState === "inactive" &&
+          control.activationVersion === expectedActivationVersion
+        : control.activationState === "active" &&
+          control.settingsVersion === action.body.expectedSettingsVersion + 1 &&
+          control.settings.correctionNoteRequired === true &&
+          control.settings.manualObservationKinds === action.body.settings.manualObservationKinds;
+  if (!valid) throw new AttendanceUiError("operational_error");
+  return control;
 }
 
 function one(search: Search, key: string): string | undefined {
@@ -301,6 +395,73 @@ function invalidAction() {
   return {
     ok: false as const,
     state: attendanceStateForError(new AttendanceUiError("validation", 400)),
+  };
+}
+
+export function isAttendanceServiceOperation(value: unknown): value is AttendanceServiceOperation {
+  return ["activate_service", "configure_service", "deactivate_service"].includes(String(value));
+}
+
+export function validateAttendanceServiceAction(
+  value: Record<string, string>,
+): { ok: false; state: AttendanceFailureState } | { ok: true; value: AttendanceServiceAction } {
+  const suppliedIdempotencyKey = value.idempotencyKey;
+  if (!UUID.test(suppliedIdempotencyKey ?? "") || !isAttendanceServiceOperation(value.operation))
+    return invalidAction();
+  const idempotencyKey = (suppliedIdempotencyKey as string).toLowerCase();
+  if (value.operation === "activate_service") {
+    if (!exact(value, ["expectedVersion", "idempotencyKey", "operation"])) return invalidAction();
+    const expectedVersion = value.expectedVersion === "" ? null : positive(value.expectedVersion);
+    return expectedVersion === undefined
+      ? invalidAction()
+      : {
+          ok: true,
+          value: { body: { expectedVersion }, idempotencyKey, operation: value.operation },
+        };
+  }
+  if (value.operation === "deactivate_service") {
+    if (!exact(value, ["expectedVersion", "idempotencyKey", "operation"])) return invalidAction();
+    const expectedVersion = positive(value.expectedVersion);
+    return expectedVersion === undefined
+      ? invalidAction()
+      : {
+          ok: true,
+          value: { body: { expectedVersion }, idempotencyKey, operation: value.operation },
+        };
+  }
+  if (
+    !exact(value, [
+      "correctionNoteRequired",
+      "expectedSettingsVersion",
+      "idempotencyKey",
+      "manualObservationKinds",
+      "operation",
+    ]) ||
+    value.correctionNoteRequired !== "true"
+  )
+    return invalidAction();
+  const expectedSettingsVersion = positive(value.expectedSettingsVersion);
+  const suppliedKinds = value.manualObservationKinds as string;
+  const selected = suppliedKinds === "" ? [] : suppliedKinds.split(",");
+  if (
+    !expectedSettingsVersion ||
+    selected.some((kind) => !["presence_start", "presence_end"].includes(kind)) ||
+    new Set(selected).size !== selected.length
+  )
+    return invalidAction();
+  const manualObservationKinds = (["presence_start", "presence_end"] as const)
+    .filter((kind) => selected.includes(kind))
+    .join(",") as HrAttendanceSettings["manualObservationKinds"];
+  return {
+    ok: true,
+    value: {
+      body: {
+        expectedSettingsVersion,
+        settings: { correctionNoteRequired: true, manualObservationKinds },
+      },
+      idempotencyKey,
+      operation: value.operation,
+    },
   };
 }
 

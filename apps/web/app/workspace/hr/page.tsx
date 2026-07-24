@@ -8,7 +8,11 @@ import {
   UserRoundPlus,
   UsersRound,
 } from "lucide-react";
-import { loadOwnAttendance, loadReportAttendance } from "../../../lib/hr-attendance";
+import {
+  loadAttendanceServiceControl,
+  loadOwnAttendance,
+  loadReportAttendance,
+} from "../../../lib/hr-attendance";
 import { hasAttendanceAction } from "../../../lib/hr-attendance-core";
 import { loadEmploymentList } from "../../../lib/hr-employment-record";
 import { hasEmploymentAction } from "../../../lib/hr-employment-record-core";
@@ -32,6 +36,7 @@ export default async function HrHubPage() {
     shiftServiceControl,
     ownAttendance,
     reportAttendance,
+    attendanceServiceControl,
   ] = await Promise.all([
     loadAuthorizedWorkforceList({}, "direct_reports"),
     loadAuthorizedWorkforceList({}, "workforce"),
@@ -45,6 +50,7 @@ export default async function HrHubPage() {
     loadShiftServiceControl(),
     loadOwnAttendance(),
     loadReportAttendance(),
+    loadAttendanceServiceControl(),
   ]);
   const canDiscoverWorkforceSettings =
     workforceServiceControl.status === "success" ||
@@ -78,10 +84,17 @@ export default async function HrHubPage() {
     ["activate_service", "configure_service", "deactivate_service", "view_service_control"] as const
   ).some((action) => hasShiftAction(shiftServiceControl.authorizedActions, action));
   const attendanceActions = [
-    ...new Set([...ownAttendance.authorizedActions, ...reportAttendance.authorizedActions]),
+    ...new Set([
+      ...ownAttendance.authorizedActions,
+      ...reportAttendance.authorizedActions,
+      ...attendanceServiceControl.authorizedActions,
+    ]),
   ];
   const canViewOwnAttendance = hasAttendanceAction(attendanceActions, "list_own");
   const canViewReportAttendance = hasAttendanceAction(attendanceActions, "list_reports");
+  const canControlAttendance = (
+    ["activate_service", "configure_service", "deactivate_service", "view_service_control"] as const
+  ).some((action) => hasAttendanceAction(attendanceActions, action));
   return (
     <section aria-labelledby="hr-hub-heading" className="work-surface">
       <header className="surface-heading">
@@ -217,6 +230,12 @@ export default async function HrHubPage() {
               {canViewReportAttendance ? (
                 <a className="text-command" href="/workspace/hr/attendance/reports">
                   Report attendance
+                </a>
+              ) : null}
+              {canControlAttendance ? (
+                <a className="text-command" href="/workspace/hr/attendance/settings">
+                  <Settings2 aria-hidden="true" size={15} strokeWidth={1.8} />
+                  Attendance settings
                 </a>
               ) : null}
             </div>
