@@ -73,6 +73,7 @@ function statusForError(error: Error): number {
     if (error.code === "ATTENDANCE_INPUT_INVALID") return 400;
     if (
       error.code === "ATTENDANCE_OBSERVATION_NOT_FOUND" ||
+      error.code === "ATTENDANCE_SERVICE_CONTROL_NOT_FOUND" ||
       error.code === "ATTENDANCE_WORKER_UNAVAILABLE"
     ) {
       return 404;

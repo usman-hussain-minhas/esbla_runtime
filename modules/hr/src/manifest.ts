@@ -3,11 +3,15 @@ import { defineModuleManifest } from "@esbla/contracts";
 export const hrManifest = defineModuleManifest({
   activation: "inactive_by_default",
   capabilities: Object.freeze([
+    Object.freeze({ exposure: "admin", id: "hr.attendance.activate_service" }),
+    Object.freeze({ exposure: "admin", id: "hr.attendance.configure_service" }),
     Object.freeze({ exposure: "tenant", id: "hr.attendance.record_manual" }),
     Object.freeze({ exposure: "tenant", id: "hr.attendance.correct" }),
+    Object.freeze({ exposure: "admin", id: "hr.attendance.deactivate_service" }),
     Object.freeze({ exposure: "tenant", id: "hr.attendance.list_own" }),
     Object.freeze({ exposure: "tenant", id: "hr.attendance.list_reports" }),
     Object.freeze({ exposure: "tenant", id: "hr.attendance.view_detail" }),
+    Object.freeze({ exposure: "admin", id: "hr.attendance.view_service_control" }),
     Object.freeze({ exposure: "admin", id: "hr.leave.activate" }),
     Object.freeze({ exposure: "tenant", id: "hr.leave.approve" }),
     Object.freeze({ exposure: "admin", id: "hr.leave.deactivate" }),

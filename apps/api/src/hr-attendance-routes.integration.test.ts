@@ -24,6 +24,7 @@ const ids = {
 interface SignedPostOptions {
   readonly body: NonNullable<InjectOptions["payload"]>;
   readonly idempotencyKey?: string;
+  readonly method?: "PATCH" | "POST";
   readonly principalId?: string;
   readonly tenantId?: string;
   readonly url?: string;
@@ -105,11 +106,11 @@ function observeReportCandidate(source: Pool): Pool {
 async function signedPost({
   body,
   idempotencyKey,
+  method = "POST",
   principalId = ids.operator,
   tenantId = ids.tenant,
   url = "/v1/hr/attendance-observations",
 }: SignedPostOptions) {
-  const method = "POST";
   const requestId = randomUUID();
   const timestamp = String(Math.floor(Date.now() / 1_000));
   const headers: Record<string, string> = {
@@ -307,7 +308,10 @@ beforeAll(async () => {
                 ($1,$2,'hr.attendance.correct'),
                 ($1,$2,'hr.attendance.list_reports'),
                 ($1,$2,'hr.attendance.view_detail'),
+                ($1,$3,'hr.attendance.activate_service'),
                 ($1,$3,'hr.attendance.configure_service'),
+                ($1,$3,'hr.attendance.deactivate_service'),
+                ($1,$3,'hr.attendance.view_service_control'),
                 ($1,$4,'hr.attendance.list_own'),
                 ($1,$4,'hr.attendance.view_detail'),
                 ($1,$5,'hr.attendance.list_reports'),
@@ -1104,5 +1108,190 @@ describe("Attendance read APIs", () => {
     await expectReadProblem(detail, 503, "ATTENDANCE_DEPENDENCY_INACTIVE");
     await setActivation("workforce_profile", "active");
     expect(await correctionCounts()).toEqual(baseline);
+  });
+});
+
+const attendanceControlUrl = "/v1/hr/attendance-observations/service-control";
+async function serviceControlCounts() {
+  const result = await governed((client) =>
+    client.query<{ evidence: string; outbox: string }>(
+      `SELECT
+         (SELECT count(*) FROM evidence_events
+          WHERE tenant_id=$1 AND subject_type IN (
+            'hr.attendance.service_control',
+            'hr.attendance.service_control.idempotency'
+          ))::text evidence,
+         (SELECT count(*) FROM outbox_events
+          WHERE tenant_id=$1 AND aggregate_type='hr.attendance.service_control')::text outbox`,
+      [ids.tenant],
+    ),
+  );
+  return {
+    evidence: Number(result.rows[0]?.evidence),
+    outbox: Number(result.rows[0]?.outbox),
+  };
+}
+async function attendanceControl() {
+  return await signedGet({ principalId: ids.admin, url: attendanceControlUrl });
+}
+async function controlMutation(
+  operation: "activate" | "deactivate" | "settings",
+  payload: Record<string, unknown>,
+  idempotencyKey = randomUUID(),
+) {
+  return await signedPost({
+    body: payload,
+    idempotencyKey,
+    method: operation === "settings" ? "PATCH" : "POST",
+    principalId: ids.admin,
+    url: `${attendanceControlUrl}/${operation}`,
+  });
+}
+
+describe("Attendance service-control APIs", () => {
+  it("returns exact current activation and registered settings only", async () => {
+    const current = await attendanceControl();
+    expect(current.response.statusCode, current.response.body).toBe(200);
+    expect(current.response.headers["x-esbla-attendance-actions"]).toBe(
+      '["activate_service","configure_service","deactivate_service","view_service_control"]',
+    );
+    expect(current.response.json()).toMatchObject({
+      activationState: "active",
+      serviceKey: "attendance",
+      settings: {
+        correctionNoteRequired: true,
+        manualObservationKinds: "presence_start",
+      },
+      settingsVersion: 2,
+    });
+    expect(Object.keys(current.response.json()).sort()).toEqual([
+      "activationState",
+      "activationVersion",
+      "serviceKey",
+      "settings",
+      "settingsVersion",
+      "updatedAt",
+      "version",
+    ]);
+  });
+
+  it("configures the exact setting replacement once and replays evidence-bound", async () => {
+    const current = (await attendanceControl()).response.json();
+    const baseline = await serviceControlCounts();
+    const key = randomUUID();
+    const payload = {
+      expectedSettingsVersion: current.settingsVersion,
+      settings: {
+        correctionNoteRequired: true,
+        manualObservationKinds: "presence_start,presence_end",
+      },
+    };
+    const first = await controlMutation("settings", payload, key);
+    expect(first.response.statusCode, first.response.body).toBe(200);
+    expect(first.response.headers["idempotent-replayed"]).toBe("false");
+    expect(first.response.json()).toMatchObject({
+      activationState: "active",
+      settings: payload.settings,
+      settingsVersion: current.settingsVersion + 1,
+      version: current.version + 1,
+    });
+    const replay = await controlMutation("settings", payload, key);
+    expect(replay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(replay.response.json()).toEqual(first.response.json());
+    expect(await serviceControlCounts()).toEqual({
+      evidence: baseline.evidence + 2,
+      outbox: baseline.outbox + 1,
+    });
+    expectProblem(
+      await controlMutation(
+        "settings",
+        { ...payload, settings: { ...payload.settings, manualObservationKinds: "presence_start" } },
+        key,
+      ),
+      409,
+      "IDEMPOTENCY_CONFLICT",
+    );
+    for (const settings of [
+      { ...payload.settings, correctionNoteRequired: false },
+      { ...payload.settings, manualObservationKinds: "gps" },
+      { ...payload.settings, providerPayload: "forbidden" },
+    ]) {
+      expectProblem(
+        await controlMutation("settings", {
+          expectedSettingsVersion: first.response.json().settingsVersion,
+          settings,
+        }),
+        400,
+        "REQUEST_VALIDATION_FAILED",
+      );
+    }
+  });
+
+  it("deactivates reachability, replays unchanged, then activates with dependency proof", async () => {
+    const current = (await attendanceControl()).response.json();
+    const baseline = await serviceControlCounts();
+    const key = randomUUID();
+    const stopped = await controlMutation(
+      "deactivate",
+      {
+        expectedVersion: current.activationVersion,
+      },
+      key,
+    );
+    expect(stopped.response.json()).toMatchObject({
+      activationState: "inactive",
+      activationVersion: current.activationVersion + 1,
+      settings: current.settings,
+    });
+    expectProblem(
+      await controlMutation("deactivate", { expectedVersion: current.activationVersion }, key),
+      503,
+      "ATTENDANCE_SERVICE_INACTIVE",
+    );
+    expectProblem(
+      await signedPost({ body: body(), idempotencyKey: randomUUID() }),
+      503,
+      "ATTENDANCE_SERVICE_INACTIVE",
+    );
+    expectProblem(
+      await controlMutation("settings", {
+        expectedSettingsVersion: current.settingsVersion,
+        settings: current.settings,
+      }),
+      503,
+      "ATTENDANCE_SERVICE_INACTIVE",
+    );
+    const started = await controlMutation("activate", {
+      expectedVersion: stopped.response.json().activationVersion,
+    });
+    expect(started.response.json()).toMatchObject({
+      activationState: "active",
+      activationVersion: stopped.response.json().activationVersion + 1,
+      settings: current.settings,
+    });
+    expect(await serviceControlCounts()).toEqual({
+      evidence: baseline.evidence + 4,
+      outbox: baseline.outbox + 2,
+    });
+  });
+
+  it("re-reads exact tenant-admin role and capability without cross-tenant movement", async () => {
+    const baseline = await serviceControlCounts();
+    await setMembership(ids.admin, "role_key", "employee");
+    expectProblem(await attendanceControl(), 403, "POLICY_DENIED");
+    await setMembership(ids.admin, "role_key", "tenant_admin");
+    await setCapability(ids.admin, "hr.attendance.view_service_control", false);
+    expectProblem(await attendanceControl(), 403, "POLICY_DENIED");
+    await setCapability(ids.admin, "hr.attendance.view_service_control", true);
+    expectProblem(
+      await signedGet({
+        principalId: ids.otherOperator,
+        tenantId: ids.otherTenant,
+        url: attendanceControlUrl,
+      }),
+      403,
+      "POLICY_DENIED",
+    );
+    expect(await serviceControlCounts()).toEqual(baseline);
   });
 });

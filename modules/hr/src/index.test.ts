@@ -5,11 +5,15 @@ describe("hrManifest", () => {
   it("stays inactive by default while declaring only ratified capabilities", () => {
     expect(hrManifest.activation).toBe("inactive_by_default");
     expect(hrManifest.capabilities.map((capability) => capability.id)).toEqual([
+      "hr.attendance.activate_service",
+      "hr.attendance.configure_service",
       "hr.attendance.record_manual",
       "hr.attendance.correct",
+      "hr.attendance.deactivate_service",
       "hr.attendance.list_own",
       "hr.attendance.list_reports",
       "hr.attendance.view_detail",
+      "hr.attendance.view_service_control",
       "hr.leave.activate",
       "hr.leave.approve",
       "hr.leave.deactivate",

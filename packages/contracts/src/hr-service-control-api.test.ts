@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  hrAttendanceSettingsDefaults,
   hrEmploymentRecordSettingsDefaults,
   hrServiceActivateBodySchema,
   hrServiceConfigureBodySchema,
@@ -39,6 +40,11 @@ const employmentRecordSettings = {
 const shiftAssignmentSettings = {
   overlapAllowed: false,
   rosterHorizonDays: 14,
+} as const;
+
+const attendanceSettings = {
+  correctionNoteRequired: true,
+  manualObservationKinds: "presence_start,presence_end",
 } as const;
 
 describe("shared HR service-control contracts", () => {
@@ -173,6 +179,32 @@ describe("shared HR service-control contracts", () => {
     }
   });
 
+  it("accepts only the exact policy-floor-locked Attendance settings replacement", () => {
+    expect(hrAttendanceSettingsDefaults).toEqual(attendanceSettings);
+    expect(Object.isFrozen(hrAttendanceSettingsDefaults)).toBe(true);
+    const body = { expectedSettingsVersion: 2, settings: attendanceSettings };
+    expect(parseHrServiceConfigureBody(body)).toBe(body);
+    for (const settings of [
+      { ...attendanceSettings, correctionNoteRequired: false },
+      { ...attendanceSettings, manualObservationKinds: "presence_start,gps" },
+      { ...attendanceSettings, manualObservationKinds: "presence_end,presence_start" },
+      { ...attendanceSettings, manualObservationKinds: "presence_start,presence_start" },
+      { ...attendanceSettings, manualObservationKinds: ["presence_start"] },
+      { correctionNoteRequired: true },
+      { manualObservationKinds: "presence_start,presence_end" },
+      { ...attendanceSettings, extra: true },
+    ]) {
+      expect(() => parseHrServiceConfigureBody({ ...body, settings })).toThrow();
+    }
+    const response = {
+      ...serviceControl,
+      serviceKey: "attendance",
+      settings: attendanceSettings,
+    } as const;
+    expect(parseHrServiceControl(response)).toBe(response);
+    expect(() => parseHrServiceControl({ ...response, settings: {} })).toThrow();
+  });
+
   it("publishes Shift settings consistently in configure and control schemas", () => {
     const settingsSchema = {
       additionalProperties: false,
@@ -195,7 +227,9 @@ describe("shared HR service-control contracts", () => {
     expect(hrServiceControlSchema.oneOf).toContainEqual({
       properties: {
         serviceKey: {
-          not: { enum: ["employment_record", "shift_assignment", "workforce_profile"] },
+          not: {
+            enum: ["attendance", "employment_record", "shift_assignment", "workforce_profile"],
+          },
         },
         settings: {
           additionalProperties: false,
@@ -213,13 +247,15 @@ describe("shared HR service-control contracts", () => {
         ...serviceControl,
         serviceKey,
         settings:
-          serviceKey === "workforce_profile"
-            ? serviceControl.settings
-            : serviceKey === "employment_record"
-              ? employmentRecordSettings
-              : serviceKey === "shift_assignment"
-                ? shiftAssignmentSettings
-                : {},
+          serviceKey === "attendance"
+            ? attendanceSettings
+            : serviceKey === "workforce_profile"
+              ? serviceControl.settings
+              : serviceKey === "employment_record"
+                ? employmentRecordSettings
+                : serviceKey === "shift_assignment"
+                  ? shiftAssignmentSettings
+                  : {},
       };
       expect(parseHrServiceControl(response)).toBe(response);
     }

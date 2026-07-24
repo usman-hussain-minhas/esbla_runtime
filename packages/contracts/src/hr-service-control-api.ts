@@ -27,6 +27,14 @@ export interface HrWorkforceProfileSettings {
   readonly managerVisibility: "minimized" | "none";
   readonly unlinkedWorkerCreationAllowed: boolean;
 }
+export interface HrAttendanceSettings {
+  readonly correctionNoteRequired: true;
+  readonly manualObservationKinds:
+    | ""
+    | "presence_start"
+    | "presence_end"
+    | "presence_start,presence_end";
+}
 export interface HrEmploymentRecordSettings {
   readonly effectiveRangeOverlapAllowed: false;
   readonly employmentTypeCodes: string;
@@ -39,11 +47,19 @@ export const hrEmploymentRecordSettingsDefaults: HrEmploymentRecordSettings = Ob
   effectiveRangeOverlapAllowed: false,
   employmentTypeCodes: "unspecified",
 });
+export const hrAttendanceSettingsDefaults: HrAttendanceSettings = Object.freeze({
+  correctionNoteRequired: true,
+  manualObservationKinds: "presence_start,presence_end",
+});
 export const hrShiftAssignmentSettingsDefaults: HrShiftAssignmentSettings = Object.freeze({
   overlapAllowed: false,
   rosterHorizonDays: 14,
 });
 export type HrServiceConfigureBody =
+  | Readonly<{
+      expectedSettingsVersion: number;
+      settings: HrAttendanceSettings;
+    }>
   | Readonly<{
       expectedSettingsVersion: number;
       settings: HrWorkforceProfileSettings;
@@ -65,13 +81,14 @@ interface HrServiceControlBase {
 }
 export type HrServiceControl = HrServiceControlBase &
   (
+    | { readonly serviceKey: "attendance"; readonly settings: HrAttendanceSettings }
     | { readonly serviceKey: "workforce_profile"; readonly settings: HrWorkforceProfileSettings }
     | { readonly serviceKey: "employment_record"; readonly settings: HrEmploymentRecordSettings }
     | { readonly serviceKey: "shift_assignment"; readonly settings: HrShiftAssignmentSettings }
     | {
         readonly serviceKey: Exclude<
           HrServiceKey,
-          "employment_record" | "shift_assignment" | "workforce_profile"
+          "attendance" | "employment_record" | "shift_assignment" | "workforce_profile"
         >;
         readonly settings: Readonly<Record<string, never>>;
       }
@@ -132,6 +149,17 @@ const workforceProfileSettingsSchema = {
   required: ["employeeNumberRequired", "managerVisibility", "unlinkedWorkerCreationAllowed"],
   type: "object",
 } as const;
+const attendanceSettingsSchema = {
+  additionalProperties: false,
+  properties: {
+    correctionNoteRequired: { const: true },
+    manualObservationKinds: {
+      enum: ["", "presence_start", "presence_end", "presence_start,presence_end"],
+    },
+  },
+  required: ["correctionNoteRequired", "manualObservationKinds"],
+  type: "object",
+} as const;
 const employmentRecordSettingsSchema = {
   additionalProperties: false,
   properties: {
@@ -165,6 +193,7 @@ export const hrServiceConfigureBodySchema = {
     expectedSettingsVersion: { ...positiveVersionSchema, maximum: maximumPostgresInteger },
     settings: {
       oneOf: [
+        attendanceSettingsSchema,
         workforceProfileSettingsSchema,
         employmentRecordSettingsSchema,
         shiftAssignmentSettingsSchema,
@@ -179,6 +208,13 @@ export const hrServiceControlSchema = {
   $id: "HrServiceControlResponseV1",
   additionalProperties: false,
   oneOf: [
+    {
+      properties: {
+        serviceKey: { const: "attendance" },
+        settings: attendanceSettingsSchema,
+      },
+      type: "object",
+    },
     {
       properties: {
         serviceKey: { const: "workforce_profile" },
@@ -203,7 +239,9 @@ export const hrServiceControlSchema = {
     {
       properties: {
         serviceKey: {
-          not: { enum: ["employment_record", "shift_assignment", "workforce_profile"] },
+          not: {
+            enum: ["attendance", "employment_record", "shift_assignment", "workforce_profile"],
+          },
         },
         settings: emptyServiceSettingsSchema,
       },
@@ -216,6 +254,7 @@ export const hrServiceControlSchema = {
     serviceKey: { enum: hrServiceKeys },
     settings: {
       anyOf: [
+        attendanceSettingsSchema,
         workforceProfileSettingsSchema,
         employmentRecordSettingsSchema,
         shiftAssignmentSettingsSchema,
@@ -349,6 +388,21 @@ function parseWorkforceProfileSettings(value: unknown, label: string): HrWorkfor
   return value as unknown as HrWorkforceProfileSettings;
 }
 
+function parseAttendanceSettings(value: unknown, label: string): HrAttendanceSettings {
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(value, ["correctionNoteRequired", "manualObservationKinds"], label);
+  if (
+    value.correctionNoteRequired !== true ||
+    typeof value.manualObservationKinds !== "string" ||
+    !["", "presence_start", "presence_end", "presence_start,presence_end"].includes(
+      value.manualObservationKinds,
+    )
+  ) {
+    throw new TypeError(`${label} is invalid`);
+  }
+  return value as unknown as HrAttendanceSettings;
+}
+
 function parseEmploymentRecordSettings(value: unknown, label: string): HrEmploymentRecordSettings {
   if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
   assertExactKeys(value, ["effectiveRangeOverlapAllowed", "employmentTypeCodes"], label);
@@ -452,7 +506,9 @@ export function parseHrServiceConfigureBody(value: unknown): HrServiceConfigureB
   if (!isRecord(value.settings)) {
     throw new TypeError("HrServiceConfigureRequestV1.settings must be an object");
   }
-  if (Object.hasOwn(value.settings, "effectiveRangeOverlapAllowed")) {
+  if (Object.hasOwn(value.settings, "correctionNoteRequired")) {
+    parseAttendanceSettings(value.settings, "HrServiceConfigureRequestV1.settings");
+  } else if (Object.hasOwn(value.settings, "effectiveRangeOverlapAllowed")) {
     parseEmploymentRecordSettings(value.settings, "HrServiceConfigureRequestV1.settings");
   } else if (
     Object.hasOwn(value.settings, "overlapAllowed") ||
@@ -474,7 +530,9 @@ export function parseHrServiceControl(value: unknown): HrServiceControl {
   if (value.activationState !== "active" && value.activationState !== "inactive") {
     throw new TypeError("HrServiceControlResponseV1.activationState is invalid");
   }
-  if (value.serviceKey === "workforce_profile") {
+  if (value.serviceKey === "attendance") {
+    parseAttendanceSettings(value.settings, "HrServiceControlResponseV1.settings");
+  } else if (value.serviceKey === "workforce_profile") {
     parseWorkforceProfileSettings(value.settings, "HrServiceControlResponseV1.settings");
   } else if (value.serviceKey === "employment_record") {
     parseEmploymentRecordSettings(value.settings, "HrServiceControlResponseV1.settings");
