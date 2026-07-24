@@ -4,8 +4,13 @@ import { fixture } from "./hr-leave-fixture.mjs";
 test.describe.configure({ mode: "serial" });
 
 const employmentActionWorkerProfileId = process.env.ESBLA_TEST_EMPLOYMENT_ACTION_WORKER_PROFILE_ID;
-if (!/^[0-9a-f-]{36}$/.test(employmentActionWorkerProfileId ?? "")) {
+const fixtureId = /^[0-9a-f-]{36}$/;
+if (!fixtureId.test(employmentActionWorkerProfileId ?? "")) {
   throw new Error("Employment action Worker Profile fixture is missing");
+}
+const shiftEmployeeWorkerProfileId = process.env.ESBLA_TEST_SHIFT_EMPLOYEE_WORKER_PROFILE_ID;
+if (!fixtureId.test(shiftEmployeeWorkerProfileId ?? "")) {
+  throw new Error("Shift Worker Profile fixtures are missing");
 }
 
 async function openActor(browser, origin, label) {
@@ -851,9 +856,7 @@ test("tenant admin configures and controls Employment without record access", as
   }
 });
 
-test("Employment widgets follow each exact current capability instead of a read proxy", async ({
-  browser,
-}) => {
+test("Employment and Shift widgets follow exact action capabilities", async ({ browser }) => {
   const actionAdmin = await openActor(
     browser,
     fixture.employmentActionAdminOrigin,
@@ -906,6 +909,7 @@ test("Employment widgets follow each exact current capability instead of a read 
     await expect(
       actionOperator.page.getByRole("link", { name: "Employment administration" }),
     ).toBeVisible();
+    await expect(actionOperator.page.getByRole("link", { name: "Report shifts" })).toBeVisible();
     await expect(
       actionOperator.page.getByRole("link", { name: "Open employment facts" }),
     ).toHaveCount(0);
@@ -913,6 +917,26 @@ test("Employment widgets follow each exact current capability instead of a read 
     for (const operation of ["create_record", "create_version", "end_record"]) {
       await expect(employmentForm(actionOperator.page, operation)).toHaveCount(1);
     }
+    await actionOperator.page.goto(
+      `${actionOperator.origin}/workspace/hr/shifts/reports?rosterVersionId=00000000-0000-4000-8000-000000000000`,
+    );
+    await expect(actionOperator.page.locator(".form-error-summary")).toBeVisible();
+    await expect(
+      actionOperator.page.locator('form[action="/workspace/hr/shifts/action"]'),
+    ).toHaveCount(4);
+    await actionOperator.page.getByText("Create an exact roster period", { exact: true }).click();
+    await actionOperator.page.getByLabel("Period start").fill("2030-01-01");
+    await actionOperator.page.getByLabel("Period end").fill("2030-01-07");
+    await actionOperator.page.getByRole("button", { name: "Create draft roster" }).click();
+    await expect(
+      actionOperator.page.getByRole("heading", { name: "Last Shift action receipt" }),
+    ).toBeVisible();
+    await expect(actionOperator.page.getByText(/create_roster confirmed draft/)).toBeVisible();
+    await actionOperator.page.reload();
+    await expect(
+      actionOperator.page.getByRole("heading", { name: "Last Shift action receipt" }),
+    ).toBeVisible();
+    await actionOperator.page.goto(`${actionOperator.origin}/workspace/hr/employment/admin`);
     await employmentForm(actionOperator.page, "create_record")
       .getByLabel("Worker Profile ID")
       .fill(employmentActionWorkerProfileId);
@@ -1109,7 +1133,6 @@ test("Employment widgets follow each exact current capability instead of a read 
     await expect(
       actionAdmin.page.getByRole("heading", { name: "Last mutation receipt" }),
     ).toHaveCount(0);
-
     await viewAdmin.page.goto(`${viewAdmin.origin}/workspace/hr/employment/settings`);
     await expect(
       viewAdmin.page
@@ -1126,5 +1149,92 @@ test("Employment widgets follow each exact current capability instead of a read 
     }
   } finally {
     await closeActors(actionAdmin, actionOperator, listOperator, readEmployee, viewAdmin);
+  }
+});
+
+test("Shift roster renders across operator, employee and manager authority", async ({
+  browser,
+}) => {
+  const employee = await openActor(
+    browser,
+    fixture.employmentEmployeeOrigin,
+    fixture.employmentEmployeeLabel,
+  );
+  const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
+  const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
+  const submit = async (actor, name) => {
+    const button = actor.page.getByRole("button", { name });
+    await button.focus();
+    await actor.page.keyboard.press("Enter");
+    await expect(actor.page).toHaveURL(/result=success/);
+  };
+  try {
+    await employee.page.goto(`${employee.origin}/workspace/hr`);
+    await expect(employee.page.getByRole("link", { name: "Report shifts" })).toHaveCount(0);
+    await operator.page.goto(`${operator.origin}/workspace/hr/shifts/reports?result=success`);
+    await expect(
+      operator.page.getByRole("heading", { name: "Last Shift action receipt" }),
+    ).toHaveCount(0);
+    await expect(operator.page.locator("#shift-result")).toContainText("not confirmed");
+    await operator.page.goto(`${operator.origin}/workspace/hr/shifts/reports?result=conflict`);
+    await expect(operator.page.locator("#shift-result")).toContainText("not confirmed");
+    await operator.page.getByText("Create an exact roster period", { exact: true }).click();
+    await operator.page.getByLabel("Period start").fill("2028-08-01");
+    await operator.page.getByLabel("Period end").fill("2028-08-07");
+    await submit(operator, "Create draft roster");
+    const created = new URL(operator.page.url());
+    const rosterVersionId = created.searchParams.get("rosterVersionId");
+    expect(rosterVersionId).toMatch(/^[0-9a-f-]{36}$/);
+
+    const assign = async (workerProfileId) => {
+      await operator.page.goto(
+        `${operator.origin}/workspace/hr/shifts/reports?rosterVersionId=${rosterVersionId}&rosterVersion=1`,
+      );
+      await operator.page.getByText("Assign a worker", { exact: true }).click();
+      await operator.page.getByLabel("Worker Profile ID").fill(workerProfileId);
+      await operator.page.getByLabel("Start instant").fill("2028-08-03T04:00:00Z");
+      await operator.page.getByLabel("End instant").fill("2028-08-03T12:00:00Z");
+      await submit(operator, "Assign shift");
+    };
+    await assign(shiftEmployeeWorkerProfileId);
+
+    await operator.page.goto(
+      `${operator.origin}/workspace/hr/shifts/reports?rosterVersionId=${rosterVersionId}&rosterVersion=1`,
+    );
+    await submit(operator, "Publish exact roster");
+
+    await employee.page.setViewportSize({ width: 390, height: 844 });
+    await employee.page.goto(
+      `${employee.origin}/workspace/hr/shifts?from=2028-08-01&to=2028-08-07`,
+    );
+    await expect(employee.page.getByText("Asia/Karachi", { exact: true })).toBeVisible();
+    expect(
+      await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+    await employee.page.getByRole("link", { name: "View persistent history" }).click();
+    await expect(employee.page.getByRole("heading", { name: "Evidence history" })).toBeVisible();
+    await expect(employee.page.locator(".history-list strong")).toHaveText(["active"]);
+    await employee.page.reload();
+    await expect(employee.page.locator(".history-list strong")).toHaveText(["active"]);
+
+    await manager.page.goto(
+      `${manager.origin}/workspace/hr/shifts/reports?rosterVersionId=${rosterVersionId}&status=active`,
+    );
+    await expect(
+      manager.page.getByText(shiftEmployeeWorkerProfileId, { exact: false }),
+    ).toBeVisible();
+
+    await operator.page.goto(
+      `${operator.origin}/workspace/hr/shifts/reports?rosterVersionId=${rosterVersionId}&status=active`,
+    );
+    await submit(operator, "Cancel assignment");
+    await expect(
+      operator.page.getByRole("heading", { name: "Last Shift action receipt" }),
+    ).toBeVisible();
+    await expect(operator.page.getByText(/cancel confirmed cancelled/)).toBeVisible();
+    await operator.page.getByRole("link", { name: "View persistent history" }).click();
+    await expect(operator.page.locator(".history-list strong").last()).toHaveText("cancelled");
+  } finally {
+    await closeActors(employee, manager, operator);
   }
 });
