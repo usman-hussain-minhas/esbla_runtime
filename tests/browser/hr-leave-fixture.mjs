@@ -391,6 +391,7 @@ export async function seedHrLeaveFixture() {
   if (!/^[a-z_][a-z0-9_]*$/.test(applicationRole)) throw new Error("Unsafe application role");
   const pool = createDatabasePool(requiredEnvironment("DATABASE_MIGRATION_URL"), { max: 2 });
   let employmentActionWorkerProfileId;
+  let shiftEmployeeWorkerProfileId;
   try {
     await migrateDatabase(createDatabase(pool));
     const client = await pool.connect();
@@ -411,10 +412,13 @@ export async function seedHrLeaveFixture() {
           hr_worker_profiles, hr_employment_records TO ${applicationRole}`,
       );
       await client.query(
-        `GRANT SELECT ON hr_employment_record_service_control TO ${applicationRole}`,
+        `GRANT SELECT ON hr_employment_record_service_control,
+          hr_shift_assignment_service_control TO ${applicationRole}`,
       );
       await client.query(
-        `GRANT SELECT, INSERT ON hr_employment_record_versions TO ${applicationRole}`,
+        `GRANT SELECT, INSERT ON hr_employment_record_versions TO ${applicationRole};
+         GRANT SELECT, INSERT, UPDATE ON hr_shift_assignments,
+          hr_shift_roster_versions TO ${applicationRole}`,
       );
       await client.query(
         `GRANT SELECT, INSERT ON evidence_events, outbox_events TO ${applicationRole}`,
@@ -512,6 +516,28 @@ export async function seedHrLeaveFixture() {
       );
       await client.query(
         `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+         SELECT $1, actor.principal_id, capability FROM
+          (VALUES ($2::uuid,$5::text[]),($3::uuid,$5::text[]),($4::uuid,$6::text[]))
+          actor(principal_id,capabilities)
+         CROSS JOIN LATERAL unnest(actor.capabilities) capability`,
+        [
+          fixture.tenantId,
+          fixture.employmentEmployeePrincipalId,
+          fixture.managerPrincipalId,
+          fixture.operatorPrincipalId,
+          ["hr.shift.list_roster", "hr.shift.view_detail"],
+          [
+            "hr.shift.assign",
+            "hr.shift.cancel",
+            "hr.shift.create_roster",
+            "hr.shift.list_roster",
+            "hr.shift.publish",
+            "hr.shift.view_detail",
+          ],
+        ],
+      );
+      await client.query(
+        `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
          VALUES ($1, $2, 'hr.employment.list_authorized'),
                 ($1, $2, 'hr.employment.view_detail'),
                 ($1, $3, 'hr.employment.create_record'),
@@ -525,7 +551,7 @@ export async function seedHrLeaveFixture() {
                 ($1, $4, 'hr.employment.view_service_control'),
                 ($1, $5, 'hr.employment.create_record'),
                 ($1, $5, 'hr.employment.create_version'),
-                ($1, $5, 'hr.employment.end_record'),
+                ($1, $5, 'hr.employment.end_record'), ($1, $5, 'hr.shift.create_roster'), ($1, $5, 'hr.shift.assign'), ($1, $5, 'hr.shift.publish'), ($1, $5, 'hr.shift.cancel'),
                 ($1, $6, 'hr.employment.view_service_control'),
                 ($1, $7, 'hr.employment.list_authorized')`,
         [
@@ -542,7 +568,8 @@ export async function seedHrLeaveFixture() {
         `INSERT INTO service_activations (tenant_id, service_key, state, version)
          VALUES ($1, 'hr.leave_request', 'active', 1),
                 ($1, 'workforce_profile', 'active', 1),
-                ($1, 'employment_record', 'active', 1)`,
+                ($1, 'employment_record', 'active', 1),
+                ($1, 'shift_assignment', 'active', 1)`,
         [fixture.tenantId],
       );
       await client.query(
@@ -578,7 +605,10 @@ export async function seedHrLeaveFixture() {
         "BROWSER-DIRECT-001",
         fixture.reportPrincipalId,
       );
-      await createActiveProfile("BROWSER-EMPLOYMENT-001", fixture.employmentEmployeePrincipalId);
+      shiftEmployeeWorkerProfileId = await createActiveProfile(
+        "BROWSER-EMPLOYMENT-001",
+        fixture.employmentEmployeePrincipalId,
+      );
       const actionWorker = await client.query(
         `INSERT INTO hr_worker_profiles (worker_profile_id, tenant_id, employee_number)
          VALUES (gen_random_uuid(), $1, 'BROWSER-EMPLOYMENT-ACTION-001')
@@ -595,17 +625,13 @@ export async function seedHrLeaveFixture() {
                 ($1, 'BROWSER-EMPLOYMENT-CONTROL-001')`,
         [fixture.tenantId],
       );
-      const relationship = await client.query(
-        `INSERT INTO hr_reporting_relationships
-           (tenant_id, worker_profile_id, manager_worker_profile_id,
-            relationship_status, relationship_version)
-         VALUES ($1, $2, $3, 'assigned', 1) RETURNING reporting_relationship_id`,
-        [fixture.tenantId, reportWorkerProfileId, managerWorkerProfileId],
-      );
       await client.query(
-        `UPDATE hr_worker_profiles SET current_reporting_relationship_id=$3, row_version=4
-         WHERE tenant_id=$1 AND worker_profile_id=$2`,
-        [fixture.tenantId, reportWorkerProfileId, relationship.rows[0]?.reporting_relationship_id],
+        `WITH relationships AS (
+           INSERT INTO hr_reporting_relationships (tenant_id,worker_profile_id,manager_worker_profile_id,relationship_status,relationship_version)
+           VALUES ($1,$2,$4,'assigned',1),($1,$3,$4,'assigned',1) RETURNING worker_profile_id,reporting_relationship_id)
+         UPDATE hr_worker_profiles profile SET current_reporting_relationship_id=relationship.reporting_relationship_id,row_version=4 FROM relationships relationship WHERE profile.tenant_id=$1 AND profile.worker_profile_id=relationship.worker_profile_id`,
+        // biome-ignore format: exact four-value SQL binding
+        [fixture.tenantId, reportWorkerProfileId, shiftEmployeeWorkerProfileId, managerWorkerProfileId],
       );
       await client.query("SELECT set_config('app.tenant_id', $1, true)", [
         fixture.employmentActionAdminTenantId,
@@ -642,5 +668,8 @@ export async function seedHrLeaveFixture() {
   } finally {
     await pool.end();
   }
-  return Object.freeze({ employmentActionWorkerProfileId });
+  return Object.freeze({
+    employmentActionWorkerProfileId,
+    shiftEmployeeWorkerProfileId,
+  });
 }

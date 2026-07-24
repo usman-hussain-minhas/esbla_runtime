@@ -16,6 +16,19 @@ import { hrManifest } from "./manifest.js";
 
 export const HR_SHIFT_ASSIGNMENT_SERVICE_KEY = "shift_assignment";
 export const HR_SHIFT_ASSIGNMENT_BILLING_STATE = "non_billable";
+export const HR_SHIFT_AUTHORIZED_ACTIONS = Object.freeze([
+  "activate_service",
+  "assign",
+  "cancel",
+  "configure_service",
+  "create_roster",
+  "deactivate_service",
+  "list_roster",
+  "publish",
+  "view_detail",
+  "view_service_control",
+] as const);
+export type ShiftAuthorizedAction = (typeof HR_SHIFT_AUTHORIZED_ACTIONS)[number];
 
 type ShiftAction = "assign_shift" | "cancel_assignment" | "create_roster" | "publish_roster";
 const SHIFT_CAPABILITY_SUFFIXES: Readonly<Record<ShiftAction, string>> = {
@@ -325,6 +338,60 @@ async function authorize(transaction: TenantTransaction, action: ShiftAction): P
     actionKey,
     HR_SHIFT_ASSIGNMENT_SERVICE_KEY,
   );
+}
+
+const SHIFT_ADMIN_ACTIONS = new Set<ShiftAuthorizedAction>([
+  "activate_service",
+  "configure_service",
+  "deactivate_service",
+  "view_service_control",
+]);
+const SHIFT_OPERATOR_ACTIONS = new Set<ShiftAuthorizedAction>([
+  "assign",
+  "cancel",
+  "create_roster",
+  "publish",
+]);
+
+function roleAllowsShiftAction(
+  roleKey: string,
+  action: ShiftAuthorizedAction,
+  listMode?: "own" | "roster",
+): boolean {
+  if (action === "list_roster" && listMode)
+    return listMode === "own"
+      ? roleKey === "employee"
+      : ["hr_operator", "manager"].includes(roleKey);
+  if (SHIFT_ADMIN_ACTIONS.has(action)) return roleKey === "tenant_admin";
+  if (SHIFT_OPERATOR_ACTIONS.has(action)) return roleKey === "hr_operator";
+  return roleKey === "employee" || roleKey === "manager" || roleKey === "hr_operator";
+}
+
+export async function inspectShiftActionAuthority(
+  pool: Pool,
+  context: OperationContext,
+  listMode?: "own" | "roster",
+): Promise<readonly ShiftAuthorizedAction[]> {
+  return await withTenantTransaction(pool, context, async (transaction) => {
+    const capabilityIds = HR_SHIFT_AUTHORIZED_ACTIONS.map((action) => `hr.shift.${action}`);
+    const result = await transaction.client.query<{ capability_id: string }>(
+      `SELECT capability_id FROM membership_capabilities
+       WHERE tenant_id=$1 AND principal_id=$2 AND capability_id=ANY($3::text[])
+       ORDER BY capability_id`,
+      [transaction.context.tenantId, transaction.context.actorPrincipalId, capabilityIds],
+    );
+    const current = new Set(result.rows.map(({ capability_id }) => capability_id));
+    return Object.freeze(
+      HR_SHIFT_AUTHORIZED_ACTIONS.filter((action) => {
+        const capabilityId = `hr.shift.${action}`;
+        return (
+          roleAllowsShiftAction(transaction.actor.roleKey, action, listMode) &&
+          current.has(capabilityId) &&
+          hrManifest.capabilities.some(({ id }) => id === capabilityId)
+        );
+      }),
+    );
+  });
 }
 
 async function prepareReceipt(

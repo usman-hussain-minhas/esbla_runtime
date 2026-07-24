@@ -327,6 +327,7 @@ try {
             ...playwrightArtifactEnvironment,
             ESBLA_TEST_EMPLOYMENT_ACTION_WORKER_PROFILE_ID:
               seededFixture.employmentActionWorkerProfileId,
+            ESBLA_TEST_SHIFT_EMPLOYEE_WORKER_PROFILE_ID: seededFixture.shiftEmployeeWorkerProfileId,
             TMPDIR: playwrightRoot.path,
           },
         },

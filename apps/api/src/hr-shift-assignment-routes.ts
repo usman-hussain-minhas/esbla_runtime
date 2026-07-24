@@ -51,6 +51,7 @@ import {
   deactivateShiftAssignmentService,
   getAuthorizedShiftAssignmentDetail,
   getShiftAssignmentServiceControl,
+  inspectShiftActionAuthority,
   listAuthorizedShiftAssignments,
   publishShiftRoster,
 } from "@esbla/hr";
@@ -136,6 +137,12 @@ export function registerShiftAssignmentRoutes({
   runtimeEnvironment,
   server,
 }: RegisterShiftAssignmentRoutesOptions): void {
+  const attachShiftActions = async (request: FastifyRequest, reply: FastifyReply) => {
+    const listMode = (request.query as { mode?: "own" | "roster" }).mode;
+    const actions = await inspectShiftActionAuthority(pool, operationContext(request), listMode);
+    reply.header("x-esbla-shift-actions", JSON.stringify(actions));
+  };
+
   for (const schema of [
     hrShiftAssignBodySchema,
     hrShiftAssignmentPathSchema,
@@ -160,6 +167,7 @@ export function registerShiftAssignmentRoutes({
         async (request) => {
           strict(parseHrServiceControlQuery, request.query);
         },
+        attachShiftActions,
       ],
       schema: {
         querystring: { $ref: "HrServiceControlQueryV1#" },
@@ -416,6 +424,7 @@ export function registerShiftAssignmentRoutes({
           strict(parseHrShiftAssignmentPath, request.params);
           strict(parseHrShiftDetailQuery, request.query);
         },
+        attachShiftActions,
       ],
       schema: {
         params: { $ref: "HrShiftAssignmentPathV1#" },
@@ -448,6 +457,7 @@ export function registerShiftAssignmentRoutes({
         async (request) => {
           request.query = listQuery(request.query);
         },
+        attachShiftActions,
       ],
       schema: {
         querystring: { $ref: "HrShiftListQueryV1#" },

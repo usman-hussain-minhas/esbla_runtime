@@ -9,17 +9,30 @@ import {
 } from "lucide-react";
 import { loadEmploymentList } from "../../../lib/hr-employment-record";
 import { hasEmploymentAction } from "../../../lib/hr-employment-record-core";
+import { loadOwnShifts, loadRosterShifts } from "../../../lib/hr-shift-assignment";
+import { hasShiftAction } from "../../../lib/hr-shift-assignment-core";
 import { loadAuthorizedWorkforceList } from "../../../lib/hr-workforce-profile-list";
 import { loadWorkforceProfileServiceControl } from "../../../lib/hr-workforce-profile-service-control";
 
 export default async function HrHubPage() {
-  const [directReports, workforceAdministration, workforceServiceControl, employmentRecords] =
-    await Promise.all([
-      loadAuthorizedWorkforceList({}, "direct_reports"),
-      loadAuthorizedWorkforceList({}, "workforce"),
-      loadWorkforceProfileServiceControl(),
-      loadEmploymentList(),
-    ]);
+  const [
+    directReports,
+    workforceAdministration,
+    workforceServiceControl,
+    employmentRecords,
+    shifts,
+    shiftReports,
+  ] = await Promise.all([
+    loadAuthorizedWorkforceList({}, "direct_reports"),
+    loadAuthorizedWorkforceList({}, "workforce"),
+    loadWorkforceProfileServiceControl(),
+    loadEmploymentList(),
+    loadOwnShifts(),
+    loadRosterShifts({
+      rosterVersionId: "00000000-0000-4000-8000-000000000000",
+      status: "active",
+    }),
+  ]);
   const canDiscoverWorkforceSettings =
     workforceServiceControl.status === "success" ||
     (workforceServiceControl.status === "error" && workforceServiceControl.kind === "not_found");
@@ -32,6 +45,22 @@ export default async function HrHubPage() {
     ["activate_service", "configure_service", "deactivate_service", "view_service_control"] as const
   ).some((action) => hasEmploymentAction(employmentActions, action));
   const canDiscoverEmployment = employmentActions.length > 0;
+  const shiftActions = shifts.authorizedActions;
+  const canViewOwnShifts =
+    hasShiftAction(shiftActions, "list_roster") && shifts.status === "success";
+  const reportActions = shiftReports.authorizedActions;
+  const canMutateRoster = (["assign", "cancel", "create_roster", "publish"] as const).some(
+    (action) => hasShiftAction(reportActions, action),
+  );
+  const canViewReportShifts =
+    shiftReports.status === "error" &&
+    ((shiftReports.kind === "denied" && canMutateRoster) ||
+      (shiftReports.kind === "not_found" &&
+        (canMutateRoster || hasShiftAction(reportActions, "list_roster"))));
+  const shiftLinks = [
+    [canViewOwnShifts, "/workspace/hr/shifts", "My shifts"],
+    [canViewReportShifts, "/workspace/hr/shifts/reports", "Report shifts"],
+  ].filter(([visible]) => visible);
   return (
     <section aria-labelledby="hr-hub-heading" className="work-surface">
       <header className="surface-heading">
@@ -117,6 +146,23 @@ export default async function HrHubPage() {
                   Employment settings
                 </a>
               ) : null}
+            </div>
+          </li>
+        ) : null}
+        {shiftActions.length > 0 ? (
+          <li className="work-queue-item">
+            <div className="work-queue-primary">
+              <div>
+                <p className="work-queue-kicker">Shift Assignment</p>
+                <h2>Published work rosters</h2>
+              </div>
+            </div>
+            <div className="work-queue-actions">
+              {shiftLinks.map(([, href, label]) => (
+                <a className="text-command" href={String(href)} key={String(href)}>
+                  {label}
+                </a>
+              ))}
             </div>
           </li>
         ) : null}

@@ -444,6 +444,7 @@ describe("Shift Assignment authorized read APIs", () => {
       url: `/v1/hr/shift-assignments?${ownQuery}`,
     });
     expect(own.response.statusCode, own.response.body).toBe(200);
+    expect(own.response.headers["x-esbla-shift-actions"]).toBe('["list_roster","view_detail"]');
     expect(own.response.json()).toMatchObject({
       accessScope: "own",
       items: [{ shiftAssignmentId: assignmentId, status: "active", workerProfileId }],
@@ -487,6 +488,11 @@ describe("Shift Assignment authorized read APIs", () => {
         url: `/v1/hr/shift-assignments?${rosterQuery}`,
       });
       expect(result.response.statusCode, result.response.body).toBe(200);
+      expect(result.response.headers["x-esbla-shift-actions"]).toBe(
+        principalId === ids.manager
+          ? '["list_roster","view_detail"]'
+          : '["assign","cancel","create_roster","list_roster","publish","view_detail"]',
+      );
       expect(result.response.json()).toMatchObject({
         accessScope,
         items: [{ shiftAssignmentId: assignmentId }],
@@ -500,6 +506,11 @@ describe("Shift Assignment authorized read APIs", () => {
         url: `/v1/hr/shift-assignments/by-id/${assignmentId}`,
       });
       expect(detail.response.statusCode, detail.response.body).toBe(200);
+      expect(detail.response.headers["x-esbla-shift-actions"]).toBe(
+        principalId === ids.operator
+          ? '["assign","cancel","create_roster","list_roster","publish","view_detail"]'
+          : '["list_roster","view_detail"]',
+      );
       expect(detail.response.json()).toMatchObject({
         assignment: { shiftAssignmentId: assignmentId, status: "active" },
         history: [
@@ -761,6 +772,9 @@ describe("Shift Assignment service-control APIs", () => {
     const controlUrl = "/v1/hr/shift-rosters/service-control";
     const initial = await signedGet({ principalId: ids.admin, url: controlUrl });
     expect(initial.response.statusCode, initial.response.body).toBe(200);
+    expect(initial.response.headers["x-esbla-shift-actions"]).toBe(
+      '["activate_service","configure_service","deactivate_service","view_service_control"]',
+    );
     const initialControl = initial.response.json();
     expect(initialControl).toEqual({
       activationState: "active",
