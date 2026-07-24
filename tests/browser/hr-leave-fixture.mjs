@@ -511,7 +511,11 @@ export async function seedHrLeaveFixture() {
                 ($1, $5, 'hr.shift.activate_service'),
                 ($1, $5, 'hr.shift.configure_service'),
                 ($1, $5, 'hr.shift.deactivate_service'),
-                ($1, $5, 'hr.shift.view_service_control')`,
+                ($1, $5, 'hr.shift.view_service_control'),
+                ($1, $5, 'hr.attendance.activate_service'),
+                ($1, $5, 'hr.attendance.configure_service'),
+                ($1, $5, 'hr.attendance.deactivate_service'),
+                ($1, $5, 'hr.attendance.view_service_control')`,
         [
           fixture.tenantId,
           fixture.employeePrincipalId,
@@ -590,8 +594,7 @@ export async function seedHrLeaveFixture() {
          VALUES ($1, 'hr.leave_request', 'active', 1),
                 ($1, 'workforce_profile', 'active', 1),
                 ($1, 'employment_record', 'active', 1),
-                ($1, 'shift_assignment', 'active', 1),
-                ($1, 'attendance', 'active', 1)`,
+                ($1, 'shift_assignment', 'active', 1)`,
         [fixture.tenantId],
       );
       await client.query(
@@ -673,7 +676,10 @@ export async function seedHrLeaveFixture() {
          VALUES ($1, $2, 'hr.employment.activate_service'),
                 ($1, $2, 'hr.employment.configure_service'),
                 ($1, $2, 'hr.employment.deactivate_service'),
-                ($1, $2, 'hr.shift.configure_service')`,
+                ($1, $2, 'hr.shift.configure_service'),
+                ($1, $2, 'hr.attendance.activate_service'),
+                ($1, $2, 'hr.attendance.configure_service'),
+                ($1, $2, 'hr.attendance.deactivate_service')`,
         [fixture.employmentActionAdminTenantId, fixture.employmentActionAdminPrincipalId],
       );
       await client.query(

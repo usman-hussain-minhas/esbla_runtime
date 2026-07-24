@@ -2,7 +2,6 @@ import { expect, test } from "@playwright/test";
 import { fixture } from "./hr-leave-fixture.mjs";
 
 test.describe.configure({ mode: "serial" });
-
 const employmentActionWorkerProfileId = process.env.ESBLA_TEST_EMPLOYMENT_ACTION_WORKER_PROFILE_ID;
 const fixtureId = /^[0-9a-f-]{36}$/;
 if (!fixtureId.test(employmentActionWorkerProfileId ?? "")) {
@@ -12,7 +11,6 @@ const shiftEmployeeWorkerProfileId = process.env.ESBLA_TEST_SHIFT_EMPLOYEE_WORKE
 if (!fixtureId.test(shiftEmployeeWorkerProfileId ?? "")) {
   throw new Error("Shift Worker Profile fixtures are missing");
 }
-
 async function openActor(browser, origin, label) {
   const context = await browser.newContext({ serviceWorkers: "block" });
   const page = await context.newPage();
@@ -39,7 +37,6 @@ async function openActor(browser, origin, label) {
 
   return { context, diagnostics, label, origin, page };
 }
-
 async function closeActors(...actors) {
   for (const actor of actors) {
     expect.soft(actor.diagnostics.console, `${actor.label} console errors`).toEqual([]);
@@ -57,7 +54,6 @@ async function closeActors(...actors) {
     )
     .toBe(true);
 }
-
 async function submitLeave(actor, values) {
   await actor.page.goto(`${actor.origin}/workspace/hr/leave/new`);
   await expect(actor.page).toHaveTitle("Esbla");
@@ -89,13 +85,11 @@ async function submitLeave(actor, values) {
   await expect(actor.page.locator(".leave-history-item strong")).toHaveText(["Submitted"]);
   return leaveRequestId;
 }
-
 function assignedCard(page, leaveRequestId) {
   return page.locator('ol[aria-label="Assigned leave approvals"] > li').filter({
     has: page.locator(`a[href="/workspace/hr/leave/${leaveRequestId}?returnContext=my-work"]`),
   });
 }
-
 async function openAssignedWork(actor, leaveRequestId) {
   await actor.page.goto(`${actor.origin}/workspace/my-work`);
   await expect(actor.page.getByRole("heading", { name: "Assigned work" })).toBeVisible();
@@ -1360,6 +1354,73 @@ test("Shift roster renders across operator, employee and manager authority", asy
     await expect(operator.page.locator(".history-list strong").last()).toHaveText("cancelled");
   } finally {
     await closeActors(employee, manager, operator);
+  }
+});
+
+test("tenant admin controls Attendance settings while record access remains separate", async ({
+  browser,
+}) => {
+  const admin = await openActor(browser, fixture.adminOrigin, fixture.adminLabel);
+  const actionAdmin = await openActor(
+    browser,
+    fixture.employmentActionAdminOrigin,
+    fixture.employmentActionAdminLabel,
+  );
+  const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
+  const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
+  const submit = async (actor, name) => {
+    const response = actor.page.waitForResponse(
+      (candidate) => new URL(candidate.url()).pathname === "/workspace/hr/attendance/action",
+    );
+    await actor.page.getByRole("button", { exact: true, name }).press("Enter");
+    expect((await response).status()).toBe(303);
+    await expect(actor.page.locator(".success-banner")).toBeFocused();
+  };
+  try {
+    await actionAdmin.page.goto(`${actionAdmin.origin}/workspace/hr/attendance/settings`);
+    await expect(actionAdmin.page.getByLabel("Expected activation version").first()).toBeVisible();
+    await submit(actionAdmin, "Activate service");
+    await expect(actionAdmin.page.getByLabel("Expected settings version")).toHaveValue("1");
+    await actionAdmin.page.getByLabel("Allowed manual observations").selectOption("presence_end");
+    await submit(actionAdmin, "Save Attendance settings");
+    await submit(actionAdmin, "Deactivate service");
+    await expect(actionAdmin.page.getByLabel("Expected activation version")).toHaveValue("2");
+    await admin.page.goto(`${admin.origin}/workspace/hr`);
+    await admin.page.getByRole("link", { name: "Attendance settings" }).click();
+    await expect(admin.page.getByRole("heading", { name: "Attendance settings" })).toBeVisible();
+    await submit(admin, "Activate service");
+    await expect(admin.page.locator(".leave-status")).toHaveText("Active");
+    await admin.page.getByLabel("Allowed manual observations").selectOption("presence_start");
+    await submit(admin, "Save Attendance settings");
+    await expect(admin.page.getByLabel("Allowed manual observations")).toHaveValue(
+      "presence_start",
+    );
+    await operator.page.goto(`${operator.origin}/workspace/hr/attendance/reports`);
+    await operator.page.getByLabel("Worker profile ID").fill(shiftEmployeeWorkerProfileId);
+    await operator.page.getByLabel("Observation").selectOption("presence_end");
+    await operator.page.getByLabel("Observed instant").fill("2028-08-03T12:30:00.000Z");
+    await operator.page.getByRole("button", { name: "Record attendance" }).press("Enter");
+    await expect(operator.page.locator(".form-error-summary")).toContainText(
+      "Attendance action was not confirmed",
+    );
+    await employee.page.goto(`${employee.origin}/workspace/hr/attendance/settings`);
+    await expect(
+      employee.page.getByRole("heading", { name: "Attendance unavailable" }),
+    ).toBeVisible();
+    await expect(employee.page.getByRole("heading", { name: "Service lifecycle" })).toHaveCount(0);
+    await submit(admin, "Deactivate service");
+    await expect(admin.page.locator(".leave-status")).toHaveText("Inactive");
+    await employee.page.goto(`${employee.origin}/workspace/hr/attendance`);
+    await expect(employee.page.getByRole("heading", { name: "Attendance inactive" })).toBeVisible();
+    await submit(admin, "Activate service");
+    await expect(admin.page.locator(".leave-status")).toHaveText("Active");
+    await admin.page.setViewportSize({ height: 844, width: 390 });
+    const fitsViewport = await admin.page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    );
+    expect(fitsViewport).toBe(true);
+  } finally {
+    await closeActors(actionAdmin, admin, employee, operator);
   }
 });
 

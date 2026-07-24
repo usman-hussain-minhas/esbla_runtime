@@ -8,9 +8,14 @@ import {
   canRenderAttendanceAction,
   decodeAttendanceMutation,
   decodeAttendanceRead,
+  decodeAttendanceServiceControl,
+  decodeAttendanceServiceMutation,
   hasAttendanceAction,
+  isAttendanceServiceActionOnlyFallback,
+  isAttendanceServiceOperation,
   parseAttendanceActions,
   validateAttendanceAction,
+  validateAttendanceServiceAction,
 } from "./hr-attendance-core";
 
 const ids = {
@@ -37,11 +42,23 @@ const correction = {
   supersedesAttendanceCorrectionId: null,
   version: 1,
 } as const;
+const serviceControl = {
+  activationState: "active",
+  activationVersion: 1,
+  serviceKey: "attendance",
+  settings: {
+    correctionNoteRequired: true,
+    manualObservationKinds: "presence_start,presence_end",
+  },
+  settingsVersion: 1,
+  updatedAt: "2026-07-24T09:02:00.000Z",
+  version: 1,
+} as const;
 function response(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return Response.json(body, {
     headers: {
       "x-esbla-attendance-actions":
-        '["correct","list_own","list_reports","record_manual","view_detail"]',
+        '["activate_service","configure_service","correct","deactivate_service","list_own","list_reports","record_manual","view_detail","view_service_control"]',
       ...headers,
     },
     status,
@@ -115,6 +132,29 @@ describe("Attendance rendered boundary", () => {
       kind: "inactive",
       title: "Attendance inactive",
     });
+    for (const code of [
+      "ACTIVATION_CONFLICT",
+      "ATTENDANCE_CONFLICT",
+      "ATTENDANCE_VERSION_CONFLICT",
+      "IDEMPOTENCY_CONFLICT",
+    ]) {
+      await expect(
+        decodeAttendanceServiceControl(
+          response(
+            {
+              ...problem,
+              code,
+              detail: "Attendance currentness check failed",
+              status: 409,
+              title: "Conflict",
+              type: `urn:esbla:problem:${code.toLowerCase()}`,
+            },
+            409,
+            { "content-type": "application/problem+json" },
+          ),
+        ),
+      ).rejects.toMatchObject({ httpStatus: 409, kind: "conflict" });
+    }
   });
 
   it("validates paired cursors, date periods and exact mutation forms", () => {
@@ -187,5 +227,117 @@ describe("Attendance rendered boundary", () => {
         workerProfileId: ids.worker,
       }),
     ).toMatchObject({ ok: false, state: { kind: "validation" } });
+  });
+
+  it("binds strict Attendance service control forms and response continuity", async () => {
+    const actions = parseAttendanceActions(
+      response({}, 200, {
+        "x-esbla-attendance-actions":
+          '["activate_service","configure_service","correct","deactivate_service","list_own","list_reports","record_manual","view_detail","view_service_control"]',
+      }),
+    );
+    expect(actions).toEqual([
+      "activate_service",
+      "configure_service",
+      "correct",
+      "deactivate_service",
+      "list_own",
+      "list_reports",
+      "record_manual",
+      "view_detail",
+      "view_service_control",
+    ]);
+    expect(isAttendanceServiceOperation("configure_service")).toBe(true);
+    expect(
+      validateAttendanceServiceAction({
+        expectedVersion: "",
+        idempotencyKey: ids.receipt,
+        operation: "activate_service",
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: { body: { expectedVersion: null }, operation: "activate_service" },
+    });
+    expect(
+      validateAttendanceServiceAction({
+        correctionNoteRequired: "true",
+        expectedSettingsVersion: "1",
+        idempotencyKey: ids.receipt,
+        manualObservationKinds: "presence_end,presence_start",
+        operation: "configure_service",
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        body: {
+          expectedSettingsVersion: 1,
+          settings: {
+            correctionNoteRequired: true,
+            manualObservationKinds: "presence_start,presence_end",
+          },
+        },
+        operation: "configure_service",
+      },
+    });
+    for (const invalid of [
+      {
+        correctionNoteRequired: "false",
+        expectedSettingsVersion: "1",
+        idempotencyKey: ids.receipt,
+        manualObservationKinds: "presence_start",
+        operation: "configure_service",
+      },
+      {
+        correctionNoteRequired: "true",
+        expectedSettingsVersion: "1",
+        idempotencyKey: ids.receipt,
+        manualObservationKinds: "presence_start,presence_start",
+        operation: "configure_service",
+      },
+      {
+        expectedVersion: "1",
+        extra: "field",
+        idempotencyKey: ids.receipt,
+        operation: "deactivate_service",
+      },
+    ]) {
+      expect(validateAttendanceServiceAction(invalid)).toMatchObject({
+        ok: false,
+        state: { kind: "validation" },
+      });
+    }
+    await expect(decodeAttendanceServiceControl(response(serviceControl))).resolves.toEqual(
+      serviceControl,
+    );
+    await expect(
+      decodeAttendanceServiceMutation(
+        response(serviceControl, 200, { "idempotent-replayed": "false" }),
+        {
+          body: { expectedVersion: null },
+          idempotencyKey: ids.receipt,
+          operation: "activate_service",
+        },
+      ),
+    ).resolves.toEqual(serviceControl);
+    await expect(
+      decodeAttendanceServiceMutation(
+        response({ ...serviceControl, serviceKey: "shift_assignment" }),
+        {
+          body: { expectedVersion: null },
+          idempotencyKey: ids.receipt,
+          operation: "activate_service",
+        },
+      ),
+    ).rejects.toMatchObject({ kind: "operational_error" });
+    expect(isAttendanceServiceActionOnlyFallback("denied", true)).toBe(true);
+    expect(isAttendanceServiceActionOnlyFallback("denied", false)).toBe(false);
+    for (const failure of [
+      "dependency_unavailable",
+      "inactive",
+      "not_found",
+      "operational_error",
+    ] as const) {
+      expect(isAttendanceServiceActionOnlyFallback(failure, true)).toBe(false);
+    }
   });
 });
