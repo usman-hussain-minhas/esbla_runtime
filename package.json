@@ -20,7 +20,7 @@
     "typecheck": "pnpm -r --sort --if-present typecheck"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.3",
+    "@biomejs/biome": "2.5.5",
     "@playwright/test": "1.61.1",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
