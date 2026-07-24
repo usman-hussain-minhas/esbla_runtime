@@ -127,6 +127,13 @@
       "when": 1784867107244,
       "tag": "0017_colorful_lady_vermin",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1784873865879,
+      "tag": "0018_attendance_settings_snapshot_lock",
+      "breakpoints": true
     }
   ]
 }

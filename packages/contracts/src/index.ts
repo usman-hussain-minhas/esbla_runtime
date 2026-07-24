@@ -4,6 +4,7 @@ export {
   type DevelopmentSignatureInput,
   signDevelopmentPrincipal,
 } from "./development-principal.js";
+export * from "./hr-attendance-api.js";
 export {
   type HrEmploymentAccessScope,
   type HrEmploymentCreateRecordBody,
