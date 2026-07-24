@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { createDatabase, createDatabasePool, migrateDatabase } from "@esbla/db";
+import {
+  createAttendanceSyntheticTestMarker,
+  recordSyntheticTestAttendanceObservation,
+} from "@esbla/hr";
 import type { FastifyInstance, InjectOptions } from "fastify";
 import type { Pool, PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -17,6 +21,8 @@ const ids = {
   otherOperator: "92000000-0000-4000-8000-000000000003",
   otherOperatorMembership: "93000000-0000-4000-8000-000000000003",
   otherTenant: "94000000-0000-4000-8000-000000000002",
+  system: "92000000-0000-4000-8000-000000000006",
+  systemMembership: "93000000-0000-4000-8000-000000000006",
   tenant: "94000000-0000-4000-8000-000000000001",
   worker: "92000000-0000-4000-8000-000000000002",
   workerMembership: "93000000-0000-4000-8000-000000000002",
@@ -34,6 +40,7 @@ type SignedGetOptions = Pick<SignedPostOptions, "principalId" | "tenantId"> & {
 };
 let migrationPool: Pool;
 let managerProfileId = "";
+let otherWorkerProfileId = "";
 let pool: Pool;
 let relationshipId = "";
 let server: FastifyInstance;
@@ -255,6 +262,28 @@ async function createObservation(observedAt?: string) {
   expect(result.response.statusCode, result.response.body).toBe(201);
   return result.response.json() as { attendanceObservationId: string };
 }
+async function createActiveWorkerProfile(
+  client: PoolClient,
+  tenantId: string,
+  principalId: string,
+): Promise<string> {
+  const profile = await client.query<{ worker_profile_id: string }>(
+    "INSERT INTO hr_worker_profiles (tenant_id) VALUES ($1) RETURNING worker_profile_id",
+    [tenantId],
+  );
+  const profileId = String(profile.rows[0]?.worker_profile_id);
+  await client.query(
+    `UPDATE hr_worker_profiles SET principal_id=$3,row_version=2
+     WHERE tenant_id=$1 AND worker_profile_id=$2`,
+    [tenantId, profileId, principalId],
+  );
+  await client.query(
+    `UPDATE hr_worker_profiles SET workforce_status='active',row_version=3
+     WHERE tenant_id=$1 AND worker_profile_id=$2`,
+    [tenantId, profileId],
+  );
+  return profileId;
+}
 beforeAll(async () => {
   const runtimeUrl = process.env.DATABASE_URL;
   const migrationUrl = process.env.DATABASE_MIGRATION_URL;
@@ -280,8 +309,8 @@ beforeAll(async () => {
     `INSERT INTO principals (principal_id,display_name)
      VALUES ($1,'Attendance Operator'),($2,'Attendance Worker'),
             ($3,'Other Attendance Operator'),($4,'Attendance Administrator'),
-            ($5,'Attendance Manager')`,
-    [ids.operator, ids.worker, ids.otherOperator, ids.admin, ids.manager],
+            ($5,'Attendance Manager'),($6,'Attendance Synthetic System')`,
+    [ids.operator, ids.worker, ids.otherOperator, ids.admin, ids.manager, ids.system],
   );
   const client = await migrationPool.connect();
   try {
@@ -289,7 +318,8 @@ beforeAll(async () => {
       await tenantClient.query(
         `INSERT INTO memberships (membership_id,tenant_id,principal_id,role_key)
          VALUES ($1,$2,$3,'hr_operator'),($4,$2,$5,'employee'),
-                ($6,$2,$7,'tenant_admin'),($8,$2,$9,'manager')`,
+                ($6,$2,$7,'tenant_admin'),($8,$2,$9,'manager'),
+                ($10,$2,$11,'system')`,
         [
           ids.operatorMembership,
           ids.tenant,
@@ -300,6 +330,8 @@ beforeAll(async () => {
           ids.admin,
           ids.managerMembership,
           ids.manager,
+          ids.systemMembership,
+          ids.system,
         ],
       );
       await tenantClient.query(
@@ -315,44 +347,17 @@ beforeAll(async () => {
                 ($1,$4,'hr.attendance.list_own'),
                 ($1,$4,'hr.attendance.view_detail'),
                 ($1,$5,'hr.attendance.list_reports'),
-                ($1,$5,'hr.attendance.view_detail')`,
-        [ids.tenant, ids.operator, ids.admin, ids.worker, ids.manager],
+                ($1,$5,'hr.attendance.view_detail'),
+                ($1,$6,'hr.attendance.record_synthetic_test')`,
+        [ids.tenant, ids.operator, ids.admin, ids.worker, ids.manager, ids.system],
       );
       await tenantClient.query(
         `INSERT INTO service_activations (tenant_id,service_key,state,version)
          VALUES ($1,'workforce_profile','active',1),($1,'attendance','active',1)`,
         [ids.tenant],
       );
-      const profile = await tenantClient.query<{ worker_profile_id: string }>(
-        "INSERT INTO hr_worker_profiles (tenant_id) VALUES ($1) RETURNING worker_profile_id",
-        [ids.tenant],
-      );
-      workerProfileId = String(profile.rows[0]?.worker_profile_id);
-      await tenantClient.query(
-        `UPDATE hr_worker_profiles SET principal_id=$3,row_version=2
-         WHERE tenant_id=$1 AND worker_profile_id=$2`,
-        [ids.tenant, workerProfileId, ids.worker],
-      );
-      await tenantClient.query(
-        `UPDATE hr_worker_profiles SET workforce_status='active',row_version=3
-         WHERE tenant_id=$1 AND worker_profile_id=$2`,
-        [ids.tenant, workerProfileId],
-      );
-      const manager = await tenantClient.query<{ worker_profile_id: string }>(
-        "INSERT INTO hr_worker_profiles (tenant_id) VALUES ($1) RETURNING worker_profile_id",
-        [ids.tenant],
-      );
-      managerProfileId = String(manager.rows[0]?.worker_profile_id);
-      await tenantClient.query(
-        `UPDATE hr_worker_profiles SET principal_id=$3,row_version=2
-         WHERE tenant_id=$1 AND worker_profile_id=$2`,
-        [ids.tenant, managerProfileId, ids.manager],
-      );
-      await tenantClient.query(
-        `UPDATE hr_worker_profiles SET workforce_status='active',row_version=3
-         WHERE tenant_id=$1 AND worker_profile_id=$2`,
-        [ids.tenant, managerProfileId],
-      );
+      workerProfileId = await createActiveWorkerProfile(tenantClient, ids.tenant, ids.worker);
+      managerProfileId = await createActiveWorkerProfile(tenantClient, ids.tenant, ids.manager);
       const relationship = await tenantClient.query<{ reporting_relationship_id: string }>(
         `INSERT INTO hr_reporting_relationships
            (tenant_id,worker_profile_id,manager_worker_profile_id,relationship_status,
@@ -385,6 +390,11 @@ beforeAll(async () => {
         `INSERT INTO service_activations (tenant_id,service_key,state,version)
          VALUES ($1,'workforce_profile','active',1),($1,'attendance','active',1)`,
         [ids.otherTenant],
+      );
+      otherWorkerProfileId = await createActiveWorkerProfile(
+        tenantClient,
+        ids.otherTenant,
+        ids.otherOperator,
       );
     });
   } finally {
@@ -590,6 +600,199 @@ describe("Attendance manual observation API", () => {
       400,
       "REQUEST_VALIDATION_FAILED",
     );
+  });
+});
+describe("Attendance internal synthetic-test action", () => {
+  const syntheticInput = (
+    idempotencyKey: string,
+    observationKind: "presence_end" | "presence_start" = "presence_start",
+  ) => ({
+    idempotencyKey,
+    observationKind,
+    observedAt: "2026-07-23T09:00:00+05:00",
+    workerProfileId,
+  });
+  const syntheticContext = (correlationId: string) => ({
+    actorPrincipalId: ids.system,
+    correlationId,
+    tenantId: ids.tenant,
+  });
+  const callSynthetic = (
+    key: string,
+    marker = createAttendanceSyntheticTestMarker(),
+    input = syntheticInput(key),
+    correlationId = key,
+  ) =>
+    recordSyntheticTestAttendanceObservation(pool, syntheticContext(correlationId), input, marker);
+  const expectDeniedWhile = async (
+    denySql: string,
+    restoreSql: string,
+    values: unknown[],
+    code: string,
+    marker: ReturnType<typeof createAttendanceSyntheticTestMarker>,
+  ) => {
+    await governedMutation(denySql, values);
+    try {
+      await expect(callSynthetic(randomUUID(), marker)).rejects.toMatchObject({ code });
+    } finally {
+      await governedMutation(restoreSql, values);
+    }
+  };
+
+  it("records and replays one synthetic fact with atomic evidence, outbox and no billing", async () => {
+    const key = randomUUID();
+    const marker = createAttendanceSyntheticTestMarker();
+    const before = await counts();
+    const first = await callSynthetic(key, marker);
+    expect(first).toMatchObject({
+      billingState: "non_billable",
+      observation: {
+        observationKind: "presence_start",
+        observedAt: "2026-07-23T04:00:00.000Z",
+        sourceKind: "synthetic",
+        version: 1,
+        workerProfileId,
+      },
+      replayed: false,
+    });
+    expect(await callSynthetic(key, marker, syntheticInput(key), randomUUID())).toEqual({
+      ...first,
+      replayed: true,
+    });
+    expect(await counts()).toEqual({
+      evidence: before.evidence + 2,
+      observations: before.observations + 1,
+      outbox: before.outbox + 1,
+      work: before.work,
+    });
+    const proof = await governed((client) =>
+      client.query(
+        `SELECT evidence.tenant_id,evidence.actor_principal_id,
+                evidence.subject_type,evidence.subject_id,
+                evidence.correlation_id,evidence.prior_state,evidence.new_state,
+                outbox.event_type AS outbox_event_type,
+                outbox.aggregate_type,outbox.aggregate_id,
+                outbox.aggregate_version,outbox.payload,observation.source_kind
+         FROM evidence_events evidence
+         JOIN outbox_events outbox USING (tenant_id,correlation_id)
+         JOIN hr_attendance_observations observation
+           ON observation.tenant_id=evidence.tenant_id
+          AND observation.attendance_observation_id=evidence.subject_id
+         WHERE evidence.tenant_id=$1
+           AND evidence.event_type='hr.attendance.record_synthetic_test'`,
+        [ids.tenant],
+      ),
+    );
+    expect(proof.rows).toHaveLength(1);
+    expect(proof.rows[0]).toMatchObject({
+      actor_principal_id: ids.system,
+      aggregate_id: first.observation.attendanceObservationId,
+      aggregate_type: "hr.attendance.observation",
+      aggregate_version: 1,
+      correlation_id: key,
+      new_state: "recorded",
+      outbox_event_type: "hr.attendance.record_synthetic_test",
+      prior_state: null,
+      source_kind: "synthetic",
+      subject_id: first.observation.attendanceObservationId,
+      subject_type: "hr.attendance.observation",
+      tenant_id: ids.tenant,
+      payload: {
+        action: "record_synthetic_test",
+        afterVersion: 1,
+        beforeVersion: null,
+        billingState: "non_billable",
+      },
+    });
+    await expect(
+      callSynthetic(key, marker, syntheticInput(key, "presence_end")),
+    ).rejects.toMatchObject({
+      code: "IDEMPOTENCY_CONFLICT",
+    });
+    expect(await counts()).toEqual({
+      evidence: before.evidence + 2,
+      observations: before.observations + 1,
+      outbox: before.outbox + 1,
+      work: before.work,
+    });
+  });
+
+  it("fails forged markers, current authority, activation and cross-tenant input closed", async () => {
+    const baseline = await counts();
+    const validMarker = createAttendanceSyntheticTestMarker();
+    await expect(
+      callSynthetic(randomUUID(), { kind: "hr.attendance.synthetic_test.v1" }),
+    ).rejects.toMatchObject({
+      code: "POLICY_DENIED",
+    });
+    await expectDeniedWhile(
+      "UPDATE memberships SET role_key='hr_operator' WHERE tenant_id=$1 AND principal_id=$2",
+      "UPDATE memberships SET role_key='system' WHERE tenant_id=$1 AND principal_id=$2",
+      [ids.tenant, ids.system],
+      "POLICY_DENIED",
+      validMarker,
+    );
+    await expectDeniedWhile(
+      `DELETE FROM membership_capabilities
+       WHERE tenant_id=$1 AND principal_id=$2
+         AND capability_id='hr.attendance.record_synthetic_test'`,
+      `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+       VALUES ($1,$2,'hr.attendance.record_synthetic_test')`,
+      [ids.tenant, ids.system],
+      "POLICY_DENIED",
+      validMarker,
+    );
+    await expectDeniedWhile(
+      `UPDATE service_activations SET state='inactive',version=version+1
+       WHERE tenant_id=$1 AND service_key='attendance'`,
+      `UPDATE service_activations SET state='active',version=version+1
+       WHERE tenant_id=$1 AND service_key='attendance'`,
+      [ids.tenant],
+      "ATTENDANCE_SERVICE_INACTIVE",
+      validMarker,
+    );
+    await expectDeniedWhile(
+      `UPDATE service_activations SET state='inactive',version=version+1
+       WHERE tenant_id=$1 AND service_key='workforce_profile'`,
+      `UPDATE service_activations SET state='active',version=version+1
+       WHERE tenant_id=$1 AND service_key='workforce_profile'`,
+      [ids.tenant],
+      "ATTENDANCE_DEPENDENCY_INACTIVE",
+      validMarker,
+    );
+    const otherBaseline = await counts(ids.otherTenant);
+    const crossTenantKey = randomUUID();
+    await expect(
+      callSynthetic(crossTenantKey, validMarker, {
+        ...syntheticInput(crossTenantKey),
+        workerProfileId: otherWorkerProfileId,
+      }),
+    ).rejects.toMatchObject({ code: "ATTENDANCE_WORKER_UNAVAILABLE" });
+    expect(await counts()).toEqual(baseline);
+    expect(await counts(ids.otherTenant)).toEqual(otherBaseline);
+  });
+
+  it("requires the supported test environment and stays unreachable from product HTTP", async () => {
+    const marker = createAttendanceSyntheticTestMarker();
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      expect(() => createAttendanceSyntheticTestMarker()).toThrow(
+        "Synthetic Attendance is test-only",
+      );
+      await expect(callSynthetic(randomUUID(), marker)).rejects.toMatchObject({
+        code: "POLICY_DENIED",
+      });
+    } finally {
+      if (previous === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previous;
+    }
+    const response = await server.inject({
+      method: "POST",
+      payload: body(),
+      url: "/v1/hr/attendance-observations/synthetic-test",
+    });
+    expect(response.statusCode).toBe(404);
   });
 });
 describe("Attendance correction API", () => {

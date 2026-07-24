@@ -14,6 +14,7 @@ describe("hrManifest", () => {
       "hr.attendance.list_reports",
       "hr.attendance.view_detail",
       "hr.attendance.view_service_control",
+      "hr.attendance.record_synthetic_test",
       "hr.leave.activate",
       "hr.leave.approve",
       "hr.leave.deactivate",
