@@ -49,6 +49,11 @@ export const hrShiftAssignmentStatus = pgEnum("hr_shift_assignment_status", [
   "active",
   "cancelled",
 ]);
+export const hrAttendanceObservationKind = pgEnum("hr_attendance_observation_kind", [
+  "presence_start",
+  "presence_end",
+]);
+export const hrAttendanceSourceKind = pgEnum("hr_attendance_source_kind", ["manual", "synthetic"]);
 
 type PgTableExtras = PgTableExtraConfigValue[];
 
@@ -372,6 +377,147 @@ export const hrShiftAssignments = pgTable(
       sql`char_length(trim(${table.ianaTimezone})) > 0`,
     ),
     check("hr_shift_assignments_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const hrAttendanceServiceControl = pgTable(
+  "hr_attendance_service_control",
+  {
+    serviceControlId: uuid("service_control_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    serviceKey: text("service_key").default("attendance").notNull(),
+    settingsVersion: integer("settings_version").default(1).notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.serviceKey],
+      foreignColumns: [serviceActivations.tenantId, serviceActivations.serviceKey],
+      name: "hr_attendance_service_control_activation_fk",
+    }).onDelete("restrict"),
+    uniqueIndex("uq_hr_attendance_service_control_tenant_key").on(table.tenantId, table.serviceKey),
+    check("hr_attendance_service_control_key_exact", sql`${table.serviceKey} = 'attendance'`),
+    check(
+      "hr_attendance_service_control_settings_version_positive",
+      sql`${table.settingsVersion} > 0`,
+    ),
+    check("hr_attendance_service_control_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const hrAttendanceObservations = pgTable(
+  "hr_attendance_observations",
+  {
+    attendanceObservationId: uuid("attendance_observation_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    workerProfileId: uuid("worker_profile_id").notNull(),
+    observedAt: timestamp("observed_at", { mode: "date", withTimezone: true }).notNull(),
+    observationKind: hrAttendanceObservationKind("observation_kind").notNull(),
+    sourceKind: hrAttendanceSourceKind("source_kind").notNull(),
+    actorPrincipalId: uuid("actor_principal_id").notNull(),
+    correlationId: uuid("correlation_id").notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table): PgTableExtras => [
+    unique("uq_hr_attendance_observations_composite_identity").on(
+      table.tenantId,
+      table.attendanceObservationId,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.workerProfileId],
+      foreignColumns: [hrWorkforceProfiles.tenantId, hrWorkforceProfiles.workerProfileId],
+      name: "hr_attendance_observations_worker_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.actorPrincipalId],
+      foreignColumns: [memberships.tenantId, memberships.principalId],
+      name: "hr_attendance_observations_actor_same_tenant_fk",
+    }).onDelete("restrict"),
+    index("idx_hr_attendance_observations_tenant_worker_observed").on(
+      table.tenantId,
+      table.workerProfileId,
+      table.observedAt.desc(),
+      table.attendanceObservationId.desc(),
+    ),
+    check("hr_attendance_observations_row_version_fixed", sql`${table.rowVersion} = 1`),
+  ],
+).enableRLS();
+
+export const hrAttendanceCorrections = pgTable(
+  "hr_attendance_corrections",
+  {
+    attendanceCorrectionId: uuid("attendance_correction_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    attendanceObservationId: uuid("attendance_observation_id").notNull(),
+    correctedObservedAt: timestamp("corrected_observed_at", {
+      mode: "date",
+      withTimezone: true,
+    }).notNull(),
+    correctedObservationKind: hrAttendanceObservationKind("corrected_observation_kind").notNull(),
+    reason: text("reason").notNull(),
+    correctionVersion: integer("correction_version").notNull(),
+    supersedesAttendanceCorrectionId: uuid("supersedes_attendance_correction_id"),
+    actorPrincipalId: uuid("actor_principal_id").notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  },
+  (table): PgTableExtras => [
+    unique("uq_hr_attendance_corrections_composite_identity").on(
+      table.tenantId,
+      table.attendanceObservationId,
+      table.attendanceCorrectionId,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.attendanceObservationId],
+      foreignColumns: [
+        hrAttendanceObservations.tenantId,
+        hrAttendanceObservations.attendanceObservationId,
+      ],
+      name: "hr_attendance_corrections_observation_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [
+        table.tenantId,
+        table.attendanceObservationId,
+        table.supersedesAttendanceCorrectionId,
+      ],
+      foreignColumns: [table.tenantId, table.attendanceObservationId, table.attendanceCorrectionId],
+      name: "hr_attendance_corrections_predecessor_same_root_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.actorPrincipalId],
+      foreignColumns: [memberships.tenantId, memberships.principalId],
+      name: "hr_attendance_corrections_actor_same_tenant_fk",
+    }).onDelete("restrict"),
+    index("idx_hr_attendance_corrections_tenant_observation_version").on(
+      table.tenantId,
+      table.attendanceObservationId,
+      table.correctionVersion.desc(),
+      table.attendanceCorrectionId.desc(),
+    ),
+    uniqueIndex("uq_hr_attendance_corrections_tenant_observation_version").on(
+      table.tenantId,
+      table.attendanceObservationId,
+      table.correctionVersion,
+    ),
+    uniqueIndex("uq_hr_attendance_corrections_tenant_successor")
+      .on(table.tenantId, table.supersedesAttendanceCorrectionId)
+      .where(sql`${table.supersedesAttendanceCorrectionId} IS NOT NULL`),
+    check(
+      "hr_attendance_corrections_reason_valid",
+      sql`char_length(trim(${table.reason})) BETWEEN 1 AND 2000`,
+    ),
+    check(
+      "hr_attendance_corrections_predecessor_version_consistent",
+      sql`(${table.correctionVersion} = 1
+              AND ${table.supersedesAttendanceCorrectionId} IS NULL)
+          OR (${table.correctionVersion} > 1
+              AND ${table.supersedesAttendanceCorrectionId} IS NOT NULL)`,
+    ),
+    check("hr_attendance_corrections_version_positive", sql`${table.correctionVersion} > 0`),
   ],
 ).enableRLS();
 
