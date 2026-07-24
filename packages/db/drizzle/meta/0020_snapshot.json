@@ -1,0 +1,4543 @@
+{
+  "id": "fae4f3fe-78f7-4ec0-8d5e-0565f605d8da",
+  "prevId": "599be1c3-8ab0-479a-84c8-206325f9bc4c",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.evidence_events": {
+      "name": "evidence_events",
+      "schema": "",
+      "columns": {
+        "evidence_event_id": {
+          "name": "evidence_event_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subject_type": {
+          "name": "subject_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subject_id": {
+          "name": "subject_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_principal_id": {
+          "name": "actor_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "correlation_id": {
+          "name": "correlation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "prior_state": {
+          "name": "prior_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "new_state": {
+          "name": "new_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "evidence_events_tenant_subject_occurred_idx": {
+          "name": "evidence_events_tenant_subject_occurred_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "subject_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "subject_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "evidence_event_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "evidence_events_tenant_id_tenants_tenant_id_fk": {
+          "name": "evidence_events_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "evidence_events",
+          "tableTo": "tenants",
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "evidence_events_actor_same_tenant_fk": {
+          "name": "evidence_events_actor_same_tenant_fk",
+          "tableFrom": "evidence_events",
+          "tableTo": "memberships",
+          "columnsFrom": ["tenant_id", "actor_principal_id"],
+          "columnsTo": ["tenant_id", "principal_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "evidence_events_idempotency_uq": {
+          "name": "evidence_events_idempotency_uq",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "subject_type", "subject_id", "event_type", "correlation_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "evidence_events_type_not_blank": {
+          "name": "evidence_events_type_not_blank",
+          "value": "char_length(trim(\"evidence_events\".\"event_type\")) > 0"
+        },
+        "evidence_events_subject_type_not_blank": {
+          "name": "evidence_events_subject_type_not_blank",
+          "value": "char_length(trim(\"evidence_events\".\"subject_type\")) > 0"
+        },
+        "evidence_events_new_state_not_blank": {
+          "name": "evidence_events_new_state_not_blank",
+          "value": "char_length(trim(\"evidence_events\".\"new_state\")) > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_attendance_corrections": {
+      "name": "hr_attendance_corrections",
+      "schema": "",
+      "columns": {
+        "attendance_correction_id": {
+          "name": "attendance_correction_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attendance_observation_id": {
+          "name": "attendance_observation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "corrected_observed_at": {
+          "name": "corrected_observed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "corrected_observation_kind": {
+          "name": "corrected_observation_kind",
+          "type": "hr_attendance_observation_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "correction_version": {
+          "name": "correction_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "supersedes_attendance_correction_id": {
+          "name": "supersedes_attendance_correction_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actor_principal_id": {
+          "name": "actor_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "idx_hr_attendance_corrections_tenant_observation_version": {
+          "name": "idx_hr_attendance_corrections_tenant_observation_version",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "attendance_observation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "correction_version",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "attendance_correction_id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "uq_hr_attendance_corrections_tenant_observation_version": {
+          "name": "uq_hr_attendance_corrections_tenant_observation_version",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "attendance_observation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "correction_version",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "uq_hr_attendance_corrections_tenant_successor": {
+          "name": "uq_hr_attendance_corrections_tenant_successor",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "supersedes_attendance_correction_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"hr_attendance_corrections\".\"supersedes_attendance_correction_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_attendance_corrections_observation_same_tenant_fk": {
+          "name": "hr_attendance_corrections_observation_same_tenant_fk",
+          "tableFrom": "hr_attendance_corrections",
+          "tableTo": "hr_attendance_observations",
+          "columnsFrom": ["tenant_id", "attendance_observation_id"],
+          "columnsTo": ["tenant_id", "attendance_observation_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_attendance_corrections_predecessor_same_root_fk": {
+          "name": "hr_attendance_corrections_predecessor_same_root_fk",
+          "tableFrom": "hr_attendance_corrections",
+          "tableTo": "hr_attendance_corrections",
+          "columnsFrom": [
+            "tenant_id",
+            "attendance_observation_id",
+            "supersedes_attendance_correction_id"
+          ],
+          "columnsTo": ["tenant_id", "attendance_observation_id", "attendance_correction_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_attendance_corrections_actor_same_tenant_fk": {
+          "name": "hr_attendance_corrections_actor_same_tenant_fk",
+          "tableFrom": "hr_attendance_corrections",
+          "tableTo": "memberships",
+          "columnsFrom": ["tenant_id", "actor_principal_id"],
+          "columnsTo": ["tenant_id", "principal_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "uq_hr_attendance_corrections_composite_identity": {
+          "name": "uq_hr_attendance_corrections_composite_identity",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "attendance_observation_id", "attendance_correction_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "hr_attendance_corrections_reason_valid": {
+          "name": "hr_attendance_corrections_reason_valid",
+          "value": "char_length(trim(\"hr_attendance_corrections\".\"reason\")) BETWEEN 1 AND 2000"
+        },
+        "hr_attendance_corrections_predecessor_version_consistent": {
+          "name": "hr_attendance_corrections_predecessor_version_consistent",
+          "value": "(\"hr_attendance_corrections\".\"correction_version\" = 1\n              AND \"hr_attendance_corrections\".\"supersedes_attendance_correction_id\" IS NULL)\n          OR (\"hr_attendance_corrections\".\"correction_version\" > 1\n              AND \"hr_attendance_corrections\".\"supersedes_attendance_correction_id\" IS NOT NULL)"
+        },
+        "hr_attendance_corrections_version_positive": {
+          "name": "hr_attendance_corrections_version_positive",
+          "value": "\"hr_attendance_corrections\".\"correction_version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_attendance_observations": {
+      "name": "hr_attendance_observations",
+      "schema": "",
+      "columns": {
+        "attendance_observation_id": {
+          "name": "attendance_observation_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "worker_profile_id": {
+          "name": "worker_profile_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "observed_at": {
+          "name": "observed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "observation_kind": {
+          "name": "observation_kind",
+          "type": "hr_attendance_observation_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_kind": {
+          "name": "source_kind",
+          "type": "hr_attendance_source_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_principal_id": {
+          "name": "actor_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "correlation_id": {
+          "name": "correlation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "idx_hr_attendance_observations_tenant_worker_observed": {
+          "name": "idx_hr_attendance_observations_tenant_worker_observed",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "worker_profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "observed_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "attendance_observation_id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_hr_attendance_observations_tenant_observed": {
+          "name": "idx_hr_attendance_observations_tenant_observed",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "observed_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "attendance_observation_id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_attendance_observations_tenant_id_tenants_tenant_id_fk": {
+          "name": "hr_attendance_observations_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "hr_attendance_observations",
+          "tableTo": "tenants",
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_attendance_observations_worker_same_tenant_fk": {
+          "name": "hr_attendance_observations_worker_same_tenant_fk",
+          "tableFrom": "hr_attendance_observations",
+          "tableTo": "hr_worker_profiles",
+          "columnsFrom": ["tenant_id", "worker_profile_id"],
+          "columnsTo": ["tenant_id", "worker_profile_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_attendance_observations_actor_same_tenant_fk": {
+          "name": "hr_attendance_observations_actor_same_tenant_fk",
+          "tableFrom": "hr_attendance_observations",
+          "tableTo": "memberships",
+          "columnsFrom": ["tenant_id", "actor_principal_id"],
+          "columnsTo": ["tenant_id", "principal_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "uq_hr_attendance_observations_composite_identity": {
+          "name": "uq_hr_attendance_observations_composite_identity",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "attendance_observation_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "hr_attendance_observations_row_version_fixed": {
+          "name": "hr_attendance_observations_row_version_fixed",
+          "value": "\"hr_attendance_observations\".\"row_version\" = 1"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_attendance_service_control": {
+      "name": "hr_attendance_service_control",
+      "schema": "",
+      "columns": {
+        "service_control_id": {
+          "name": "service_control_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "service_key": {
+          "name": "service_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'attendance'"
+        },
+        "settings_version": {
+          "name": "settings_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "uq_hr_attendance_service_control_tenant_key": {
+          "name": "uq_hr_attendance_service_control_tenant_key",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "service_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_attendance_service_control_activation_fk": {
+          "name": "hr_attendance_service_control_activation_fk",
+          "tableFrom": "hr_attendance_service_control",
+          "tableTo": "service_activations",
+          "columnsFrom": ["tenant_id", "service_key"],
+          "columnsTo": ["tenant_id", "service_key"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "hr_attendance_service_control_key_exact": {
+          "name": "hr_attendance_service_control_key_exact",
+          "value": "\"hr_attendance_service_control\".\"service_key\" = 'attendance'"
+        },
+        "hr_attendance_service_control_settings_version_positive": {
+          "name": "hr_attendance_service_control_settings_version_positive",
+          "value": "\"hr_attendance_service_control\".\"settings_version\" > 0"
+        },
+        "hr_attendance_service_control_row_version_positive": {
+          "name": "hr_attendance_service_control_row_version_positive",
+          "value": "\"hr_attendance_service_control\".\"row_version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_employment_record_service_control": {
+      "name": "hr_employment_record_service_control",
+      "schema": "",
+      "columns": {
+        "service_control_id": {
+          "name": "service_control_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "service_key": {
+          "name": "service_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'employment_record'"
+        },
+        "settings_version": {
+          "name": "settings_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "uq_hr_employment_record_service_control_tenant_key": {
+          "name": "uq_hr_employment_record_service_control_tenant_key",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "service_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_employment_record_service_control_activation_fk": {
+          "name": "hr_employment_record_service_control_activation_fk",
+          "tableFrom": "hr_employment_record_service_control",
+          "tableTo": "service_activations",
+          "columnsFrom": ["tenant_id", "service_key"],
+          "columnsTo": ["tenant_id", "service_key"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "hr_employment_record_service_control_key_exact": {
+          "name": "hr_employment_record_service_control_key_exact",
+          "value": "\"hr_employment_record_service_control\".\"service_key\" = 'employment_record'"
+        },
+        "hr_employment_record_service_control_settings_version_positive": {
+          "name": "hr_employment_record_service_control_settings_version_positive",
+          "value": "\"hr_employment_record_service_control\".\"settings_version\" > 0"
+        },
+        "hr_employment_record_service_control_row_version_positive": {
+          "name": "hr_employment_record_service_control_row_version_positive",
+          "value": "\"hr_employment_record_service_control\".\"row_version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_employment_record_versions": {
+      "name": "hr_employment_record_versions",
+      "schema": "",
+      "columns": {
+        "employment_record_version_id": {
+          "name": "employment_record_version_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "employment_record_id": {
+          "name": "employment_record_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "worker_profile_id": {
+          "name": "worker_profile_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "effective_from": {
+          "name": "effective_from",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "effective_to": {
+          "name": "effective_to",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "employment_type_code": {
+          "name": "employment_type_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "organization_reference": {
+          "name": "organization_reference",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "position_reference": {
+          "name": "position_reference",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "supersedes_version_id": {
+          "name": "supersedes_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version_kind": {
+          "name": "version_kind",
+          "type": "hr_employment_version_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "terminal_version": {
+          "name": "terminal_version",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "uq_hr_employment_record_versions_tenant_record_version": {
+          "name": "uq_hr_employment_record_versions_tenant_record_version",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "employment_record_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "version",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "uq_hr_employment_record_versions_tenant_successor": {
+          "name": "uq_hr_employment_record_versions_tenant_successor",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "employment_record_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "supersedes_version_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"hr_employment_record_versions\".\"supersedes_version_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_hr_employment_record_versions_tenant_record_cursor": {
+          "name": "idx_hr_employment_record_versions_tenant_record_cursor",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "employment_record_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "version",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "employment_record_version_id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_employment_record_versions_tenant_fk": {
+          "name": "hr_employment_record_versions_tenant_fk",
+          "tableFrom": "hr_employment_record_versions",
+          "tableTo": "tenants",
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_employment_record_versions_record_same_tenant_fk": {
+          "name": "hr_employment_record_versions_record_same_tenant_fk",
+          "tableFrom": "hr_employment_record_versions",
+          "tableTo": "hr_employment_records",
+          "columnsFrom": ["tenant_id", "employment_record_id"],
+          "columnsTo": ["tenant_id", "employment_record_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_employment_record_versions_worker_same_tenant_fk": {
+          "name": "hr_employment_record_versions_worker_same_tenant_fk",
+          "tableFrom": "hr_employment_record_versions",
+          "tableTo": "hr_worker_profiles",
+          "columnsFrom": ["tenant_id", "worker_profile_id"],
+          "columnsTo": ["tenant_id", "worker_profile_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_employment_record_versions_predecessor_same_root_fk": {
+          "name": "hr_employment_record_versions_predecessor_same_root_fk",
+          "tableFrom": "hr_employment_record_versions",
+          "tableTo": "hr_employment_record_versions",
+          "columnsFrom": ["tenant_id", "employment_record_id", "supersedes_version_id"],
+          "columnsTo": ["tenant_id", "employment_record_id", "employment_record_version_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "uq_hr_employment_record_versions_composite_identity": {
+          "name": "uq_hr_employment_record_versions_composite_identity",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "employment_record_id", "employment_record_version_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "hr_employment_record_versions_effective_range_valid": {
+          "name": "hr_employment_record_versions_effective_range_valid",
+          "value": "\"hr_employment_record_versions\".\"effective_to\" IS NULL OR \"hr_employment_record_versions\".\"effective_to\" >= \"hr_employment_record_versions\".\"effective_from\""
+        },
+        "hr_employment_record_versions_identifier_values_valid": {
+          "name": "hr_employment_record_versions_identifier_values_valid",
+          "value": "(\"hr_employment_record_versions\".\"employment_type_code\" IS NULL OR char_length(trim(\"hr_employment_record_versions\".\"employment_type_code\")) > 0)\n          AND (\"hr_employment_record_versions\".\"organization_reference\" IS NULL OR char_length(trim(\"hr_employment_record_versions\".\"organization_reference\")) > 0)\n          AND (\"hr_employment_record_versions\".\"position_reference\" IS NULL OR char_length(trim(\"hr_employment_record_versions\".\"position_reference\")) > 0)"
+        },
+        "hr_employment_record_versions_predecessor_version_consistent": {
+          "name": "hr_employment_record_versions_predecessor_version_consistent",
+          "value": "(\"hr_employment_record_versions\".\"version\" = 1 AND \"hr_employment_record_versions\".\"supersedes_version_id\" IS NULL)\n          OR (\"hr_employment_record_versions\".\"version\" > 1 AND \"hr_employment_record_versions\".\"supersedes_version_id\" IS NOT NULL)"
+        },
+        "hr_employment_record_versions_terminal_kind_consistent": {
+          "name": "hr_employment_record_versions_terminal_kind_consistent",
+          "value": "(\"hr_employment_record_versions\".\"version_kind\" = 'effective' AND \"hr_employment_record_versions\".\"terminal_version\" = false)\n          OR (\"hr_employment_record_versions\".\"version_kind\" = 'end' AND \"hr_employment_record_versions\".\"terminal_version\" = true\n              AND \"hr_employment_record_versions\".\"effective_to\" IS NOT NULL)"
+        },
+        "hr_employment_record_versions_version_positive": {
+          "name": "hr_employment_record_versions_version_positive",
+          "value": "\"hr_employment_record_versions\".\"version\" > 0"
+        },
+        "hr_employment_record_versions_row_version_fixed": {
+          "name": "hr_employment_record_versions_row_version_fixed",
+          "value": "\"hr_employment_record_versions\".\"row_version\" = 1"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_employment_records": {
+      "name": "hr_employment_records",
+      "schema": "",
+      "columns": {
+        "employment_record_id": {
+          "name": "employment_record_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "worker_profile_id": {
+          "name": "worker_profile_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "hr_employment_record_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'draft'"
+        },
+        "current_version_id": {
+          "name": "current_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "idx_hr_employment_records_tenant_cursor": {
+          "name": "idx_hr_employment_records_tenant_cursor",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "worker_profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "employment_record_id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_hr_employment_records_tenant_order_cursor": {
+          "name": "idx_hr_employment_records_tenant_order_cursor",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "employment_record_id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_hr_employment_records_tenant_worker_active_head": {
+          "name": "idx_hr_employment_records_tenant_worker_active_head",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "worker_profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "employment_record_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "uq_hr_employment_records_tenant_worker_current": {
+          "name": "uq_hr_employment_records_tenant_worker_current",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "worker_profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"hr_employment_records\".\"status\" <> 'ended'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_employment_records_tenant_id_tenants_tenant_id_fk": {
+          "name": "hr_employment_records_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "hr_employment_records",
+          "tableTo": "tenants",
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_employment_records_worker_same_tenant_fk": {
+          "name": "hr_employment_records_worker_same_tenant_fk",
+          "tableFrom": "hr_employment_records",
+          "tableTo": "hr_worker_profiles",
+          "columnsFrom": ["tenant_id", "worker_profile_id"],
+          "columnsTo": ["tenant_id", "worker_profile_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_employment_records_current_version_same_root_fk": {
+          "name": "hr_employment_records_current_version_same_root_fk",
+          "tableFrom": "hr_employment_records",
+          "tableTo": "hr_employment_record_versions",
+          "columnsFrom": ["tenant_id", "employment_record_id", "current_version_id"],
+          "columnsTo": ["tenant_id", "employment_record_id", "employment_record_version_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "uq_hr_employment_records_composite_identity": {
+          "name": "uq_hr_employment_records_composite_identity",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "employment_record_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "hr_employment_records_status_head_consistent": {
+          "name": "hr_employment_records_status_head_consistent",
+          "value": "(\"hr_employment_records\".\"status\" = 'draft' AND \"hr_employment_records\".\"current_version_id\" IS NULL)\n          OR (\"hr_employment_records\".\"status\" IN ('active', 'ended') AND \"hr_employment_records\".\"current_version_id\" IS NOT NULL)"
+        },
+        "hr_employment_records_row_version_positive": {
+          "name": "hr_employment_records_row_version_positive",
+          "value": "\"hr_employment_records\".\"row_version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_leave_requests": {
+      "name": "hr_leave_requests",
+      "schema": "",
+      "columns": {
+        "leave_request_id": {
+          "name": "leave_request_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "employee_principal_id": {
+          "name": "employee_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "approver_principal_id": {
+          "name": "approver_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "category_code": {
+          "name": "category_code",
+          "type": "hr_leave_category",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "start_date": {
+          "name": "start_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "end_date": {
+          "name": "end_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "hr_leave_request_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'submitted'"
+        },
+        "decision_note": {
+          "name": "decision_note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "correlation_id": {
+          "name": "correlation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "submitted_at": {
+          "name": "submitted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "decided_at": {
+          "name": "decided_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "hr_leave_requests_assigned_open_idx": {
+          "name": "hr_leave_requests_assigned_open_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "approver_principal_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "submitted_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "leave_request_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"hr_leave_requests\".\"status\" = 'submitted'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "hr_leave_requests_employee_history_idx": {
+          "name": "hr_leave_requests_employee_history_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "employee_principal_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "submitted_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "leave_request_id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_leave_requests_tenant_id_tenants_tenant_id_fk": {
+          "name": "hr_leave_requests_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "hr_leave_requests",
+          "tableTo": "tenants",
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_leave_requests_employee_same_tenant_fk": {
+          "name": "hr_leave_requests_employee_same_tenant_fk",
+          "tableFrom": "hr_leave_requests",
+          "tableTo": "memberships",
+          "columnsFrom": ["tenant_id", "employee_principal_id"],
+          "columnsTo": ["tenant_id", "principal_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_leave_requests_approver_same_tenant_fk": {
+          "name": "hr_leave_requests_approver_same_tenant_fk",
+          "tableFrom": "hr_leave_requests",
+          "tableTo": "memberships",
+          "columnsFrom": ["tenant_id", "approver_principal_id"],
+          "columnsTo": ["tenant_id", "principal_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "hr_leave_requests_tenant_employee_idempotency_uq": {
+          "name": "hr_leave_requests_tenant_employee_idempotency_uq",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "employee_principal_id", "idempotency_key"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "hr_leave_requests_dates_valid": {
+          "name": "hr_leave_requests_dates_valid",
+          "value": "\"hr_leave_requests\".\"end_date\" >= \"hr_leave_requests\".\"start_date\""
+        },
+        "hr_leave_requests_distinct_approver": {
+          "name": "hr_leave_requests_distinct_approver",
+          "value": "\"hr_leave_requests\".\"employee_principal_id\" <> \"hr_leave_requests\".\"approver_principal_id\""
+        },
+        "hr_leave_requests_reason_valid": {
+          "name": "hr_leave_requests_reason_valid",
+          "value": "\"hr_leave_requests\".\"reason\" IS NULL OR (char_length(trim(\"hr_leave_requests\".\"reason\")) BETWEEN 1 AND 2000)"
+        },
+        "hr_leave_requests_decision_note_valid": {
+          "name": "hr_leave_requests_decision_note_valid",
+          "value": "\"hr_leave_requests\".\"decision_note\" IS NULL OR (char_length(trim(\"hr_leave_requests\".\"decision_note\")) BETWEEN 1 AND 2000)"
+        },
+        "hr_leave_requests_decision_consistent": {
+          "name": "hr_leave_requests_decision_consistent",
+          "value": "(\"hr_leave_requests\".\"status\" = 'submitted' AND \"hr_leave_requests\".\"decided_at\" IS NULL AND \"hr_leave_requests\".\"decision_note\" IS NULL) OR (\"hr_leave_requests\".\"status\" IN ('approved', 'rejected') AND \"hr_leave_requests\".\"decided_at\" IS NOT NULL)"
+        },
+        "hr_leave_requests_idempotency_not_blank": {
+          "name": "hr_leave_requests_idempotency_not_blank",
+          "value": "char_length(trim(\"hr_leave_requests\".\"idempotency_key\")) > 0"
+        },
+        "hr_leave_requests_version_positive": {
+          "name": "hr_leave_requests_version_positive",
+          "value": "\"hr_leave_requests\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_reporting_relationships": {
+      "name": "hr_reporting_relationships",
+      "schema": "",
+      "columns": {
+        "reporting_relationship_id": {
+          "name": "reporting_relationship_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "worker_profile_id": {
+          "name": "worker_profile_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "manager_worker_profile_id": {
+          "name": "manager_worker_profile_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "relationship_status": {
+          "name": "relationship_status",
+          "type": "hr_reporting_relationship_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "effective_at": {
+          "name": "effective_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "supersedes_reporting_relationship_id": {
+          "name": "supersedes_reporting_relationship_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "relationship_version": {
+          "name": "relationship_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "uq_hr_reporting_relationships_tenant_worker_version": {
+          "name": "uq_hr_reporting_relationships_tenant_worker_version",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "worker_profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "relationship_version",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "uq_hr_reporting_relationships_tenant_successor": {
+          "name": "uq_hr_reporting_relationships_tenant_successor",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "supersedes_reporting_relationship_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"hr_reporting_relationships\".\"supersedes_reporting_relationship_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_hr_reporting_relationships_tenant_manager_current_cursor": {
+          "name": "idx_hr_reporting_relationships_tenant_manager_current_cursor",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "manager_worker_profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "relationship_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "\"effective_at\" DESC",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "\"reporting_relationship_id\" DESC",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_hr_reporting_relationships_tenant_worker_history": {
+          "name": "idx_hr_reporting_relationships_tenant_worker_history",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "worker_profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "\"relationship_version\" DESC",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "\"reporting_relationship_id\" DESC",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_reporting_relationships_tenant_fk": {
+          "name": "hr_reporting_relationships_tenant_fk",
+          "tableFrom": "hr_reporting_relationships",
+          "tableTo": "tenants",
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_reporting_relationships_report_same_tenant_fk": {
+          "name": "hr_reporting_relationships_report_same_tenant_fk",
+          "tableFrom": "hr_reporting_relationships",
+          "tableTo": "hr_worker_profiles",
+          "columnsFrom": ["tenant_id", "worker_profile_id"],
+          "columnsTo": ["tenant_id", "worker_profile_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_reporting_relationships_manager_same_tenant_fk": {
+          "name": "hr_reporting_relationships_manager_same_tenant_fk",
+          "tableFrom": "hr_reporting_relationships",
+          "tableTo": "hr_worker_profiles",
+          "columnsFrom": ["tenant_id", "manager_worker_profile_id"],
+          "columnsTo": ["tenant_id", "worker_profile_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_reporting_relationships_predecessor_same_worker_fk": {
+          "name": "hr_reporting_relationships_predecessor_same_worker_fk",
+          "tableFrom": "hr_reporting_relationships",
+          "tableTo": "hr_reporting_relationships",
+          "columnsFrom": ["tenant_id", "worker_profile_id", "supersedes_reporting_relationship_id"],
+          "columnsTo": ["tenant_id", "worker_profile_id", "reporting_relationship_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "uq_hr_reporting_relationships_composite_identity": {
+          "name": "uq_hr_reporting_relationships_composite_identity",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "worker_profile_id", "reporting_relationship_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "hr_reporting_relationships_status_manager_consistent": {
+          "name": "hr_reporting_relationships_status_manager_consistent",
+          "value": "(\"hr_reporting_relationships\".\"relationship_status\" = 'assigned' AND \"hr_reporting_relationships\".\"manager_worker_profile_id\" IS NOT NULL)\n          OR (\"hr_reporting_relationships\".\"relationship_status\" = 'unassigned' AND \"hr_reporting_relationships\".\"manager_worker_profile_id\" IS NULL)"
+        },
+        "hr_reporting_relationships_relationship_version_positive": {
+          "name": "hr_reporting_relationships_relationship_version_positive",
+          "value": "\"hr_reporting_relationships\".\"relationship_version\" > 0"
+        },
+        "hr_reporting_relationships_row_version_fixed": {
+          "name": "hr_reporting_relationships_row_version_fixed",
+          "value": "\"hr_reporting_relationships\".\"row_version\" = 1"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_shift_assignment_service_control": {
+      "name": "hr_shift_assignment_service_control",
+      "schema": "",
+      "columns": {
+        "service_control_id": {
+          "name": "service_control_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "service_key": {
+          "name": "service_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'shift_assignment'"
+        },
+        "settings_version": {
+          "name": "settings_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "uq_hr_shift_assignment_service_control_tenant_key": {
+          "name": "uq_hr_shift_assignment_service_control_tenant_key",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "service_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_shift_assignment_service_control_activation_fk": {
+          "name": "hr_shift_assignment_service_control_activation_fk",
+          "tableFrom": "hr_shift_assignment_service_control",
+          "tableTo": "service_activations",
+          "columnsFrom": ["tenant_id", "service_key"],
+          "columnsTo": ["tenant_id", "service_key"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "hr_shift_assignment_service_control_key_exact": {
+          "name": "hr_shift_assignment_service_control_key_exact",
+          "value": "\"hr_shift_assignment_service_control\".\"service_key\" = 'shift_assignment'"
+        },
+        "hr_shift_assignment_service_control_settings_version_positive": {
+          "name": "hr_shift_assignment_service_control_settings_version_positive",
+          "value": "\"hr_shift_assignment_service_control\".\"settings_version\" > 0"
+        },
+        "hr_shift_assignment_service_control_row_version_positive": {
+          "name": "hr_shift_assignment_service_control_row_version_positive",
+          "value": "\"hr_shift_assignment_service_control\".\"row_version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_shift_assignments": {
+      "name": "hr_shift_assignments",
+      "schema": "",
+      "columns": {
+        "shift_assignment_id": {
+          "name": "shift_assignment_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "roster_version_id": {
+          "name": "roster_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "worker_profile_id": {
+          "name": "worker_profile_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "starts_at": {
+          "name": "starts_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ends_at": {
+          "name": "ends_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "iana_timezone": {
+          "name": "iana_timezone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "hr_shift_assignment_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "idx_hr_shift_assignments_tenant_worker_start": {
+          "name": "idx_hr_shift_assignments_tenant_worker_start",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "worker_profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "starts_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "shift_assignment_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_hr_shift_assignments_tenant_roster_status_start": {
+          "name": "idx_hr_shift_assignments_tenant_roster_status_start",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "roster_version_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "starts_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "shift_assignment_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_hr_shift_assignments_tenant_worker_overlap": {
+          "name": "idx_hr_shift_assignments_tenant_worker_overlap",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "worker_profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "starts_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "shift_assignment_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_shift_assignments_tenant_id_tenants_tenant_id_fk": {
+          "name": "hr_shift_assignments_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "hr_shift_assignments",
+          "tableTo": "tenants",
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_shift_assignments_roster_same_tenant_fk": {
+          "name": "hr_shift_assignments_roster_same_tenant_fk",
+          "tableFrom": "hr_shift_assignments",
+          "tableTo": "hr_shift_roster_versions",
+          "columnsFrom": ["tenant_id", "roster_version_id"],
+          "columnsTo": ["tenant_id", "roster_version_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_shift_assignments_worker_same_tenant_fk": {
+          "name": "hr_shift_assignments_worker_same_tenant_fk",
+          "tableFrom": "hr_shift_assignments",
+          "tableTo": "hr_worker_profiles",
+          "columnsFrom": ["tenant_id", "worker_profile_id"],
+          "columnsTo": ["tenant_id", "worker_profile_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "uq_hr_shift_assignments_composite_identity": {
+          "name": "uq_hr_shift_assignments_composite_identity",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "shift_assignment_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "hr_shift_assignments_time_range_valid": {
+          "name": "hr_shift_assignments_time_range_valid",
+          "value": "\"hr_shift_assignments\".\"ends_at\" > \"hr_shift_assignments\".\"starts_at\""
+        },
+        "hr_shift_assignments_iana_timezone_not_blank": {
+          "name": "hr_shift_assignments_iana_timezone_not_blank",
+          "value": "char_length(trim(\"hr_shift_assignments\".\"iana_timezone\")) > 0"
+        },
+        "hr_shift_assignments_row_version_positive": {
+          "name": "hr_shift_assignments_row_version_positive",
+          "value": "\"hr_shift_assignments\".\"row_version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_shift_roster_versions": {
+      "name": "hr_shift_roster_versions",
+      "schema": "",
+      "columns": {
+        "roster_version_id": {
+          "name": "roster_version_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "period_start": {
+          "name": "period_start",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "period_end": {
+          "name": "period_end",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "hr_shift_roster_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'draft'"
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "supersedes_roster_version_id": {
+          "name": "supersedes_roster_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "published_at": {
+          "name": "published_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "uq_hr_shift_roster_versions_tenant_period_version": {
+          "name": "uq_hr_shift_roster_versions_tenant_period_version",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "period_start",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "period_end",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "version",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "uq_hr_shift_rosters_tenant_period_published": {
+          "name": "uq_hr_shift_rosters_tenant_period_published",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "period_start",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "period_end",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"hr_shift_roster_versions\".\"status\" = 'published'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "uq_hr_shift_rosters_tenant_period_draft": {
+          "name": "uq_hr_shift_rosters_tenant_period_draft",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "period_start",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "period_end",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"hr_shift_roster_versions\".\"status\" = 'draft'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "uq_hr_shift_rosters_tenant_period_successor": {
+          "name": "uq_hr_shift_rosters_tenant_period_successor",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "period_start",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "period_end",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "supersedes_roster_version_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"hr_shift_roster_versions\".\"supersedes_roster_version_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_shift_roster_versions_tenant_id_tenants_tenant_id_fk": {
+          "name": "hr_shift_roster_versions_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "hr_shift_roster_versions",
+          "tableTo": "tenants",
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_shift_roster_versions_predecessor_same_tenant_fk": {
+          "name": "hr_shift_roster_versions_predecessor_same_tenant_fk",
+          "tableFrom": "hr_shift_roster_versions",
+          "tableTo": "hr_shift_roster_versions",
+          "columnsFrom": ["tenant_id", "supersedes_roster_version_id"],
+          "columnsTo": ["tenant_id", "roster_version_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "uq_hr_shift_roster_versions_composite_identity": {
+          "name": "uq_hr_shift_roster_versions_composite_identity",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "roster_version_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "hr_shift_roster_versions_period_valid": {
+          "name": "hr_shift_roster_versions_period_valid",
+          "value": "\"hr_shift_roster_versions\".\"period_end\" >= \"hr_shift_roster_versions\".\"period_start\""
+        },
+        "hr_shift_roster_versions_publication_consistent": {
+          "name": "hr_shift_roster_versions_publication_consistent",
+          "value": "(\"hr_shift_roster_versions\".\"status\" = 'draft' AND \"hr_shift_roster_versions\".\"published_at\" IS NULL\n             AND \"hr_shift_roster_versions\".\"supersedes_roster_version_id\" IS NULL)\n          OR (\"hr_shift_roster_versions\".\"status\" IN ('published', 'superseded') AND \"hr_shift_roster_versions\".\"published_at\" IS NOT NULL)"
+        },
+        "hr_shift_roster_versions_version_positive": {
+          "name": "hr_shift_roster_versions_version_positive",
+          "value": "\"hr_shift_roster_versions\".\"version\" > 0"
+        },
+        "hr_shift_roster_versions_row_version_positive": {
+          "name": "hr_shift_roster_versions_row_version_positive",
+          "value": "\"hr_shift_roster_versions\".\"row_version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_timesheet_approvals": {
+      "name": "hr_timesheet_approvals",
+      "schema": "",
+      "columns": {
+        "timesheet_approval_id": {
+          "name": "timesheet_approval_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "timesheet_version_id": {
+          "name": "timesheet_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "approver_worker_profile_id": {
+          "name": "approver_worker_profile_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "decision": {
+          "name": "decision",
+          "type": "hr_timesheet_decision",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "decision_note": {
+          "name": "decision_note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "decided_at": {
+          "name": "decided_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "correlation_id": {
+          "name": "correlation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "uq_hr_timesheet_approvals_tenant_version": {
+          "name": "uq_hr_timesheet_approvals_tenant_version",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "timesheet_version_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_timesheet_approvals_version_same_tenant_fk": {
+          "name": "hr_timesheet_approvals_version_same_tenant_fk",
+          "tableFrom": "hr_timesheet_approvals",
+          "tableTo": "hr_timesheet_versions",
+          "columnsFrom": ["tenant_id", "timesheet_version_id"],
+          "columnsTo": ["tenant_id", "timesheet_version_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_timesheet_approvals_approver_same_tenant_fk": {
+          "name": "hr_timesheet_approvals_approver_same_tenant_fk",
+          "tableFrom": "hr_timesheet_approvals",
+          "tableTo": "hr_worker_profiles",
+          "columnsFrom": ["tenant_id", "approver_worker_profile_id"],
+          "columnsTo": ["tenant_id", "worker_profile_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "hr_timesheet_approvals_note_valid": {
+          "name": "hr_timesheet_approvals_note_valid",
+          "value": "\"hr_timesheet_approvals\".\"decision_note\" IS NULL\n          OR char_length(trim(\"hr_timesheet_approvals\".\"decision_note\")) BETWEEN 1 AND 2000"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_timesheet_entries": {
+      "name": "hr_timesheet_entries",
+      "schema": "",
+      "columns": {
+        "timesheet_entry_id": {
+          "name": "timesheet_entry_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "timesheet_version_id": {
+          "name": "timesheet_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entry_date": {
+          "name": "entry_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "minutes": {
+          "name": "minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "idx_hr_timesheet_entries_tenant_version_date": {
+          "name": "idx_hr_timesheet_entries_tenant_version_date",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "timesheet_version_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "entry_date",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "timesheet_entry_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_timesheet_entries_version_same_tenant_fk": {
+          "name": "hr_timesheet_entries_version_same_tenant_fk",
+          "tableFrom": "hr_timesheet_entries",
+          "tableTo": "hr_timesheet_versions",
+          "columnsFrom": ["tenant_id", "timesheet_version_id"],
+          "columnsTo": ["tenant_id", "timesheet_version_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "hr_timesheet_entries_minutes_valid": {
+          "name": "hr_timesheet_entries_minutes_valid",
+          "value": "\"hr_timesheet_entries\".\"minutes\" BETWEEN 1 AND 1440"
+        },
+        "hr_timesheet_entries_description_valid": {
+          "name": "hr_timesheet_entries_description_valid",
+          "value": "\"hr_timesheet_entries\".\"description\" IS NULL\n          OR char_length(trim(\"hr_timesheet_entries\".\"description\")) BETWEEN 1 AND 500"
+        },
+        "hr_timesheet_entries_row_version_positive": {
+          "name": "hr_timesheet_entries_row_version_positive",
+          "value": "\"hr_timesheet_entries\".\"row_version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_timesheet_service_control": {
+      "name": "hr_timesheet_service_control",
+      "schema": "",
+      "columns": {
+        "service_control_id": {
+          "name": "service_control_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "service_key": {
+          "name": "service_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'timesheet'"
+        },
+        "settings_version": {
+          "name": "settings_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "uq_hr_timesheet_service_control_tenant_key": {
+          "name": "uq_hr_timesheet_service_control_tenant_key",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "service_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_timesheet_service_control_activation_fk": {
+          "name": "hr_timesheet_service_control_activation_fk",
+          "tableFrom": "hr_timesheet_service_control",
+          "tableTo": "service_activations",
+          "columnsFrom": ["tenant_id", "service_key"],
+          "columnsTo": ["tenant_id", "service_key"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "hr_timesheet_service_control_key_exact": {
+          "name": "hr_timesheet_service_control_key_exact",
+          "value": "\"hr_timesheet_service_control\".\"service_key\" = 'timesheet'"
+        },
+        "hr_timesheet_service_control_settings_version_positive": {
+          "name": "hr_timesheet_service_control_settings_version_positive",
+          "value": "\"hr_timesheet_service_control\".\"settings_version\" > 0"
+        },
+        "hr_timesheet_service_control_row_version_positive": {
+          "name": "hr_timesheet_service_control_row_version_positive",
+          "value": "\"hr_timesheet_service_control\".\"row_version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_timesheet_versions": {
+      "name": "hr_timesheet_versions",
+      "schema": "",
+      "columns": {
+        "timesheet_version_id": {
+          "name": "timesheet_version_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "timesheet_id": {
+          "name": "timesheet_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "supersedes_version_id": {
+          "name": "supersedes_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "hr_timesheet_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'draft'"
+        },
+        "assigned_approver_worker_profile_id": {
+          "name": "assigned_approver_worker_profile_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "submitted_at": {
+          "name": "submitted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "total_minutes": {
+          "name": "total_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "uq_hr_timesheet_versions_tenant_number": {
+          "name": "uq_hr_timesheet_versions_tenant_number",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "timesheet_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "version",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "uq_hr_timesheet_versions_tenant_successor": {
+          "name": "uq_hr_timesheet_versions_tenant_successor",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "timesheet_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "supersedes_version_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"hr_timesheet_versions\".\"supersedes_version_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_hr_timesheet_versions_tenant_approver_submitted": {
+          "name": "idx_hr_timesheet_versions_tenant_approver_submitted",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "assigned_approver_worker_profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "submitted_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "timesheet_version_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_hr_timesheet_versions_tenant_timesheet_cursor": {
+          "name": "idx_hr_timesheet_versions_tenant_timesheet_cursor",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "timesheet_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "version",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "timesheet_version_id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_timesheet_versions_timesheet_same_tenant_fk": {
+          "name": "hr_timesheet_versions_timesheet_same_tenant_fk",
+          "tableFrom": "hr_timesheet_versions",
+          "tableTo": "hr_timesheets",
+          "columnsFrom": ["tenant_id", "timesheet_id"],
+          "columnsTo": ["tenant_id", "timesheet_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_timesheet_versions_predecessor_same_root_fk": {
+          "name": "hr_timesheet_versions_predecessor_same_root_fk",
+          "tableFrom": "hr_timesheet_versions",
+          "tableTo": "hr_timesheet_versions",
+          "columnsFrom": ["tenant_id", "timesheet_id", "supersedes_version_id"],
+          "columnsTo": ["tenant_id", "timesheet_id", "timesheet_version_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_timesheet_versions_approver_same_tenant_fk": {
+          "name": "hr_timesheet_versions_approver_same_tenant_fk",
+          "tableFrom": "hr_timesheet_versions",
+          "tableTo": "hr_worker_profiles",
+          "columnsFrom": ["tenant_id", "assigned_approver_worker_profile_id"],
+          "columnsTo": ["tenant_id", "worker_profile_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "uq_hr_timesheet_versions_composite_identity": {
+          "name": "uq_hr_timesheet_versions_composite_identity",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "timesheet_id", "timesheet_version_id"]
+        },
+        "uq_hr_timesheet_versions_tenant_identity": {
+          "name": "uq_hr_timesheet_versions_tenant_identity",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "timesheet_version_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "hr_timesheet_versions_predecessor_version_consistent": {
+          "name": "hr_timesheet_versions_predecessor_version_consistent",
+          "value": "(\"hr_timesheet_versions\".\"version\" = 1 AND \"hr_timesheet_versions\".\"supersedes_version_id\" IS NULL)\n          OR (\"hr_timesheet_versions\".\"version\" > 1 AND \"hr_timesheet_versions\".\"supersedes_version_id\" IS NOT NULL)"
+        },
+        "hr_timesheet_versions_submission_consistent": {
+          "name": "hr_timesheet_versions_submission_consistent",
+          "value": "(\"hr_timesheet_versions\".\"status\" = 'draft'\n            AND \"hr_timesheet_versions\".\"assigned_approver_worker_profile_id\" IS NULL\n            AND \"hr_timesheet_versions\".\"submitted_at\" IS NULL)\n          OR (\"hr_timesheet_versions\".\"status\" IN ('submitted', 'approved', 'rejected')\n            AND \"hr_timesheet_versions\".\"assigned_approver_worker_profile_id\" IS NOT NULL\n            AND \"hr_timesheet_versions\".\"submitted_at\" IS NOT NULL)"
+        },
+        "hr_timesheet_versions_total_minutes_valid": {
+          "name": "hr_timesheet_versions_total_minutes_valid",
+          "value": "\"hr_timesheet_versions\".\"total_minutes\" >= 0"
+        },
+        "hr_timesheet_versions_version_positive": {
+          "name": "hr_timesheet_versions_version_positive",
+          "value": "\"hr_timesheet_versions\".\"version\" > 0"
+        },
+        "hr_timesheet_versions_row_version_positive": {
+          "name": "hr_timesheet_versions_row_version_positive",
+          "value": "\"hr_timesheet_versions\".\"row_version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_timesheets": {
+      "name": "hr_timesheets",
+      "schema": "",
+      "columns": {
+        "timesheet_id": {
+          "name": "timesheet_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "worker_profile_id": {
+          "name": "worker_profile_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "period_start": {
+          "name": "period_start",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "period_end": {
+          "name": "period_end",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "current_version_id": {
+          "name": "current_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "idx_hr_timesheets_tenant_worker_period_cursor": {
+          "name": "idx_hr_timesheets_tenant_worker_period_cursor",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "worker_profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "period_start",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "timesheet_id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "uq_hr_timesheets_tenant_worker_period": {
+          "name": "uq_hr_timesheets_tenant_worker_period",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "worker_profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "period_start",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "period_end",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_timesheets_tenant_id_tenants_tenant_id_fk": {
+          "name": "hr_timesheets_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "hr_timesheets",
+          "tableTo": "tenants",
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_timesheets_worker_same_tenant_fk": {
+          "name": "hr_timesheets_worker_same_tenant_fk",
+          "tableFrom": "hr_timesheets",
+          "tableTo": "hr_worker_profiles",
+          "columnsFrom": ["tenant_id", "worker_profile_id"],
+          "columnsTo": ["tenant_id", "worker_profile_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_timesheets_current_version_same_root_fk": {
+          "name": "hr_timesheets_current_version_same_root_fk",
+          "tableFrom": "hr_timesheets",
+          "tableTo": "hr_timesheet_versions",
+          "columnsFrom": ["tenant_id", "timesheet_id", "current_version_id"],
+          "columnsTo": ["tenant_id", "timesheet_id", "timesheet_version_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "uq_hr_timesheets_composite_identity": {
+          "name": "uq_hr_timesheets_composite_identity",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "timesheet_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "hr_timesheets_period_valid": {
+          "name": "hr_timesheets_period_valid",
+          "value": "\"hr_timesheets\".\"period_end\" >= \"hr_timesheets\".\"period_start\""
+        },
+        "hr_timesheets_row_version_positive": {
+          "name": "hr_timesheets_row_version_positive",
+          "value": "\"hr_timesheets\".\"row_version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_workforce_profile_service_control": {
+      "name": "hr_workforce_profile_service_control",
+      "schema": "",
+      "columns": {
+        "service_control_id": {
+          "name": "service_control_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "service_key": {
+          "name": "service_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'workforce_profile'"
+        },
+        "settings_version": {
+          "name": "settings_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "uq_hr_workforce_profile_service_control_tenant_key": {
+          "name": "uq_hr_workforce_profile_service_control_tenant_key",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "service_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_workforce_profile_service_control_activation_fk": {
+          "name": "hr_workforce_profile_service_control_activation_fk",
+          "tableFrom": "hr_workforce_profile_service_control",
+          "tableTo": "service_activations",
+          "columnsFrom": ["tenant_id", "service_key"],
+          "columnsTo": ["tenant_id", "service_key"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "hr_workforce_profile_service_control_key_exact": {
+          "name": "hr_workforce_profile_service_control_key_exact",
+          "value": "\"hr_workforce_profile_service_control\".\"service_key\" = 'workforce_profile'"
+        },
+        "hr_workforce_profile_service_control_settings_version_positive": {
+          "name": "hr_workforce_profile_service_control_settings_version_positive",
+          "value": "\"hr_workforce_profile_service_control\".\"settings_version\" > 0"
+        },
+        "hr_workforce_profile_service_control_row_version_positive": {
+          "name": "hr_workforce_profile_service_control_row_version_positive",
+          "value": "\"hr_workforce_profile_service_control\".\"row_version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_worker_profiles": {
+      "name": "hr_worker_profiles",
+      "schema": "",
+      "columns": {
+        "worker_profile_id": {
+          "name": "worker_profile_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "principal_id": {
+          "name": "principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "employee_number": {
+          "name": "employee_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "workforce_status": {
+          "name": "workforce_status",
+          "type": "hr_workforce_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'draft'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "current_reporting_relationship_id": {
+          "name": "current_reporting_relationship_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "row_version": {
+          "name": "row_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "uq_hr_worker_profiles_tenant_principal_current": {
+          "name": "uq_hr_worker_profiles_tenant_principal_current",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "principal_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"hr_worker_profiles\".\"principal_id\" IS NOT NULL AND \"hr_worker_profiles\".\"workforce_status\" <> 'terminated'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_hr_worker_profiles_tenant_principal_fk": {
+          "name": "idx_hr_worker_profiles_tenant_principal_fk",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "principal_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_hr_worker_profiles_tenant_status_cursor": {
+          "name": "idx_hr_worker_profiles_tenant_status_cursor",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "workforce_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "worker_profile_id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "uq_hr_worker_profiles_tenant_relationship_head": {
+          "name": "uq_hr_worker_profiles_tenant_relationship_head",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "current_reporting_relationship_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"hr_worker_profiles\".\"current_reporting_relationship_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_worker_profiles_tenant_id_tenants_tenant_id_fk": {
+          "name": "hr_worker_profiles_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "hr_worker_profiles",
+          "tableTo": "tenants",
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_worker_profiles_principal_same_tenant_fk": {
+          "name": "hr_worker_profiles_principal_same_tenant_fk",
+          "tableFrom": "hr_worker_profiles",
+          "tableTo": "memberships",
+          "columnsFrom": ["tenant_id", "principal_id"],
+          "columnsTo": ["tenant_id", "principal_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_worker_profiles_current_relationship_same_root_fk": {
+          "name": "hr_worker_profiles_current_relationship_same_root_fk",
+          "tableFrom": "hr_worker_profiles",
+          "tableTo": "hr_reporting_relationships",
+          "columnsFrom": ["tenant_id", "worker_profile_id", "current_reporting_relationship_id"],
+          "columnsTo": ["tenant_id", "worker_profile_id", "reporting_relationship_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "hr_worker_profiles_tenant_profile_uq": {
+          "name": "hr_worker_profiles_tenant_profile_uq",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "worker_profile_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "hr_worker_profiles_employee_number_not_blank": {
+          "name": "hr_worker_profiles_employee_number_not_blank",
+          "value": "\"hr_worker_profiles\".\"employee_number\" IS NULL OR char_length(trim(\"hr_worker_profiles\".\"employee_number\")) > 0"
+        },
+        "hr_worker_profiles_row_version_positive": {
+          "name": "hr_worker_profiles_row_version_positive",
+          "value": "\"hr_worker_profiles\".\"row_version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.hr_workforce_status_history": {
+      "name": "hr_workforce_status_history",
+      "schema": "",
+      "columns": {
+        "workforce_status_history_id": {
+          "name": "workforce_status_history_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "worker_profile_id": {
+          "name": "worker_profile_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "previous_status": {
+          "name": "previous_status",
+          "type": "hr_workforce_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "new_status": {
+          "name": "new_status",
+          "type": "hr_workforce_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "effective_at": {
+          "name": "effective_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_principal_id": {
+          "name": "actor_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "correlation_id": {
+          "name": "correlation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "idx_hr_workforce_status_history_tenant_worker_effective": {
+          "name": "idx_hr_workforce_status_history_tenant_worker_effective",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "worker_profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "effective_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "workforce_status_history_id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_hr_workforce_status_history_tenant_actor_fk": {
+          "name": "idx_hr_workforce_status_history_tenant_actor_fk",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "actor_principal_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "hr_workforce_status_history_tenant_fk": {
+          "name": "hr_workforce_status_history_tenant_fk",
+          "tableFrom": "hr_workforce_status_history",
+          "tableTo": "tenants",
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_workforce_status_history_profile_same_tenant_fk": {
+          "name": "hr_workforce_status_history_profile_same_tenant_fk",
+          "tableFrom": "hr_workforce_status_history",
+          "tableTo": "hr_worker_profiles",
+          "columnsFrom": ["tenant_id", "worker_profile_id"],
+          "columnsTo": ["tenant_id", "worker_profile_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "hr_workforce_status_history_actor_same_tenant_fk": {
+          "name": "hr_workforce_status_history_actor_same_tenant_fk",
+          "tableFrom": "hr_workforce_status_history",
+          "tableTo": "memberships",
+          "columnsFrom": ["tenant_id", "actor_principal_id"],
+          "columnsTo": ["tenant_id", "principal_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "hr_workforce_status_history_transition_valid": {
+          "name": "hr_workforce_status_history_transition_valid",
+          "value": "((\"hr_workforce_status_history\".\"previous_status\" IS NULL AND \"hr_workforce_status_history\".\"new_status\" = 'draft') OR\n          (\"hr_workforce_status_history\".\"previous_status\" = 'draft' AND \"hr_workforce_status_history\".\"new_status\" = 'active') OR\n          (\"hr_workforce_status_history\".\"previous_status\" = 'active' AND \"hr_workforce_status_history\".\"new_status\" IN ('suspended', 'terminated')) OR\n          (\"hr_workforce_status_history\".\"previous_status\" = 'suspended' AND \"hr_workforce_status_history\".\"new_status\" IN ('active', 'terminated'))) IS TRUE"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.membership_capabilities": {
+      "name": "membership_capabilities",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "principal_id": {
+          "name": "principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "capability_id": {
+          "name": "capability_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "membership_capabilities_membership_fk": {
+          "name": "membership_capabilities_membership_fk",
+          "tableFrom": "membership_capabilities",
+          "tableTo": "memberships",
+          "columnsFrom": ["tenant_id", "principal_id"],
+          "columnsTo": ["tenant_id", "principal_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "membership_capabilities_pk": {
+          "name": "membership_capabilities_pk",
+          "columns": ["tenant_id", "principal_id", "capability_id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "membership_capabilities_id_not_blank": {
+          "name": "membership_capabilities_id_not_blank",
+          "value": "char_length(trim(\"membership_capabilities\".\"capability_id\")) > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.memberships": {
+      "name": "memberships",
+      "schema": "",
+      "columns": {
+        "membership_id": {
+          "name": "membership_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "principal_id": {
+          "name": "principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role_key": {
+          "name": "role_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "manager_principal_id": {
+          "name": "manager_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "memberships_tenant_manager_idx": {
+          "name": "memberships_tenant_manager_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "manager_principal_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "memberships_tenant_id_tenants_tenant_id_fk": {
+          "name": "memberships_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "memberships",
+          "tableTo": "tenants",
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "memberships_principal_id_principals_principal_id_fk": {
+          "name": "memberships_principal_id_principals_principal_id_fk",
+          "tableFrom": "memberships",
+          "tableTo": "principals",
+          "columnsFrom": ["principal_id"],
+          "columnsTo": ["principal_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "memberships_manager_principal_id_principals_principal_id_fk": {
+          "name": "memberships_manager_principal_id_principals_principal_id_fk",
+          "tableFrom": "memberships",
+          "tableTo": "principals",
+          "columnsFrom": ["manager_principal_id"],
+          "columnsTo": ["principal_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "memberships_manager_same_tenant_fk": {
+          "name": "memberships_manager_same_tenant_fk",
+          "tableFrom": "memberships",
+          "tableTo": "memberships",
+          "columnsFrom": ["tenant_id", "manager_principal_id"],
+          "columnsTo": ["tenant_id", "principal_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "memberships_tenant_principal_uq": {
+          "name": "memberships_tenant_principal_uq",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "principal_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "memberships_role_key_not_blank": {
+          "name": "memberships_role_key_not_blank",
+          "value": "char_length(trim(\"memberships\".\"role_key\")) > 0"
+        },
+        "memberships_status_valid": {
+          "name": "memberships_status_valid",
+          "value": "\"memberships\".\"status\" IN ('active', 'suspended')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.outbox_events": {
+      "name": "outbox_events",
+      "schema": "",
+      "columns": {
+        "event_id": {
+          "name": "event_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "aggregate_type": {
+          "name": "aggregate_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "aggregate_id": {
+          "name": "aggregate_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "aggregate_version": {
+          "name": "aggregate_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "correlation_id": {
+          "name": "correlation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "published_at": {
+          "name": "published_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "outbox_events_unpublished_idx": {
+          "name": "outbox_events_unpublished_idx",
+          "columns": [
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "event_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"outbox_events\".\"published_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "outbox_events_tenant_correlation_idx": {
+          "name": "outbox_events_tenant_correlation_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "correlation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "outbox_events_tenant_id_tenants_tenant_id_fk": {
+          "name": "outbox_events_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "outbox_events",
+          "tableTo": "tenants",
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "outbox_events_idempotency_uq": {
+          "name": "outbox_events_idempotency_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "event_type",
+            "aggregate_type",
+            "aggregate_id",
+            "aggregate_version"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "outbox_events_type_not_blank": {
+          "name": "outbox_events_type_not_blank",
+          "value": "char_length(trim(\"outbox_events\".\"event_type\")) > 0"
+        },
+        "outbox_events_aggregate_type_not_blank": {
+          "name": "outbox_events_aggregate_type_not_blank",
+          "value": "char_length(trim(\"outbox_events\".\"aggregate_type\")) > 0"
+        },
+        "outbox_events_aggregate_version_positive": {
+          "name": "outbox_events_aggregate_version_positive",
+          "value": "\"outbox_events\".\"aggregate_version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.principals": {
+      "name": "principals",
+      "schema": "",
+      "columns": {
+        "principal_id": {
+          "name": "principal_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "varchar(160)",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "principals_display_name_not_blank": {
+          "name": "principals_display_name_not_blank",
+          "value": "char_length(trim(\"principals\".\"display_name\")) > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.service_activations": {
+      "name": "service_activations",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "service_key": {
+          "name": "service_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "service_activation_state",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'inactive'"
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "service_activations_tenant_id_tenants_tenant_id_fk": {
+          "name": "service_activations_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "service_activations",
+          "tableTo": "tenants",
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "service_activations_pk": {
+          "name": "service_activations_pk",
+          "columns": ["tenant_id", "service_key"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "service_activations_key_not_blank": {
+          "name": "service_activations_key_not_blank",
+          "value": "char_length(trim(\"service_activations\".\"service_key\")) > 0"
+        },
+        "service_activations_version_positive": {
+          "name": "service_activations_version_positive",
+          "value": "\"service_activations\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.tenant_settings": {
+      "name": "tenant_settings",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "setting_key": {
+          "name": "setting_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value_type": {
+          "name": "value_type",
+          "type": "setting_value_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "tenant_settings_tenant_id_tenants_tenant_id_fk": {
+          "name": "tenant_settings_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "tenant_settings",
+          "tableTo": "tenants",
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "tenant_settings_pk": {
+          "name": "tenant_settings_pk",
+          "columns": ["tenant_id", "setting_key"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "tenant_settings_key_not_blank": {
+          "name": "tenant_settings_key_not_blank",
+          "value": "char_length(trim(\"tenant_settings\".\"setting_key\")) > 0"
+        },
+        "tenant_settings_version_positive": {
+          "name": "tenant_settings_version_positive",
+          "value": "\"tenant_settings\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.tenants": {
+      "name": "tenants",
+      "schema": "",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(160)",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "tenants_name_not_blank": {
+          "name": "tenants_name_not_blank",
+          "value": "char_length(trim(\"tenants\".\"name\")) > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.work_items": {
+      "name": "work_items",
+      "schema": "",
+      "columns": {
+        "work_item_id": {
+          "name": "work_item_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "assignee_principal_id": {
+          "name": "assignee_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "work_type": {
+          "name": "work_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subject_type": {
+          "name": "subject_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subject_id": {
+          "name": "subject_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "work_item_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'open'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "work_items_tenant_assignee_status_created_idx": {
+          "name": "work_items_tenant_assignee_status_created_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "assignee_principal_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "work_items_tenant_id_tenants_tenant_id_fk": {
+          "name": "work_items_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "work_items",
+          "tableTo": "tenants",
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "work_items_assignee_same_tenant_fk": {
+          "name": "work_items_assignee_same_tenant_fk",
+          "tableFrom": "work_items",
+          "tableTo": "memberships",
+          "columnsFrom": ["tenant_id", "assignee_principal_id"],
+          "columnsTo": ["tenant_id", "principal_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "work_items_tenant_work_subject_uq": {
+          "name": "work_items_tenant_work_subject_uq",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "work_type", "subject_type", "subject_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "work_items_completion_consistent": {
+          "name": "work_items_completion_consistent",
+          "value": "(\"work_items\".\"status\" = 'completed' AND \"work_items\".\"completed_at\" IS NOT NULL) OR (\"work_items\".\"status\" <> 'completed' AND \"work_items\".\"completed_at\" IS NULL)"
+        },
+        "work_items_work_type_not_blank": {
+          "name": "work_items_work_type_not_blank",
+          "value": "char_length(trim(\"work_items\".\"work_type\")) > 0"
+        },
+        "work_items_subject_type_not_blank": {
+          "name": "work_items_subject_type_not_blank",
+          "value": "char_length(trim(\"work_items\".\"subject_type\")) > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.workspace_tasks": {
+      "name": "workspace_tasks",
+      "schema": "",
+      "columns": {
+        "task_id": {
+          "name": "task_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_by_principal_id": {
+          "name": "created_by_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "assignee_principal_id": {
+          "name": "assignee_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "varchar(160)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "workspace_task_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'open'"
+        },
+        "due_on": {
+          "name": "due_on",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "completion_note": {
+          "name": "completion_note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "correlation_id": {
+          "name": "correlation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "workspace_tasks_assignee_open_idx": {
+          "name": "workspace_tasks_assignee_open_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "assignee_principal_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "due_on",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"workspace_tasks\".\"status\" = 'open'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "workspace_tasks_tenant_id_tenants_tenant_id_fk": {
+          "name": "workspace_tasks_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "workspace_tasks",
+          "tableTo": "tenants",
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["tenant_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "workspace_tasks_creator_same_tenant_fk": {
+          "name": "workspace_tasks_creator_same_tenant_fk",
+          "tableFrom": "workspace_tasks",
+          "tableTo": "memberships",
+          "columnsFrom": ["tenant_id", "created_by_principal_id"],
+          "columnsTo": ["tenant_id", "principal_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "workspace_tasks_assignee_same_tenant_fk": {
+          "name": "workspace_tasks_assignee_same_tenant_fk",
+          "tableFrom": "workspace_tasks",
+          "tableTo": "memberships",
+          "columnsFrom": ["tenant_id", "assignee_principal_id"],
+          "columnsTo": ["tenant_id", "principal_id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "workspace_tasks_tenant_creator_idempotency_uq": {
+          "name": "workspace_tasks_tenant_creator_idempotency_uq",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "created_by_principal_id", "idempotency_key"]
+        },
+        "workspace_tasks_tenant_task_id_uq": {
+          "name": "workspace_tasks_tenant_task_id_uq",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "task_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "workspace_tasks_title_valid": {
+          "name": "workspace_tasks_title_valid",
+          "value": "char_length(trim(\"workspace_tasks\".\"title\")) BETWEEN 1 AND 160"
+        },
+        "workspace_tasks_description_valid": {
+          "name": "workspace_tasks_description_valid",
+          "value": "\"workspace_tasks\".\"description\" IS NULL OR char_length(trim(\"workspace_tasks\".\"description\")) BETWEEN 1 AND 2000"
+        },
+        "workspace_tasks_completion_note_valid": {
+          "name": "workspace_tasks_completion_note_valid",
+          "value": "\"workspace_tasks\".\"completion_note\" IS NULL OR char_length(trim(\"workspace_tasks\".\"completion_note\")) BETWEEN 1 AND 2000"
+        },
+        "workspace_tasks_completion_consistent": {
+          "name": "workspace_tasks_completion_consistent",
+          "value": "(\"workspace_tasks\".\"status\" = 'open' AND \"workspace_tasks\".\"completed_at\" IS NULL AND \"workspace_tasks\".\"completion_note\" IS NULL) OR (\"workspace_tasks\".\"status\" = 'completed' AND \"workspace_tasks\".\"completed_at\" IS NOT NULL)"
+        },
+        "workspace_tasks_idempotency_not_blank": {
+          "name": "workspace_tasks_idempotency_not_blank",
+          "value": "char_length(trim(\"workspace_tasks\".\"idempotency_key\")) > 0"
+        },
+        "workspace_tasks_version_positive": {
+          "name": "workspace_tasks_version_positive",
+          "value": "\"workspace_tasks\".\"version\" > 0"
+        }
+      },
+      "isRLSEnabled": true
+    }
+  },
+  "enums": {
+    "public.hr_attendance_observation_kind": {
+      "name": "hr_attendance_observation_kind",
+      "schema": "public",
+      "values": ["presence_start", "presence_end"]
+    },
+    "public.hr_attendance_source_kind": {
+      "name": "hr_attendance_source_kind",
+      "schema": "public",
+      "values": ["manual", "synthetic"]
+    },
+    "public.hr_employment_record_status": {
+      "name": "hr_employment_record_status",
+      "schema": "public",
+      "values": ["draft", "active", "ended"]
+    },
+    "public.hr_employment_version_kind": {
+      "name": "hr_employment_version_kind",
+      "schema": "public",
+      "values": ["effective", "end"]
+    },
+    "public.hr_leave_category": {
+      "name": "hr_leave_category",
+      "schema": "public",
+      "values": ["annual", "sick", "unpaid", "other"]
+    },
+    "public.hr_leave_request_status": {
+      "name": "hr_leave_request_status",
+      "schema": "public",
+      "values": ["submitted", "approved", "rejected"]
+    },
+    "public.hr_reporting_relationship_status": {
+      "name": "hr_reporting_relationship_status",
+      "schema": "public",
+      "values": ["assigned", "unassigned"]
+    },
+    "public.hr_shift_assignment_status": {
+      "name": "hr_shift_assignment_status",
+      "schema": "public",
+      "values": ["active", "cancelled"]
+    },
+    "public.hr_shift_roster_status": {
+      "name": "hr_shift_roster_status",
+      "schema": "public",
+      "values": ["draft", "published", "superseded"]
+    },
+    "public.hr_timesheet_decision": {
+      "name": "hr_timesheet_decision",
+      "schema": "public",
+      "values": ["approved", "rejected"]
+    },
+    "public.hr_timesheet_status": {
+      "name": "hr_timesheet_status",
+      "schema": "public",
+      "values": ["draft", "submitted", "approved", "rejected"]
+    },
+    "public.hr_workforce_status": {
+      "name": "hr_workforce_status",
+      "schema": "public",
+      "values": ["draft", "active", "suspended", "terminated"]
+    },
+    "public.service_activation_state": {
+      "name": "service_activation_state",
+      "schema": "public",
+      "values": ["inactive", "active"]
+    },
+    "public.setting_value_type": {
+      "name": "setting_value_type",
+      "schema": "public",
+      "values": ["boolean", "integer", "decimal", "text", "enum", "duration"]
+    },
+    "public.work_item_status": {
+      "name": "work_item_status",
+      "schema": "public",
+      "values": ["open", "completed", "cancelled"]
+    },
+    "public.workspace_task_status": {
+      "name": "workspace_task_status",
+      "schema": "public",
+      "values": ["open", "completed"]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
