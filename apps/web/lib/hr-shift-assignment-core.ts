@@ -1,9 +1,11 @@
 import {
   type ApiProblemDetails,
+  type HrServiceControl,
   type HrShiftAssignmentResponse,
   type HrShiftListResponse,
   type HrShiftRoster,
   parseApiProblemDetails,
+  parseHrServiceControl,
   parseHrShiftAssignmentResponse,
   parseHrShiftListResponse,
   parseHrShiftRosterResponse,
@@ -26,6 +28,10 @@ export const SHIFT_AUTHORIZED_ACTIONS = Object.freeze([
   "view_service_control",
 ] as const);
 export type ShiftAuthorizedAction = (typeof SHIFT_AUTHORIZED_ACTIONS)[number];
+export type ShiftServiceControl = Extract<
+  HrServiceControl,
+  { readonly serviceKey: "shift_assignment" }
+>;
 export type ShiftFailureKind =
   | "conflict"
   | "denied"
@@ -35,12 +41,32 @@ export type ShiftFailureKind =
   | "operational_error"
   | "validation";
 export type ShiftOperation = "assign" | "cancel" | "create_roster" | "publish";
+export type ShiftServiceOperation = "activate_service" | "configure_service" | "deactivate_service";
 export type ShiftAction = Readonly<{
   body: Record<string, unknown>;
   id?: string;
   idempotencyKey: string;
   operation: ShiftOperation;
 }>;
+export type ShiftServiceAction =
+  | Readonly<{
+      body: Readonly<{ expectedVersion: number | null }>;
+      idempotencyKey: string;
+      operation: "activate_service";
+    }>
+  | Readonly<{
+      body: Readonly<{
+        expectedSettingsVersion: number;
+        settings: Readonly<{ overlapAllowed: false; rosterHorizonDays: number }>;
+      }>;
+      idempotencyKey: string;
+      operation: "configure_service";
+    }>
+  | Readonly<{
+      body: Readonly<{ expectedVersion: number }>;
+      idempotencyKey: string;
+      operation: "deactivate_service";
+    }>;
 export type ShiftMutationResult = HrShiftAssignmentResponse | HrShiftRoster;
 export interface ShiftFailureState {
   readonly kind: ShiftFailureKind;
@@ -99,6 +125,13 @@ export function hasShiftAction(
   action: ShiftAuthorizedAction,
 ): boolean {
   return actions.includes(action);
+}
+
+export function isShiftServiceActionOnlyFallback(
+  failureKind: ShiftFailureKind | undefined,
+  hasAction: boolean,
+): boolean {
+  return hasAction && failureKind === "denied";
 }
 
 function problemError(problem: ApiProblemDetails): ShiftUiError {
@@ -186,6 +219,22 @@ export async function decodeShiftMutation(
     if (operation === "assign" || operation === "cancel")
       return parseHrShiftAssignmentResponse(value);
     return parseHrShiftRosterResponse(value);
+  } catch {
+    throw new ShiftUiError("operational_error");
+  }
+}
+
+export async function decodeShiftServiceControl(
+  response: Response,
+  mutation = false,
+): Promise<ShiftServiceControl> {
+  const replay = response.headers.get("idempotent-replayed");
+  const valid = response.status === 200 && (!mutation || replay === "false" || replay === "true");
+  const value = await json(response, valid);
+  try {
+    const control = parseHrServiceControl(value);
+    if (control.serviceKey !== "shift_assignment") throw 0;
+    return control as ShiftServiceControl;
   } catch {
     throw new ShiftUiError("operational_error");
   }
@@ -291,4 +340,70 @@ export function validateShiftAction(
     };
   }
   return invalid();
+}
+
+export function isShiftServiceOperation(value: unknown): value is ShiftServiceOperation {
+  return ["activate_service", "configure_service", "deactivate_service"].includes(String(value));
+}
+
+export function validateShiftServiceAction(
+  value: Record<string, string>,
+): { ok: false; state: ShiftFailureState } | { ok: true; value: ShiftServiceAction } {
+  const invalid = () => ({
+    ok: false as const,
+    state: shiftStateForError(new ShiftUiError("validation", 400)),
+  });
+  if (!UUID.test(value.idempotencyKey ?? "") || !isShiftServiceOperation(value.operation))
+    return invalid();
+  const idempotencyKey = value.idempotencyKey as string;
+  if (value.operation === "activate_service") {
+    if (!exact(value, ["expectedVersion", "idempotencyKey", "operation"])) return invalid();
+    const expectedVersion = version(value.expectedVersion, true);
+    return expectedVersion === undefined
+      ? invalid()
+      : {
+          ok: true,
+          value: { body: { expectedVersion }, idempotencyKey, operation: value.operation },
+        };
+  }
+  if (value.operation === "deactivate_service") {
+    if (!exact(value, ["expectedVersion", "idempotencyKey", "operation"])) return invalid();
+    const expectedVersion = version(value.expectedVersion);
+    return expectedVersion === undefined || expectedVersion === null
+      ? invalid()
+      : {
+          ok: true,
+          value: { body: { expectedVersion }, idempotencyKey, operation: value.operation },
+        };
+  }
+  if (
+    !exact(value, [
+      "expectedSettingsVersion",
+      "idempotencyKey",
+      "operation",
+      "overlapAllowed",
+      "rosterHorizonDays",
+    ]) ||
+    value.overlapAllowed !== "false"
+  )
+    return invalid();
+  const expectedSettingsVersion = version(value.expectedSettingsVersion);
+  const rosterHorizonDays = version(value.rosterHorizonDays);
+  return expectedSettingsVersion === undefined ||
+    expectedSettingsVersion === null ||
+    rosterHorizonDays === undefined ||
+    rosterHorizonDays === null ||
+    rosterHorizonDays > 31
+    ? invalid()
+    : {
+        ok: true,
+        value: {
+          body: {
+            expectedSettingsVersion,
+            settings: { overlapAllowed: false, rosterHorizonDays },
+          },
+          idempotencyKey,
+          operation: value.operation,
+        },
+      };
 }

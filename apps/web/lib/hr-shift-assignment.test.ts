@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readShiftMutationReceipt, sealShiftMutationReceipt } from "./hr-shift-assignment";
+import {
+  readShiftMutationReceipt,
+  readShiftServiceReceipt,
+  sealShiftMutationReceipt,
+  sealShiftServiceReceipt,
+} from "./hr-shift-assignment";
+import {
+  isShiftServiceActionOnlyFallback,
+  validateShiftServiceAction,
+} from "./hr-shift-assignment-core";
 
 vi.mock("server-only", () => ({}));
 const ids = {
@@ -46,5 +55,84 @@ describe("Shift mutation receipt", () => {
     expect(readShiftMutationReceipt(sealed, 1_000)).toBeNull();
     vi.stubEnv("ESBLA_DEV_PRINCIPAL_ID", ids.principal);
     expect(readShiftMutationReceipt(sealed, 301_000)).toBeNull();
+  });
+
+  it("binds exact service-control transitions and rejects malformed settings", () => {
+    const action = {
+      body: {
+        expectedSettingsVersion: 1,
+        settings: { overlapAllowed: false as const, rosterHorizonDays: 21 },
+      },
+      idempotencyKey: ids.key,
+      operation: "configure_service" as const,
+    };
+    const sealed = sealShiftServiceReceipt(
+      action,
+      {
+        activationState: "active",
+        activationVersion: 1,
+        serviceKey: "shift_assignment",
+        settings: action.body.settings,
+        settingsVersion: 2,
+        updatedAt: "2030-01-01T00:00:00.000Z",
+        version: 2,
+      },
+      1_000,
+    );
+    expect(readShiftServiceReceipt(sealed, 1_000)).toEqual({
+      activationState: "active",
+      activationVersion: 1,
+      controlVersion: 2,
+      operation: "configure_service",
+      settingsVersion: 2,
+    });
+    expect(readShiftServiceReceipt(`${sealed}x`, 1_000)).toBeNull();
+    vi.stubEnv("ESBLA_DEV_PRINCIPAL_ID", ids.tenant);
+    expect(readShiftServiceReceipt(sealed, 1_000)).toBeNull();
+    vi.stubEnv("ESBLA_DEV_PRINCIPAL_ID", ids.principal);
+    vi.stubEnv("ESBLA_DEV_TENANT_ID", ids.principal);
+    expect(readShiftServiceReceipt(sealed, 1_000)).toBeNull();
+    vi.stubEnv("ESBLA_DEV_TENANT_ID", ids.tenant);
+    expect(readShiftServiceReceipt(sealed, 301_000)).toBeNull();
+    expect(() =>
+      sealShiftServiceReceipt(action, {
+        activationState: "active",
+        activationVersion: 1,
+        serviceKey: "shift_assignment",
+        settings: action.body.settings,
+        settingsVersion: 1,
+        updatedAt: "2030-01-01T00:00:00.000Z",
+        version: 1,
+      }),
+    ).toThrow();
+    expect(
+      validateShiftServiceAction({
+        expectedSettingsVersion: "1",
+        idempotencyKey: ids.key,
+        operation: "configure_service",
+        overlapAllowed: "false",
+        rosterHorizonDays: "21",
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: { body: { settings: { overlapAllowed: false, rosterHorizonDays: 21 } } },
+    });
+    expect(
+      validateShiftServiceAction({
+        expectedSettingsVersion: "1",
+        idempotencyKey: ids.key,
+        operation: "configure_service",
+        overlapAllowed: "true",
+        rosterHorizonDays: "21",
+      }),
+    ).toMatchObject({ ok: false, state: { kind: "validation" } });
+  });
+
+  it("permits only policy-denied action-only fallback and preserves genuine failures", () => {
+    expect(isShiftServiceActionOnlyFallback("denied", true)).toBe(true);
+    expect(isShiftServiceActionOnlyFallback("denied", false)).toBe(false);
+    expect(isShiftServiceActionOnlyFallback("dependency_unavailable", true)).toBe(false);
+    expect(isShiftServiceActionOnlyFallback("inactive", true)).toBe(false);
+    expect(isShiftServiceActionOnlyFallback("operational_error", true)).toBe(false);
   });
 });

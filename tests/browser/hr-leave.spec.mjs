@@ -857,6 +857,7 @@ test("tenant admin configures and controls Employment without record access", as
 });
 
 test("Employment and Shift widgets follow exact action capabilities", async ({ browser }) => {
+  const shiftAdmin = await openActor(browser, fixture.adminOrigin, fixture.adminLabel);
   const actionAdmin = await openActor(
     browser,
     fixture.employmentActionAdminOrigin,
@@ -887,6 +888,11 @@ test("Employment and Shift widgets follow exact action capabilities", async ({ b
       .locator('form[action="/workspace/hr/employment/action"]')
       .filter({ has: page.locator(`input[name="operation"][value="${operation}"]`) });
   const actionAdminForm = (operation) => employmentForm(actionAdmin.page, operation);
+  const shiftForm = (page, operation) =>
+    page
+      .locator('form[action="/workspace/hr/shifts/action"]')
+      .filter({ has: page.locator(`input[name="operation"][value="${operation}"]`) });
+  const shiftServiceForm = (operation) => shiftForm(shiftAdmin.page, operation);
   const expectActionAdminReceipt = async ({ activation, control, settings, state }) => {
     await expect(
       actionAdmin.page.getByRole("heading", { name: "Last mutation receipt" }),
@@ -903,6 +909,30 @@ test("Employment and Shift widgets follow exact action capabilities", async ({ b
     await expect(serviceControlFact(actionAdmin.page, "Receipt activation state")).toHaveText(
       state,
     );
+  };
+  const submitShiftServiceForm = async (operation, name) => {
+    const response = shiftAdmin.page.waitForResponse(
+      (candidate) => new URL(candidate.url()).pathname === "/workspace/hr/shifts/action",
+    );
+    await shiftServiceForm(operation).getByRole("button", { name }).click();
+    expect((await response).status()).toBe(303);
+    await expect(shiftAdmin.page).toHaveURL(/\/workspace\/hr\/shifts\/settings\?result=success/);
+    await expect(shiftAdmin.page.locator(".success-banner")).toBeFocused();
+  };
+  const expectShiftServiceReceipt = async ({ activation, control, settings, state }) => {
+    await expect(
+      shiftAdmin.page.getByRole("heading", { name: "Last service-control receipt" }),
+    ).toBeVisible();
+    await expect(serviceControlFact(shiftAdmin.page, "Receipt activation version")).toHaveText(
+      activation,
+    );
+    await expect(serviceControlFact(shiftAdmin.page, "Receipt settings version")).toHaveText(
+      settings,
+    );
+    await expect(serviceControlFact(shiftAdmin.page, "Receipt control version")).toHaveText(
+      control,
+    );
+    await expect(serviceControlFact(shiftAdmin.page, "Receipt activation state")).toHaveText(state);
   };
   try {
     await actionOperator.page.goto(`${actionOperator.origin}/workspace/hr`);
@@ -924,6 +954,16 @@ test("Employment and Shift widgets follow exact action capabilities", async ({ b
     await expect(
       actionOperator.page.locator('form[action="/workspace/hr/shifts/action"]'),
     ).toHaveCount(4);
+    await actionAdmin.page.goto(`${actionAdmin.origin}/workspace/hr/shifts/settings`);
+    await expect(
+      actionAdmin.page.getByRole("heading", { name: "Shift Assignment settings" }),
+    ).toBeVisible();
+    await expect(actionAdmin.page.getByLabel("Expected settings version")).toHaveValue("");
+    await expect(actionAdmin.page.getByLabel("Maximum inclusive roster days")).toHaveValue("");
+    await expect(shiftForm(actionAdmin.page, "configure_service")).toHaveCount(1);
+    await actionOperator.page.goto(
+      `${actionOperator.origin}/workspace/hr/shifts/reports?rosterVersionId=00000000-0000-4000-8000-000000000000`,
+    );
     await actionOperator.page.getByText("Create an exact roster period", { exact: true }).click();
     await actionOperator.page.getByLabel("Period start").fill("2030-01-01");
     await actionOperator.page.getByLabel("Period end").fill("2030-01-07");
@@ -1147,8 +1187,92 @@ test("Employment and Shift widgets follow exact action capabilities", async ({ b
     for (const operation of ["activate_service", "configure_service", "deactivate_service"]) {
       await expect(employmentForm(viewAdmin.page, operation)).toHaveCount(0);
     }
+
+    await readEmployee.page.goto(`${readEmployee.origin}/workspace/hr`);
+    await expect(readEmployee.page.getByRole("link", { name: "Shift settings" })).toHaveCount(0);
+    await readEmployee.page.goto(
+      `${readEmployee.origin}/workspace/hr/shifts/settings?result=success`,
+    );
+    await expect(
+      readEmployee.page.getByRole("heading", { name: "Shifts unavailable" }),
+    ).toBeVisible();
+    await expect(
+      readEmployee.page.locator('form[action="/workspace/hr/shifts/action"]'),
+    ).toHaveCount(0);
+
+    await shiftAdmin.page.goto(`${shiftAdmin.origin}/workspace/hr`);
+    await expect(shiftAdmin.page.getByRole("link", { name: "Shift settings" })).toBeVisible();
+    await shiftAdmin.page.getByRole("link", { name: "Shift settings" }).click();
+    await expect(
+      shiftAdmin.page.getByRole("heading", { name: "Shift Assignment settings" }),
+    ).toBeVisible();
+    await expect(shiftAdmin.page.getByLabel("Maximum inclusive roster days")).toHaveValue("14");
+    await shiftAdmin.page.getByLabel("Maximum inclusive roster days").fill("21");
+    await submitShiftServiceForm("configure_service", "Save Shift settings");
+    await expectShiftServiceReceipt({
+      activation: "1",
+      control: "2",
+      settings: "2",
+      state: "active",
+    });
+    await expect(shiftAdmin.page.getByLabel("Maximum inclusive roster days")).toHaveValue("21");
+    expect(await shiftAdmin.page.evaluate(() => document.cookie)).not.toContain(
+      "esbla_shift_roster_mutation_receipt",
+    );
+    await shiftAdmin.page.reload();
+    await expectShiftServiceReceipt({
+      activation: "1",
+      control: "2",
+      settings: "2",
+      state: "active",
+    });
+    await shiftAdmin.context.clearCookies();
+    await shiftAdmin.page.goto(`${shiftAdmin.origin}/workspace/hr/shifts/settings?result=success`);
+    await expect(
+      shiftAdmin.page.getByText(/service-control action is not confirmed/i),
+    ).toBeVisible();
+    await shiftAdmin.page.goto(`${shiftAdmin.origin}/workspace/hr/shifts/settings`);
+    await expect(shiftAdmin.page.getByLabel("Maximum inclusive roster days")).toHaveValue("21");
+
+    await submitShiftServiceForm("deactivate_service", "Deactivate service");
+    await expectShiftServiceReceipt({
+      activation: "2",
+      control: "3",
+      settings: "2",
+      state: "inactive",
+    });
+    await expect(
+      shiftServiceForm("configure_service").getByRole("button", { name: "Save Shift settings" }),
+    ).toBeDisabled();
+    await readEmployee.page.goto(`${readEmployee.origin}/workspace/hr/shifts`);
+    await expect(
+      readEmployee.page.getByRole("heading", { name: "Shift Assignment inactive" }),
+    ).toBeVisible();
+
+    await submitShiftServiceForm("activate_service", "Activate service");
+    await expectShiftServiceReceipt({
+      activation: "3",
+      control: "4",
+      settings: "2",
+      state: "active",
+    });
+    await shiftAdmin.page.setViewportSize({ height: 844, width: 390 });
+    expect(
+      await shiftAdmin.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+    await readEmployee.page.reload();
+    await expect(
+      readEmployee.page.getByRole("heading", { name: "Shift Assignment inactive" }),
+    ).toHaveCount(0);
   } finally {
-    await closeActors(actionAdmin, actionOperator, listOperator, readEmployee, viewAdmin);
+    await closeActors(
+      actionAdmin,
+      actionOperator,
+      listOperator,
+      readEmployee,
+      shiftAdmin,
+      viewAdmin,
+    );
   }
 });
 
