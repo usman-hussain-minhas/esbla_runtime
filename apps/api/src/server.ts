@@ -113,6 +113,7 @@ import {
   getOwnWorkforceProfile,
   getWorkforceProfileServiceControl,
   HrLeaveError,
+  inspectAttendanceActionAuthority,
   linkWorkforcePrincipal,
   listAssignedLeaveRequests,
   listAuthorizedReportAttendanceObservations,
@@ -348,6 +349,11 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     server,
   });
 
+  const attachAttendanceActions = async (request: FastifyRequest, reply: FastifyReply) => {
+    const actions = await inspectAttendanceActionAuthority(options.pool, operationContext(request));
+    reply.header("x-esbla-attendance-actions", JSON.stringify(actions));
+  };
+
   server.post<{ Body: HrAttendanceRecordManualBody }>(
     "/v1/hr/attendance-observations",
     {
@@ -430,6 +436,7 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
         async (request) => {
           attendanceQuery(parseHrAttendanceOwnListQuery, request.query, ["pageSize"]);
         },
+        attachAttendanceActions,
       ],
       schema: {
         querystring: { $ref: "HrAttendanceOwnListQueryV1#" },
@@ -461,6 +468,7 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
         async (request) => {
           attendanceQuery(parseHrAttendanceReportsListQuery, request.query, ["pageSize"]);
         },
+        attachAttendanceActions,
       ],
       schema: {
         querystring: { $ref: "HrAttendanceReportsListQueryV1#" },
@@ -499,6 +507,7 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
             "pageSize",
           ]);
         },
+        attachAttendanceActions,
       ],
       schema: {
         params: { $ref: "HrAttendanceCorrectionPathV1#" },

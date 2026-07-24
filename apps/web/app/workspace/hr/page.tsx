@@ -2,11 +2,14 @@ import {
   ArrowRight,
   BriefcaseBusiness,
   CalendarDays,
+  Clock3,
   Settings2,
   UserRound,
   UserRoundPlus,
   UsersRound,
 } from "lucide-react";
+import { loadOwnAttendance, loadReportAttendance } from "../../../lib/hr-attendance";
+import { hasAttendanceAction } from "../../../lib/hr-attendance-core";
 import { loadEmploymentList } from "../../../lib/hr-employment-record";
 import { hasEmploymentAction } from "../../../lib/hr-employment-record-core";
 import {
@@ -27,6 +30,8 @@ export default async function HrHubPage() {
     shifts,
     shiftReports,
     shiftServiceControl,
+    ownAttendance,
+    reportAttendance,
   ] = await Promise.all([
     loadAuthorizedWorkforceList({}, "direct_reports"),
     loadAuthorizedWorkforceList({}, "workforce"),
@@ -38,6 +43,8 @@ export default async function HrHubPage() {
       status: "active",
     }),
     loadShiftServiceControl(),
+    loadOwnAttendance(),
+    loadReportAttendance(),
   ]);
   const canDiscoverWorkforceSettings =
     workforceServiceControl.status === "success" ||
@@ -70,6 +77,11 @@ export default async function HrHubPage() {
   const canControlShifts = (
     ["activate_service", "configure_service", "deactivate_service", "view_service_control"] as const
   ).some((action) => hasShiftAction(shiftServiceControl.authorizedActions, action));
+  const attendanceActions = [
+    ...new Set([...ownAttendance.authorizedActions, ...reportAttendance.authorizedActions]),
+  ];
+  const canViewOwnAttendance = hasAttendanceAction(attendanceActions, "list_own");
+  const canViewReportAttendance = hasAttendanceAction(attendanceActions, "list_reports");
   return (
     <section aria-labelledby="hr-hub-heading" className="work-surface">
       <header className="surface-heading">
@@ -176,6 +188,35 @@ export default async function HrHubPage() {
                 <a className="text-command" href="/workspace/hr/shifts/settings">
                   <Settings2 aria-hidden="true" size={15} strokeWidth={1.8} />
                   Shift settings
+                </a>
+              ) : null}
+            </div>
+          </li>
+        ) : null}
+        {attendanceActions.length > 0 ? (
+          <li className="work-queue-item">
+            <div className="work-queue-primary">
+              <div>
+                <p className="work-queue-kicker">Attendance</p>
+                <h2>Recorded presence facts</h2>
+                <p className="work-queue-dates">
+                  Review authorized Attendance observations and their immutable correction history.
+                </p>
+              </div>
+              <span aria-hidden="true" className="empty-worklist-icon">
+                <Clock3 size={25} strokeWidth={1.7} />
+              </span>
+            </div>
+            <div className="work-queue-actions">
+              {canViewOwnAttendance ? (
+                <a className="text-command" href="/workspace/hr/attendance">
+                  My attendance
+                  <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
+                </a>
+              ) : null}
+              {canViewReportAttendance ? (
+                <a className="text-command" href="/workspace/hr/attendance/reports">
+                  Report attendance
                 </a>
               ) : null}
             </div>

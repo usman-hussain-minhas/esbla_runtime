@@ -33,6 +33,14 @@ const ACTION_CORRECT = "hr.attendance.correct";
 const ACTION_LIST_OWN = "hr.attendance.list_own";
 const ACTION_LIST_REPORTS = "hr.attendance.list_reports";
 const ACTION_VIEW_DETAIL = "hr.attendance.view_detail";
+export const HR_ATTENDANCE_AUTHORIZED_ACTIONS = Object.freeze([
+  "correct",
+  "list_own",
+  "list_reports",
+  "record_manual",
+  "view_detail",
+] as const);
+export type HrAttendanceAuthorizedAction = (typeof HR_ATTENDANCE_AUTHORIZED_ACTIONS)[number];
 const EVENT_RECORD_MANUAL = ACTION_RECORD_MANUAL;
 const EVENT_CORRECT = ACTION_CORRECT;
 const SUBJECT_CORRECTION = "hr.attendance.correction";
@@ -378,6 +386,47 @@ async function authorizeRead(
     actionKey,
     HR_ATTENDANCE_SERVICE_KEY,
   );
+}
+
+const ATTENDANCE_ACTION_ROLES: Readonly<Record<HrAttendanceAuthorizedAction, readonly string[]>> =
+  Object.freeze({
+    correct: Object.freeze(["hr_operator"]),
+    list_own: Object.freeze(["employee"]),
+    list_reports: Object.freeze(["hr_operator", "manager"]),
+    record_manual: Object.freeze(["hr_operator"]),
+    view_detail: Object.freeze(["employee", "hr_operator", "manager"]),
+  });
+
+/**
+ * Projects current role and capability state for advisory rendering only. Every action still
+ * performs its own transactional policy and object-authority checks.
+ */
+export async function inspectAttendanceActionAuthority(
+  pool: Pool,
+  context: OperationContext,
+): Promise<readonly HrAttendanceAuthorizedAction[]> {
+  return await withTenantTransaction(pool, context, async (transaction) => {
+    const capabilityIds = HR_ATTENDANCE_AUTHORIZED_ACTIONS.map(
+      (action) => `hr.attendance.${action}`,
+    );
+    const result = await transaction.client.query<{ capability_id: string }>(
+      `SELECT capability_id FROM membership_capabilities
+       WHERE tenant_id=$1 AND principal_id=$2 AND capability_id=ANY($3::text[])
+       ORDER BY capability_id`,
+      [transaction.context.tenantId, transaction.context.actorPrincipalId, capabilityIds],
+    );
+    const current = new Set(result.rows.map(({ capability_id }) => capability_id));
+    return Object.freeze(
+      HR_ATTENDANCE_AUTHORIZED_ACTIONS.filter((action) => {
+        const capabilityId = `hr.attendance.${action}`;
+        return (
+          ATTENDANCE_ACTION_ROLES[action].includes(transaction.actor.roleKey) &&
+          current.has(capabilityId) &&
+          hrManifest.capabilities.some(({ id }) => id === capabilityId)
+        );
+      }),
+    );
+  });
 }
 
 function denyRead(): never {
