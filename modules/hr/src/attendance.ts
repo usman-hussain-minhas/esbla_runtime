@@ -32,6 +32,7 @@ const ACTION_RECORD_MANUAL = "hr.attendance.record_manual";
 const ACTION_CORRECT = "hr.attendance.correct";
 const ACTION_LIST_OWN = "hr.attendance.list_own";
 const ACTION_LIST_REPORTS = "hr.attendance.list_reports";
+const ACTION_RECORD_SYNTHETIC_TEST = "hr.attendance.record_synthetic_test";
 const ACTION_VIEW_DETAIL = "hr.attendance.view_detail";
 export const HR_ATTENDANCE_AUTHORIZED_ACTIONS = Object.freeze([
   "activate_service",
@@ -46,6 +47,7 @@ export const HR_ATTENDANCE_AUTHORIZED_ACTIONS = Object.freeze([
 ] as const);
 export type HrAttendanceAuthorizedAction = (typeof HR_ATTENDANCE_AUTHORIZED_ACTIONS)[number];
 const EVENT_RECORD_MANUAL = ACTION_RECORD_MANUAL;
+const EVENT_RECORD_SYNTHETIC_TEST = ACTION_RECORD_SYNTHETIC_TEST;
 const EVENT_CORRECT = ACTION_CORRECT;
 const SUBJECT_CORRECTION = "hr.attendance.correction";
 const SUBJECT_OBSERVATION = "hr.attendance.observation";
@@ -80,6 +82,40 @@ export interface RecordManualAttendanceResult {
   readonly billingState: typeof HR_ATTENDANCE_BILLING_STATE;
   readonly observation: HrAttendanceObservation;
   readonly replayed: boolean;
+}
+
+export interface RecordSyntheticTestAttendanceInput {
+  readonly idempotencyKey: string;
+  readonly observationKind: HrAttendanceObservationKind;
+  readonly observedAt: string;
+  readonly workerProfileId: string;
+}
+
+export interface RecordSyntheticTestAttendanceResult {
+  readonly billingState: typeof HR_ATTENDANCE_BILLING_STATE;
+  readonly observation: HrAttendanceObservation;
+  readonly replayed: boolean;
+}
+
+export interface HrAttendanceSyntheticTestMarker {
+  readonly kind: "hr.attendance.synthetic_test.v1";
+}
+
+const SYNTHETIC_TEST_MARKER: HrAttendanceSyntheticTestMarker = Object.freeze({
+  kind: "hr.attendance.synthetic_test.v1",
+});
+
+export function createAttendanceSyntheticTestMarker(): HrAttendanceSyntheticTestMarker {
+  if (process.env.NODE_ENV !== "test") {
+    throw new PlatformError("POLICY_DENIED", "Synthetic Attendance is test-only");
+  }
+  return SYNTHETIC_TEST_MARKER;
+}
+
+function assertSyntheticTestBoundary(marker: HrAttendanceSyntheticTestMarker): void {
+  if (process.env.NODE_ENV !== "test" || marker !== SYNTHETIC_TEST_MARKER) {
+    throw new PlatformError("POLICY_DENIED", "Synthetic Attendance is test-only");
+  }
 }
 
 export interface AppendAttendanceCorrectionInput extends HrAttendanceCorrectionBody {
@@ -358,6 +394,52 @@ async function authorize(transaction: TenantTransaction, actionKey: string): Pro
   );
 }
 
+async function authorizeSyntheticTest(
+  transaction: TenantTransaction,
+  marker: HrAttendanceSyntheticTestMarker,
+): Promise<void> {
+  const registered = hrManifest.capabilities.some(
+    ({ exposure, id }) => exposure === "internal" && id === ACTION_RECORD_SYNTHETIC_TEST,
+  );
+  const capability = await transaction.client.query(
+    `SELECT capability_id FROM membership_capabilities
+     WHERE tenant_id=$1 AND principal_id=$2 AND capability_id=$3`,
+    [
+      transaction.context.tenantId,
+      transaction.context.actorPrincipalId,
+      ACTION_RECORD_SYNTHETIC_TEST,
+    ],
+  );
+  assertPolicyAllowed(
+    evaluatePolicy(
+      {
+        actionKey: ACTION_RECORD_SYNTHETIC_TEST,
+        input: {
+          capabilityCurrent: registered && capability.rows.length === 1,
+          markerCurrent: marker === SYNTHETIC_TEST_MARKER,
+          supportedEnvironment: process.env.NODE_ENV === "test",
+        },
+        resourceKey: HR_ATTENDANCE_SERVICE_KEY,
+        transaction,
+      },
+      [
+        {
+          effect: "allow",
+          id: "current_system_hr.attendance.record_synthetic_test",
+          matches: (request, actor) =>
+            actor.roleKey === "system" &&
+            request.capabilityCurrent === true &&
+            request.markerCurrent === true &&
+            request.supportedEnvironment === true,
+        },
+      ],
+    ),
+    transaction,
+    ACTION_RECORD_SYNTHETIC_TEST,
+    HR_ATTENDANCE_SERVICE_KEY,
+  );
+}
+
 async function authorizeRead(
   transaction: TenantTransaction,
   actionKey: string,
@@ -491,7 +573,7 @@ async function isCurrentReport(
 async function prepareReceipt(
   transaction: TenantTransaction,
   idempotencyKey: string,
-  operation: "correct" | "record_manual",
+  operation: "correct" | "record_manual" | "record_synthetic_test",
   semantics: readonly unknown[],
 ): Promise<Receipt> {
   const receiptId = deriveStableUuid(
@@ -511,21 +593,25 @@ async function prepareReceipt(
 async function readReplay(
   transaction: TenantTransaction,
   receipt: Receipt,
+  operation: "record_manual" | "record_synthetic_test",
+  sourceKind: "manual" | "synthetic",
 ): Promise<HrAttendanceObservation | null> {
+  const eventType =
+    operation === "record_manual" ? EVENT_RECORD_MANUAL : EVENT_RECORD_SYNTHETIC_TEST;
   const bound = await transaction.client.query<{
     actor_principal_id: string;
+    correlation_id: string;
     new_state: string;
     prior_state: string | null;
   }>(
-    `SELECT actor_principal_id,prior_state,new_state FROM evidence_events
+    `SELECT actor_principal_id,correlation_id,prior_state,new_state FROM evidence_events
      WHERE tenant_id=$1 AND subject_type=$2 AND subject_id=$3
-       AND event_type=$4 AND correlation_id=$5 LIMIT 2`,
+       AND event_type=$4 LIMIT 2`,
     [
       transaction.context.tenantId,
       SUBJECT_RECEIPT,
       receipt.receiptId,
-      `${EVENT_RECORD_MANUAL}.response_bound`,
-      transaction.context.correlationId,
+      `${eventType}.response_bound`,
     ],
   );
   if (bound.rows.length === 0) return null;
@@ -564,8 +650,8 @@ async function readReplay(
        AND outbox.payload->>'receiptId'=$5 LIMIT 2`,
     [
       transaction.context.tenantId,
-      EVENT_RECORD_MANUAL,
-      transaction.context.correlationId,
+      eventType,
+      binding.correlation_id,
       transaction.context.actorPrincipalId,
       receipt.receiptId,
     ],
@@ -582,7 +668,8 @@ async function readReplay(
     row.aggregate_version !== 1 ||
     row.prior_state !== null ||
     row.new_state !== "recorded" ||
-    payload.action !== "record_manual" ||
+    row.source_kind !== sourceKind ||
+    payload.action !== operation ||
     payload.afterVersion !== 1 ||
     payload.beforeVersion !== null ||
     payload.billingState !== HR_ATTENDANCE_BILLING_STATE ||
@@ -664,6 +751,88 @@ function translateWriteError(error: unknown): never {
   throw error;
 }
 
+type RecordAttendanceOperation = "record_manual" | "record_synthetic_test";
+
+async function recordAttendanceObservation(
+  transaction: TenantTransaction,
+  receipt: Receipt,
+  operation: RecordAttendanceOperation,
+  sourceKind: "manual" | "synthetic",
+  workerProfileId: string,
+  observedAt: string,
+  observationKind: HrAttendanceObservationKind,
+  beforeInsert?: () => Promise<void>,
+): Promise<RecordManualAttendanceResult> {
+  const replay = await readReplay(transaction, receipt, operation, sourceKind);
+  if (replay) {
+    return {
+      billingState: HR_ATTENDANCE_BILLING_STATE,
+      observation: replay,
+      replayed: true,
+    };
+  }
+  await beforeInsert?.();
+  const worker = await transaction.client.query<{ workforce_status: string }>(
+    `SELECT workforce_status FROM hr_worker_profiles
+     WHERE tenant_id=$1 AND worker_profile_id=$2 FOR SHARE`,
+    [transaction.context.tenantId, workerProfileId],
+  );
+  if (worker.rows[0]?.workforce_status !== "active") {
+    throw new HrAttendanceError(
+      "ATTENDANCE_WORKER_UNAVAILABLE",
+      "Attendance worker is unavailable",
+    );
+  }
+  const inserted = await transaction.client.query<ObservationRow>(
+    `INSERT INTO hr_attendance_observations
+       (tenant_id,worker_profile_id,observed_at,observation_kind,source_kind)
+     VALUES ($1,$2,$3,$4,$5)
+     RETURNING attendance_observation_id,worker_profile_id,observed_at,
+               observation_kind,source_kind,row_version`,
+    [transaction.context.tenantId, workerProfileId, observedAt, observationKind, sourceKind],
+  );
+  const observation = mapObservation(inserted.rows[0] as ObservationRow);
+  const eventType =
+    operation === "record_manual" ? EVENT_RECORD_MANUAL : EVENT_RECORD_SYNTHETIC_TEST;
+  await recordMutationProof(transaction, {
+    evidence: {
+      eventType,
+      newState: "recorded",
+      priorState: null,
+      subjectId: observation.attendanceObservationId,
+      subjectType: SUBJECT_OBSERVATION,
+    },
+    outbox: {
+      aggregateId: observation.attendanceObservationId,
+      aggregateType: SUBJECT_OBSERVATION,
+      aggregateVersion: 1,
+      eventType,
+      payload: {
+        action: operation,
+        afterVersion: 1,
+        beforeVersion: null,
+        billingState: HR_ATTENDANCE_BILLING_STATE,
+        observationKind: observation.observationKind,
+        receiptId: receipt.receiptId,
+        workerProfileId: observation.workerProfileId,
+      },
+    },
+  });
+  const bound = await appendEvidence(transaction, {
+    eventType: `${eventType}.response_bound`,
+    newState: semanticSha256([observation]),
+    priorState: receipt.semanticSha256,
+    subjectId: receipt.receiptId,
+    subjectType: SUBJECT_RECEIPT,
+  });
+  if (bound.replayed) throw idempotencyConflict();
+  return {
+    billingState: HR_ATTENDANCE_BILLING_STATE,
+    observation,
+    replayed: false,
+  };
+}
+
 export async function recordManualAttendanceObservation(
   pool: Pool,
   context: OperationContext,
@@ -683,72 +852,52 @@ export async function recordManualAttendanceObservation(
         input.observationKind,
         "manual",
       ]);
-      const replay = await readReplay(transaction, receipt);
-      if (replay) {
-        return {
-          billingState: HR_ATTENDANCE_BILLING_STATE,
-          observation: replay,
-          replayed: true,
-        };
-      }
-      await assertKindAllowed(transaction, input.observationKind);
-      const worker = await transaction.client.query<{ workforce_status: string }>(
-        `SELECT workforce_status FROM hr_worker_profiles
-         WHERE tenant_id=$1 AND worker_profile_id=$2 FOR SHARE`,
-        [transaction.context.tenantId, workerProfileId],
+      return await recordAttendanceObservation(
+        transaction,
+        receipt,
+        "record_manual",
+        "manual",
+        workerProfileId,
+        observedAt,
+        input.observationKind,
+        async () => await assertKindAllowed(transaction, input.observationKind),
       );
-      if (worker.rows[0]?.workforce_status !== "active") {
-        throw new HrAttendanceError(
-          "ATTENDANCE_WORKER_UNAVAILABLE",
-          "Attendance worker is unavailable",
-        );
-      }
-      const inserted = await transaction.client.query<ObservationRow>(
-        `INSERT INTO hr_attendance_observations
-           (tenant_id,worker_profile_id,observed_at,observation_kind,source_kind)
-         VALUES ($1,$2,$3,$4,'manual')
-         RETURNING attendance_observation_id,worker_profile_id,observed_at,
-                   observation_kind,source_kind,row_version`,
-        [transaction.context.tenantId, workerProfileId, observedAt, input.observationKind],
+    });
+  } catch (error) {
+    return translateWriteError(error);
+  }
+}
+
+export async function recordSyntheticTestAttendanceObservation(
+  pool: Pool,
+  context: OperationContext,
+  input: RecordSyntheticTestAttendanceInput,
+  marker: HrAttendanceSyntheticTestMarker,
+): Promise<RecordSyntheticTestAttendanceResult> {
+  assertSyntheticTestBoundary(marker);
+  const workerProfileId = normalizeUuid(input.workerProfileId, "workerProfileId");
+  const observedAt = normalizeInstant(input.observedAt);
+  if (!["presence_start", "presence_end"].includes(input.observationKind)) {
+    throw inputInvalid("observationKind is invalid");
+  }
+  try {
+    return await withAttendanceTransaction(pool, context, async (transaction) => {
+      await authorizeSyntheticTest(transaction, marker);
+      const receipt = await prepareReceipt(
+        transaction,
+        input.idempotencyKey,
+        "record_synthetic_test",
+        [workerProfileId, observedAt, input.observationKind, "synthetic"],
       );
-      const observation = mapObservation(inserted.rows[0] as ObservationRow);
-      await recordMutationProof(transaction, {
-        evidence: {
-          eventType: EVENT_RECORD_MANUAL,
-          newState: "recorded",
-          priorState: null,
-          subjectId: observation.attendanceObservationId,
-          subjectType: SUBJECT_OBSERVATION,
-        },
-        outbox: {
-          aggregateId: observation.attendanceObservationId,
-          aggregateType: SUBJECT_OBSERVATION,
-          aggregateVersion: 1,
-          eventType: EVENT_RECORD_MANUAL,
-          payload: {
-            action: "record_manual",
-            afterVersion: 1,
-            beforeVersion: null,
-            billingState: HR_ATTENDANCE_BILLING_STATE,
-            observationKind: observation.observationKind,
-            receiptId: receipt.receiptId,
-            workerProfileId: observation.workerProfileId,
-          },
-        },
-      });
-      const bound = await appendEvidence(transaction, {
-        eventType: `${EVENT_RECORD_MANUAL}.response_bound`,
-        newState: semanticSha256([observation]),
-        priorState: receipt.semanticSha256,
-        subjectId: receipt.receiptId,
-        subjectType: SUBJECT_RECEIPT,
-      });
-      if (bound.replayed) throw idempotencyConflict();
-      return {
-        billingState: HR_ATTENDANCE_BILLING_STATE,
-        observation,
-        replayed: false,
-      };
+      return await recordAttendanceObservation(
+        transaction,
+        receipt,
+        "record_synthetic_test",
+        "synthetic",
+        workerProfileId,
+        observedAt,
+        input.observationKind,
+      );
     });
   } catch (error) {
     return translateWriteError(error);

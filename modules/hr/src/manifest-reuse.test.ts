@@ -9,9 +9,9 @@ describe("HR passenger manifest reuse contract", () => {
     expect(hrManifest.version).toBe("0.1.0");
   });
 
-  it("declares bounded tenant/admin capabilities without provider, money, or deployment exposure", () => {
+  it("declares bounded internal/tenant/admin capabilities without provider, money, or deployment exposure", () => {
     const exposures = new Set(hrManifest.capabilities.map((capability) => capability.exposure));
-    expect(exposures).toEqual(new Set(["admin", "tenant"]));
+    expect(exposures).toEqual(new Set(["admin", "internal", "tenant"]));
     expect(hrManifest.capabilities.map((capability) => capability.id).sort()).toEqual([
       "hr.attendance.activate_service",
       "hr.attendance.configure_service",
@@ -20,6 +20,7 @@ describe("HR passenger manifest reuse contract", () => {
       "hr.attendance.list_own",
       "hr.attendance.list_reports",
       "hr.attendance.record_manual",
+      "hr.attendance.record_synthetic_test",
       "hr.attendance.view_detail",
       "hr.attendance.view_service_control",
       "hr.employment.activate_service",
@@ -61,6 +62,12 @@ describe("HR passenger manifest reuse contract", () => {
       "hr.workforce.view_own",
       "hr.workforce.view_service_control",
     ]);
+    expect(
+      hrManifest.capabilities.filter((capability) => capability.id.startsWith("hr.attendance.")),
+    ).toContainEqual({
+      exposure: "internal",
+      id: "hr.attendance.record_synthetic_test",
+    });
     expect(
       hrManifest.capabilities.filter((capability) => capability.id.startsWith("hr.employment.")),
     ).toEqual([
