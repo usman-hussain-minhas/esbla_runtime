@@ -1,5 +1,6 @@
 import {
   EmploymentError,
+  HrAttendanceError,
   HrLeaveError,
   HrShiftAssignmentError,
   HrWorkforceProfileError,
@@ -68,6 +69,17 @@ function statusForError(error: Error): number {
     if (error.code === "LEAVE_SERVICE_INACTIVE") return 503;
     return 409;
   }
+  if (error instanceof HrAttendanceError) {
+    if (error.code === "ATTENDANCE_INPUT_INVALID") return 400;
+    if (error.code === "ATTENDANCE_WORKER_UNAVAILABLE") return 404;
+    if (
+      error.code === "ATTENDANCE_DEPENDENCY_INACTIVE" ||
+      error.code === "ATTENDANCE_SERVICE_INACTIVE"
+    ) {
+      return 503;
+    }
+    return 409;
+  }
   if (error instanceof EmploymentError) {
     if (error.code === "EMPLOYMENT_INPUT_INVALID") return 400;
     if (
@@ -130,6 +142,7 @@ function codeForError(error: Error): string {
   if (
     error instanceof AuthError ||
     error instanceof EmploymentError ||
+    error instanceof HrAttendanceError ||
     error instanceof HrLeaveError ||
     error instanceof HrShiftAssignmentError ||
     error instanceof HrWorkforceProfileError ||

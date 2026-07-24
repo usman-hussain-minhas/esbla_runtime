@@ -1,6 +1,7 @@
 import {
   assignedWorkspaceTaskPageSchema,
   assignedWorkspaceTaskSchema,
+  type HrAttendanceRecordManualBody,
   type HrDecideLeaveRequestBody,
   type HrLeaveListQuery,
   type HrLeaveRequestPath,
@@ -20,6 +21,8 @@ import {
   hrAssignedLeaveListQuerySchema,
   hrAssignedLeaveRequestPageSchema,
   hrAssignedLeaveRequestSchema,
+  hrAttendanceObservationResponseSchema,
+  hrAttendanceRecordManualBodySchema,
   hrDecideLeaveRequestBodySchema,
   hrLeaveEvidenceEventSchema,
   hrLeaveListQuerySchema,
@@ -44,6 +47,8 @@ import {
   hrWorkforceOwnQuerySchema,
   hrWorkforceProfilePathSchema,
   hrWorkforceProfileSchema,
+  parseHrAttendanceObservation,
+  parseHrAttendanceRecordManualBody,
   parseHrServiceActivateBody,
   parseHrServiceControlQuery,
   parseHrServiceDeactivateBody,
@@ -90,6 +95,7 @@ import {
   listAssignedLeaveRequests,
   listAuthorizedWorkforceProfiles,
   listOwnLeaveRequests,
+  recordManualAttendanceObservation,
   rejectLeaveRequest,
   submitLeaveRequest,
 } from "@esbla/hr";
@@ -209,6 +215,8 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     logger: options.logger ?? true,
   });
   for (const schema of [
+    hrAttendanceRecordManualBodySchema,
+    hrAttendanceObservationResponseSchema,
     hrSubmitLeaveRequestBodySchema,
     hrServiceControlQuerySchema,
     hrServiceActivateBodySchema,
@@ -290,6 +298,41 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     runtimeEnvironment: options.runtimeEnvironment ?? "production",
     server,
   });
+
+  server.post<{ Body: HrAttendanceRecordManualBody }>(
+    "/v1/hr/attendance-observations",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictMutationIdempotencyKey(request);
+          assertStrictRequest(parseHrAttendanceRecordManualBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrAttendanceRecordManualRequestV1#" },
+        response: {
+          200: { $ref: "HrAttendanceObservationResponseV1#" },
+          201: { $ref: "HrAttendanceObservationResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = {
+        ...operationContext(request),
+        correlationId: idempotencyKey(request).toLowerCase(),
+      };
+      const result = await recordManualAttendanceObservation(options.pool, context, {
+        ...assertStrictRequest(parseHrAttendanceRecordManualBody, request.body),
+        idempotencyKey: context.correlationId,
+      });
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply
+        .code(result.replayed ? 200 : 201)
+        .send(parseHrAttendanceObservation(result.observation));
+    },
+  );
 
   server.get<{ Querystring: HrServiceControlQuery }>(
     "/v1/hr/workforce-profiles/service-control",
