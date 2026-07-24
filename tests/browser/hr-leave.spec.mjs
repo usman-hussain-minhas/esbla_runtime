@@ -1362,3 +1362,77 @@ test("Shift roster renders across operator, employee and manager authority", asy
     await closeActors(employee, manager, operator);
   }
 });
+
+test("Attendance renders manual facts and persistent correction history by current role", async ({
+  browser,
+}) => {
+  const employee = await openActor(
+    browser,
+    fixture.employmentEmployeeOrigin,
+    fixture.employmentEmployeeLabel,
+  );
+  const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
+  const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
+  const period = "from=2028-08-01&to=2028-08-07";
+  try {
+    await employee.page.goto(`${employee.origin}/workspace/hr`);
+    await expect(employee.page.getByRole("link", { name: "My attendance" })).toBeVisible();
+    await expect(employee.page.getByRole("link", { name: "Report attendance" })).toHaveCount(0);
+    await manager.page.goto(`${manager.origin}/workspace/hr`);
+    await expect(manager.page.getByRole("link", { name: "Report attendance" })).toBeVisible();
+    await expect(manager.page.getByRole("link", { name: "My attendance" })).toHaveCount(0);
+
+    await operator.page.goto(`${operator.origin}/workspace/hr/attendance/reports?${period}`);
+    await operator.page.getByLabel("Worker profile ID").fill(shiftEmployeeWorkerProfileId);
+    await operator.page.getByLabel("Observed instant").fill("2028-08-04T04:30:00.000Z");
+    const record = operator.page.getByRole("button", { name: "Record attendance" });
+    await record.focus();
+    await operator.page.keyboard.press("Enter");
+    await expect(operator.page).toHaveURL(/\/workspace\/hr\/attendance\/by-id\/[0-9a-f-]+$/);
+    const observationId = new URL(operator.page.url()).pathname.split("/").at(-1);
+    expect(observationId).toMatch(fixtureId);
+    await expect(operator.page.getByRole("heading", { name: "Append a correction" })).toBeVisible();
+
+    await employee.page.setViewportSize({ height: 844, width: 390 });
+    await employee.page.goto(`${employee.origin}/workspace/hr/attendance?${period}`);
+    expect(
+      await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+    const employeeHistory = employee.page.getByRole("link", { name: "View correction history" });
+    await employeeHistory.focus();
+    await employee.page.keyboard.press("Enter");
+    await expect(employee.page).toHaveURL(
+      `${employee.origin}/workspace/hr/attendance/by-id/${observationId}?returnTo=own`,
+    );
+    await expect(employee.page.getByRole("heading", { name: "Append a correction" })).toHaveCount(
+      0,
+    );
+
+    await manager.page.goto(`${manager.origin}/workspace/hr/attendance/reports?${period}`);
+    await expect(
+      manager.page.getByText(shiftEmployeeWorkerProfileId, { exact: true }),
+    ).toBeVisible();
+    await manager.page.getByRole("link", { name: "View correction history" }).click();
+    await expect(manager.page.getByRole("heading", { name: "Append a correction" })).toHaveCount(0);
+
+    await operator.page.getByLabel("Corrected observation").selectOption("presence_end");
+    await operator.page.getByLabel("Corrected instant").fill("2028-08-04T12:30:00.000Z");
+    await operator.page.getByLabel("Reason").fill("Rendered correction history");
+    const correct = operator.page.getByRole("button", { name: "Append correction" });
+    await correct.focus();
+    await operator.page.keyboard.press("Enter");
+    await expect(operator.page).toHaveURL(
+      `${operator.origin}/workspace/hr/attendance/by-id/${observationId}`,
+    );
+    await expect(
+      operator.page.getByText("Rendered correction history", { exact: true }),
+    ).toBeVisible();
+
+    await employee.page.reload();
+    await expect(
+      employee.page.getByText("Rendered correction history", { exact: true }),
+    ).toBeVisible();
+  } finally {
+    await closeActors(employee, manager, operator);
+  }
+});

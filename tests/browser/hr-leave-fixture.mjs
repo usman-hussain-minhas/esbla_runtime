@@ -413,12 +413,14 @@ export async function seedHrLeaveFixture() {
       );
       await client.query(
         `GRANT SELECT ON hr_employment_record_service_control,
-          hr_shift_assignment_service_control TO ${applicationRole}`,
+          hr_shift_assignment_service_control, hr_attendance_service_control TO ${applicationRole}`,
       );
       await client.query(
         `GRANT SELECT, INSERT ON hr_employment_record_versions TO ${applicationRole};
          GRANT SELECT, INSERT, UPDATE ON hr_shift_assignments,
-          hr_shift_roster_versions TO ${applicationRole}`,
+          hr_shift_roster_versions TO ${applicationRole};
+         GRANT SELECT, INSERT ON hr_attendance_observations,
+          hr_attendance_corrections TO ${applicationRole}`,
       );
       await client.query(
         `GRANT SELECT, INSERT ON evidence_events, outbox_events TO ${applicationRole}`,
@@ -521,7 +523,7 @@ export async function seedHrLeaveFixture() {
       await client.query(
         `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
          SELECT $1, actor.principal_id, capability FROM
-          (VALUES ($2::uuid,$5::text[]),($3::uuid,$5::text[]),($4::uuid,$6::text[]))
+          (VALUES ($2::uuid,$5::text[]),($3::uuid,$6::text[]),($4::uuid,$7::text[]))
           actor(principal_id,capabilities)
          CROSS JOIN LATERAL unnest(actor.capabilities) capability`,
         [
@@ -529,8 +531,23 @@ export async function seedHrLeaveFixture() {
           fixture.employmentEmployeePrincipalId,
           fixture.managerPrincipalId,
           fixture.operatorPrincipalId,
-          ["hr.shift.list_roster", "hr.shift.view_detail"],
           [
+            "hr.attendance.list_own",
+            "hr.attendance.view_detail",
+            "hr.shift.list_roster",
+            "hr.shift.view_detail",
+          ],
+          [
+            "hr.attendance.list_reports",
+            "hr.attendance.view_detail",
+            "hr.shift.list_roster",
+            "hr.shift.view_detail",
+          ],
+          [
+            "hr.attendance.correct",
+            "hr.attendance.list_reports",
+            "hr.attendance.record_manual",
+            "hr.attendance.view_detail",
             "hr.shift.assign",
             "hr.shift.cancel",
             "hr.shift.create_roster",
@@ -573,7 +590,8 @@ export async function seedHrLeaveFixture() {
          VALUES ($1, 'hr.leave_request', 'active', 1),
                 ($1, 'workforce_profile', 'active', 1),
                 ($1, 'employment_record', 'active', 1),
-                ($1, 'shift_assignment', 'active', 1)`,
+                ($1, 'shift_assignment', 'active', 1),
+                ($1, 'attendance', 'active', 1)`,
         [fixture.tenantId],
       );
       await client.query(

@@ -929,6 +929,7 @@ describe("Attendance read APIs", () => {
       url: correctionUrl,
     });
     const own = await signedGet({ url: ownUrl("&pageSize=1") });
+    expect(own.response.headers["x-esbla-attendance-actions"]).toBe('["list_own","view_detail"]');
     expect(own.response.json().accessScope).toBe("own");
     const ownCursor = own.response.json().nextCursor;
     const ownNext = await signedGet({
@@ -941,6 +942,9 @@ describe("Attendance read APIs", () => {
       own.response.json().items[0].attendanceObservationId,
     );
     const reports = await signedGet({ principalId: ids.manager, url: reportsUrl("&pageSize=1") });
+    expect(reports.response.headers["x-esbla-attendance-actions"]).toBe(
+      '["list_reports","view_detail"]',
+    );
     expect(reports.response.json().accessScope).toBe("assigned");
     expect(reports.response.json().items[0]?.attendanceObservationId).toBe(
       observation.attendanceObservationId,
@@ -957,6 +961,9 @@ describe("Attendance read APIs", () => {
       reports.response.json().items[0].attendanceObservationId,
     );
     const tenantReports = await signedGet({ principalId: ids.operator, url: reportsUrl() });
+    expect(tenantReports.response.headers["x-esbla-attendance-actions"]).toBe(
+      '["correct","list_reports","record_manual","view_detail"]',
+    );
     expect(tenantReports.response.json().accessScope).toBe("tenant");
 
     const detail = await signedGet({
