@@ -3,7 +3,10 @@ import {
   assignedWorkspaceTaskSchema,
   type HrAttendanceCorrectionBody,
   type HrAttendanceCorrectionPath,
+  type HrAttendanceDetailQuery,
+  type HrAttendanceOwnListQuery,
   type HrAttendanceRecordManualBody,
+  type HrAttendanceReportsListQuery,
   type HrDecideLeaveRequestBody,
   type HrLeaveListQuery,
   type HrLeaveRequestPath,
@@ -26,8 +29,12 @@ import {
   hrAttendanceCorrectionBodySchema,
   hrAttendanceCorrectionPathSchema,
   hrAttendanceCorrectionResponseSchema,
+  hrAttendanceDetailQuerySchema,
+  hrAttendanceListResponseSchema,
   hrAttendanceObservationResponseSchema,
+  hrAttendanceOwnListQuerySchema,
   hrAttendanceRecordManualBodySchema,
+  hrAttendanceReportsListQuerySchema,
   hrDecideLeaveRequestBodySchema,
   hrLeaveEvidenceEventSchema,
   hrLeaveListQuerySchema,
@@ -55,8 +62,13 @@ import {
   parseHrAttendanceCorrection,
   parseHrAttendanceCorrectionBody,
   parseHrAttendanceCorrectionPath,
+  parseHrAttendanceDetailQuery,
+  parseHrAttendanceListResponse,
   parseHrAttendanceObservation,
+  parseHrAttendanceObservationResponse,
+  parseHrAttendanceOwnListQuery,
   parseHrAttendanceRecordManualBody,
+  parseHrAttendanceReportsListQuery,
   parseHrServiceActivateBody,
   parseHrServiceControlQuery,
   parseHrServiceDeactivateBody,
@@ -95,6 +107,7 @@ import {
   configureWorkforceProfileService,
   createWorkforceProfile,
   deactivateWorkforceProfileService,
+  getAuthorizedAttendanceObservation,
   getAuthorizedWorkforceProfileDetail,
   getLeaveRequestDetail,
   getOwnWorkforceProfile,
@@ -102,7 +115,9 @@ import {
   HrLeaveError,
   linkWorkforcePrincipal,
   listAssignedLeaveRequests,
+  listAuthorizedReportAttendanceObservations,
   listAuthorizedWorkforceProfiles,
+  listOwnAttendanceObservations,
   listOwnLeaveRequests,
   recordManualAttendanceObservation,
   rejectLeaveRequest,
@@ -181,6 +196,24 @@ function assertStrictRequest<T>(parse: (value: unknown) => T, value: unknown): T
   }
 }
 
+function attendanceQuery<T>(
+  parse: (value: unknown) => T,
+  value: unknown,
+  integerFields: readonly string[],
+): T {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return assertStrictRequest(parse, value);
+  }
+  const normalized: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+  for (const field of integerFields) {
+    const candidate = normalized[field];
+    if (typeof candidate === "string" && /^[1-9]\d*$/.test(candidate)) {
+      normalized[field] = Number(candidate);
+    }
+  }
+  return assertStrictRequest(parse, normalized);
+}
+
 function parseWorkforceConfigureBody(value: unknown): WorkforceConfigureBody {
   const body = assertStrictRequest(parseHrServiceConfigureBody, value);
   if (!("employeeNumberRequired" in body.settings)) throw requestContractViolation();
@@ -227,7 +260,11 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     hrAttendanceCorrectionBodySchema,
     hrAttendanceCorrectionPathSchema,
     hrAttendanceCorrectionResponseSchema,
+    hrAttendanceDetailQuerySchema,
+    hrAttendanceListResponseSchema,
+    hrAttendanceOwnListQuerySchema,
     hrAttendanceRecordManualBodySchema,
+    hrAttendanceReportsListQuerySchema,
     hrAttendanceObservationResponseSchema,
     hrSubmitLeaveRequestBodySchema,
     hrServiceControlQuerySchema,
@@ -382,6 +419,113 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
       return reply
         .code(result.replayed ? 200 : 201)
         .send(parseHrAttendanceCorrection(result.correction));
+    },
+  );
+
+  server.get<{ Querystring: HrAttendanceOwnListQuery }>(
+    "/v1/hr/attendance-observations/own",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          attendanceQuery(parseHrAttendanceOwnListQuery, request.query, ["pageSize"]);
+        },
+      ],
+      schema: {
+        querystring: { $ref: "HrAttendanceOwnListQueryV1#" },
+        response: {
+          200: { $ref: "HrAttendanceListResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) =>
+      reply
+        .code(200)
+        .send(
+          parseHrAttendanceListResponse(
+            await listOwnAttendanceObservations(
+              options.pool,
+              operationContext(request),
+              attendanceQuery(parseHrAttendanceOwnListQuery, request.query, ["pageSize"]),
+            ),
+          ),
+        ),
+  );
+
+  server.get<{ Querystring: HrAttendanceReportsListQuery }>(
+    "/v1/hr/attendance-observations/reports",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          attendanceQuery(parseHrAttendanceReportsListQuery, request.query, ["pageSize"]);
+        },
+      ],
+      schema: {
+        querystring: { $ref: "HrAttendanceReportsListQueryV1#" },
+        response: {
+          200: { $ref: "HrAttendanceListResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) =>
+      reply
+        .code(200)
+        .send(
+          parseHrAttendanceListResponse(
+            await listAuthorizedReportAttendanceObservations(
+              options.pool,
+              operationContext(request),
+              attendanceQuery(parseHrAttendanceReportsListQuery, request.query, ["pageSize"]),
+            ),
+          ),
+        ),
+  );
+
+  server.get<{
+    Params: HrAttendanceCorrectionPath;
+    Querystring: HrAttendanceDetailQuery;
+  }>(
+    "/v1/hr/attendance-observations/by-id/:observationId",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictRequest(parseHrAttendanceCorrectionPath, request.params);
+          attendanceQuery(parseHrAttendanceDetailQuery, request.query, [
+            "cursorCorrectionVersion",
+            "pageSize",
+          ]);
+        },
+      ],
+      schema: {
+        params: { $ref: "HrAttendanceCorrectionPathV1#" },
+        querystring: { $ref: "HrAttendanceDetailQueryV1#" },
+        response: {
+          200: { $ref: "HrAttendanceObservationResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const path = assertStrictRequest(parseHrAttendanceCorrectionPath, request.params);
+      return reply
+        .code(200)
+        .send(
+          parseHrAttendanceObservationResponse(
+            await getAuthorizedAttendanceObservation(
+              options.pool,
+              operationContext(request),
+              path.observationId,
+              attendanceQuery(parseHrAttendanceDetailQuery, request.query, [
+                "cursorCorrectionVersion",
+                "pageSize",
+              ]),
+            ),
+          ),
+        );
     },
   );
 

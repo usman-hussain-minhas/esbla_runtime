@@ -1,0 +1,1 @@
+CREATE INDEX "idx_hr_attendance_observations_tenant_observed" ON "hr_attendance_observations" USING btree ("tenant_id","observed_at" DESC NULLS LAST,"attendance_observation_id" DESC NULLS LAST);

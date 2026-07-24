@@ -201,6 +201,7 @@ describe("Attendance persistence kernel", () => {
       [
         [
           "idx_hr_attendance_corrections_tenant_observation_version",
+          "idx_hr_attendance_observations_tenant_observed",
           "idx_hr_attendance_observations_tenant_worker_observed",
           "uq_hr_attendance_corrections_tenant_observation_version",
           "uq_hr_attendance_corrections_tenant_successor",
@@ -210,6 +211,7 @@ describe("Attendance persistence kernel", () => {
     );
     expect(indexes.rows.map(({ definition }) => definition)).toEqual([
       "CREATE INDEX idx_hr_attendance_corrections_tenant_observation_version ON public.hr_attendance_corrections USING btree (tenant_id, attendance_observation_id, correction_version DESC NULLS LAST, attendance_correction_id DESC NULLS LAST)",
+      "CREATE INDEX idx_hr_attendance_observations_tenant_observed ON public.hr_attendance_observations USING btree (tenant_id, observed_at DESC NULLS LAST, attendance_observation_id DESC NULLS LAST)",
       "CREATE INDEX idx_hr_attendance_observations_tenant_worker_observed ON public.hr_attendance_observations USING btree (tenant_id, worker_profile_id, observed_at DESC NULLS LAST, attendance_observation_id DESC NULLS LAST)",
       "CREATE UNIQUE INDEX uq_hr_attendance_corrections_tenant_observation_version ON public.hr_attendance_corrections USING btree (tenant_id, attendance_observation_id, correction_version)",
       "CREATE UNIQUE INDEX uq_hr_attendance_corrections_tenant_successor ON public.hr_attendance_corrections USING btree (tenant_id, supersedes_attendance_correction_id) WHERE (supersedes_attendance_correction_id IS NOT NULL)",
@@ -488,5 +490,33 @@ describe("Attendance persistence kernel", () => {
       ),
     );
     expect(unchanged.rows).toEqual(control.rows);
+  });
+
+  it("bounds tenant-wide ordered attendance reads at representative cardinality", async () => {
+    await tenantTransaction(migrationPool, ids.tenant, ids.hrActor, (client) =>
+      client.query(
+        `INSERT INTO hr_attendance_observations
+           (tenant_id,worker_profile_id,observed_at,observation_kind,source_kind)
+         SELECT $1,$2,'2028-01-01T00:00:00Z'::timestamptz
+                  + sequence * interval '1 second','presence_start','manual'
+         FROM generate_series(1,5000) sequence`,
+        [ids.tenant, workerProfileId],
+      ),
+    );
+    await migrationPool.query("ANALYZE hr_attendance_observations");
+    const plan = await tenantTransaction(pool, ids.tenant, ids.hrActor, (client) =>
+      client.query<{ "QUERY PLAN": unknown }>(
+        `EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON)
+         SELECT attendance_observation_id,worker_profile_id,observed_at
+         FROM hr_attendance_observations
+         WHERE tenant_id=$1 AND observed_at>=$2::timestamptz AND observed_at<$3::timestamptz
+         ORDER BY observed_at DESC NULLS LAST,
+                  attendance_observation_id DESC NULLS LAST LIMIT 50`,
+        [ids.tenant, "2028-01-01T00:00:00Z", "2029-01-01T00:00:00Z"],
+      ),
+    );
+    const rendered = JSON.stringify(plan.rows[0]?.["QUERY PLAN"]);
+    expect(rendered).toContain("idx_hr_attendance_observations_tenant_observed");
+    expect(rendered).not.toContain('"Node Type":"Sort"');
   });
 });

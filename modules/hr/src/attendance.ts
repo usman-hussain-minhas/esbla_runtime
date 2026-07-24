@@ -1,9 +1,15 @@
 import { createHash } from "node:crypto";
 import type {
+  HrAttendanceAccessScope,
   HrAttendanceCorrection,
   HrAttendanceCorrectionBody,
+  HrAttendanceCorrectionCursor,
+  HrAttendanceDetailQuery,
+  HrAttendanceListQuery,
   HrAttendanceObservation,
+  HrAttendanceObservationCursor,
   HrAttendanceObservationKind,
+  HrAttendanceObservationResponse,
   HrAttendanceRecordManualBody,
 } from "@esbla/contracts";
 import {
@@ -24,6 +30,9 @@ export const HR_ATTENDANCE_SERVICE_KEY = "attendance";
 export const HR_ATTENDANCE_BILLING_STATE = "non_billable";
 const ACTION_RECORD_MANUAL = "hr.attendance.record_manual";
 const ACTION_CORRECT = "hr.attendance.correct";
+const ACTION_LIST_OWN = "hr.attendance.list_own";
+const ACTION_LIST_REPORTS = "hr.attendance.list_reports";
+const ACTION_VIEW_DETAIL = "hr.attendance.view_detail";
 const EVENT_RECORD_MANUAL = ACTION_RECORD_MANUAL;
 const EVENT_CORRECT = ACTION_CORRECT;
 const SUBJECT_CORRECTION = "hr.attendance.correction";
@@ -68,6 +77,12 @@ export interface AppendAttendanceCorrectionResult {
   readonly billingState: typeof HR_ATTENDANCE_BILLING_STATE;
   readonly correction: HrAttendanceCorrection;
   readonly replayed: boolean;
+}
+
+export interface AttendanceListResult {
+  readonly accessScope: HrAttendanceAccessScope;
+  readonly items: readonly HrAttendanceObservation[];
+  readonly nextCursor: HrAttendanceObservationCursor | null;
 }
 
 interface ObservationRow {
@@ -206,6 +221,59 @@ function mapCorrection(row: CorrectionRow): HrAttendanceCorrection {
   };
 }
 
+function normalizePageSize(value: number | undefined): number {
+  const selected = value ?? 50;
+  if (!Number.isSafeInteger(selected) || selected < 1 || selected > 50) {
+    throw inputInvalid("pageSize must be an integer from 1 through 50");
+  }
+  return selected;
+}
+
+function normalizeCursor(
+  value:
+    | Pick<HrAttendanceListQuery, "cursorAttendanceObservationId" | "cursorObservedAt">
+    | undefined,
+): HrAttendanceObservationCursor | undefined {
+  const id = value?.cursorAttendanceObservationId;
+  const timestamp = value?.cursorObservedAt;
+  if ((id === undefined) !== (timestamp === undefined)) {
+    throw inputInvalid("Attendance observation cursor must be paired");
+  }
+  return id && timestamp
+    ? {
+        attendanceObservationId: normalizeUuid(id, "cursorAttendanceObservationId"),
+        observedAt: normalizeInstant(timestamp),
+      }
+    : undefined;
+}
+
+function normalizeCorrectionCursor(
+  value:
+    | Pick<HrAttendanceDetailQuery, "cursorAttendanceCorrectionId" | "cursorCorrectionVersion">
+    | undefined,
+): HrAttendanceCorrectionCursor | undefined {
+  const id = value?.cursorAttendanceCorrectionId;
+  const version = value?.cursorCorrectionVersion;
+  if ((id === undefined) !== (version === undefined)) {
+    throw inputInvalid("Attendance correction cursor must be paired");
+  }
+  if (id === undefined || version === undefined) return undefined;
+  if (!Number.isSafeInteger(version) || version < 1 || version > 2_147_483_647) {
+    throw inputInvalid("cursorCorrectionVersion must be a positive integer");
+  }
+  return {
+    attendanceCorrectionId: normalizeUuid(id, "cursorAttendanceCorrectionId"),
+    version,
+  };
+}
+
+function normalizeRange(query: HrAttendanceListQuery): readonly [string, string] {
+  const rangeStart = normalizeInstant(query.rangeStart);
+  const rangeEnd = normalizeInstant(query.rangeEnd);
+  if (rangeEnd <= rangeStart) throw inputInvalid("rangeEnd must follow rangeStart");
+  return [rangeStart, rangeEnd];
+}
+
 async function withAttendanceTransaction<T>(
   pool: Pool,
   context: OperationContext,
@@ -274,6 +342,91 @@ async function authorize(transaction: TenantTransaction, actionKey: string): Pro
     actionKey,
     HR_ATTENDANCE_SERVICE_KEY,
   );
+}
+
+async function authorizeRead(
+  transaction: TenantTransaction,
+  actionKey: string,
+  role: "employee" | "hr_operator" | "manager",
+): Promise<void> {
+  const registered = hrManifest.capabilities.some(
+    ({ exposure, id }) => exposure === "tenant" && id === actionKey,
+  );
+  const capability = await transaction.client.query(
+    `SELECT capability_id FROM membership_capabilities
+     WHERE tenant_id=$1 AND principal_id=$2 AND capability_id=$3`,
+    [transaction.context.tenantId, transaction.context.actorPrincipalId, actionKey],
+  );
+  assertPolicyAllowed(
+    evaluatePolicy(
+      {
+        actionKey,
+        input: { capabilityCurrent: registered && capability.rows.length === 1, role },
+        resourceKey: HR_ATTENDANCE_SERVICE_KEY,
+        transaction,
+      },
+      [
+        {
+          effect: "allow",
+          id: `current_${role}_${actionKey}`,
+          matches: (request, actor) =>
+            actor.roleKey === request.role && request.capabilityCurrent === true,
+        },
+      ],
+    ),
+    transaction,
+    actionKey,
+    HR_ATTENDANCE_SERVICE_KEY,
+  );
+}
+
+function denyRead(): never {
+  throw new PlatformError("POLICY_DENIED", "Policy decision denied the action");
+}
+
+async function actorProfile(transaction: TenantTransaction, lock: boolean): Promise<string> {
+  const result = await transaction.client.query<{ worker_profile_id: string }>(
+    `SELECT worker_profile_id FROM hr_worker_profiles
+     WHERE tenant_id=$1 AND principal_id=$2 AND workforce_status='active'
+     ORDER BY worker_profile_id LIMIT 2 ${lock ? "FOR SHARE" : ""}`,
+    [transaction.context.tenantId, transaction.context.actorPrincipalId],
+  );
+  if (result.rows.length !== 1 || !result.rows[0]) return denyRead();
+  return result.rows[0].worker_profile_id;
+}
+
+async function lockProfiles(
+  transaction: TenantTransaction,
+  profileIds: readonly string[],
+): Promise<void> {
+  const selected = [...new Set(profileIds)].sort();
+  const result = await transaction.client.query<{ worker_profile_id: string }>(
+    `SELECT worker_profile_id FROM hr_worker_profiles
+     WHERE tenant_id=$1 AND worker_profile_id=ANY($2::uuid[])
+     ORDER BY worker_profile_id FOR SHARE`,
+    [transaction.context.tenantId, selected],
+  );
+  if (result.rows.length !== selected.length) return denyRead();
+}
+
+async function isCurrentReport(
+  transaction: TenantTransaction,
+  managerProfileId: string,
+  workerProfileId: string,
+): Promise<boolean> {
+  const result = await transaction.client.query(
+    `SELECT 1 FROM hr_worker_profiles profile
+     JOIN hr_reporting_relationships relationship
+       ON relationship.tenant_id=profile.tenant_id
+      AND relationship.worker_profile_id=profile.worker_profile_id
+      AND relationship.reporting_relationship_id=profile.current_reporting_relationship_id
+     WHERE profile.tenant_id=$1 AND profile.worker_profile_id=$2
+       AND profile.workforce_status='active'
+       AND relationship.manager_worker_profile_id=$3
+       AND relationship.relationship_status='assigned' LIMIT 1`,
+    [transaction.context.tenantId, workerProfileId, managerProfileId],
+  );
+  return result.rows.length === 1;
 }
 
 async function prepareReceipt(
@@ -768,6 +921,274 @@ export async function appendAttendanceCorrection(
         billingState: HR_ATTENDANCE_BILLING_STATE,
         correction,
         replayed: false,
+      };
+    });
+  } catch (error) {
+    return translateWriteError(error);
+  }
+}
+
+function nextObservationCursor(
+  rows: readonly ObservationRow[],
+  limit: number,
+): HrAttendanceObservationCursor | null {
+  const last = rows.length === limit ? rows.at(-1) : undefined;
+  return last
+    ? {
+        attendanceObservationId: last.attendance_observation_id,
+        observedAt: mapObservation(last).observedAt,
+      }
+    : null;
+}
+
+async function queryObservationPage(
+  transaction: TenantTransaction,
+  workerProfileId: string | null,
+  query: HrAttendanceListQuery,
+  limit: number,
+  selectedCursor: HrAttendanceObservationCursor | undefined,
+): Promise<readonly ObservationRow[]> {
+  const [rangeStart, rangeEnd] = normalizeRange(query);
+  const values: unknown[] = [transaction.context.tenantId, rangeStart, rangeEnd];
+  const worker = workerProfileId ? `AND worker_profile_id=$${values.push(workerProfileId)}` : "";
+  const cursor = selectedCursor
+    ? `AND (observed_at,attendance_observation_id)<
+       ($${values.push(selectedCursor.observedAt)}::timestamptz,
+        $${values.push(selectedCursor.attendanceObservationId)}::uuid)`
+    : "";
+  values.push(limit);
+  const result = await transaction.client.query<ObservationRow>(
+    `SELECT attendance_observation_id,worker_profile_id,observed_at,
+            observation_kind,source_kind,row_version
+     FROM hr_attendance_observations
+     WHERE tenant_id=$1 AND observed_at>=$2::timestamptz AND observed_at<$3::timestamptz
+       ${worker} ${cursor}
+     ORDER BY observed_at DESC NULLS LAST,attendance_observation_id DESC NULLS LAST
+     LIMIT $${values.length}`,
+    values,
+  );
+  return result.rows;
+}
+
+export async function listOwnAttendanceObservations(
+  pool: Pool,
+  context: OperationContext,
+  query: HrAttendanceListQuery,
+): Promise<AttendanceListResult> {
+  const limit = normalizePageSize(query.pageSize);
+  const selectedCursor = normalizeCursor(query);
+  try {
+    return await withAttendanceTransaction(pool, context, async (transaction) => {
+      await authorizeRead(transaction, ACTION_LIST_OWN, "employee");
+      const workerProfileId = await actorProfile(transaction, true);
+      const rows = await queryObservationPage(
+        transaction,
+        workerProfileId,
+        query,
+        limit,
+        selectedCursor,
+      );
+      return {
+        accessScope: "own",
+        items: rows.map(mapObservation),
+        nextCursor: nextObservationCursor(rows, limit),
+      };
+    });
+  } catch (error) {
+    return translateWriteError(error);
+  }
+}
+
+async function managerObservationPage(
+  transaction: TenantTransaction,
+  managerProfileId: string,
+  query: HrAttendanceListQuery,
+  limit: number,
+  selectedCursor: HrAttendanceObservationCursor | undefined,
+): Promise<readonly ObservationRow[]> {
+  const [rangeStart, rangeEnd] = normalizeRange(query);
+  const values: unknown[] = [transaction.context.tenantId, managerProfileId, rangeStart, rangeEnd];
+  const cursor = selectedCursor
+    ? `AND (observation.observed_at,observation.attendance_observation_id)<
+       ($${values.push(selectedCursor.observedAt)}::timestamptz,
+        $${values.push(selectedCursor.attendanceObservationId)}::uuid)`
+    : "";
+  values.push(limit);
+  const candidates = await transaction.client.query<
+    Pick<ObservationRow, "attendance_observation_id" | "worker_profile_id">
+  >(
+    `SELECT observation.attendance_observation_id,observation.worker_profile_id
+     FROM hr_attendance_observations observation
+     JOIN hr_worker_profiles profile
+       ON profile.tenant_id=observation.tenant_id
+      AND profile.worker_profile_id=observation.worker_profile_id
+     JOIN hr_reporting_relationships relationship
+       ON relationship.tenant_id=profile.tenant_id
+      AND relationship.worker_profile_id=profile.worker_profile_id
+      AND relationship.reporting_relationship_id=profile.current_reporting_relationship_id
+     WHERE observation.tenant_id=$1 AND relationship.manager_worker_profile_id=$2
+       AND profile.workforce_status='active' AND relationship.relationship_status='assigned'
+       AND observation.observed_at>=$3::timestamptz
+       AND observation.observed_at<$4::timestamptz ${cursor}
+     ORDER BY observation.observed_at DESC NULLS LAST,
+              observation.attendance_observation_id DESC NULLS LAST
+     LIMIT $${values.length}`,
+    values,
+  );
+  if (candidates.rows.length === 0) return [];
+  await lockProfiles(transaction, [
+    managerProfileId,
+    ...candidates.rows.map(({ worker_profile_id }) => worker_profile_id),
+  ]);
+  if ((await actorProfile(transaction, false)) !== managerProfileId) return denyRead();
+  const ids = candidates.rows.map(({ attendance_observation_id }) => attendance_observation_id);
+  const result = await transaction.client.query<ObservationRow>(
+    `SELECT observation.attendance_observation_id,observation.worker_profile_id,
+            observation.observed_at,observation.observation_kind,
+            observation.source_kind,observation.row_version
+     FROM hr_attendance_observations observation
+     JOIN hr_worker_profiles profile
+       ON profile.tenant_id=observation.tenant_id
+      AND profile.worker_profile_id=observation.worker_profile_id
+     JOIN hr_reporting_relationships relationship
+       ON relationship.tenant_id=profile.tenant_id
+      AND relationship.worker_profile_id=profile.worker_profile_id
+      AND relationship.reporting_relationship_id=profile.current_reporting_relationship_id
+     WHERE observation.tenant_id=$1
+       AND observation.attendance_observation_id=ANY($2::uuid[])
+       AND profile.workforce_status='active'
+       AND relationship.manager_worker_profile_id=$3
+       AND relationship.relationship_status='assigned'
+     ORDER BY observation.observed_at DESC NULLS LAST,
+              observation.attendance_observation_id DESC NULLS LAST`,
+    [transaction.context.tenantId, ids, managerProfileId],
+  );
+  if (
+    result.rows.length !== candidates.rows.length ||
+    result.rows.some(
+      ({ attendance_observation_id }, index) =>
+        attendance_observation_id !== candidates.rows[index]?.attendance_observation_id,
+    )
+  ) {
+    throw conflict("Attendance report list changed during authorization");
+  }
+  return result.rows;
+}
+
+export async function listAuthorizedReportAttendanceObservations(
+  pool: Pool,
+  context: OperationContext,
+  query: HrAttendanceListQuery,
+): Promise<AttendanceListResult> {
+  const limit = normalizePageSize(query.pageSize);
+  const selectedCursor = normalizeCursor(query);
+  try {
+    return await withAttendanceTransaction(pool, context, async (transaction) => {
+      let accessScope: HrAttendanceAccessScope;
+      let rows: readonly ObservationRow[];
+      if (transaction.actor.roleKey === "manager") {
+        await authorizeRead(transaction, ACTION_LIST_REPORTS, "manager");
+        const managerProfileId = await actorProfile(transaction, false);
+        rows = await managerObservationPage(
+          transaction,
+          managerProfileId,
+          query,
+          limit,
+          selectedCursor,
+        );
+        accessScope = "assigned";
+      } else if (transaction.actor.roleKey === "hr_operator") {
+        await authorizeRead(transaction, ACTION_LIST_REPORTS, "hr_operator");
+        rows = await queryObservationPage(transaction, null, query, limit, selectedCursor);
+        accessScope = "tenant";
+      } else {
+        return denyRead();
+      }
+      return {
+        accessScope,
+        items: rows.map(mapObservation),
+        nextCursor: nextObservationCursor(rows, limit),
+      };
+    });
+  } catch (error) {
+    return translateWriteError(error);
+  }
+}
+
+export async function getAuthorizedAttendanceObservation(
+  pool: Pool,
+  context: OperationContext,
+  observationIdValue: string,
+  query: HrAttendanceDetailQuery,
+): Promise<HrAttendanceObservationResponse> {
+  const observationId = normalizeUuid(observationIdValue, "observationId");
+  const limit = normalizePageSize(query.pageSize);
+  const selectedCursor = normalizeCorrectionCursor(query);
+  try {
+    return await withAttendanceTransaction(pool, context, async (transaction) => {
+      const result = await transaction.client.query<ObservationRow>(
+        `SELECT attendance_observation_id,worker_profile_id,observed_at,
+                observation_kind,source_kind,row_version
+         FROM hr_attendance_observations
+         WHERE tenant_id=$1 AND attendance_observation_id=$2`,
+        [transaction.context.tenantId, observationId],
+      );
+      const row = result.rows[0];
+      if (!row) {
+        throw new HrAttendanceError(
+          "ATTENDANCE_OBSERVATION_NOT_FOUND",
+          "Attendance observation was not found",
+        );
+      }
+      const role = transaction.actor.roleKey;
+      if (role === "employee") {
+        await authorizeRead(transaction, ACTION_VIEW_DETAIL, "employee");
+        if ((await actorProfile(transaction, true)) !== row.worker_profile_id) return denyRead();
+      } else if (role === "manager") {
+        await authorizeRead(transaction, ACTION_VIEW_DETAIL, "manager");
+        const managerProfileId = await actorProfile(transaction, false);
+        await lockProfiles(transaction, [managerProfileId, row.worker_profile_id]);
+        if (
+          (await actorProfile(transaction, false)) !== managerProfileId ||
+          !(await isCurrentReport(transaction, managerProfileId, row.worker_profile_id))
+        ) {
+          return denyRead();
+        }
+      } else if (role === "hr_operator") {
+        await authorizeRead(transaction, ACTION_VIEW_DETAIL, "hr_operator");
+      } else {
+        return denyRead();
+      }
+      const values: unknown[] = [transaction.context.tenantId, observationId];
+      const cursor = selectedCursor
+        ? `AND (correction_version,attendance_correction_id)<
+           ($${values.push(selectedCursor.version)}::integer,
+            $${values.push(selectedCursor.attendanceCorrectionId)}::uuid)`
+        : "";
+      values.push(limit);
+      const corrections = await transaction.client.query<CorrectionRow>(
+        `SELECT attendance_correction_id,attendance_observation_id,
+                corrected_observed_at,corrected_observation_kind,reason,
+                correction_version,supersedes_attendance_correction_id,created_at
+         FROM hr_attendance_corrections
+         WHERE tenant_id=$1 AND attendance_observation_id=$2 ${cursor}
+         ORDER BY correction_version DESC NULLS LAST,
+                  attendance_correction_id DESC NULLS LAST
+         LIMIT $${values.length}`,
+        values,
+      );
+      const last = corrections.rows.length === limit ? corrections.rows.at(-1) : undefined;
+      return {
+        ...mapObservation(row),
+        corrections: {
+          items: corrections.rows.map(mapCorrection),
+          nextCursor: last
+            ? {
+                attendanceCorrectionId: last.attendance_correction_id,
+                version: last.correction_version,
+              }
+            : null,
+        },
       };
     });
   } catch (error) {

@@ -134,6 +134,13 @@
       "when": 1784873865879,
       "tag": "0018_attendance_settings_snapshot_lock",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1784886435532,
+      "tag": "0019_careless_power_pack",
+      "breakpoints": true
     }
   ]
 }

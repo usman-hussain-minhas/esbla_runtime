@@ -7,6 +7,9 @@ describe("hrManifest", () => {
     expect(hrManifest.capabilities.map((capability) => capability.id)).toEqual([
       "hr.attendance.record_manual",
       "hr.attendance.correct",
+      "hr.attendance.list_own",
+      "hr.attendance.list_reports",
+      "hr.attendance.view_detail",
       "hr.leave.activate",
       "hr.leave.approve",
       "hr.leave.deactivate",

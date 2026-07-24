@@ -10,6 +10,8 @@ const secret = "esbla-attendance-manual-api-integration-secret-v1";
 const ids = {
   admin: "92000000-0000-4000-8000-000000000004",
   adminMembership: "93000000-0000-4000-8000-000000000004",
+  manager: "92000000-0000-4000-8000-000000000005",
+  managerMembership: "93000000-0000-4000-8000-000000000005",
   operator: "92000000-0000-4000-8000-000000000001",
   operatorMembership: "93000000-0000-4000-8000-000000000001",
   otherOperator: "92000000-0000-4000-8000-000000000003",
@@ -26,10 +28,16 @@ interface SignedPostOptions {
   readonly tenantId?: string;
   readonly url?: string;
 }
+type SignedGetOptions = Pick<SignedPostOptions, "principalId" | "tenantId"> & {
+  readonly url: string;
+};
 let migrationPool: Pool;
+let managerProfileId = "";
 let pool: Pool;
+let relationshipId = "";
 let server: FastifyInstance;
 let workerProfileId = "";
+let afterReportCandidate: (() => Promise<void>) | null = null;
 async function tenantTransaction<T>(
   client: PoolClient,
   tenantId: string,
@@ -67,6 +75,33 @@ async function governed<T>(
 async function governedMutation(query: string, values: unknown[]): Promise<void> {
   await governed((tenantClient) => tenantClient.query(query, values));
 }
+function observeReportCandidate(source: Pool): Pool {
+  return new Proxy(source, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (property !== "connect") return typeof value === "function" ? value.bind(target) : value;
+      return async () => {
+        const client = await target.connect();
+        return new Proxy(client, {
+          get(connection, clientProperty) {
+            const member = Reflect.get(connection, clientProperty, connection);
+            if (clientProperty !== "query")
+              return typeof member === "function" ? member.bind(connection) : member;
+            return async (text: string, values?: unknown[]) => {
+              const result = await connection.query(text, values);
+              if (text.includes("SELECT observation.attendance_observation_id")) {
+                const step = afterReportCandidate;
+                afterReportCandidate = null;
+                await step?.();
+              }
+              return result;
+            };
+          },
+        });
+      };
+    },
+  });
+}
 async function signedPost({
   body,
   idempotencyKey,
@@ -97,6 +132,32 @@ async function signedPost({
   return {
     requestId,
     response: await server.inject({ headers, method, payload: body, url }),
+  };
+}
+async function signedGet({
+  principalId = ids.worker,
+  tenantId = ids.tenant,
+  url,
+}: SignedGetOptions) {
+  const requestId = randomUUID();
+  const timestamp = String(Math.floor(Date.now() / 1_000));
+  const headers = {
+    "x-esbla-auth-signature": signDevelopmentPrincipal(secret, {
+      method: "GET",
+      principalId,
+      requestId,
+      tenantId,
+      timestamp,
+      url,
+    }),
+    "x-esbla-auth-timestamp": timestamp,
+    "x-esbla-principal-id": principalId,
+    "x-esbla-request-id": requestId,
+    "x-esbla-tenant-id": tenantId,
+  };
+  return {
+    requestId,
+    response: await server.inject({ headers, method: "GET", url }),
   };
 }
 async function correctionCounts(tenantId: string = ids.tenant) {
@@ -167,9 +228,12 @@ function expectProblem(
   expect(result.response.json()).toMatchObject({ code, requestId: result.requestId, status });
   expect(Object.keys(result.response.json())).toHaveLength(7);
 }
-const body = (observationKind: "presence_end" | "presence_start" = "presence_start") => ({
+const body = (
+  observationKind: "presence_end" | "presence_start" = "presence_start",
+  observedAt = "2026-07-24T08:30:00+05:00",
+) => ({
   observationKind,
-  observedAt: "2026-07-24T08:30:00+05:00",
+  observedAt,
   workerProfileId,
 });
 const correctionBody = (
@@ -182,8 +246,11 @@ const correctionBody = (
   expectedCurrentCorrectionVersion,
   reason: "Clock corrected",
 });
-async function createObservation() {
-  const result = await signedPost({ body: body(), idempotencyKey: randomUUID() });
+async function createObservation(observedAt?: string) {
+  const result = await signedPost({
+    body: body("presence_start", observedAt),
+    idempotencyKey: randomUUID(),
+  });
   expect(result.response.statusCode, result.response.body).toBe(201);
   return result.response.json() as { attendanceObservationId: string };
 }
@@ -197,7 +264,8 @@ beforeAll(async () => {
   migrationPool = createDatabasePool(migrationUrl, { max: 3 });
   await migrateDatabase(createDatabase(migrationPool));
   await migrationPool.query(
-    `GRANT SELECT ON membership_capabilities,tenant_settings,hr_attendance_service_control TO ${applicationRole};
+    `GRANT SELECT ON membership_capabilities,tenant_settings,hr_attendance_service_control,
+       hr_reporting_relationships TO ${applicationRole};
      GRANT SELECT,UPDATE ON hr_worker_profiles,service_activations TO ${applicationRole};
      GRANT SELECT,INSERT ON hr_attendance_corrections,hr_attendance_observations,evidence_events,outbox_events TO ${applicationRole}`,
   );
@@ -210,15 +278,17 @@ beforeAll(async () => {
   await migrationPool.query(
     `INSERT INTO principals (principal_id,display_name)
      VALUES ($1,'Attendance Operator'),($2,'Attendance Worker'),
-            ($3,'Other Attendance Operator'),($4,'Attendance Administrator')`,
-    [ids.operator, ids.worker, ids.otherOperator, ids.admin],
+            ($3,'Other Attendance Operator'),($4,'Attendance Administrator'),
+            ($5,'Attendance Manager')`,
+    [ids.operator, ids.worker, ids.otherOperator, ids.admin, ids.manager],
   );
   const client = await migrationPool.connect();
   try {
     await tenantTransaction(client, ids.tenant, ids.operator, async (tenantClient) => {
       await tenantClient.query(
         `INSERT INTO memberships (membership_id,tenant_id,principal_id,role_key)
-         VALUES ($1,$2,$3,'hr_operator'),($4,$2,$5,'employee'),($6,$2,$7,'tenant_admin')`,
+         VALUES ($1,$2,$3,'hr_operator'),($4,$2,$5,'employee'),
+                ($6,$2,$7,'tenant_admin'),($8,$2,$9,'manager')`,
         [
           ids.operatorMembership,
           ids.tenant,
@@ -227,14 +297,22 @@ beforeAll(async () => {
           ids.worker,
           ids.adminMembership,
           ids.admin,
+          ids.managerMembership,
+          ids.manager,
         ],
       );
       await tenantClient.query(
         `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
          VALUES ($1,$2,'hr.attendance.record_manual'),
                 ($1,$2,'hr.attendance.correct'),
-                ($1,$3,'hr.attendance.configure_service')`,
-        [ids.tenant, ids.operator, ids.admin],
+                ($1,$2,'hr.attendance.list_reports'),
+                ($1,$2,'hr.attendance.view_detail'),
+                ($1,$3,'hr.attendance.configure_service'),
+                ($1,$4,'hr.attendance.list_own'),
+                ($1,$4,'hr.attendance.view_detail'),
+                ($1,$5,'hr.attendance.list_reports'),
+                ($1,$5,'hr.attendance.view_detail')`,
+        [ids.tenant, ids.operator, ids.admin, ids.worker, ids.manager],
       );
       await tenantClient.query(
         `INSERT INTO service_activations (tenant_id,service_key,state,version)
@@ -256,6 +334,35 @@ beforeAll(async () => {
          WHERE tenant_id=$1 AND worker_profile_id=$2`,
         [ids.tenant, workerProfileId],
       );
+      const manager = await tenantClient.query<{ worker_profile_id: string }>(
+        "INSERT INTO hr_worker_profiles (tenant_id) VALUES ($1) RETURNING worker_profile_id",
+        [ids.tenant],
+      );
+      managerProfileId = String(manager.rows[0]?.worker_profile_id);
+      await tenantClient.query(
+        `UPDATE hr_worker_profiles SET principal_id=$3,row_version=2
+         WHERE tenant_id=$1 AND worker_profile_id=$2`,
+        [ids.tenant, managerProfileId, ids.manager],
+      );
+      await tenantClient.query(
+        `UPDATE hr_worker_profiles SET workforce_status='active',row_version=3
+         WHERE tenant_id=$1 AND worker_profile_id=$2`,
+        [ids.tenant, managerProfileId],
+      );
+      const relationship = await tenantClient.query<{ reporting_relationship_id: string }>(
+        `INSERT INTO hr_reporting_relationships
+           (tenant_id,worker_profile_id,manager_worker_profile_id,relationship_status,
+            relationship_version)
+         VALUES ($1,$2,$3,'assigned',1)
+         RETURNING reporting_relationship_id`,
+        [ids.tenant, workerProfileId, managerProfileId],
+      );
+      relationshipId = String(relationship.rows[0]?.reporting_relationship_id);
+      await tenantClient.query(
+        `UPDATE hr_worker_profiles SET current_reporting_relationship_id=$3,row_version=4
+         WHERE tenant_id=$1 AND worker_profile_id=$2`,
+        [ids.tenant, workerProfileId, relationshipId],
+      );
     });
     await tenantTransaction(client, ids.otherTenant, ids.otherOperator, async (tenantClient) => {
       await tenantClient.query(
@@ -266,7 +373,8 @@ beforeAll(async () => {
       await tenantClient.query(
         `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
          VALUES ($1,$2,'hr.attendance.record_manual'),
-                ($1,$2,'hr.attendance.correct')`,
+                ($1,$2,'hr.attendance.correct'),
+                ($1,$2,'hr.attendance.view_detail')`,
         [ids.otherTenant, ids.otherOperator],
       );
       await tenantClient.query(
@@ -282,7 +390,7 @@ beforeAll(async () => {
     authenticate: createDevelopmentAuthenticator({ secret }),
     logger: false,
     migrationReadPool: migrationPool,
-    pool,
+    pool: observeReportCandidate(pool),
     runtimeEnvironment: "test",
   });
   await server.ready();
@@ -748,5 +856,246 @@ describe("Attendance correction API", () => {
       outbox: 0,
       work: 0,
     });
+  });
+});
+const rangeQuery = "rangeStart=2026-07-24T00%3A00%3A00.000Z&rangeEnd=2026-07-25T00%3A00%3A00.000Z";
+const detailUrl = (id: string, query = "") => `/v1/hr/attendance-observations/by-id/${id}${query}`;
+const ownUrl = (query = "") => `/v1/hr/attendance-observations/own?${rangeQuery}${query}`;
+const reportsUrl = (query = "") => `/v1/hr/attendance-observations/reports?${rangeQuery}${query}`;
+async function expectReadProblem(
+  url: string,
+  status: number,
+  code: string,
+  principalId: string = ids.worker,
+  tenantId: string = ids.tenant,
+): Promise<void> {
+  expectProblem(await signedGet({ principalId, tenantId, url }), status, code);
+}
+async function setCapability(
+  principalId: string,
+  capabilityId: string,
+  enabled: boolean,
+): Promise<void> {
+  await governedMutation(
+    enabled
+      ? `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+         VALUES ($1,$2,$3)`
+      : `DELETE FROM membership_capabilities
+         WHERE tenant_id=$1 AND principal_id=$2 AND capability_id=$3`,
+    [ids.tenant, principalId, capabilityId],
+  );
+}
+async function setMembership(
+  principalId: string,
+  field: "role_key" | "status",
+  value: string,
+): Promise<void> {
+  await governedMutation(
+    `UPDATE memberships SET ${field}=$3 WHERE tenant_id=$1 AND principal_id=$2`,
+    [ids.tenant, principalId, value],
+  );
+}
+async function setProfileStatus(profileId: string, status: "active" | "suspended"): Promise<void> {
+  await governedMutation(
+    `UPDATE hr_worker_profiles SET workforce_status=$3,row_version=row_version+1
+     WHERE tenant_id=$1 AND worker_profile_id=$2 AND workforce_status<>$3`,
+    [ids.tenant, profileId, status],
+  );
+}
+async function setActivation(serviceKey: string, state: "active" | "inactive"): Promise<void> {
+  await governedMutation(
+    `UPDATE service_activations SET state=$3,version=version+1
+     WHERE tenant_id=$1 AND service_key=$2`,
+    [ids.tenant, serviceKey, state],
+  );
+}
+
+describe("Attendance read APIs", () => {
+  it("serves cursor-stable own, report and detail history without private fields", async () => {
+    await createObservation();
+    const observation = await createObservation("2026-07-24T08:31:00+05:00");
+    const correctionUrl = `/v1/hr/attendance-observations/${observation.attendanceObservationId}/corrections`;
+    const first = await signedPost({
+      body: correctionBody(),
+      idempotencyKey: randomUUID(),
+      url: correctionUrl,
+    });
+    const second = await signedPost({
+      body: {
+        ...correctionBody(first.response.json().attendanceCorrectionId, 1),
+        reason: "Second correction",
+      },
+      idempotencyKey: randomUUID(),
+      url: correctionUrl,
+    });
+    const own = await signedGet({ url: ownUrl("&pageSize=1") });
+    expect(own.response.json().accessScope).toBe("own");
+    const ownCursor = own.response.json().nextCursor;
+    const ownNext = await signedGet({
+      url: ownUrl(
+        `&pageSize=1&cursorObservedAt=${encodeURIComponent(ownCursor.observedAt)}` +
+          `&cursorAttendanceObservationId=${ownCursor.attendanceObservationId}`,
+      ),
+    });
+    expect(ownNext.response.json().items[0]?.attendanceObservationId).not.toBe(
+      own.response.json().items[0].attendanceObservationId,
+    );
+    const reports = await signedGet({ principalId: ids.manager, url: reportsUrl("&pageSize=1") });
+    expect(reports.response.json().accessScope).toBe("assigned");
+    expect(reports.response.json().items[0]?.attendanceObservationId).toBe(
+      observation.attendanceObservationId,
+    );
+    const reportCursor = reports.response.json().nextCursor;
+    const reportNext = await signedGet({
+      principalId: ids.manager,
+      url: reportsUrl(
+        `&pageSize=1&cursorObservedAt=${encodeURIComponent(reportCursor.observedAt)}` +
+          `&cursorAttendanceObservationId=${reportCursor.attendanceObservationId}`,
+      ),
+    });
+    expect(reportNext.response.json().items[0]?.attendanceObservationId).not.toBe(
+      reports.response.json().items[0].attendanceObservationId,
+    );
+    const tenantReports = await signedGet({ principalId: ids.operator, url: reportsUrl() });
+    expect(tenantReports.response.json().accessScope).toBe("tenant");
+
+    const detail = await signedGet({
+      url: detailUrl(observation.attendanceObservationId, "?pageSize=1"),
+    });
+    expect(detail.response.json().corrections.items[0]?.attendanceCorrectionId).toBe(
+      second.response.json().attendanceCorrectionId,
+    );
+    const cursor = detail.response.json().corrections.nextCursor;
+    const history = await signedGet({
+      url: detailUrl(
+        observation.attendanceObservationId,
+        `?pageSize=1&cursorCorrectionVersion=${cursor.version}` +
+          `&cursorAttendanceCorrectionId=${cursor.attendanceCorrectionId}`,
+      ),
+    });
+    expect(history.response.json().corrections.items[0]?.attendanceCorrectionId).toBe(
+      first.response.json().attendanceCorrectionId,
+    );
+    for (const principalId of [ids.manager, ids.operator]) {
+      const authorized = await signedGet({
+        principalId,
+        url: detailUrl(observation.attendanceObservationId),
+      });
+      expect(authorized.response.statusCode, authorized.response.body).toBe(200);
+    }
+  });
+  it("fails a concurrently invalidated report page closed without hiding older reports", async () => {
+    const older = await governed(async (client) => {
+      const profile = await client.query<{ worker_profile_id: string }>(
+        "INSERT INTO hr_worker_profiles (tenant_id) VALUES ($1) RETURNING worker_profile_id",
+        [ids.tenant],
+      );
+      const profileId = profile.rows[0]?.worker_profile_id ?? "";
+      await client.query(
+        `UPDATE hr_worker_profiles SET principal_id=$3,row_version=2
+         WHERE tenant_id=$1 AND worker_profile_id=$2`,
+        [ids.tenant, profileId, ids.admin],
+      );
+      await client.query(
+        `UPDATE hr_worker_profiles SET workforce_status='active',row_version=3
+         WHERE tenant_id=$1 AND worker_profile_id=$2`,
+        [ids.tenant, profileId],
+      );
+      const relationship = await client.query<{ reporting_relationship_id: string }>(
+        `INSERT INTO hr_reporting_relationships
+           (tenant_id,worker_profile_id,manager_worker_profile_id,
+            relationship_status,relationship_version)
+         VALUES ($1,$2,$3,'assigned',1) RETURNING reporting_relationship_id`,
+        [ids.tenant, profileId, managerProfileId],
+      );
+      await client.query(
+        `UPDATE hr_worker_profiles SET current_reporting_relationship_id=$3,row_version=4
+         WHERE tenant_id=$1 AND worker_profile_id=$2`,
+        [ids.tenant, profileId, relationship.rows[0]?.reporting_relationship_id],
+      );
+      return (
+        await client.query<{ id: string }>(
+          `INSERT INTO hr_attendance_observations
+             (tenant_id,worker_profile_id,observed_at,observation_kind,source_kind)
+           VALUES ($1,$2,'2026-07-24T03:29:00Z','presence_start','manual')
+           RETURNING attendance_observation_id id`,
+          [ids.tenant, profileId],
+        )
+      ).rows[0]?.id;
+    });
+    await createObservation();
+    try {
+      afterReportCandidate = () => setProfileStatus(workerProfileId, "suspended");
+      expectProblem(
+        await signedGet({ principalId: ids.manager, url: reportsUrl("&pageSize=1") }),
+        409,
+        "ATTENDANCE_CONFLICT",
+      );
+      const retry = await signedGet({ principalId: ids.manager, url: reportsUrl("&pageSize=1") });
+      expect(retry.response.json().items[0]?.attendanceObservationId).toBe(older);
+    } finally {
+      afterReportCandidate = null;
+      await setProfileStatus(workerProfileId, "active");
+    }
+  });
+
+  it("re-reads manager role, assigned relationship, membership and capability", async () => {
+    const observation = await createObservation();
+    const detail = detailUrl(observation.attendanceObservationId);
+    await setMembership(ids.manager, "role_key", "employee");
+    await expectReadProblem(reportsUrl(), 403, "POLICY_DENIED", ids.manager);
+    await setMembership(ids.manager, "role_key", "manager");
+    await setProfileStatus(managerProfileId, "suspended");
+    await expectReadProblem(reportsUrl(), 403, "POLICY_DENIED", ids.manager);
+    await setProfileStatus(managerProfileId, "active");
+    await setCapability(ids.manager, "hr.attendance.list_reports", false);
+    await expectReadProblem(reportsUrl(), 403, "POLICY_DENIED", ids.manager);
+    await setCapability(ids.manager, "hr.attendance.list_reports", true);
+    await setMembership(ids.worker, "status", "suspended");
+    await expectReadProblem(detail, 403, "ACTOR_NOT_ACTIVE_MEMBER");
+    await setMembership(ids.worker, "status", "active");
+    await setProfileStatus(workerProfileId, "suspended");
+    await expectReadProblem(ownUrl(), 403, "POLICY_DENIED");
+    await setProfileStatus(workerProfileId, "active");
+    await setCapability(ids.worker, "hr.attendance.list_own", false);
+    await expectReadProblem(ownUrl(), 403, "POLICY_DENIED");
+    await setCapability(ids.worker, "hr.attendance.list_own", true);
+    await setCapability(ids.worker, "hr.attendance.view_detail", false);
+    await expectReadProblem(detail, 403, "POLICY_DENIED");
+    await setCapability(ids.worker, "hr.attendance.view_detail", true);
+    const unassigned = await governed((client) =>
+      client.query<{ id: string }>(
+        `INSERT INTO hr_reporting_relationships
+           (tenant_id,worker_profile_id,relationship_status,relationship_version,
+            supersedes_reporting_relationship_id)
+         VALUES ($1,$2,'unassigned',2,$3) RETURNING reporting_relationship_id id`,
+        [ids.tenant, workerProfileId, relationshipId],
+      ),
+    );
+    await governedMutation(
+      `UPDATE hr_worker_profiles SET current_reporting_relationship_id=$3,
+              row_version=row_version+1 WHERE tenant_id=$1 AND worker_profile_id=$2`,
+      [ids.tenant, workerProfileId, unassigned.rows[0]?.id],
+    );
+    await expectReadProblem(detail, 403, "POLICY_DENIED", ids.manager);
+  });
+
+  it("fails cross-tenant and inactive service/dependency reads closed without movement", async () => {
+    const detail = detailUrl((await createObservation()).attendanceObservationId);
+    const baseline = await correctionCounts();
+    await expectReadProblem(
+      detail,
+      404,
+      "ATTENDANCE_OBSERVATION_NOT_FOUND",
+      ids.otherOperator,
+      ids.otherTenant,
+    );
+    await setActivation("attendance", "inactive");
+    await expectReadProblem(detail, 503, "ATTENDANCE_SERVICE_INACTIVE");
+    await setActivation("attendance", "active");
+    await setActivation("workforce_profile", "inactive");
+    await expectReadProblem(detail, 503, "ATTENDANCE_DEPENDENCY_INACTIVE");
+    await setActivation("workforce_profile", "active");
+    expect(await correctionCounts()).toEqual(baseline);
   });
 });
