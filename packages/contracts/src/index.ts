@@ -111,6 +111,7 @@ export {
   parseHrServiceMutationResponse,
 } from "./hr-service-control-api.js";
 export * from "./hr-shift-assignment-api.js";
+export * from "./hr-timesheet-api.js";
 export {
   type HrDirectReportsCursor,
   type HrDirectReportsPage,
