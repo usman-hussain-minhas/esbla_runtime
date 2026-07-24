@@ -9,6 +9,8 @@ import { createServer } from "./server.js";
 
 const secret = "esbla-shift-read-api-integration-secret-v1";
 const ids = {
+  admin: "81000000-0000-4000-8000-000000000005",
+  adminMembership: "82000000-0000-4000-8000-000000000005",
   employee: "81000000-0000-4000-8000-000000000003",
   employeeMembership: "82000000-0000-4000-8000-000000000003",
   manager: "81000000-0000-4000-8000-000000000004",
@@ -39,6 +41,23 @@ let pool: Pool;
 let rosterVersionId = "";
 let server: FastifyInstance;
 let workerProfileId = "";
+async function restoreShiftRuntimeAuthority(applicationRole: string): Promise<void> {
+  const readOnly =
+    "tenant_settings,hr_workforce_profile_service_control,membership_capabilities," +
+    "hr_workforce_status_history,memberships,hr_shift_assignment_service_control";
+  const readInsert = "hr_reporting_relationships,evidence_events,outbox_events";
+  const readWrite =
+    "hr_worker_profiles,service_activations,hr_shift_assignments,hr_shift_roster_versions";
+  await migrationPool.query(
+    `REVOKE ALL PRIVILEGES ON TABLE ${readOnly},${readInsert},${readWrite}
+     FROM ${applicationRole}`,
+  );
+  await migrationPool.query(`GRANT SELECT ON TABLE ${readOnly} TO ${applicationRole}`);
+  await migrationPool.query(`GRANT SELECT,INSERT ON TABLE ${readInsert} TO ${applicationRole}`);
+  await migrationPool.query(
+    `GRANT SELECT,INSERT,UPDATE ON TABLE ${readWrite} TO ${applicationRole}`,
+  );
+}
 async function tenantTransaction<T>(
   client: PoolClient,
   tenantId: string,
@@ -119,6 +138,35 @@ async function signedPost({
   };
   if (idempotencyKey) headers["idempotency-key"] = idempotencyKey;
   const request: InjectOptions = { headers, method: "POST", payload: body, url };
+  return { requestId, response: await server.inject(request) };
+}
+async function signedPatch({
+  body,
+  idempotencyKey,
+  principalId,
+  tenantId = ids.tenant,
+  url,
+}: SignedMutationOptions) {
+  const requestId = randomUUID();
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const headers: Record<string, string> = {
+    "x-esbla-auth-signature": signDevelopmentPrincipal(secret, {
+      body,
+      method: "PATCH",
+      principalId,
+      requestId,
+      tenantId,
+      timestamp,
+      url,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    }),
+    "x-esbla-auth-timestamp": timestamp,
+    "x-esbla-principal-id": principalId,
+    "x-esbla-request-id": requestId,
+    "x-esbla-tenant-id": tenantId,
+  };
+  if (idempotencyKey) headers["idempotency-key"] = idempotencyKey;
+  const request: InjectOptions = { headers, method: "PATCH", payload: body, url };
   return { requestId, response: await server.inject(request) };
 }
 async function setActivation(
@@ -211,6 +259,7 @@ beforeAll(async () => {
   }
   migrationPool = createDatabasePool(migrationUrl, { max: 3 });
   await migrateDatabase(createDatabase(migrationPool));
+  await restoreShiftRuntimeAuthority(applicationRole);
   pool = createDatabasePool(runtimeUrl, { max: 8 });
   await migrationPool.query(
     `GRANT SELECT ON membership_capabilities,tenant_settings TO ${applicationRole};
@@ -223,15 +272,17 @@ beforeAll(async () => {
   ]);
   await migrationPool.query(
     `INSERT INTO principals (principal_id,display_name)
-     VALUES ($1,'Shift Operator'),($2,'Shift Employee'),($3,'Shift Manager')`,
-    [ids.operator, ids.employee, ids.manager],
+     VALUES ($1,'Shift Operator'),($2,'Shift Employee'),($3,'Shift Manager'),
+            ($4,'Shift Administrator')`,
+    [ids.operator, ids.employee, ids.manager, ids.admin],
   );
   const client = await migrationPool.connect();
   try {
     await tenantTransaction(client, ids.tenant, ids.operator, async (tenantClient) => {
       await tenantClient.query(
         `INSERT INTO memberships (membership_id,tenant_id,principal_id,role_key)
-         VALUES ($1,$2,$3,'hr_operator'),($4,$2,$5,'employee'),($6,$2,$7,'manager')`,
+         VALUES ($1,$2,$3,'hr_operator'),($4,$2,$5,'employee'),($6,$2,$7,'manager'),
+                ($8,$2,$9,'tenant_admin')`,
         [
           ids.operatorMembership,
           ids.tenant,
@@ -240,6 +291,22 @@ beforeAll(async () => {
           ids.employee,
           ids.managerMembership,
           ids.manager,
+          ids.adminMembership,
+          ids.admin,
+        ],
+      );
+      await tenantClient.query(
+        `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+         SELECT $1,$2,capability FROM unnest($3::text[]) capability`,
+        [
+          ids.tenant,
+          ids.admin,
+          [
+            "hr.shift.activate_service",
+            "hr.shift.configure_service",
+            "hr.shift.deactivate_service",
+            "hr.shift.view_service_control",
+          ],
         ],
       );
       await tenantClient.query(
@@ -353,6 +420,7 @@ beforeAll(async () => {
   server = createServer({
     authenticate: createDevelopmentAuthenticator({ secret }),
     logger: false,
+    migrationReadPool: migrationPool,
     pool,
     runtimeEnvironment: "test",
   });
@@ -684,6 +752,144 @@ describe("Shift Assignment authorized lifecycle APIs", () => {
       expect(Object.keys(problem).sort()).toEqual(
         ["code", "detail", "instance", "requestId", "status", "title", "type"].sort(),
       );
+    }
+    expect(await persistenceCounts()).toEqual(before);
+  });
+});
+describe("Shift Assignment service-control APIs", () => {
+  it("returns exact full controls for configure, deactivate, reactivate and replay", async () => {
+    const controlUrl = "/v1/hr/shift-rosters/service-control";
+    const initial = await signedGet({ principalId: ids.admin, url: controlUrl });
+    expect(initial.response.statusCode, initial.response.body).toBe(200);
+    const initialControl = initial.response.json();
+    expect(initialControl).toEqual({
+      activationState: "active",
+      activationVersion: expect.any(Number),
+      serviceKey: "shift_assignment",
+      settings: { overlapAllowed: false, rosterHorizonDays: 14 },
+      settingsVersion: 1,
+      updatedAt: expect.any(String),
+      version: expect.any(Number),
+    });
+
+    const unchanged = await persistenceCounts();
+    expectProblem(
+      await signedGet({ principalId: ids.admin, url: `${controlUrl}?tenantId=${ids.otherTenant}` }),
+      400,
+      "REQUEST_VALIDATION_FAILED",
+    );
+    expectProblem(
+      await signedGet({ principalId: ids.operator, url: controlUrl }),
+      403,
+      "POLICY_DENIED",
+    );
+    const invalidConfigure = await signedPatch({
+      body: {
+        expectedSettingsVersion: 1,
+        settings: {
+          employeeNumberRequired: false,
+          managerVisibility: "none",
+          unlinkedWorkerCreationAllowed: false,
+        },
+      },
+      idempotencyKey: randomUUID(),
+      principalId: ids.admin,
+      url: `${controlUrl}/settings`,
+    });
+    expectProblem(invalidConfigure, 400, "REQUEST_VALIDATION_FAILED");
+    expect(await persistenceCounts()).toEqual(unchanged);
+
+    const configureBody = {
+      expectedSettingsVersion: initialControl.settingsVersion,
+      settings: { overlapAllowed: false, rosterHorizonDays: 21 },
+    };
+    const configureKey = randomUUID();
+    const configured = await signedPatch({
+      body: configureBody,
+      idempotencyKey: configureKey,
+      principalId: ids.admin,
+      url: `${controlUrl}/settings`,
+    });
+    expect(configured.response.statusCode, configured.response.body).toBe(200);
+    expect(configured.response.json()).toMatchObject({
+      activationState: "active",
+      activationVersion: initialControl.activationVersion,
+      serviceKey: "shift_assignment",
+      settings: configureBody.settings,
+      settingsVersion: initialControl.settingsVersion + 1,
+      version: initialControl.version + 1,
+    });
+
+    const deactivateKey = randomUUID();
+    const deactivated = await signedPost({
+      body: { expectedVersion: initialControl.activationVersion },
+      idempotencyKey: deactivateKey,
+      principalId: ids.admin,
+      url: `${controlUrl}/deactivate`,
+    });
+    expect(deactivated.response.statusCode, deactivated.response.body).toBe(200);
+    expect(deactivated.response.json()).toMatchObject({
+      activationState: "inactive",
+      activationVersion: initialControl.activationVersion + 1,
+      settings: configureBody.settings,
+      settingsVersion: initialControl.settingsVersion + 1,
+      version: initialControl.version + 2,
+    });
+    const deactivateReplay = await signedPost({
+      body: { expectedVersion: initialControl.activationVersion },
+      idempotencyKey: deactivateKey,
+      principalId: ids.admin,
+      url: `${controlUrl}/deactivate`,
+    });
+    expect(deactivateReplay.response.json()).toEqual(deactivated.response.json());
+
+    const activateKey = randomUUID();
+    const activated = await signedPost({
+      body: { expectedVersion: deactivated.response.json().activationVersion },
+      idempotencyKey: activateKey,
+      principalId: ids.admin,
+      url: `${controlUrl}/activate`,
+    });
+    expect(activated.response.statusCode, activated.response.body).toBe(200);
+    expect(activated.response.headers["idempotent-replayed"]).toBe("false");
+    expect(activated.response.json()).toMatchObject({
+      activationState: "active",
+      activationVersion: initialControl.activationVersion + 2,
+      settings: configureBody.settings,
+      settingsVersion: initialControl.settingsVersion + 1,
+      version: initialControl.version + 3,
+    });
+    const activateReplay = await signedPost({
+      body: { expectedVersion: deactivated.response.json().activationVersion },
+      idempotencyKey: activateKey,
+      principalId: ids.admin,
+      url: `${controlUrl}/activate`,
+    });
+    expect(activateReplay.response.json()).toEqual(activated.response.json());
+
+    const configureReplay = await signedPatch({
+      body: configureBody,
+      idempotencyKey: configureKey,
+      principalId: ids.admin,
+      url: `${controlUrl}/settings`,
+    });
+    expect(configureReplay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(configureReplay.response.json()).toEqual(configured.response.json());
+    expect((await signedGet({ principalId: ids.admin, url: controlUrl })).response.json()).toEqual(
+      activated.response.json(),
+    );
+  }, 20_000);
+
+  it("requires a signed UUID idempotency key before mutation validation", async () => {
+    const before = await persistenceCounts();
+    for (const idempotencyKey of [undefined, "not-a-uuid"]) {
+      const result = await signedPatch({
+        body: { unexpected: true },
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+        principalId: ids.admin,
+        url: "/v1/hr/shift-rosters/service-control/settings",
+      });
+      expect(result.response.statusCode, result.response.body).toBe(401);
     }
     expect(await persistenceCounts()).toEqual(before);
   });

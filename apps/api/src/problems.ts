@@ -98,7 +98,9 @@ function statusForError(error: Error): number {
   }
   if (error instanceof HrShiftAssignmentError) {
     if (error.code === "SHIFT_INPUT_INVALID") return 400;
-    if (error.code === "SHIFT_NOT_FOUND") return 404;
+    if (error.code === "SHIFT_NOT_FOUND" || error.code === "SHIFT_SERVICE_CONTROL_NOT_FOUND") {
+      return 404;
+    }
     if (error.code === "SHIFT_DEPENDENCY_INACTIVE" || error.code === "SHIFT_SERVICE_INACTIVE") {
       return 503;
     }

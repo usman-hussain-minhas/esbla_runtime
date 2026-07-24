@@ -30,12 +30,16 @@ describe("HR passenger manifest reuse contract", () => {
       "hr.leave.reject",
       "hr.leave.submit",
       "hr.leave.view",
+      "hr.shift.activate_service",
       "hr.shift.assign",
       "hr.shift.cancel",
+      "hr.shift.configure_service",
       "hr.shift.create_roster",
+      "hr.shift.deactivate_service",
       "hr.shift.list_roster",
       "hr.shift.publish",
       "hr.shift.view_detail",
+      "hr.shift.view_service_control",
       "hr.workforce.activate_service",
       "hr.workforce.change_reporting_relationship",
       "hr.workforce.change_status",
@@ -79,12 +83,16 @@ describe("HR passenger manifest reuse contract", () => {
     expect(
       hrManifest.capabilities.filter((capability) => capability.id.startsWith("hr.shift.")),
     ).toEqual([
+      { exposure: "admin", id: "hr.shift.activate_service" },
       { exposure: "tenant", id: "hr.shift.assign" },
       { exposure: "tenant", id: "hr.shift.cancel" },
+      { exposure: "admin", id: "hr.shift.configure_service" },
       { exposure: "tenant", id: "hr.shift.create_roster" },
+      { exposure: "admin", id: "hr.shift.deactivate_service" },
       { exposure: "tenant", id: "hr.shift.list_roster" },
       { exposure: "tenant", id: "hr.shift.publish" },
       { exposure: "tenant", id: "hr.shift.view_detail" },
+      { exposure: "admin", id: "hr.shift.view_service_control" },
     ]);
     expect(hrManifest.capabilities).not.toContainEqual({
       exposure: "integration",

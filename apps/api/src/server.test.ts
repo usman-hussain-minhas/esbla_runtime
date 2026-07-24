@@ -95,7 +95,7 @@ describe("runtime probes", () => {
     expect(query).not.toHaveBeenCalled();
   });
 
-  it("protects admitted Shift routes while keeping service-control routes dormant", async () => {
+  it("protects every admitted Shift route before PostgreSQL access", async () => {
     const { query, server } = testServer();
     const rosterVersionId = randomUUID();
     const shiftAssignmentId = randomUUID();
@@ -139,7 +139,7 @@ describe("runtime probes", () => {
         url: "/v1/hr/shift-rosters/service-control/settings",
       },
     ] as const) {
-      expect((await server.inject(request)).statusCode).toBe(404);
+      expect((await server.inject(request)).statusCode).toBe(401);
     }
     expect(query).not.toHaveBeenCalled();
   });

@@ -31,10 +31,26 @@ import {
   parseHrShiftRosterResponse,
 } from "@esbla/contracts";
 import {
+  type HrServiceActivateBody,
+  type HrServiceConfigureBody,
+  type HrServiceControlQuery,
+  type HrServiceDeactivateBody,
+  type HrShiftAssignmentSettings,
+  parseHrServiceActivateBody,
+  parseHrServiceConfigureBody,
+  parseHrServiceControl,
+  parseHrServiceControlQuery,
+  parseHrServiceDeactivateBody,
+} from "@esbla/contracts/hr-service-control-api";
+import {
+  activateShiftAssignmentService,
   assignShift,
   cancelShiftAssignment,
+  configureShiftAssignmentService,
   createShiftRoster,
+  deactivateShiftAssignmentService,
   getAuthorizedShiftAssignmentDetail,
+  getShiftAssignmentServiceControl,
   listAuthorizedShiftAssignments,
   publishShiftRoster,
 } from "@esbla/hr";
@@ -48,9 +64,16 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 
 export interface RegisterShiftAssignmentRoutesOptions {
   readonly authenticate: Authenticate;
+  readonly migrationReadPool: Pool;
   readonly pool: Pool;
+  readonly runtimeEnvironment: "development" | "production" | "test";
   readonly server: FastifyInstance;
 }
+
+type ShiftConfigureBody = Extract<
+  HrServiceConfigureBody,
+  { readonly settings: HrShiftAssignmentSettings }
+>;
 
 function operationContext(request: FastifyRequest): OperationContext {
   if (!request.operationContext) throw new Error("authenticated operation context is missing");
@@ -98,9 +121,19 @@ function listQuery(value: unknown): HrShiftListQuery {
   return strict(parseHrShiftListQuery, normalized);
 }
 
+function shiftConfigureBody(value: unknown): ShiftConfigureBody {
+  const body = strict(parseHrServiceConfigureBody, value);
+  if (!("overlapAllowed" in body.settings) || !("rosterHorizonDays" in body.settings)) {
+    throw requestContractViolation();
+  }
+  return body as ShiftConfigureBody;
+}
+
 export function registerShiftAssignmentRoutes({
   authenticate,
+  migrationReadPool,
   pool,
+  runtimeEnvironment,
   server,
 }: RegisterShiftAssignmentRoutesOptions): void {
   for (const schema of [
@@ -118,6 +151,122 @@ export function registerShiftAssignmentRoutes({
   ]) {
     server.addSchema(schema);
   }
+
+  server.get<{ Querystring: HrServiceControlQuery }>(
+    "/v1/hr/shift-rosters/service-control",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          strict(parseHrServiceControlQuery, request.query);
+        },
+      ],
+      schema: {
+        querystring: { $ref: "HrServiceControlQueryV1#" },
+        response: {
+          200: { $ref: "HrServiceControlResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) =>
+      reply
+        .code(200)
+        .send(
+          parseHrServiceControl(
+            (await getShiftAssignmentServiceControl(pool, operationContext(request))).control,
+          ),
+        ),
+  );
+
+  server.post<{ Body: HrServiceActivateBody }>(
+    "/v1/hr/shift-rosters/service-control/activate",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          mutationContext(request);
+          strict(parseHrServiceActivateBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrServiceActivateRequestV1#" },
+        response: {
+          200: { $ref: "HrServiceControlResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await activateShiftAssignmentService(
+        pool,
+        migrationReadPool,
+        mutationContext(request),
+        request.body,
+        runtimeEnvironment === "production" ? "production" : "non_production",
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(parseHrServiceControl(result.control));
+    },
+  );
+
+  server.post<{ Body: HrServiceDeactivateBody }>(
+    "/v1/hr/shift-rosters/service-control/deactivate",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          mutationContext(request);
+          strict(parseHrServiceDeactivateBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrServiceDeactivateRequestV1#" },
+        response: {
+          200: { $ref: "HrServiceControlResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await deactivateShiftAssignmentService(
+        pool,
+        mutationContext(request),
+        request.body,
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(parseHrServiceControl(result.control));
+    },
+  );
+
+  server.patch<{ Body: ShiftConfigureBody }>(
+    "/v1/hr/shift-rosters/service-control/settings",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          mutationContext(request);
+          shiftConfigureBody(request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrServiceConfigureRequestV1#" },
+        response: {
+          200: { $ref: "HrServiceControlResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await configureShiftAssignmentService(
+        pool,
+        mutationContext(request),
+        request.body,
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(parseHrServiceControl(result.control));
+    },
+  );
 
   server.post<{ Body: HrShiftCreateRosterBody }>(
     "/v1/hr/shift-rosters",

@@ -5,6 +5,10 @@ import { type OperationContext, PlatformError } from "@esbla/platform-core";
 import type { Pool, PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  observeShiftServiceLockContention,
+  restoreShiftRuntimeTableAuthority,
+} from "./shift-assignment.integration-fixture.js";
+import {
   assignShift,
   cancelShiftAssignment,
   createShiftRoster,
@@ -14,11 +18,20 @@ import {
   getAuthorizedShiftAssignmentDetail,
   listAuthorizedShiftAssignments,
 } from "./shift-assignment-queries.js";
+import {
+  activateShiftAssignmentService,
+  configureShiftAssignmentService,
+  deactivateShiftAssignmentService,
+  getShiftAssignmentServiceControl,
+} from "./shift-assignment-service-control.js";
 import { changeWorkforceReportingRelationship } from "./workforce-commands.js";
 
 const ids = {
   actor: "a6000000-0000-4000-8000-000000000001",
   actorMembership: "26000000-0000-4000-8000-000000000001",
+  controlAdmin: "e6000000-0000-4000-8000-000000000005",
+  controlAdminMembership: "26000000-0000-4000-8000-000000000005",
+  controlTenant: "d8000000-0000-4000-8000-000000000004",
   manager: "d6000000-0000-4000-8000-000000000004",
   managerMembership: "26000000-0000-4000-8000-000000000004",
   missingTenant: "c8000000-0000-4000-8000-000000000003",
@@ -104,6 +117,41 @@ async function shiftCounts(periodStart: string): Promise<ShiftCounts> {
   });
 }
 
+type ControlCounts = {
+  activations: number;
+  assignments: number;
+  controls: number;
+  evidence: number;
+  outbox: number;
+  rosters: number;
+  settings: number;
+  work: number;
+};
+async function controlCounts(): Promise<ControlCounts> {
+  return await tenantTransaction(
+    migrationPool,
+    ids.controlTenant,
+    ids.controlAdmin,
+    async (client) => {
+      const result = await client.query<ControlCounts>(
+        `SELECT
+           (SELECT count(*) FROM service_activations WHERE tenant_id=$1)::integer activations,
+           (SELECT count(*) FROM hr_shift_assignment_service_control
+            WHERE tenant_id=$1)::integer controls,
+           (SELECT count(*) FROM tenant_settings
+            WHERE tenant_id=$1 AND setting_key LIKE 'hr.shift_assignment.%')::integer settings,
+           (SELECT count(*) FROM hr_shift_roster_versions WHERE tenant_id=$1)::integer rosters,
+           (SELECT count(*) FROM hr_shift_assignments WHERE tenant_id=$1)::integer assignments,
+           (SELECT count(*) FROM evidence_events WHERE tenant_id=$1)::integer evidence,
+           (SELECT count(*) FROM outbox_events WHERE tenant_id=$1)::integer outbox,
+           (SELECT count(*) FROM work_items WHERE tenant_id=$1)::integer work`,
+        [ids.controlTenant],
+      );
+      return result.rows[0] as ControlCounts;
+    },
+  );
+}
+
 const setActivation = (
   tenantId: string,
   actorId: string,
@@ -127,6 +175,7 @@ beforeAll(async () => {
   }
   migrationPool = createDatabasePool(migrationUrl, { max: 3 });
   await migrateDatabase(createDatabase(migrationPool));
+  await restoreShiftRuntimeTableAuthority(migrationPool, applicationRole);
   pool = createDatabasePool(runtimeUrl, { max: 8 });
   await migrationPool.query(
     `GRANT SELECT ON membership_capabilities,tenant_settings TO ${applicationRole};
@@ -137,14 +186,15 @@ beforeAll(async () => {
 
   await migrationPool.query(
     `INSERT INTO tenants (tenant_id,name)
-     VALUES ($1,'Shift Lifecycle'),($2,'Other Shift'),($3,'Missing Shift')`,
-    [ids.tenant, ids.otherTenant, ids.missingTenant],
+     VALUES ($1,'Shift Lifecycle'),($2,'Other Shift'),($3,'Missing Shift'),
+            ($4,'Shift Control')`,
+    [ids.tenant, ids.otherTenant, ids.missingTenant, ids.controlTenant],
   );
   await migrationPool.query(
     `INSERT INTO principals (principal_id,display_name)
      VALUES ($1,'Shift Operator'),($2,'Other Operator'),($3,'Shift Worker'),
-            ($4,'Shift Manager')`,
-    [ids.actor, ids.otherActor, ids.worker, ids.manager],
+            ($4,'Shift Manager'),($5,'Shift Administrator')`,
+    [ids.actor, ids.otherActor, ids.worker, ids.manager, ids.controlAdmin],
   );
   for (const [tenantId, actorId, membershipId] of [
     [ids.tenant, ids.actor, ids.actorMembership],
@@ -180,6 +230,32 @@ beforeAll(async () => {
       );
     });
   }
+  await tenantTransaction(migrationPool, ids.controlTenant, ids.controlAdmin, async (client) => {
+    await client.query(
+      `INSERT INTO memberships (membership_id,tenant_id,principal_id,role_key)
+         VALUES ($1,$2,$3,'tenant_admin')`,
+      [ids.controlAdminMembership, ids.controlTenant, ids.controlAdmin],
+    );
+    await client.query(
+      `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+         SELECT $1,$2,capability FROM unnest($3::text[]) capability`,
+      [
+        ids.controlTenant,
+        ids.controlAdmin,
+        [
+          "hr.shift.activate_service",
+          "hr.shift.configure_service",
+          "hr.shift.deactivate_service",
+          "hr.shift.view_service_control",
+        ],
+      ],
+    );
+    await client.query(
+      `INSERT INTO service_activations (tenant_id,service_key,state,version)
+         VALUES ($1,'workforce_profile','active',1)`,
+      [ids.controlTenant],
+    );
+  });
   await tenantTransaction(migrationPool, ids.tenant, ids.actor, async (client) => {
     await client.query(
       `INSERT INTO memberships (membership_id,tenant_id,principal_id,role_key)
@@ -906,4 +982,206 @@ describe("Shift Assignment mutation lifecycle", () => {
     await denyAbsentActor(ids.otherTenant);
     await denyAbsentActor(ids.missingTenant);
   });
+});
+describe("Shift Assignment service control", () => {
+  const adminContext = (correlationId = randomUUID()) =>
+    context(correlationId, ids.controlTenant, ids.controlAdmin);
+
+  it("activates, configures and deactivates with exact replay-safe full controls", async () => {
+    const initialCounts = await controlCounts();
+    await expect(getShiftAssignmentServiceControl(pool, adminContext())).rejects.toMatchObject({
+      code: "SHIFT_SERVICE_CONTROL_NOT_FOUND",
+    });
+    await expect(
+      getShiftAssignmentServiceControl(pool, context(randomUUID(), ids.tenant, ids.controlAdmin)),
+    ).rejects.toMatchObject({ code: "ACTOR_NOT_ACTIVE_MEMBER" });
+    expect(await controlCounts()).toEqual(initialCounts);
+
+    await setActivation(ids.controlTenant, ids.controlAdmin, "workforce_profile", "inactive");
+    const dependencyBlockedCounts = await controlCounts();
+    await expect(
+      activateShiftAssignmentService(
+        pool,
+        migrationPool,
+        adminContext(),
+        { expectedVersion: null },
+        "non_production",
+      ),
+    ).rejects.toMatchObject({ code: "SHIFT_DEPENDENCY_INACTIVE" });
+    expect(await controlCounts()).toEqual(dependencyBlockedCounts);
+    await setActivation(ids.controlTenant, ids.controlAdmin, "workforce_profile", "active");
+
+    const isolatedReaderCounts = await controlCounts();
+    await expect(
+      activateShiftAssignmentService(
+        pool,
+        pool,
+        adminContext(),
+        { expectedVersion: null },
+        "non_production",
+      ),
+    ).rejects.toMatchObject({ code: "ACTIVATION_DEPENDENCY_BLOCKED" });
+    expect(await controlCounts()).toEqual(isolatedReaderCounts);
+
+    const contention = await observeShiftServiceLockContention(
+      migrationPool,
+      ids.controlTenant,
+      async () =>
+        await activateShiftAssignmentService(
+          pool,
+          migrationPool,
+          adminContext(),
+          { expectedVersion: null },
+          "non_production",
+        ),
+    );
+    expect(contention).toEqual({
+      bounded: "SHIFT_VERSION_CONFLICT",
+      settled: "SHIFT_VERSION_CONFLICT",
+    });
+    expect(await controlCounts()).toEqual(isolatedReaderCounts);
+
+    const activateKey = randomUUID();
+    const activated = await activateShiftAssignmentService(
+      pool,
+      migrationPool,
+      adminContext(activateKey),
+      { expectedVersion: null },
+      "non_production",
+    );
+    expect(activated).toEqual({
+      billingState: "non_billable",
+      control: {
+        activationState: "active",
+        activationVersion: 1,
+        serviceKey: "shift_assignment",
+        settings: { overlapAllowed: false, rosterHorizonDays: 14 },
+        settingsVersion: 1,
+        updatedAt: expect.any(String),
+        version: 1,
+      },
+      replayed: false,
+    });
+    await expect(
+      activateShiftAssignmentService(
+        pool,
+        migrationPool,
+        adminContext(activateKey),
+        { expectedVersion: null },
+        "production",
+      ),
+    ).resolves.toEqual({ ...activated, replayed: true });
+    await expect(
+      activateShiftAssignmentService(
+        pool,
+        migrationPool,
+        adminContext(activateKey),
+        { expectedVersion: 1 },
+        "non_production",
+      ),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+
+    const configureKey = randomUUID();
+    const configureInput = {
+      expectedSettingsVersion: 1,
+      settings: { overlapAllowed: false as const, rosterHorizonDays: 21 },
+    };
+    const configured = await configureShiftAssignmentService(
+      pool,
+      adminContext(configureKey),
+      configureInput,
+    );
+    expect(configured).toMatchObject({
+      billingState: "non_billable",
+      control: {
+        activationState: "active",
+        activationVersion: 1,
+        serviceKey: "shift_assignment",
+        settings: configureInput.settings,
+        settingsVersion: 2,
+        version: 2,
+      },
+      replayed: false,
+    });
+    await expect(
+      configureShiftAssignmentService(pool, adminContext(configureKey), configureInput),
+    ).resolves.toEqual({ ...configured, replayed: true });
+    await expect(
+      configureShiftAssignmentService(pool, adminContext(configureKey), {
+        ...configureInput,
+        settings: { overlapAllowed: false, rosterHorizonDays: 22 },
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+
+    const concurrent = await Promise.allSettled(
+      [20, 22].map(
+        async (rosterHorizonDays) =>
+          await configureShiftAssignmentService(pool, adminContext(), {
+            expectedSettingsVersion: 2,
+            settings: { overlapAllowed: false, rosterHorizonDays },
+          }),
+      ),
+    );
+    expect(concurrent.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    expect(concurrent.filter(({ status }) => status === "rejected")).toHaveLength(1);
+    const current = await getShiftAssignmentServiceControl(pool, adminContext());
+    expect(current.control).toMatchObject({ activationVersion: 1, settingsVersion: 3, version: 3 });
+
+    const deactivateKey = randomUUID();
+    const deactivated = await deactivateShiftAssignmentService(pool, adminContext(deactivateKey), {
+      expectedVersion: current.control.activationVersion,
+    });
+    expect(deactivated).toMatchObject({
+      control: { activationState: "inactive", activationVersion: 2, version: 4 },
+      replayed: false,
+    });
+    const productionCounts = await controlCounts();
+    await expect(
+      activateShiftAssignmentService(
+        pool,
+        migrationPool,
+        adminContext(),
+        { expectedVersion: 2 },
+        "production",
+      ),
+    ).rejects.toMatchObject({ code: "ACTIVATION_DEPENDENCY_BLOCKED" });
+    expect(await controlCounts()).toEqual(productionCounts);
+
+    const reactivated = await activateShiftAssignmentService(
+      pool,
+      migrationPool,
+      adminContext(),
+      { expectedVersion: 2 },
+      "non_production",
+    );
+    expect(reactivated).toMatchObject({
+      control: { activationState: "active", activationVersion: 3, version: 5 },
+      replayed: false,
+    });
+    await expect(
+      deactivateShiftAssignmentService(pool, adminContext(deactivateKey), {
+        expectedVersion: current.control.activationVersion,
+      }),
+    ).resolves.toEqual({ ...deactivated, replayed: true });
+    await expect(
+      configureShiftAssignmentService(pool, adminContext(configureKey), configureInput),
+    ).resolves.toEqual({ ...configured, replayed: true });
+
+    await tenantTransaction(
+      migrationPool,
+      ids.controlTenant,
+      ids.controlAdmin,
+      async (client) =>
+        await client.query(
+          `UPDATE memberships SET role_key='employee'
+           WHERE tenant_id=$1 AND principal_id=$2`,
+          [ids.controlTenant, ids.controlAdmin],
+        ),
+    );
+    const deniedCounts = await controlCounts();
+    await expect(getShiftAssignmentServiceControl(pool, adminContext())).rejects.toMatchObject({
+      code: "POLICY_DENIED",
+    });
+    expect(await controlCounts()).toEqual(deniedCounts);
+  }, 30_000);
 });
