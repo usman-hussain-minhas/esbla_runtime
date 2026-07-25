@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import {
+  type HrExpenseClaimApproveBody,
   type HrExpenseClaimCreateBody,
+  type HrExpenseClaimDecisionBody,
   type HrExpenseClaimEditDraftBody,
+  type HrExpenseClaimRejectBody,
   type HrExpenseClaimResponse,
   type HrExpenseClaimSubmitBody,
   parseHrExpenseClaimResponse,
@@ -9,6 +12,7 @@ import {
 import {
   appendEvidence,
   assertPolicyAllowed,
+  completeWorkItem,
   createWorkItem,
   deriveStableUuid,
   evaluatePolicy,
@@ -34,7 +38,9 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const SUBJECT_VERSION = "hr.expense.version";
 const SUBJECT_RECEIPT = "hr.expense.idempotency";
 const WORK_TYPE = "hr.expense.approval";
-type ExpenseAction = "create" | "edit_draft" | "submit";
+type EmployeeAction = "create" | "edit_draft" | "submit";
+type ManagerAction = "approve" | "reject";
+type ExpenseAction = EmployeeAction | ManagerAction;
 
 interface Receipt {
   readonly action: ExpenseAction;
@@ -69,6 +75,14 @@ interface LineRow {
   readonly expense_line_id: string;
   readonly row_version: number;
 }
+interface WorkRow {
+  readonly assignee_principal_id: string;
+  readonly status: "cancelled" | "completed" | "open";
+  readonly subject_id: string;
+  readonly subject_type: string;
+  readonly work_item_id: string;
+  readonly work_type: string;
+}
 type DetailRow = RootRow &
   Omit<VersionRow, "row_version"> & {
     readonly version_row_version: number;
@@ -95,6 +109,13 @@ const categoryCodes = Object.freeze({
   },
   valueType: "text",
 } satisfies SettingDefinition<string>);
+const rejectionNoteRequired = Object.freeze({
+  allowTenantOverride: true,
+  defaultValue: true,
+  key: "hr.expense.rejection_note_required",
+  validate: (value: boolean) => typeof value === "boolean",
+  valueType: "boolean",
+} satisfies SettingDefinition<boolean>);
 function inputInvalid(message: string): HrExpenseClaimError {
   return new HrExpenseClaimError("EXPENSE_INPUT_INVALID", message);
 }
@@ -151,6 +172,14 @@ function normalizeDescription(value: string | null | undefined): string | null {
   const selected = value.trim();
   if (selected.length < 1 || selected.length > 500) {
     throw inputInvalid("Expense line description must contain 1 to 500 characters");
+  }
+  return selected;
+}
+function normalizeDecisionNote(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const selected = value.trim();
+  if (selected.length < 1 || selected.length > 2000) {
+    throw inputInvalid("Expense decision note must contain 1 to 2000 characters");
   }
   return selected;
 }
@@ -225,7 +254,7 @@ async function withExpenseTransaction<T>(
   );
 }
 
-async function authorizeEmployee(transaction: TenantTransaction, action: ExpenseAction) {
+async function authorizeEmployee(transaction: TenantTransaction, action: EmployeeAction) {
   const actionKey = `hr.expense.${action}`;
   const capability = await transaction.client.query(
     `SELECT capability_id FROM membership_capabilities
@@ -364,7 +393,11 @@ async function prepareReceipt(
 async function readReplay(
   transaction: TenantTransaction,
   receipt: Receipt,
-  replayInput: HrExpenseClaimEditDraftBody | HrExpenseClaimSubmitBody | null = null,
+  replayInput:
+    | HrExpenseClaimDecisionBody
+    | HrExpenseClaimEditDraftBody
+    | HrExpenseClaimSubmitBody
+    | null = null,
 ): Promise<HrExpenseClaimResponse | null> {
   const found = await transaction.client.query<{
     actor_principal_id: string;
@@ -429,11 +462,15 @@ async function readReplay(
   const beforeVersion = receipt.action === "create" ? null : replayInput?.expectedVersion;
   const afterVersion = (beforeVersion ?? 0) + 1;
   const transition =
-    receipt.action === "submit"
-      ? (["draft", "submitted"] as const)
-      : receipt.action === "edit_draft"
-        ? (["draft", "draft"] as const)
-        : ([null, "draft"] as const);
+    receipt.action === "approve"
+      ? (["submitted", "approved"] as const)
+      : receipt.action === "reject"
+        ? (["submitted", "rejected"] as const)
+        : receipt.action === "submit"
+          ? (["draft", "submitted"] as const)
+          : receipt.action === "edit_draft"
+            ? (["draft", "draft"] as const)
+            : ([null, "draft"] as const);
   if (
     proof.rows.length !== 1 ||
     !recorded ||
@@ -479,6 +516,16 @@ async function readReplay(
         totalAmountMinor: 0,
       },
       rootVersion: 1,
+    });
+  } else if (replayInput && (receipt.action === "approve" || receipt.action === "reject")) {
+    result = parseHrExpenseClaimResponse({
+      ...current,
+      currentVersion: {
+        ...current.currentVersion,
+        rowVersion: afterVersion,
+        status: receipt.action === "approve" ? "approved" : "rejected",
+      },
+      rootVersion: replayInput.expectedRootVersion,
     });
   } else if (replayInput && "lines" in replayInput) {
     const lines = replayInput.lines
@@ -1008,4 +1055,239 @@ export async function submitExpenseClaim(
   } catch (error) {
     return translate(error);
   }
+}
+
+async function managerProfile(
+  transaction: TenantTransaction,
+  action: ManagerAction,
+): Promise<string> {
+  const actionKey = `hr.expense.${action}`;
+  const capability = await transaction.client.query(
+    `SELECT capability_id FROM membership_capabilities
+     WHERE tenant_id=$1 AND principal_id=$2 AND capability_id=$3`,
+    [transaction.context.tenantId, transaction.context.actorPrincipalId, actionKey],
+  );
+  const profile = await transaction.client.query<{ worker_profile_id: string }>(
+    `SELECT worker_profile_id FROM hr_worker_profiles
+     WHERE tenant_id=$1 AND principal_id=$2 AND workforce_status='active'
+     ORDER BY worker_profile_id LIMIT 2 FOR SHARE`,
+    [transaction.context.tenantId, transaction.context.actorPrincipalId],
+  );
+  const registered = hrManifest.capabilities.some(
+    ({ exposure, id }) => exposure === "tenant" && id === actionKey,
+  );
+  assertPolicyAllowed(
+    evaluatePolicy(
+      {
+        actionKey,
+        input: {
+          capabilityCurrent: registered && capability.rows.length === 1,
+          profileCurrent: profile.rows.length === 1,
+        },
+        resourceKey: HR_EXPENSE_CLAIM_SERVICE_KEY,
+        transaction,
+      },
+      [
+        {
+          effect: "allow",
+          id: `current_manager_${action}`,
+          matches: (request, actor) =>
+            actor.roleKey === "manager" && request.capabilityCurrent && request.profileCurrent,
+        },
+      ],
+    ),
+    transaction,
+    actionKey,
+    HR_EXPENSE_CLAIM_SERVICE_KEY,
+  );
+  const selected = profile.rows[0];
+  if (!selected) {
+    throw new PlatformError("POLICY_DENIED", "Expense manager authority was denied");
+  }
+  return selected.worker_profile_id;
+}
+
+async function rejectionNoteIsRequired(transaction: TenantTransaction): Promise<boolean> {
+  await transaction.client.query(
+    "SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1::text,0))",
+    [`hr.expense.settings.v1:${transaction.context.tenantId}`],
+  );
+  return (await resolveSetting(transaction, rejectionNoteRequired)).value;
+}
+
+async function decideExpenseClaim(
+  pool: Pool,
+  context: OperationContext,
+  expenseClaimIdInput: string,
+  input: HrExpenseClaimDecisionBody & { readonly idempotencyKey: string },
+  action: ManagerAction,
+): Promise<ExpenseClaimMutationResult> {
+  const expenseClaimId = normalizeUuid(expenseClaimIdInput, "expenseClaimId");
+  const decisionNote = normalizeDecisionNote(input.decisionNote);
+  try {
+    return await withExpenseTransaction(pool, context, async (transaction) => {
+      const approverWorkerProfileId = await managerProfile(transaction, action);
+      const noteRequired = action === "reject" ? await rejectionNoteIsRequired(transaction) : false;
+      const versionId = normalizeUuid(
+        input.expectedExpenseClaimVersionId,
+        "expectedExpenseClaimVersionId",
+      );
+      const receipt = await prepareReceipt(transaction, action, input.idempotencyKey, [
+        expenseClaimId,
+        input.expectedRootVersion,
+        versionId,
+        input.expectedVersion,
+        decisionNote,
+      ]);
+      const root = await transaction.client.query<RootRow>(
+        `SELECT expense_claim_id,worker_profile_id,created_at,current_version_id,row_version
+         FROM hr_expense_claims
+         WHERE tenant_id=$1 AND expense_claim_id=$2 FOR UPDATE`,
+        [transaction.context.tenantId, expenseClaimId],
+      );
+      const selectedRoot = root.rows[0];
+      if (!selectedRoot) throw notFound();
+      if (
+        selectedRoot.row_version !== input.expectedRootVersion ||
+        selectedRoot.current_version_id !== versionId
+      ) {
+        throw versionConflict();
+      }
+      const version = await transaction.client.query<VersionRow>(
+        `SELECT expense_claim_version_id,expense_claim_id,supersedes_version_id,
+                version,currency_code,status,assigned_approver_worker_profile_id,
+                submitted_at,total_amount_minor,row_version
+         FROM hr_expense_claim_versions
+         WHERE tenant_id=$1 AND expense_claim_id=$2 AND expense_claim_version_id=$3
+         FOR UPDATE`,
+        [transaction.context.tenantId, expenseClaimId, versionId],
+      );
+      const selectedVersion = version.rows[0];
+      if (!selectedVersion) throw versionConflict();
+      const work = await transaction.client.query<WorkRow>(
+        `SELECT work_item_id,assignee_principal_id,status,work_type,subject_type,subject_id
+         FROM work_items
+         WHERE tenant_id=$1 AND work_type=$2 AND subject_type=$3 AND subject_id=$4
+         ORDER BY work_item_id LIMIT 2 FOR UPDATE`,
+        [transaction.context.tenantId, WORK_TYPE, SUBJECT_VERSION, versionId],
+      );
+      const selectedWork = work.rows[0];
+      const assignmentCurrent =
+        work.rows.length === 1 &&
+        selectedVersion.assigned_approver_worker_profile_id === approverWorkerProfileId &&
+        selectedWork?.assignee_principal_id === transaction.context.actorPrincipalId &&
+        selectedWork.work_type === WORK_TYPE &&
+        selectedWork.subject_type === SUBJECT_VERSION &&
+        selectedWork.subject_id === versionId &&
+        selectedWork.status !== "cancelled";
+      const actionKey = `hr.expense.${action}`;
+      assertPolicyAllowed(
+        evaluatePolicy(
+          {
+            actionKey,
+            input: { assignmentCurrent },
+            resourceKey: versionId,
+            transaction,
+          },
+          [
+            {
+              effect: "allow",
+              id: `exact_assigned_manager_${action}`,
+              matches: (request, actor) => actor.roleKey === "manager" && request.assignmentCurrent,
+            },
+          ],
+        ),
+        transaction,
+        actionKey,
+        versionId,
+      );
+      const replay = await readReplay(transaction, receipt, input);
+      if (replay) {
+        return {
+          billingState: HR_EXPENSE_CLAIM_BILLING_STATE,
+          expenseClaim: replay,
+          replayed: true,
+        };
+      }
+      if (noteRequired && !decisionNote) {
+        throw inputInvalid("An Expense Claim rejection note is required by tenant policy");
+      }
+      if (
+        selectedVersion.status !== "submitted" ||
+        selectedVersion.row_version !== input.expectedVersion ||
+        selectedWork?.status !== "open"
+      ) {
+        throw versionConflict();
+      }
+      const targetStatus = action === "approve" ? "approved" : "rejected";
+      await transaction.client.query(
+        `INSERT INTO hr_expense_claim_approvals
+           (expense_approval_id,tenant_id,expense_claim_version_id,
+            approver_worker_profile_id,decision,decision_note,correlation_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [
+          deriveStableUuid("hr.expense.approval.v1", receipt.receiptId),
+          transaction.context.tenantId,
+          versionId,
+          approverWorkerProfileId,
+          targetStatus,
+          decisionNote,
+          transaction.context.correlationId,
+        ],
+      );
+      const updated = await transaction.client.query(
+        `UPDATE hr_expense_claim_versions
+         SET status=$4,updated_at=GREATEST(now(),updated_at + interval '1 microsecond'),
+             row_version=row_version+1
+         WHERE tenant_id=$1 AND expense_claim_id=$2 AND expense_claim_version_id=$3
+           AND status='submitted' AND row_version=$5
+         RETURNING row_version`,
+        [
+          transaction.context.tenantId,
+          expenseClaimId,
+          versionId,
+          targetStatus,
+          selectedVersion.row_version,
+        ],
+      );
+      if (updated.rows.length !== 1) throw versionConflict();
+      await completeWorkItem(transaction, selectedWork.work_item_id);
+      const expenseClaim = await mapExpenseClaim(transaction, expenseClaimId);
+      await recordResult(
+        transaction,
+        receipt,
+        expenseClaim,
+        versionId,
+        "submitted",
+        targetStatus,
+        selectedVersion.row_version,
+        expenseClaim.currentVersion.rowVersion,
+      );
+      return {
+        billingState: HR_EXPENSE_CLAIM_BILLING_STATE,
+        expenseClaim,
+        replayed: false,
+      };
+    });
+  } catch (error) {
+    return translate(error);
+  }
+}
+
+export async function approveExpenseClaim(
+  pool: Pool,
+  context: OperationContext,
+  expenseClaimId: string,
+  input: HrExpenseClaimApproveBody & { readonly idempotencyKey: string },
+): Promise<ExpenseClaimMutationResult> {
+  return await decideExpenseClaim(pool, context, expenseClaimId, input, "approve");
+}
+
+export async function rejectExpenseClaim(
+  pool: Pool,
+  context: OperationContext,
+  expenseClaimId: string,
+  input: HrExpenseClaimRejectBody & { readonly idempotencyKey: string },
+): Promise<ExpenseClaimMutationResult> {
+  return await decideExpenseClaim(pool, context, expenseClaimId, input, "reject");
 }
