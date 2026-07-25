@@ -80,6 +80,11 @@ const TIMESHEET_REQUIRED_MIGRATIONS = [
     hash: "f6076ed481451093ccb5a996afea806f2499056517282207a2f0265e97601414",
     id: "0021",
   },
+  {
+    createdAt: 1784944010163,
+    hash: "642ff06564f73c935ef15daa893603c021715654291f11fa5265d86b896635ed",
+    id: "0022",
+  },
 ] as const;
 type ControlAction = (typeof CONTROL_ACTIONS)[number];
 type MutationAction = Exclude<ControlAction, "view_service_control">;
