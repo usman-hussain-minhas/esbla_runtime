@@ -1,16 +1,22 @@
 import {
+  type HrExpenseClaimApproveBody,
   type HrExpenseClaimCreateBody,
   type HrExpenseClaimEditDraftBody,
   type HrExpenseClaimPath,
+  type HrExpenseClaimRejectBody,
   type HrExpenseClaimSubmitBody,
+  hrExpenseClaimApproveBodySchema,
   hrExpenseClaimCreateBodySchema,
   hrExpenseClaimEditDraftBodySchema,
   hrExpenseClaimPathSchema,
+  hrExpenseClaimRejectBodySchema,
   hrExpenseClaimResponseSchema,
   hrExpenseClaimSubmitBodySchema,
+  parseHrExpenseClaimApproveBody,
   parseHrExpenseClaimCreateBody,
   parseHrExpenseClaimEditDraftBody,
   parseHrExpenseClaimPath,
+  parseHrExpenseClaimRejectBody,
   parseHrExpenseClaimResponse,
   parseHrExpenseClaimSubmitBody,
 } from "@esbla/contracts/hr-expense-claim-api";
@@ -28,12 +34,14 @@ import {
 } from "@esbla/contracts/hr-service-control-api";
 import {
   activateExpenseClaimService,
+  approveExpenseClaim,
   configureExpenseClaimService,
   createExpenseClaim,
   deactivateExpenseClaimService,
   editExpenseClaimDraft,
   getExpenseClaimServiceControl,
   inspectExpenseClaimServiceControlAuthority,
+  rejectExpenseClaim,
   submitExpenseClaim,
 } from "@esbla/hr";
 import type { OperationContext } from "@esbla/platform-core";
@@ -103,10 +111,12 @@ export function registerExpenseClaimRoutes({
   server,
 }: RegisterExpenseClaimRoutesOptions): void {
   for (const schema of [
+    hrExpenseClaimApproveBodySchema,
     hrExpenseClaimCreateBodySchema,
     hrExpenseClaimEditDraftBodySchema,
     hrExpenseClaimPathSchema,
     hrExpenseClaimResponseSchema,
+    hrExpenseClaimRejectBodySchema,
     hrExpenseClaimSubmitBodySchema,
   ]) {
     server.addSchema(schema);
@@ -221,6 +231,84 @@ export function registerExpenseClaimRoutes({
         strict(parseHrExpenseClaimPath, request.params).expenseClaimId,
         {
           ...strict(parseHrExpenseClaimSubmitBody, request.body),
+          idempotencyKey: context.correlationId,
+        },
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(parseHrExpenseClaimResponse(result.expenseClaim));
+    },
+  );
+
+  server.post<{
+    Body: HrExpenseClaimApproveBody;
+    Params: HrExpenseClaimPath;
+  }>(
+    "/v1/hr/expense-claims/:expenseClaimId/approve",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          mutationContext(request);
+          strict(parseHrExpenseClaimPath, request.params);
+          strict(parseHrExpenseClaimApproveBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrExpenseApproveRequestV1#" },
+        params: { $ref: "HrExpenseClaimPathV1#" },
+        response: {
+          200: { $ref: "HrExpenseClaimResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = mutationContext(request);
+      const result = await approveExpenseClaim(
+        pool,
+        context,
+        strict(parseHrExpenseClaimPath, request.params).expenseClaimId,
+        {
+          ...strict(parseHrExpenseClaimApproveBody, request.body),
+          idempotencyKey: context.correlationId,
+        },
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(parseHrExpenseClaimResponse(result.expenseClaim));
+    },
+  );
+
+  server.post<{
+    Body: HrExpenseClaimRejectBody;
+    Params: HrExpenseClaimPath;
+  }>(
+    "/v1/hr/expense-claims/:expenseClaimId/reject",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          mutationContext(request);
+          strict(parseHrExpenseClaimPath, request.params);
+          strict(parseHrExpenseClaimRejectBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrExpenseRejectRequestV1#" },
+        params: { $ref: "HrExpenseClaimPathV1#" },
+        response: {
+          200: { $ref: "HrExpenseClaimResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = mutationContext(request);
+      const result = await rejectExpenseClaim(
+        pool,
+        context,
+        strict(parseHrExpenseClaimPath, request.params).expenseClaimId,
+        {
+          ...strict(parseHrExpenseClaimRejectBody, request.body),
           idempotencyKey: context.correlationId,
         },
       );

@@ -22,6 +22,8 @@ const ids = {
   otherEmployeeMembership: "ab000000-0000-4000-8000-000000000005",
   otherTenant: "ac000000-0000-4000-8000-000000000002",
   tenant: "ac000000-0000-4000-8000-000000000001",
+  unassignedManager: "aa000000-0000-4000-8000-000000000006",
+  unassignedManagerMembership: "ab000000-0000-4000-8000-000000000006",
 } as const;
 const controlUrl = "/v1/hr/expense-claims/service-control";
 const retentionInsert = `INSERT INTO evidence_events
@@ -67,6 +69,14 @@ async function governed<T>(operation: (client: PoolClient) => Promise<T>): Promi
   const client = await migrationPool.connect();
   try {
     return await tenantTransaction(client, ids.tenant, ids.admin, operation);
+  } finally {
+    client.release();
+  }
+}
+async function governedOther<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await migrationPool.connect();
+  try {
+    return await tenantTransaction(client, ids.otherTenant, ids.otherAdmin, operation);
   } finally {
     client.release();
   }
@@ -198,6 +208,23 @@ async function mutate(
     ...overrides,
   });
 }
+async function claimMutation(
+  method: "PATCH" | "POST",
+  url: string,
+  body: Record<string, unknown>,
+  idempotencyKey = randomUUID(),
+  principalId: string = ids.employee,
+  tenantId: string = ids.tenant,
+) {
+  return signedRequest({
+    body,
+    idempotencyKey,
+    method,
+    principalId,
+    tenantId,
+    url,
+  });
+}
 function expectProblem(
   result: Awaited<ReturnType<typeof signedRequest>>,
   status: number,
@@ -226,6 +253,8 @@ async function proofCounts() {
 async function claimProofCounts() {
   const result = await governed((client) =>
     client.query<{
+      approvals: number;
+      completedWork: number;
       evidence: number;
       forbidden: number;
       lines: number;
@@ -239,8 +268,11 @@ async function claimProofCounts() {
          (SELECT count(*)::integer FROM hr_expense_claims WHERE tenant_id=$1) roots,
          (SELECT count(*)::integer FROM hr_expense_claim_versions WHERE tenant_id=$1) versions,
          (SELECT count(*)::integer FROM hr_expense_claim_lines WHERE tenant_id=$1) lines,
+         (SELECT count(*)::integer FROM hr_expense_claim_approvals WHERE tenant_id=$1) approvals,
          (SELECT count(*)::integer FROM work_items WHERE tenant_id=$1
             AND work_type='hr.expense.approval' AND status='open') "openWork",
+         (SELECT count(*)::integer FROM work_items WHERE tenant_id=$1
+            AND work_type='hr.expense.approval' AND status='completed') "completedWork",
          (SELECT count(*)::integer FROM evidence_events WHERE tenant_id=$1
             AND (subject_type='hr.expense.version' OR subject_type='hr.expense.idempotency')) evidence,
          (SELECT count(*)::integer FROM outbox_events WHERE tenant_id=$1
@@ -271,6 +303,7 @@ beforeAll(async () => {
     `GRANT SELECT ON membership_capabilities,tenant_settings,hr_expense_claim_service_control,hr_reporting_relationships TO ${applicationRole};
      GRANT SELECT,UPDATE ON hr_worker_profiles,service_activations TO ${applicationRole};
      GRANT SELECT,INSERT,UPDATE,DELETE ON hr_expense_claims,hr_expense_claim_versions,hr_expense_claim_lines TO ${applicationRole};
+     GRANT SELECT,INSERT ON hr_expense_claim_approvals TO ${applicationRole};
      GRANT SELECT,INSERT ON evidence_events,outbox_events TO ${applicationRole};
      GRANT SELECT,INSERT,UPDATE ON work_items TO ${applicationRole}`,
   );
@@ -284,15 +317,23 @@ beforeAll(async () => {
     `INSERT INTO principals (principal_id,display_name)
      VALUES ($1,'Expense Claim Service Administrator'),($2,'Expense Claim Service Employee'),
             ($3,'Other Expense Claim Service Administrator'),($4,'Expense Claim Manager'),
-            ($5,'Other Expense Claim Employee')`,
-    [ids.admin, ids.employee, ids.otherAdmin, ids.manager, ids.otherEmployee],
+            ($5,'Other Expense Claim Employee'),($6,'Unassigned Expense Claim Manager')`,
+    [
+      ids.admin,
+      ids.employee,
+      ids.otherAdmin,
+      ids.manager,
+      ids.otherEmployee,
+      ids.unassignedManager,
+    ],
   );
   const client = await migrationPool.connect();
   try {
     await tenantTransaction(client, ids.tenant, ids.admin, async (tenantClient) => {
       await tenantClient.query(
         `INSERT INTO memberships (membership_id,tenant_id,principal_id,role_key)
-         VALUES ($1,$2,$3,'tenant_admin'),($4,$2,$5,'employee'),($6,$2,$7,'manager')`,
+         VALUES ($1,$2,$3,'tenant_admin'),($4,$2,$5,'employee'),($6,$2,$7,'manager'),
+                ($8,$2,$9,'manager')`,
         [
           ids.adminMembership,
           ids.tenant,
@@ -301,6 +342,8 @@ beforeAll(async () => {
           ids.employee,
           ids.managerMembership,
           ids.manager,
+          ids.unassignedManagerMembership,
+          ids.unassignedManager,
         ],
       );
       await tenantClient.query(
@@ -315,11 +358,18 @@ beforeAll(async () => {
         [ids.tenant, ids.employee],
       );
       await tenantClient.query(
+        `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+         VALUES ($1,$2,'hr.expense.approve'),($1,$2,'hr.expense.reject'),
+                ($1,$3,'hr.expense.approve'),($1,$3,'hr.expense.reject')`,
+        [ids.tenant, ids.manager, ids.unassignedManager],
+      );
+      await tenantClient.query(
         `INSERT INTO service_activations (tenant_id,service_key,state,version) VALUES ($1,'workforce_profile','active',1),($1,'workspace.task','active',1)`,
         [ids.tenant],
       );
       workerProfileId = await activeProfile(tenantClient, ids.tenant, ids.employee);
       managerProfileId = await activeProfile(tenantClient, ids.tenant, ids.manager);
+      await activeProfile(tenantClient, ids.tenant, ids.unassignedManager);
       const relationship = await tenantClient.query<{ reporting_relationship_id: string }>(
         `INSERT INTO hr_reporting_relationships
            (tenant_id,worker_profile_id,manager_worker_profile_id,
@@ -572,22 +622,6 @@ describe.sequential("Expense Claim employee lifecycle API", () => {
         [ids.tenant],
       ),
     );
-    const claimMutation = async (
-      method: "PATCH" | "POST",
-      url: string,
-      body: Record<string, unknown>,
-      idempotencyKey = randomUUID(),
-      principalId: string = ids.employee,
-      tenantId: string = ids.tenant,
-    ) =>
-      signedRequest({
-        body,
-        idempotencyKey,
-        method,
-        principalId,
-        tenantId,
-        url,
-      });
     const before = await claimProofCounts();
     const createBody = { currencyCode: "PKR" };
     const createKey = randomUUID();
@@ -702,6 +736,8 @@ describe.sequential("Expense Claim employee lifecycle API", () => {
     expect(replayedSubmit.response.headers["idempotent-replayed"]).toBe("true");
     expect(replayedSubmit.response.json()).toEqual(submitted.response.json());
     expect(await claimProofCounts()).toEqual({
+      approvals: before.approvals,
+      completedWork: before.completedWork,
       evidence: before.evidence + 6,
       forbidden: 0,
       lines: before.lines + 2,
@@ -768,5 +804,204 @@ describe.sequential("Expense Claim employee lifecycle API", () => {
     );
     await setActivation("expense_claim_boundary", "active", 5);
     expect(await claimProofCounts()).toEqual(beforeDenied);
+  });
+});
+
+describe.sequential("Expense Claim assigned-manager decision API", () => {
+  it("approves or rejects exact assigned work while current authority and note policy fail closed", async () => {
+    const createSubmitted = async (expenseDate: string) => {
+      const created = await claimMutation("POST", "/v1/hr/expense-claims", {
+        currencyCode: "PKR",
+      });
+      expect(created.response.statusCode, created.response.body).toBe(201);
+      const draft = created.response.json();
+      const expenseClaimId = String(draft.expenseClaimId);
+      const expenseClaimVersionId = String(draft.currentVersion.expenseClaimVersionId);
+      const edited = await claimMutation("PATCH", `/v1/hr/expense-claims/${expenseClaimId}/draft`, {
+        expectedExpenseClaimVersionId: expenseClaimVersionId,
+        expectedRootVersion: 1,
+        expectedVersion: 1,
+        lines: [{ amountMinor: 1_000, categoryCode: "other", expenseDate }],
+      });
+      expect(edited.response.statusCode, edited.response.body).toBe(200);
+      const submitted = await claimMutation(
+        "POST",
+        `/v1/hr/expense-claims/${expenseClaimId}/submit`,
+        {
+          expectedExpenseClaimVersionId: expenseClaimVersionId,
+          expectedRootVersion: 1,
+          expectedVersion: 2,
+        },
+      );
+      expect(submitted.response.statusCode, submitted.response.body).toBe(200);
+      expect(submitted.response.json().currentVersion).toMatchObject({
+        assignedApproverWorkerProfileId: managerProfileId,
+        rowVersion: 3,
+        status: "submitted",
+      });
+      return { expenseClaimId, expenseClaimVersionId };
+    };
+
+    const before = await claimProofCounts();
+    const approveCandidate = await createSubmitted("2028-08-02");
+    const rejectCandidate = await createSubmitted("2028-08-03");
+    const expectedDecision = (expenseClaimVersionId: string) => ({
+      expectedExpenseClaimVersionId: expenseClaimVersionId,
+      expectedRootVersion: 1,
+      expectedVersion: 3,
+    });
+
+    const approveBody = expectedDecision(approveCandidate.expenseClaimVersionId);
+    const approveKey = randomUUID();
+    const approved = await claimMutation(
+      "POST",
+      `/v1/hr/expense-claims/${approveCandidate.expenseClaimId}/approve`,
+      approveBody,
+      approveKey,
+      ids.manager,
+    );
+    expect(approved.response.statusCode, approved.response.body).toBe(200);
+    expect(approved.response.headers["idempotent-replayed"]).toBe("false");
+    expect(approved.response.json().currentVersion).toMatchObject({
+      rowVersion: 4,
+      status: "approved",
+    });
+    const replayedApprove = await claimMutation(
+      "POST",
+      `/v1/hr/expense-claims/${approveCandidate.expenseClaimId}/approve`,
+      approveBody,
+      approveKey,
+      ids.manager,
+    );
+    expect(replayedApprove.response.headers["idempotent-replayed"]).toBe("true");
+    expect(replayedApprove.response.json()).toEqual(approved.response.json());
+
+    const rejectBody = expectedDecision(rejectCandidate.expenseClaimVersionId);
+    const beforeDenied = await claimProofCounts();
+    expectProblem(
+      await claimMutation(
+        "POST",
+        `/v1/hr/expense-claims/${rejectCandidate.expenseClaimId}/reject`,
+        rejectBody,
+        randomUUID(),
+        ids.unassignedManager,
+      ),
+      403,
+      "POLICY_DENIED",
+    );
+    expect(await claimProofCounts()).toEqual(beforeDenied);
+
+    await governed((client) =>
+      client.query(
+        "UPDATE memberships SET role_key='employee' WHERE tenant_id=$1 AND principal_id=$2",
+        [ids.tenant, ids.manager],
+      ),
+    );
+    expectProblem(
+      await claimMutation(
+        "POST",
+        `/v1/hr/expense-claims/${rejectCandidate.expenseClaimId}/reject`,
+        rejectBody,
+        randomUUID(),
+        ids.manager,
+      ),
+      403,
+      "POLICY_DENIED",
+    );
+    await governed((client) =>
+      client.query(
+        "UPDATE memberships SET role_key='manager' WHERE tenant_id=$1 AND principal_id=$2",
+        [ids.tenant, ids.manager],
+      ),
+    );
+    expect(await claimProofCounts()).toEqual(beforeDenied);
+
+    await governed((client) =>
+      client.query(
+        `INSERT INTO tenant_settings (tenant_id,setting_key,value_type,value,version)
+         VALUES ($1,'hr.expense.rejection_note_required','boolean','true'::jsonb,1)
+         ON CONFLICT (tenant_id,setting_key)
+         DO UPDATE SET value_type='boolean',value='true'::jsonb,
+                       version=tenant_settings.version+1`,
+        [ids.tenant],
+      ),
+    );
+    expectProblem(
+      await claimMutation(
+        "POST",
+        `/v1/hr/expense-claims/${rejectCandidate.expenseClaimId}/reject`,
+        rejectBody,
+        randomUUID(),
+        ids.manager,
+      ),
+      400,
+      "EXPENSE_INPUT_INVALID",
+    );
+    expect(await claimProofCounts()).toEqual(beforeDenied);
+    await governed((client) =>
+      client.query(
+        `UPDATE tenant_settings SET value='false'::jsonb,version=version+1
+         WHERE tenant_id=$1 AND setting_key='hr.expense.rejection_note_required'`,
+        [ids.tenant],
+      ),
+    );
+    const rejectKey = randomUUID();
+    const rejected = await claimMutation(
+      "POST",
+      `/v1/hr/expense-claims/${rejectCandidate.expenseClaimId}/reject`,
+      rejectBody,
+      rejectKey,
+      ids.manager,
+    );
+    expect(rejected.response.statusCode, rejected.response.body).toBe(200);
+    expect(rejected.response.json().currentVersion).toMatchObject({
+      rowVersion: 4,
+      status: "rejected",
+    });
+    const replayedReject = await claimMutation(
+      "POST",
+      `/v1/hr/expense-claims/${rejectCandidate.expenseClaimId}/reject`,
+      rejectBody,
+      rejectKey,
+      ids.manager,
+    );
+    expect(replayedReject.response.headers["idempotent-replayed"]).toBe("true");
+    expect(replayedReject.response.json()).toEqual(rejected.response.json());
+
+    await governedOther(async (client) => {
+      await client.query(
+        "UPDATE memberships SET role_key='manager' WHERE tenant_id=$1 AND principal_id=$2",
+        [ids.otherTenant, ids.otherEmployee],
+      );
+      await client.query(
+        `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+         VALUES ($1,$2,'hr.expense.approve')`,
+        [ids.otherTenant, ids.otherEmployee],
+      );
+    });
+    expectProblem(
+      await claimMutation(
+        "POST",
+        `/v1/hr/expense-claims/${approveCandidate.expenseClaimId}/approve`,
+        approveBody,
+        randomUUID(),
+        ids.otherEmployee,
+        ids.otherTenant,
+      ),
+      404,
+      "EXPENSE_NOT_FOUND",
+    );
+    expect(await claimProofCounts()).toEqual({
+      approvals: before.approvals + 2,
+      completedWork: before.completedWork + 2,
+      evidence: before.evidence + 16,
+      forbidden: 0,
+      lines: before.lines + 2,
+      nonBillable: before.nonBillable + 8,
+      openWork: before.openWork,
+      outbox: before.outbox + 8,
+      roots: before.roots + 2,
+      versions: before.versions + 2,
+    });
   });
 });
