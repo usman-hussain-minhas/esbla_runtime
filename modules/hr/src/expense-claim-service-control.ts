@@ -98,9 +98,11 @@ type ControlAction = (typeof CONTROL_ACTIONS)[number];
 type MutationAction = Exclude<ControlAction, "view_service_control">;
 export type HrExpenseClaimActivationMode = "non_production" | "production";
 export type HrExpenseClaimErrorCode =
+  | "EXPENSE_APPROVER_UNAVAILABLE"
   | "EXPENSE_CONFLICT"
   | "EXPENSE_DEPENDENCY_INACTIVE"
   | "EXPENSE_INPUT_INVALID"
+  | "EXPENSE_NOT_FOUND"
   | "EXPENSE_SERVICE_CONTROL_NOT_FOUND"
   | "EXPENSE_SERVICE_INACTIVE"
   | "EXPENSE_VERSION_CONFLICT";
