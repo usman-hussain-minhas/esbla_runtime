@@ -41,7 +41,11 @@ interface SignedRequestOptions {
 let migrationPool: Pool;
 let pool: Pool;
 let server: FastifyInstance;
+let approvedExpenseClaimId = "";
+let approvedExpenseClaimVersionId = "";
 let managerProfileId = "";
+let rejectedExpenseClaimId = "";
+let rejectedExpenseClaimVersionId = "";
 let workerProfileId = "";
 async function tenantTransaction<T>(
   client: PoolClient,
@@ -354,12 +358,13 @@ beforeAll(async () => {
       await tenantClient.query(
         `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
          VALUES ($1,$2,'hr.expense.create'),($1,$2,'hr.expense.edit_draft'),
-                ($1,$2,'hr.expense.submit')`,
+                ($1,$2,'hr.expense.submit'),($1,$2,'hr.expense.create_correction')`,
         [ids.tenant, ids.employee],
       );
       await tenantClient.query(
         `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
          VALUES ($1,$2,'hr.expense.approve'),($1,$2,'hr.expense.reject'),
+                ($1,$2,'hr.expense.create_correction'),
                 ($1,$3,'hr.expense.approve'),($1,$3,'hr.expense.reject')`,
         [ids.tenant, ids.manager, ids.unassignedManager],
       );
@@ -866,6 +871,8 @@ describe.sequential("Expense Claim assigned-manager decision API", () => {
       rowVersion: 4,
       status: "approved",
     });
+    approvedExpenseClaimId = approveCandidate.expenseClaimId;
+    approvedExpenseClaimVersionId = approveCandidate.expenseClaimVersionId;
     const replayedApprove = await claimMutation(
       "POST",
       `/v1/hr/expense-claims/${approveCandidate.expenseClaimId}/approve`,
@@ -958,6 +965,8 @@ describe.sequential("Expense Claim assigned-manager decision API", () => {
       rowVersion: 4,
       status: "rejected",
     });
+    rejectedExpenseClaimId = rejectCandidate.expenseClaimId;
+    rejectedExpenseClaimVersionId = rejectCandidate.expenseClaimVersionId;
     const replayedReject = await claimMutation(
       "POST",
       `/v1/hr/expense-claims/${rejectCandidate.expenseClaimId}/reject`,
@@ -1003,5 +1012,138 @@ describe.sequential("Expense Claim assigned-manager decision API", () => {
       roots: before.roots + 2,
       versions: before.versions + 2,
     });
+  });
+
+  it("creates exactly one employee-owned draft successor without changing its terminal predecessor", async () => {
+    const body = {
+      expectedExpenseClaimVersionId: approvedExpenseClaimVersionId,
+      expectedRootVersion: 1,
+      expectedVersion: 4,
+    };
+    const before = await claimProofCounts();
+    expectProblem(
+      await claimMutation(
+        "POST",
+        `/v1/hr/expense-claims/${approvedExpenseClaimId}/corrections`,
+        body,
+        randomUUID(),
+        ids.manager,
+      ),
+      403,
+      "POLICY_DENIED",
+    );
+    expect(await claimProofCounts()).toEqual(before);
+
+    const key = randomUUID();
+    const created = await claimMutation(
+      "POST",
+      `/v1/hr/expense-claims/${approvedExpenseClaimId}/corrections`,
+      body,
+      key,
+    );
+    expect(created.response.statusCode, created.response.body).toBe(201);
+    expect(created.response.headers["idempotent-replayed"]).toBe("false");
+    const correction = created.response.json();
+    expect(correction).toMatchObject({
+      currentVersion: {
+        assignedApproverWorkerProfileId: null,
+        currencyCode: "PKR",
+        lines: [],
+        rowVersion: 1,
+        status: "draft",
+        submittedAt: null,
+        supersedesVersionId: approvedExpenseClaimVersionId,
+        totalAmountMinor: 0,
+        version: 2,
+      },
+      expenseClaimId: approvedExpenseClaimId,
+      rootVersion: 2,
+    });
+    const replayed = await claimMutation(
+      "POST",
+      `/v1/hr/expense-claims/${approvedExpenseClaimId}/corrections`,
+      body,
+      key,
+    );
+    expect(replayed.response.headers["idempotent-replayed"]).toBe("true");
+    expect(replayed.response.json()).toEqual(correction);
+    const rejectedCorrection = await claimMutation(
+      "POST",
+      `/v1/hr/expense-claims/${rejectedExpenseClaimId}/corrections`,
+      {
+        expectedExpenseClaimVersionId: rejectedExpenseClaimVersionId,
+        expectedRootVersion: 1,
+        expectedVersion: 4,
+      },
+    );
+    expect(rejectedCorrection.response.statusCode, rejectedCorrection.response.body).toBe(201);
+    expect(rejectedCorrection.response.json()).toMatchObject({
+      currentVersion: {
+        rowVersion: 1,
+        status: "draft",
+        supersedesVersionId: rejectedExpenseClaimVersionId,
+        version: 2,
+      },
+      expenseClaimId: rejectedExpenseClaimId,
+      rootVersion: 2,
+    });
+    const after = await claimProofCounts();
+    expect(after).toEqual({
+      approvals: before.approvals,
+      completedWork: before.completedWork,
+      evidence: before.evidence + 4,
+      forbidden: 0,
+      lines: before.lines,
+      nonBillable: before.nonBillable + 2,
+      openWork: before.openWork,
+      outbox: before.outbox + 2,
+      roots: before.roots,
+      versions: before.versions + 2,
+    });
+    expectProblem(
+      await claimMutation(
+        "POST",
+        `/v1/hr/expense-claims/${approvedExpenseClaimId}/corrections`,
+        body,
+      ),
+      409,
+      "EXPENSE_VERSION_CONFLICT",
+    );
+    expect(await claimProofCounts()).toEqual(after);
+
+    const durable = await governed((client) =>
+      client.query<{
+        current_version_id: string;
+        predecessor_row_version: number;
+        predecessor_status: string;
+        root_version: number;
+        successors: number;
+      }>(
+        `SELECT root.current_version_id,root.row_version root_version,
+                predecessor.status predecessor_status,
+                predecessor.row_version predecessor_row_version,
+                (SELECT count(*)::integer FROM hr_expense_claim_versions successor
+                  WHERE successor.tenant_id=root.tenant_id
+                    AND successor.expense_claim_id=root.expense_claim_id
+                    AND successor.supersedes_version_id=predecessor.expense_claim_version_id)
+                  successors
+         FROM hr_expense_claims root
+         JOIN hr_expense_claim_versions predecessor
+           ON predecessor.tenant_id=root.tenant_id
+          AND predecessor.expense_claim_id=root.expense_claim_id
+          AND predecessor.expense_claim_version_id=$3
+         WHERE root.tenant_id=$1 AND root.expense_claim_id=$2`,
+        [ids.tenant, approvedExpenseClaimId, approvedExpenseClaimVersionId],
+      ),
+    );
+    expect(durable.rows).toEqual([
+      {
+        current_version_id: correction.currentVersion.expenseClaimVersionId,
+        predecessor_row_version: 4,
+        predecessor_status: "approved",
+        root_version: 2,
+        successors: 1,
+      },
+    ]);
   });
 });

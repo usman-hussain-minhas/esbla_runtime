@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   type HrExpenseClaimApproveBody,
   type HrExpenseClaimCreateBody,
+  type HrExpenseClaimCreateCorrectionBody,
   type HrExpenseClaimDecisionBody,
   type HrExpenseClaimEditDraftBody,
   type HrExpenseClaimRejectBody,
@@ -38,7 +39,7 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const SUBJECT_VERSION = "hr.expense.version";
 const SUBJECT_RECEIPT = "hr.expense.idempotency";
 const WORK_TYPE = "hr.expense.approval";
-type EmployeeAction = "create" | "edit_draft" | "submit";
+type EmployeeAction = "create" | "create_correction" | "edit_draft" | "submit";
 type ManagerAction = "approve" | "reject";
 type ExpenseAction = EmployeeAction | ManagerAction;
 
@@ -394,6 +395,7 @@ async function readReplay(
   transaction: TenantTransaction,
   receipt: Receipt,
   replayInput:
+    | HrExpenseClaimCreateCorrectionBody
     | HrExpenseClaimDecisionBody
     | HrExpenseClaimEditDraftBody
     | HrExpenseClaimSubmitBody
@@ -459,7 +461,12 @@ async function readReplay(
     !Array.isArray(recorded.payload)
       ? (recorded.payload as Record<string, unknown>)
       : null;
-  const beforeVersion = receipt.action === "create" ? null : replayInput?.expectedVersion;
+  const beforeVersion =
+    receipt.action === "create"
+      ? null
+      : receipt.action === "create_correction"
+        ? replayInput?.expectedRootVersion
+        : replayInput?.expectedVersion;
   const afterVersion = (beforeVersion ?? 0) + 1;
   const transition =
     receipt.action === "approve"
@@ -471,6 +478,11 @@ async function readReplay(
           : receipt.action === "edit_draft"
             ? (["draft", "draft"] as const)
             : ([null, "draft"] as const);
+  const transitionCurrent =
+    receipt.action === "create_correction"
+      ? (recorded?.prior_state === "approved" || recorded?.prior_state === "rejected") &&
+        recorded?.new_state === "draft"
+      : recorded?.prior_state === transition[0] && recorded?.new_state === transition[1];
   if (
     proof.rows.length !== 1 ||
     !recorded ||
@@ -486,8 +498,7 @@ async function readReplay(
     recorded.aggregate_type !== SUBJECT_VERSION ||
     recorded.subject_type !== SUBJECT_VERSION ||
     recorded.aggregate_version !== afterVersion ||
-    recorded?.prior_state !== transition[0] ||
-    recorded?.new_state !== transition[1] ||
+    !transitionCurrent ||
     !UUID_PATTERN.test(String(payload.expenseClaimId))
   ) {
     throw idempotencyConflict();
@@ -496,10 +507,12 @@ async function readReplay(
   const versionId =
     receipt.action === "create"
       ? deriveStableUuid("hr.expense.version.v1", receipt.receiptId)
-      : normalizeUuid(
-          replayInput?.expectedExpenseClaimVersionId ?? "",
-          "expectedExpenseClaimVersionId",
-        );
+      : receipt.action === "create_correction"
+        ? deriveStableUuid("hr.expense.correction.version.v1", receipt.receiptId)
+        : normalizeUuid(
+            replayInput?.expectedExpenseClaimVersionId ?? "",
+            "expectedExpenseClaimVersionId",
+          );
   if (recorded.aggregate_id !== versionId) throw idempotencyConflict();
   const current = await mapExpenseClaim(transaction, expenseClaimId, versionId);
   let result: HrExpenseClaimResponse;
@@ -516,6 +529,20 @@ async function readReplay(
         totalAmountMinor: 0,
       },
       rootVersion: 1,
+    });
+  } else if (replayInput && receipt.action === "create_correction") {
+    result = parseHrExpenseClaimResponse({
+      ...current,
+      currentVersion: {
+        ...current.currentVersion,
+        assignedApproverWorkerProfileId: null,
+        lines: [],
+        rowVersion: 1,
+        status: "draft",
+        submittedAt: null,
+        totalAmountMinor: 0,
+      },
+      rootVersion: afterVersion,
     });
   } else if (replayInput && (receipt.action === "approve" || receipt.action === "reject")) {
     result = parseHrExpenseClaimResponse({
@@ -1045,6 +1072,126 @@ export async function submitExpenseClaim(
         "submitted",
         selectedVersion.row_version,
         expenseClaim.currentVersion.rowVersion,
+      );
+      return {
+        billingState: HR_EXPENSE_CLAIM_BILLING_STATE,
+        expenseClaim,
+        replayed: false,
+      };
+    });
+  } catch (error) {
+    return translate(error);
+  }
+}
+
+export async function createExpenseClaimCorrection(
+  pool: Pool,
+  context: OperationContext,
+  expenseClaimIdInput: string,
+  input: HrExpenseClaimCreateCorrectionBody & { readonly idempotencyKey: string },
+): Promise<ExpenseClaimMutationResult> {
+  const expenseClaimId = normalizeUuid(expenseClaimIdInput, "expenseClaimId");
+  try {
+    return await withExpenseTransaction(pool, context, async (transaction) => {
+      await authorizeEmployee(transaction, "create_correction");
+      const workerProfileId = await employeeProfile(transaction);
+      const versionId = normalizeUuid(
+        input.expectedExpenseClaimVersionId,
+        "expectedExpenseClaimVersionId",
+      );
+      const receipt = await prepareReceipt(transaction, "create_correction", input.idempotencyKey, [
+        expenseClaimId,
+        input,
+      ]);
+      const root = await transaction.client.query<RootRow>(
+        `SELECT expense_claim_id,worker_profile_id,created_at,current_version_id,row_version
+         FROM hr_expense_claims
+         WHERE tenant_id=$1 AND expense_claim_id=$2 FOR UPDATE`,
+        [transaction.context.tenantId, expenseClaimId],
+      );
+      const selectedRoot = root.rows[0];
+      if (!selectedRoot || selectedRoot.worker_profile_id !== workerProfileId) throw notFound();
+      const replay = await readReplay(transaction, receipt, input);
+      if (replay) {
+        return {
+          billingState: HR_EXPENSE_CLAIM_BILLING_STATE,
+          expenseClaim: replay,
+          replayed: true,
+        };
+      }
+      if (
+        selectedRoot.row_version !== input.expectedRootVersion ||
+        selectedRoot.current_version_id !== versionId
+      ) {
+        throw versionConflict();
+      }
+      const predecessor = await transaction.client.query<VersionRow>(
+        `SELECT expense_claim_version_id,expense_claim_id,supersedes_version_id,
+                version,currency_code,status,assigned_approver_worker_profile_id,
+                submitted_at,total_amount_minor,row_version
+         FROM hr_expense_claim_versions
+         WHERE tenant_id=$1 AND expense_claim_id=$2 AND expense_claim_version_id=$3
+         FOR UPDATE`,
+        [transaction.context.tenantId, expenseClaimId, versionId],
+      );
+      const selectedPredecessor = predecessor.rows[0];
+      if (
+        !selectedPredecessor ||
+        (selectedPredecessor.status !== "approved" && selectedPredecessor.status !== "rejected") ||
+        selectedPredecessor.row_version !== input.expectedVersion
+      ) {
+        throw versionConflict();
+      }
+      const successors = await transaction.client.query(
+        `SELECT expense_claim_version_id FROM hr_expense_claim_versions
+         WHERE tenant_id=$1 AND expense_claim_id=$2 AND supersedes_version_id=$3
+         ORDER BY expense_claim_version_id LIMIT 2`,
+        [transaction.context.tenantId, expenseClaimId, versionId],
+      );
+      if (successors.rows.length !== 0) throw versionConflict();
+      const correctionVersionId = deriveStableUuid(
+        "hr.expense.correction.version.v1",
+        receipt.receiptId,
+      );
+      await transaction.client.query(
+        `INSERT INTO hr_expense_claim_versions
+           (expense_claim_version_id,tenant_id,expense_claim_id,
+            supersedes_version_id,version,currency_code)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [
+          correctionVersionId,
+          transaction.context.tenantId,
+          expenseClaimId,
+          versionId,
+          selectedPredecessor.version + 1,
+          selectedPredecessor.currency_code,
+        ],
+      );
+      const advanced = await transaction.client.query(
+        `UPDATE hr_expense_claims
+         SET current_version_id=$3,row_version=row_version+1
+         WHERE tenant_id=$1 AND expense_claim_id=$2
+           AND current_version_id=$4 AND row_version=$5
+         RETURNING row_version`,
+        [
+          transaction.context.tenantId,
+          expenseClaimId,
+          correctionVersionId,
+          versionId,
+          selectedRoot.row_version,
+        ],
+      );
+      if (advanced.rows.length !== 1) throw versionConflict();
+      const expenseClaim = await mapExpenseClaim(transaction, expenseClaimId);
+      await recordResult(
+        transaction,
+        receipt,
+        expenseClaim,
+        correctionVersionId,
+        selectedPredecessor.status,
+        "draft",
+        selectedRoot.row_version,
+        expenseClaim.rootVersion,
       );
       return {
         billingState: HR_EXPENSE_CLAIM_BILLING_STATE,
