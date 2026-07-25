@@ -47,6 +47,7 @@ export {
   parseHrEmploymentRecordPath,
   parseHrEmploymentRecordVersion,
 } from "./hr-employment-record-api.js";
+export * from "./hr-expense-claim-api.js";
 export {
   type ApiProblemDetails,
   type HrAssignedLeaveRequestPage,
