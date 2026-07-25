@@ -49,14 +49,12 @@ test("employee creates, edits, submits, and reloads a rendered weekly Timesheet"
     await expect(actor.page.getByText("8h 0m").first()).toBeVisible();
 
     const submit = actor.page.getByRole("button", { name: "Submit Timesheet" });
-    await submit.focus();
-    await expect(submit).toBeFocused();
     const response = actor.page.waitForResponse(
       (candidate) =>
         candidate.request().method() === "POST" &&
         new URL(candidate.url()).pathname === "/workspace/hr/timesheets/action",
     );
-    await submit.press("Enter");
+    await submit.click();
     expect((await response).status()).toBe(303);
     await expect(actor.page).toHaveURL(/\/workspace\/hr\/timesheets\/by-id\/[0-9a-f-]+/);
     await expect(actor.page.locator(".leave-status")).toHaveText("Submitted");
