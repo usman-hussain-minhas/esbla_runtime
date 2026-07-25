@@ -29,6 +29,11 @@
       "development": "./src/hr-shift-assignment-api.ts",
       "import": "./dist/hr-shift-assignment-api.js"
     },
+    "./hr-timesheet-api": {
+      "types": "./src/hr-timesheet-api.ts",
+      "development": "./src/hr-timesheet-api.ts",
+      "import": "./dist/hr-timesheet-api.js"
+    },
     "./workspace-task-api": {
       "types": "./src/workspace-task-api.ts",
       "development": "./src/workspace-task-api.ts",

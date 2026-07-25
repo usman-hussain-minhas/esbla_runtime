@@ -85,9 +85,11 @@ type ControlAction = (typeof CONTROL_ACTIONS)[number];
 type MutationAction = Exclude<ControlAction, "view_service_control">;
 export type HrTimesheetActivationMode = "non_production" | "production";
 export type HrTimesheetErrorCode =
+  | "TIMESHEET_APPROVER_UNAVAILABLE"
   | "TIMESHEET_CONFLICT"
   | "TIMESHEET_DEPENDENCY_INACTIVE"
   | "TIMESHEET_INPUT_INVALID"
+  | "TIMESHEET_NOT_FOUND"
   | "TIMESHEET_SERVICE_CONTROL_NOT_FOUND"
   | "TIMESHEET_SERVICE_INACTIVE"
   | "TIMESHEET_VERSION_CONFLICT";

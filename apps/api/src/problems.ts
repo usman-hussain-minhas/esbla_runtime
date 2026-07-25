@@ -127,7 +127,13 @@ function statusForError(error: Error): number {
   }
   if (error instanceof HrTimesheetError) {
     if (error.code === "TIMESHEET_INPUT_INVALID") return 400;
-    if (error.code === "TIMESHEET_SERVICE_CONTROL_NOT_FOUND") return 404;
+    if (
+      error.code === "TIMESHEET_NOT_FOUND" ||
+      error.code === "TIMESHEET_SERVICE_CONTROL_NOT_FOUND"
+    ) {
+      return 404;
+    }
+    if (error.code === "TIMESHEET_APPROVER_UNAVAILABLE") return 422;
     if (
       error.code === "TIMESHEET_DEPENDENCY_INACTIVE" ||
       error.code === "TIMESHEET_SERVICE_INACTIVE"

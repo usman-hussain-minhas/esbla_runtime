@@ -11,11 +11,30 @@ import {
   parseHrServiceDeactivateBody,
 } from "@esbla/contracts/hr-service-control-api";
 import {
+  type HrTimesheetCreateBody,
+  type HrTimesheetEditDraftBody,
+  type HrTimesheetPath,
+  type HrTimesheetSubmitBody,
+  hrTimesheetCreateBodySchema,
+  hrTimesheetEditDraftBodySchema,
+  hrTimesheetPathSchema,
+  hrTimesheetResponseSchema,
+  hrTimesheetSubmitBodySchema,
+  parseHrTimesheetCreateBody,
+  parseHrTimesheetEditDraftBody,
+  parseHrTimesheetPath,
+  parseHrTimesheetResponse,
+  parseHrTimesheetSubmitBody,
+} from "@esbla/contracts/hr-timesheet-api";
+import {
   activateTimesheetService,
   configureTimesheetService,
+  createTimesheet,
   deactivateTimesheetService,
+  editTimesheetDraft,
   getTimesheetServiceControl,
   inspectTimesheetServiceControlAuthority,
+  submitTimesheet,
 } from "@esbla/hr";
 import type { OperationContext } from "@esbla/platform-core";
 import { workspaceManifest } from "@esbla/workspace";
@@ -87,10 +106,128 @@ export function registerTimesheetRoutes({
   runtimeEnvironment,
   server,
 }: RegisterTimesheetRoutesOptions): void {
+  for (const schema of [
+    hrTimesheetCreateBodySchema,
+    hrTimesheetEditDraftBodySchema,
+    hrTimesheetSubmitBodySchema,
+    hrTimesheetPathSchema,
+    hrTimesheetResponseSchema,
+  ]) {
+    server.addSchema(schema);
+  }
   const attachTimesheetActions = async (request: FastifyRequest, reply: FastifyReply) => {
     const actions = await inspectTimesheetServiceControlAuthority(pool, operationContext(request));
     reply.header("x-esbla-timesheet-actions", JSON.stringify(actions));
   };
+
+  server.post<{ Body: HrTimesheetCreateBody }>(
+    "/v1/hr/timesheets",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          mutationContext(request);
+          strict(parseHrTimesheetCreateBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrTimesheetCreateRequestV1#" },
+        response: {
+          200: { $ref: "HrTimesheetResponseV1#" },
+          201: { $ref: "HrTimesheetResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await createTimesheet(pool, mutationContext(request), {
+        ...strict(parseHrTimesheetCreateBody, request.body),
+        idempotencyKey: mutationContext(request).correlationId,
+      });
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply
+        .code(result.replayed ? 200 : 201)
+        .send(parseHrTimesheetResponse(result.timesheet));
+    },
+  );
+
+  server.patch<{
+    Body: HrTimesheetEditDraftBody;
+    Params: HrTimesheetPath;
+  }>(
+    "/v1/hr/timesheets/:timesheetId/draft",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          mutationContext(request);
+          strict(parseHrTimesheetPath, request.params);
+          strict(parseHrTimesheetEditDraftBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrTimesheetEditDraftRequestV1#" },
+        params: { $ref: "HrTimesheetPathV1#" },
+        response: {
+          200: { $ref: "HrTimesheetResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = mutationContext(request);
+      const result = await editTimesheetDraft(
+        pool,
+        context,
+        strict(parseHrTimesheetPath, request.params).timesheetId,
+        {
+          ...strict(parseHrTimesheetEditDraftBody, request.body),
+          idempotencyKey: context.correlationId,
+        },
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(parseHrTimesheetResponse(result.timesheet));
+    },
+  );
+
+  server.post<{
+    Body: HrTimesheetSubmitBody;
+    Params: HrTimesheetPath;
+  }>(
+    "/v1/hr/timesheets/:timesheetId/submit",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          mutationContext(request);
+          strict(parseHrTimesheetPath, request.params);
+          strict(parseHrTimesheetSubmitBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrTimesheetSubmitRequestV1#" },
+        params: { $ref: "HrTimesheetPathV1#" },
+        response: {
+          200: { $ref: "HrTimesheetResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = mutationContext(request);
+      const result = await submitTimesheet(
+        pool,
+        context,
+        strict(parseHrTimesheetPath, request.params).timesheetId,
+        {
+          ...strict(parseHrTimesheetSubmitBody, request.body),
+          idempotencyKey: context.correlationId,
+        },
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(parseHrTimesheetResponse(result.timesheet));
+    },
+  );
 
   server.get<{ Querystring: HrServiceControlQuery }>(
     CONTROL_ROUTE,
