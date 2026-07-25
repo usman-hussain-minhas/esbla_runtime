@@ -48,7 +48,9 @@ export default async function TimesheetDetailPage({ params, searchParams }: Prop
           <span className="leave-status">{label(detail.currentVersion.status)}</span>
         ) : null}
       </header>
-      {result && result in resultCopy ? (
+      {result &&
+      Object.hasOwn(resultCopy, result) &&
+      (result !== "current" || state.status === "success") ? (
         <TimesheetResult
           message={resultCopy[result as keyof typeof resultCopy]}
           success={result === "current"}

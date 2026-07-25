@@ -50,7 +50,14 @@ test("employee creates, edits, submits, and reloads a rendered weekly Timesheet"
 
     const submit = actor.page.getByRole("button", { name: "Submit Timesheet" });
     await submit.focus();
-    await actor.page.keyboard.press("Enter");
+    await expect(submit).toBeFocused();
+    const response = actor.page.waitForResponse(
+      (candidate) =>
+        candidate.request().method() === "POST" &&
+        new URL(candidate.url()).pathname === "/workspace/hr/timesheets/action",
+    );
+    await submit.press("Enter");
+    expect((await response).status()).toBe(303);
     await expect(actor.page).toHaveURL(/\/workspace\/hr\/timesheets\/by-id\/[0-9a-f-]+/);
     await expect(actor.page.locator(".leave-status")).toHaveText("Submitted");
     await expect(actor.page.getByRole("heading", { name: "Version history" })).toBeVisible();
@@ -66,7 +73,8 @@ test("employee creates, edits, submits, and reloads a rendered weekly Timesheet"
       ),
     ).toBe(true);
   } finally {
-    expect(actor.diagnostics).toEqual({ console: [], external: [], page: [], server: [] });
-    await actor.context.close();
+    const [closed] = await Promise.allSettled([actor.context.close()]);
+    expect.soft(actor.diagnostics).toEqual({ console: [], external: [], page: [], server: [] });
+    expect.soft(closed?.status).toBe("fulfilled");
   }
 });

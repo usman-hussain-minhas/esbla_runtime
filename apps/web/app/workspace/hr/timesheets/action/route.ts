@@ -71,7 +71,7 @@ export async function POST(request: Request): Promise<Response> {
   let value: Record<string, string>;
   try {
     const form = await request.formData();
-    value = {};
+    value = Object.create(null) as Record<string, string>;
     for (const [key, entry] of form.entries()) {
       if (typeof entry !== "string" || Object.hasOwn(value, key)) throw 0;
       value[key] = entry;

@@ -35,6 +35,9 @@ export default async function TimesheetsPage({ searchParams }: Props) {
   const detailPromise = selectedId ? loadTimesheetDetail(selectedId) : Promise.resolve(null);
   const [state, selected] = await Promise.all([listPromise, detailPromise]);
   const result = one(parameters.result);
+  const resultIsTruthful =
+    result !== "current" ||
+    (state.status === "success" && (!selectedId || selected?.status === "success"));
   const canCreate = hasTimesheetAction(state.authorizedActions, "create");
   const detail = selected?.status === "success" ? selected.detail : null;
   const canEdit =
@@ -61,7 +64,7 @@ export default async function TimesheetsPage({ searchParams }: Props) {
           </p>
         </div>
       </header>
-      {result && result in resultCopy ? (
+      {result && Object.hasOwn(resultCopy, result) && resultIsTruthful ? (
         <TimesheetResult
           message={resultCopy[result as keyof typeof resultCopy]}
           success={result === "current"}
