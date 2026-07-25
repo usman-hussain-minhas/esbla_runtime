@@ -1,12 +1,14 @@
 import {
   type HrExpenseClaimApproveBody,
   type HrExpenseClaimCreateBody,
+  type HrExpenseClaimCreateCorrectionBody,
   type HrExpenseClaimEditDraftBody,
   type HrExpenseClaimPath,
   type HrExpenseClaimRejectBody,
   type HrExpenseClaimSubmitBody,
   hrExpenseClaimApproveBodySchema,
   hrExpenseClaimCreateBodySchema,
+  hrExpenseClaimCreateCorrectionBodySchema,
   hrExpenseClaimEditDraftBodySchema,
   hrExpenseClaimPathSchema,
   hrExpenseClaimRejectBodySchema,
@@ -14,6 +16,7 @@ import {
   hrExpenseClaimSubmitBodySchema,
   parseHrExpenseClaimApproveBody,
   parseHrExpenseClaimCreateBody,
+  parseHrExpenseClaimCreateCorrectionBody,
   parseHrExpenseClaimEditDraftBody,
   parseHrExpenseClaimPath,
   parseHrExpenseClaimRejectBody,
@@ -37,6 +40,7 @@ import {
   approveExpenseClaim,
   configureExpenseClaimService,
   createExpenseClaim,
+  createExpenseClaimCorrection,
   deactivateExpenseClaimService,
   editExpenseClaimDraft,
   getExpenseClaimServiceControl,
@@ -113,6 +117,7 @@ export function registerExpenseClaimRoutes({
   for (const schema of [
     hrExpenseClaimApproveBodySchema,
     hrExpenseClaimCreateBodySchema,
+    hrExpenseClaimCreateCorrectionBodySchema,
     hrExpenseClaimEditDraftBodySchema,
     hrExpenseClaimPathSchema,
     hrExpenseClaimResponseSchema,
@@ -236,6 +241,48 @@ export function registerExpenseClaimRoutes({
       );
       reply.header("idempotent-replayed", String(result.replayed));
       return reply.code(200).send(parseHrExpenseClaimResponse(result.expenseClaim));
+    },
+  );
+
+  server.post<{
+    Body: HrExpenseClaimCreateCorrectionBody;
+    Params: HrExpenseClaimPath;
+  }>(
+    "/v1/hr/expense-claims/:expenseClaimId/corrections",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          mutationContext(request);
+          strict(parseHrExpenseClaimPath, request.params);
+          strict(parseHrExpenseClaimCreateCorrectionBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrExpenseCreateCorrectionRequestV1#" },
+        params: { $ref: "HrExpenseClaimPathV1#" },
+        response: {
+          200: { $ref: "HrExpenseClaimResponseV1#" },
+          201: { $ref: "HrExpenseClaimResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = mutationContext(request);
+      const result = await createExpenseClaimCorrection(
+        pool,
+        context,
+        strict(parseHrExpenseClaimPath, request.params).expenseClaimId,
+        {
+          ...strict(parseHrExpenseClaimCreateCorrectionBody, request.body),
+          idempotencyKey: context.correlationId,
+        },
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply
+        .code(result.replayed ? 200 : 201)
+        .send(parseHrExpenseClaimResponse(result.expenseClaim));
     },
   );
 
