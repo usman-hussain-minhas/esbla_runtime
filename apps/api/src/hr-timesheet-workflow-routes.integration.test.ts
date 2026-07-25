@@ -135,6 +135,30 @@ async function mutation(
   });
 }
 
+async function signedGet(
+  url: string,
+  principalId: string = ids.employee,
+  tenantId: string = ids.tenant,
+) {
+  const requestId = randomUUID();
+  const timestamp = String(Math.floor(Date.now() / 1_000));
+  const headers = {
+    "x-esbla-auth-signature": signDevelopmentPrincipal(secret, {
+      method: "GET",
+      principalId,
+      requestId,
+      tenantId,
+      timestamp,
+      url,
+    }),
+    "x-esbla-auth-timestamp": timestamp,
+    "x-esbla-principal-id": principalId,
+    "x-esbla-request-id": requestId,
+    "x-esbla-tenant-id": tenantId,
+  };
+  return { requestId, response: await server.inject({ headers, method: "GET", url }) };
+}
+
 async function serviceState(state: "active" | "inactive") {
   await governed(ids.tenant, ids.operator, (client) =>
     client.query(
@@ -275,18 +299,33 @@ beforeAll(async () => {
       [
         ids.tenant,
         ids.employee,
-        ["hr.timesheet.create", "hr.timesheet.edit_draft", "hr.timesheet.submit"],
+        [
+          "hr.timesheet.create",
+          "hr.timesheet.edit_draft",
+          "hr.timesheet.list_own",
+          "hr.timesheet.submit",
+          "hr.timesheet.view_detail",
+        ],
       ],
     );
     await client.query(
       `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
        SELECT $1,$2,capability FROM unnest($3::text[]) capability`,
-      [ids.tenant, ids.manager, ["hr.timesheet.approve", "hr.timesheet.reject"]],
+      [
+        ids.tenant,
+        ids.manager,
+        [
+          "hr.timesheet.approve",
+          "hr.timesheet.list_assigned",
+          "hr.timesheet.reject",
+          "hr.timesheet.view_detail",
+        ],
+      ],
     );
     await client.query(
       `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
-       VALUES ($1,$2,'hr.timesheet.create_correction')`,
-      [ids.tenant, ids.operator],
+       SELECT $1,$2,capability FROM unnest($3::text[]) capability`,
+      [ids.tenant, ids.operator, ["hr.timesheet.create_correction", "hr.timesheet.view_detail"]],
     );
     await client.query(
       "INSERT INTO tenant_settings (tenant_id,setting_key,value_type,value) VALUES ($1,'hr.timesheet.max_daily_minutes','integer','300')",
@@ -318,8 +357,12 @@ beforeAll(async () => {
     );
     await client.query(
       `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
-       VALUES ($1,$2,'hr.timesheet.edit_draft')`,
-      [ids.otherTenant, ids.otherEmployee],
+       SELECT $1,$2,capability FROM unnest($3::text[]) capability`,
+      [
+        ids.otherTenant,
+        ids.otherEmployee,
+        ["hr.timesheet.edit_draft", "hr.timesheet.list_own", "hr.timesheet.view_detail"],
+      ],
     );
     await client.query(
       `INSERT INTO service_activations (tenant_id,service_key,state,version)
@@ -990,5 +1033,156 @@ describe("Timesheet employee workflow API", () => {
     expect(durableReplay.response.statusCode, durableReplay.response.body).toBe(200);
     expect(durableReplay.response.headers["idempotent-replayed"]).toBe("true");
     expect(durableReplay.response.json()).toEqual(correction);
+  });
+
+  it("reads bounded own, assigned, and durable version-history pages through current authority", async () => {
+    const firstSubmitted = await submitWeeklyTimesheet("2028-08-15", "2028-08-21", "2028-08-15");
+    const secondSubmitted = await submitWeeklyTimesheet("2028-08-22", "2028-08-28", "2028-08-22");
+
+    const ownFirst = await signedGet("/v1/hr/timesheets/own?pageSize=1");
+    expect(ownFirst.response.statusCode, ownFirst.response.body).toBe(200);
+    const ownFirstPage = ownFirst.response.json();
+    expect(ownFirstPage).toMatchObject({
+      kind: "own",
+      items: [
+        {
+          periodStart: "2028-08-22",
+          status: "submitted",
+          timesheetId: secondSubmitted.timesheetId,
+        },
+      ],
+    });
+    expect(ownFirstPage.nextCursor).toEqual({
+      periodStart: "2028-08-22",
+      timesheetId: secondSubmitted.timesheetId,
+    });
+    const ownSecond = await signedGet(
+      `/v1/hr/timesheets/own?pageSize=1&cursorPeriodStart=${ownFirstPage.nextCursor.periodStart}` +
+        `&cursorTimesheetId=${ownFirstPage.nextCursor.timesheetId}`,
+    );
+    expect(ownSecond.response.statusCode, ownSecond.response.body).toBe(200);
+    expect(ownSecond.response.json().items[0].timesheetId).toBe(firstSubmitted.timesheetId);
+    expect(
+      (await signedGet("/v1/hr/timesheets/own?cursorPeriodStart=2028-08-22")).response.statusCode,
+    ).toBe(400);
+
+    const assignedFirst = await signedGet("/v1/hr/timesheets/assigned?pageSize=1", ids.manager);
+    expect(assignedFirst.response.statusCode, assignedFirst.response.body).toBe(200);
+    const assignedFirstPage = assignedFirst.response.json();
+    expect(assignedFirstPage).toMatchObject({
+      kind: "assigned",
+      items: [{ status: "submitted" }],
+    });
+    expect(assignedFirstPage.items[0].workItemId).toMatch(/^[0-9a-f]{8}-[0-9a-f-]{27}$/i);
+    const assignedCursor = assignedFirstPage.nextCursor;
+    expect(assignedCursor).toMatchObject({
+      submittedAt: expect.any(String),
+      timesheetVersionId: expect.any(String),
+    });
+    const assignedSecond = await signedGet(
+      `/v1/hr/timesheets/assigned?pageSize=1` +
+        `&cursorSubmittedAt=${encodeURIComponent(assignedCursor.submittedAt)}` +
+        `&cursorTimesheetVersionId=${assignedCursor.timesheetVersionId}`,
+      ids.manager,
+    );
+    expect(assignedSecond.response.statusCode, assignedSecond.response.body).toBe(200);
+    expect(assignedSecond.response.json().items).toHaveLength(1);
+    expect(assignedSecond.response.json().items[0].timesheetId).not.toBe(
+      assignedFirstPage.items[0].timesheetId,
+    );
+
+    const assignedDetail = await signedGet(
+      `/v1/hr/timesheets/by-id/${firstSubmitted.timesheetId}`,
+      ids.manager,
+    );
+    expect(assignedDetail.response.statusCode, assignedDetail.response.body).toBe(200);
+    expect(assignedDetail.response.json()).toMatchObject({
+      accessScope: "assigned",
+      timesheetId: firstSubmitted.timesheetId,
+    });
+
+    await governed(ids.tenant, ids.operator, (client) =>
+      client.query("UPDATE memberships SET role_key='employee' WHERE principal_id=$1", [
+        ids.manager,
+      ]),
+    );
+    try {
+      expectProblem(
+        await signedGet("/v1/hr/timesheets/assigned", ids.manager),
+        403,
+        "POLICY_DENIED",
+      );
+      expectProblem(
+        await signedGet(`/v1/hr/timesheets/by-id/${firstSubmitted.timesheetId}`, ids.manager),
+        404,
+        "TIMESHEET_NOT_FOUND",
+      );
+    } finally {
+      await governed(ids.tenant, ids.operator, (client) =>
+        client.query("UPDATE memberships SET role_key='manager' WHERE principal_id=$1", [
+          ids.manager,
+        ]),
+      );
+    }
+
+    const detailFirst = await signedGet(`/v1/hr/timesheets/by-id/${timesheetId}?pageSize=1`);
+    expect(detailFirst.response.statusCode, detailFirst.response.body).toBe(200);
+    const detailFirstPage = detailFirst.response.json();
+    expect(detailFirstPage).toMatchObject({
+      accessScope: "own",
+      currentVersion: { status: "approved", version: 2 },
+      history: {
+        items: [{ status: "approved", version: 2 }],
+        nextCursor: {
+          timesheetVersionId: expect.any(String),
+          version: 2,
+        },
+      },
+      timesheetId,
+    });
+    const historyCursor = detailFirstPage.history.nextCursor;
+    const detailSecond = await signedGet(
+      `/v1/hr/timesheets/by-id/${timesheetId}?pageSize=1` +
+        `&cursorVersion=${historyCursor.version}` +
+        `&cursorTimesheetVersionId=${historyCursor.timesheetVersionId}`,
+    );
+    expect(detailSecond.response.statusCode, detailSecond.response.body).toBe(200);
+    expect(detailSecond.response.json().history.items).toEqual([
+      expect.objectContaining({ supersedesVersionId: null, version: 1 }),
+    ]);
+
+    const operatorDetail = await signedGet(`/v1/hr/timesheets/by-id/${timesheetId}`, ids.operator);
+    expect(operatorDetail.response.statusCode, operatorDetail.response.body).toBe(200);
+    expect(operatorDetail.response.json().accessScope).toBe("tenant");
+    await governed(ids.tenant, ids.operator, (client) =>
+      client.query("UPDATE memberships SET role_key='tenant_admin' WHERE principal_id=$1", [
+        ids.operator,
+      ]),
+    );
+    try {
+      expectProblem(
+        await signedGet(`/v1/hr/timesheets/by-id/${timesheetId}`, ids.operator),
+        403,
+        "POLICY_DENIED",
+      );
+    } finally {
+      await governed(ids.tenant, ids.operator, (client) =>
+        client.query("UPDATE memberships SET role_key='hr_operator' WHERE principal_id=$1", [
+          ids.operator,
+        ]),
+      );
+    }
+    expectProblem(
+      await signedGet(`/v1/hr/timesheets/by-id/${timesheetId}`, ids.otherEmployee, ids.otherTenant),
+      404,
+      "TIMESHEET_NOT_FOUND",
+    );
+
+    await serviceState("inactive");
+    try {
+      expectProblem(await signedGet("/v1/hr/timesheets/own"), 503, "TIMESHEET_SERVICE_INACTIVE");
+    } finally {
+      await serviceState("active");
+    }
   });
 });

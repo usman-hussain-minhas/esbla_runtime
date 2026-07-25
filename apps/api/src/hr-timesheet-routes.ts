@@ -12,24 +12,35 @@ import {
 } from "@esbla/contracts/hr-service-control-api";
 import {
   type HrTimesheetApproveBody,
+  type HrTimesheetAssignedListQuery,
   type HrTimesheetCreateBody,
   type HrTimesheetCreateCorrectionBody,
+  type HrTimesheetDetailQuery,
   type HrTimesheetEditDraftBody,
+  type HrTimesheetOwnListQuery,
   type HrTimesheetPath,
   type HrTimesheetRejectBody,
   type HrTimesheetSubmitBody,
   hrTimesheetApproveBodySchema,
+  hrTimesheetAssignedListQuerySchema,
   hrTimesheetCreateBodySchema,
   hrTimesheetCreateCorrectionBodySchema,
+  hrTimesheetDetailQuerySchema,
   hrTimesheetEditDraftBodySchema,
+  hrTimesheetListResponseSchema,
+  hrTimesheetOwnListQuerySchema,
   hrTimesheetPathSchema,
   hrTimesheetRejectBodySchema,
   hrTimesheetResponseSchema,
   hrTimesheetSubmitBodySchema,
   parseHrTimesheetApproveBody,
+  parseHrTimesheetAssignedListQuery,
   parseHrTimesheetCreateBody,
   parseHrTimesheetCreateCorrectionBody,
+  parseHrTimesheetDetailQuery,
   parseHrTimesheetEditDraftBody,
+  parseHrTimesheetListResponse,
+  parseHrTimesheetOwnListQuery,
   parseHrTimesheetPath,
   parseHrTimesheetRejectBody,
   parseHrTimesheetResponse,
@@ -43,8 +54,11 @@ import {
   createTimesheetCorrection,
   deactivateTimesheetService,
   editTimesheetDraft,
+  getAuthorizedTimesheetDetail,
   getTimesheetServiceControl,
   inspectTimesheetServiceControlAuthority,
+  listAssignedTimesheets,
+  listOwnTimesheets,
   rejectTimesheet,
   submitTimesheet,
 } from "@esbla/hr";
@@ -88,6 +102,19 @@ function strict<T>(parse: (value: unknown) => T, value: unknown): T {
   }
 }
 
+function queryIntegers(value: unknown, fields: readonly string[]): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  const query = value as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.entries(query).map(([key, selected]) => [
+      key,
+      fields.includes(key) && typeof selected === "string" && /^[1-9]\d*$/.test(selected)
+        ? Number(selected)
+        : selected,
+    ]),
+  );
+}
+
 function mutationContext(request: FastifyRequest): OperationContext {
   const value = request.headers["idempotency-key"];
   if (Array.isArray(value) || typeof value !== "string" || value.length === 0) {
@@ -122,7 +149,11 @@ export function registerTimesheetRoutes({
     hrTimesheetApproveBodySchema,
     hrTimesheetCreateBodySchema,
     hrTimesheetCreateCorrectionBodySchema,
+    hrTimesheetDetailQuerySchema,
     hrTimesheetEditDraftBodySchema,
+    hrTimesheetAssignedListQuerySchema,
+    hrTimesheetListResponseSchema,
+    hrTimesheetOwnListQuerySchema,
     hrTimesheetRejectBodySchema,
     hrTimesheetSubmitBodySchema,
     hrTimesheetPathSchema,
@@ -362,6 +393,103 @@ export function registerTimesheetRoutes({
       reply.header("idempotent-replayed", String(result.replayed));
       return reply.code(200).send(parseHrTimesheetResponse(result.timesheet));
     },
+  );
+
+  server.get<{ Querystring: HrTimesheetOwnListQuery }>(
+    "/v1/hr/timesheets/own",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          request.query = strict(
+            parseHrTimesheetOwnListQuery,
+            queryIntegers(request.query, ["pageSize"]),
+          );
+        },
+      ],
+      schema: {
+        querystring: { $ref: "HrTimesheetOwnListQueryV1#" },
+        response: {
+          200: { $ref: "HrTimesheetListResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) =>
+      reply
+        .code(200)
+        .send(
+          parseHrTimesheetListResponse(
+            await listOwnTimesheets(pool, operationContext(request), request.query),
+          ),
+        ),
+  );
+
+  server.get<{ Querystring: HrTimesheetAssignedListQuery }>(
+    "/v1/hr/timesheets/assigned",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          request.query = strict(
+            parseHrTimesheetAssignedListQuery,
+            queryIntegers(request.query, ["pageSize"]),
+          );
+        },
+      ],
+      schema: {
+        querystring: { $ref: "HrTimesheetAssignedListQueryV1#" },
+        response: {
+          200: { $ref: "HrTimesheetListResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) =>
+      reply
+        .code(200)
+        .send(
+          parseHrTimesheetListResponse(
+            await listAssignedTimesheets(pool, operationContext(request), request.query),
+          ),
+        ),
+  );
+
+  server.get<{ Params: HrTimesheetPath; Querystring: HrTimesheetDetailQuery }>(
+    "/v1/hr/timesheets/by-id/:timesheetId",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          strict(parseHrTimesheetPath, request.params);
+          request.query = strict(
+            parseHrTimesheetDetailQuery,
+            queryIntegers(request.query, ["cursorVersion", "pageSize"]),
+          );
+        },
+      ],
+      schema: {
+        params: { $ref: "HrTimesheetPathV1#" },
+        querystring: { $ref: "HrTimesheetDetailQueryV1#" },
+        response: {
+          200: { $ref: "HrTimesheetResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) =>
+      reply
+        .code(200)
+        .send(
+          parseHrTimesheetResponse(
+            await getAuthorizedTimesheetDetail(
+              pool,
+              operationContext(request),
+              strict(parseHrTimesheetPath, request.params).timesheetId,
+              request.query,
+            ),
+          ),
+        ),
   );
 
   server.get<{ Querystring: HrServiceControlQuery }>(

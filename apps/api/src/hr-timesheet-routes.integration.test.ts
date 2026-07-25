@@ -261,14 +261,18 @@ afterAll(async () => {
   await migrationPool?.end();
 });
 describe("Timesheet service-control API", () => {
-  it("fails activation until eligible and returns only registered control state", async () => {
+  it("activates only after exact eligibility and returns only registered control state", async () => {
     expectProblem(await signedGet(controlUrl), 404, "TIMESHEET_SERVICE_CONTROL_NOT_FOUND");
     const before = await proofCounts();
-    const blocked = await mutate("activate", { expectedVersion: null });
-    expectProblem(blocked, 503, "ACTIVATION_DEPENDENCY_BLOCKED");
-    await expectActivationBlocked(domainActivate("non_production", null), ["service_not_eligible"]);
-    expect(await proofCounts()).toEqual(before);
-    await setActivation("timesheet", "active", 1);
+    const activated = await mutate("activate", { expectedVersion: null });
+    expect(activated.response.statusCode, activated.response.body).toBe(200);
+    expect(activated.response.headers["idempotent-replayed"]).toBe("false");
+    expect(await proofCounts()).toEqual({
+      evidence: before.evidence + 1,
+      nonBillable: before.nonBillable + 1,
+      outbox: before.outbox + 1,
+      settings: 0,
+    });
     const current = await signedGet(controlUrl);
     expect(current.response.statusCode, current.response.body).toBe(200);
     expect(current.response.json()).toEqual({
@@ -393,7 +397,6 @@ describe("Timesheet service-control API", () => {
       await migrationPool.query(setup);
       try {
         await expectActivationBlocked(domainActivate("non_production", 2), [
-          "service_not_eligible",
           "non_soft_dependency_not_eligible",
         ]);
       } finally {
@@ -414,7 +417,6 @@ describe("Timesheet service-control API", () => {
       });
       expectProblem(missing, 503, "ACTIVATION_DEPENDENCY_BLOCKED");
       await expectActivationBlocked(domainActivate("production", 2), [
-        "service_not_eligible",
         "qualified_retention_evidence_unavailable",
       ]);
       const app = await pool.connect();
@@ -430,7 +432,10 @@ describe("Timesheet service-control API", () => {
       await governed((client) =>
         client.query(retentionInsert, [ids.tenant, ids.admin, randomUUID()]),
       );
-      await expectActivationBlocked(domainActivate("production", 2), ["service_not_eligible"]);
+      await expect(domainActivate("production", 2)).resolves.toMatchObject({
+        control: { activationState: "active", activationVersion: 3 },
+        replayed: false,
+      });
     } finally {
       await production.close();
     }
@@ -440,6 +445,6 @@ describe("Timesheet service-control API", () => {
         [ids.tenant],
       ),
     );
-    expect(activation.rows[0]).toEqual({ state: "inactive", version: 2 });
+    expect(activation.rows[0]).toEqual({ state: "active", version: 3 });
   });
 });
