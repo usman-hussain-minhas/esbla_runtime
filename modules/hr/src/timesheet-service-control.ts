@@ -47,6 +47,21 @@ const CONTROL_ACTIONS = Object.freeze([
   "deactivate_service",
   "view_service_control",
 ] as const);
+export const HR_TIMESHEET_AUTHORIZED_ACTIONS = Object.freeze([
+  "activate_service",
+  "approve",
+  "configure_service",
+  "create",
+  "create_correction",
+  "deactivate_service",
+  "edit_draft",
+  "list_assigned",
+  "list_own",
+  "reject",
+  "submit",
+  "view_detail",
+  "view_service_control",
+] as const);
 const REQUIRED_TIMESHEET_CAPABILITIES =
   "admin:hr.timesheet.activate_service,tenant:hr.timesheet.approve,admin:hr.timesheet.configure_service,tenant:hr.timesheet.create,tenant:hr.timesheet.create_correction,admin:hr.timesheet.deactivate_service,tenant:hr.timesheet.edit_draft,tenant:hr.timesheet.list_assigned,tenant:hr.timesheet.list_own,tenant:hr.timesheet.reject,tenant:hr.timesheet.submit,tenant:hr.timesheet.view_detail,admin:hr.timesheet.view_service_control".split(
     ",",
@@ -87,6 +102,7 @@ const TIMESHEET_REQUIRED_MIGRATIONS = [
   },
 ] as const;
 type ControlAction = (typeof CONTROL_ACTIONS)[number];
+export type HrTimesheetAuthorizedAction = (typeof HR_TIMESHEET_AUTHORIZED_ACTIONS)[number];
 type MutationAction = Exclude<ControlAction, "view_service_control">;
 export type HrTimesheetActivationMode = "non_production" | "production";
 export type HrTimesheetErrorCode =
@@ -355,12 +371,33 @@ async function authorizeAdmin(
   assertPolicyAllowed(platformDecision, transaction, platformAction, HR_TIMESHEET_SERVICE_KEY);
   return platformDecision;
 }
-export async function inspectTimesheetServiceControlAuthority(
+const TIMESHEET_ACTION_ROLES: Readonly<Record<HrTimesheetAuthorizedAction, readonly string[]>> =
+  Object.freeze({
+    activate_service: Object.freeze(["tenant_admin"]),
+    approve: Object.freeze(["manager"]),
+    configure_service: Object.freeze(["tenant_admin"]),
+    create: Object.freeze(["employee"]),
+    create_correction: Object.freeze(["hr_operator"]),
+    deactivate_service: Object.freeze(["tenant_admin"]),
+    edit_draft: Object.freeze(["employee"]),
+    list_assigned: Object.freeze(["manager"]),
+    list_own: Object.freeze(["employee"]),
+    reject: Object.freeze(["manager"]),
+    submit: Object.freeze(["employee"]),
+    view_detail: Object.freeze(["employee", "hr_operator", "manager"]),
+    view_service_control: Object.freeze(["tenant_admin"]),
+  });
+
+/**
+ * Projects current role and capability state for advisory rendering only. Every action still
+ * performs its own transactional policy and object-authority checks.
+ */
+export async function inspectTimesheetActionAuthority(
   pool: Pool,
   context: OperationContext,
-): Promise<readonly ControlAction[]> {
+): Promise<readonly HrTimesheetAuthorizedAction[]> {
   return await withTenantTransaction(pool, context, async (transaction) => {
-    const capabilityIds = CONTROL_ACTIONS.map((action) => `hr.timesheet.${action}`);
+    const capabilityIds = HR_TIMESHEET_AUTHORIZED_ACTIONS.map((action) => `hr.timesheet.${action}`);
     const result = await transaction.client.query<{ capability_id: string }>(
       `SELECT capability_id FROM membership_capabilities
        WHERE tenant_id=$1 AND principal_id=$2 AND capability_id=ANY($3::text[])
@@ -369,18 +406,24 @@ export async function inspectTimesheetServiceControlAuthority(
     );
     const current = new Set(result.rows.map(({ capability_id }) => capability_id));
     return Object.freeze(
-      CONTROL_ACTIONS.filter((action) => {
+      HR_TIMESHEET_AUTHORIZED_ACTIONS.filter((action) => {
         const capabilityId = `hr.timesheet.${action}`;
         return (
-          transaction.actor.roleKey === "tenant_admin" &&
+          TIMESHEET_ACTION_ROLES[action].includes(transaction.actor.roleKey) &&
           current.has(capabilityId) &&
-          hrManifest.capabilities.some(
-            ({ exposure, id }) => exposure === "admin" && id === capabilityId,
-          )
+          hrManifest.capabilities.some(({ id }) => id === capabilityId)
         );
       }),
     );
   });
+}
+
+export async function inspectTimesheetServiceControlAuthority(
+  pool: Pool,
+  context: OperationContext,
+): Promise<readonly ControlAction[]> {
+  const actions = await inspectTimesheetActionAuthority(pool, context);
+  return Object.freeze(CONTROL_ACTIONS.filter((action) => actions.includes(action)));
 }
 async function requireActiveDependencies(transaction: TenantTransaction): Promise<void> {
   const result = await transaction.client

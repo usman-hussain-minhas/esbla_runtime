@@ -56,7 +56,7 @@ import {
   editTimesheetDraft,
   getAuthorizedTimesheetDetail,
   getTimesheetServiceControl,
-  inspectTimesheetServiceControlAuthority,
+  inspectTimesheetActionAuthority,
   listAssignedTimesheets,
   listOwnTimesheets,
   rejectTimesheet,
@@ -162,7 +162,7 @@ export function registerTimesheetRoutes({
     server.addSchema(schema);
   }
   const attachTimesheetActions = async (request: FastifyRequest, reply: FastifyReply) => {
-    const actions = await inspectTimesheetServiceControlAuthority(pool, operationContext(request));
+    const actions = await inspectTimesheetActionAuthority(pool, operationContext(request));
     reply.header("x-esbla-timesheet-actions", JSON.stringify(actions));
   };
 
@@ -406,6 +406,7 @@ export function registerTimesheetRoutes({
             queryIntegers(request.query, ["pageSize"]),
           );
         },
+        attachTimesheetActions,
       ],
       schema: {
         querystring: { $ref: "HrTimesheetOwnListQueryV1#" },
@@ -436,6 +437,7 @@ export function registerTimesheetRoutes({
             queryIntegers(request.query, ["pageSize"]),
           );
         },
+        attachTimesheetActions,
       ],
       schema: {
         querystring: { $ref: "HrTimesheetAssignedListQueryV1#" },
@@ -467,6 +469,7 @@ export function registerTimesheetRoutes({
             queryIntegers(request.query, ["cursorVersion", "pageSize"]),
           );
         },
+        attachTimesheetActions,
       ],
       schema: {
         params: { $ref: "HrTimesheetPathV1#" },

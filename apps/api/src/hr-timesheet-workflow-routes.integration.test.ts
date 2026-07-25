@@ -1041,6 +1041,9 @@ describe("Timesheet employee workflow API", () => {
 
     const ownFirst = await signedGet("/v1/hr/timesheets/own?pageSize=1");
     expect(ownFirst.response.statusCode, ownFirst.response.body).toBe(200);
+    expect(ownFirst.response.headers["x-esbla-timesheet-actions"]).toBe(
+      '["create","edit_draft","list_own","submit","view_detail"]',
+    );
     const ownFirstPage = ownFirst.response.json();
     expect(ownFirstPage).toMatchObject({
       kind: "own",
@@ -1068,6 +1071,9 @@ describe("Timesheet employee workflow API", () => {
 
     const assignedFirst = await signedGet("/v1/hr/timesheets/assigned?pageSize=1", ids.manager);
     expect(assignedFirst.response.statusCode, assignedFirst.response.body).toBe(200);
+    expect(assignedFirst.response.headers["x-esbla-timesheet-actions"]).toBe(
+      '["approve","list_assigned","reject","view_detail"]',
+    );
     const assignedFirstPage = assignedFirst.response.json();
     expect(assignedFirstPage).toMatchObject({
       kind: "assigned",
@@ -1096,6 +1102,9 @@ describe("Timesheet employee workflow API", () => {
       ids.manager,
     );
     expect(assignedDetail.response.statusCode, assignedDetail.response.body).toBe(200);
+    expect(assignedDetail.response.headers["x-esbla-timesheet-actions"]).toBe(
+      '["approve","list_assigned","reject","view_detail"]',
+    );
     expect(assignedDetail.response.json()).toMatchObject({
       accessScope: "assigned",
       timesheetId: firstSubmitted.timesheetId,

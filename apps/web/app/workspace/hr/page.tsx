@@ -22,6 +22,8 @@ import {
   loadShiftServiceControl,
 } from "../../../lib/hr-shift-assignment";
 import { hasShiftAction } from "../../../lib/hr-shift-assignment-core";
+import { loadOwnTimesheets } from "../../../lib/hr-timesheet";
+import { hasTimesheetAction } from "../../../lib/hr-timesheet-core";
 import { loadAuthorizedWorkforceList } from "../../../lib/hr-workforce-profile-list";
 import { loadWorkforceProfileServiceControl } from "../../../lib/hr-workforce-profile-service-control";
 
@@ -37,6 +39,7 @@ export default async function HrHubPage() {
     ownAttendance,
     reportAttendance,
     attendanceServiceControl,
+    ownTimesheets,
   ] = await Promise.all([
     loadAuthorizedWorkforceList({}, "direct_reports"),
     loadAuthorizedWorkforceList({}, "workforce"),
@@ -51,6 +54,7 @@ export default async function HrHubPage() {
     loadOwnAttendance(),
     loadReportAttendance(),
     loadAttendanceServiceControl(),
+    loadOwnTimesheets(),
   ]);
   const canDiscoverWorkforceSettings =
     workforceServiceControl.status === "success" ||
@@ -95,6 +99,7 @@ export default async function HrHubPage() {
   const canControlAttendance = (
     ["activate_service", "configure_service", "deactivate_service", "view_service_control"] as const
   ).some((action) => hasAttendanceAction(attendanceActions, action));
+  const canViewOwnTimesheets = hasTimesheetAction(ownTimesheets.authorizedActions, "list_own");
   return (
     <section aria-labelledby="hr-hub-heading" className="work-surface">
       <header className="surface-heading">
@@ -236,6 +241,31 @@ export default async function HrHubPage() {
                 <a className="text-command" href="/workspace/hr/attendance/settings">
                   <Settings2 aria-hidden="true" size={15} strokeWidth={1.8} />
                   Attendance settings
+                </a>
+              ) : null}
+            </div>
+          </li>
+        ) : null}
+        {canViewOwnTimesheets ? (
+          <li className="work-queue-item">
+            <div className="work-queue-primary">
+              <div>
+                <p className="work-queue-kicker">Timesheet</p>
+                <h2>Weekly work-time facts</h2>
+                <p className="work-queue-dates">
+                  Record and review bounded weekly minutes without Project, billing, invoicing, or
+                  payroll meaning.
+                </p>
+              </div>
+              <span aria-hidden="true" className="empty-worklist-icon">
+                <Clock3 size={25} strokeWidth={1.7} />
+              </span>
+            </div>
+            <div className="work-queue-actions">
+              {canViewOwnTimesheets ? (
+                <a className="text-command" href="/workspace/hr/timesheets">
+                  My Timesheets
+                  <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
                 </a>
               ) : null}
             </div>
