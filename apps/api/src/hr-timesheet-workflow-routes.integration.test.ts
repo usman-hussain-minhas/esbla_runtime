@@ -284,6 +284,11 @@ beforeAll(async () => {
       [ids.tenant, ids.manager, ["hr.timesheet.approve", "hr.timesheet.reject"]],
     );
     await client.query(
+      `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+       VALUES ($1,$2,'hr.timesheet.create_correction')`,
+      [ids.tenant, ids.operator],
+    );
+    await client.query(
       "INSERT INTO tenant_settings (tenant_id,setting_key,value_type,value) VALUES ($1,'hr.timesheet.max_daily_minutes','integer','300')",
       [ids.tenant],
     );
@@ -799,5 +804,191 @@ describe("Timesheet employee workflow API", () => {
     expect(historicalReplay.response.headers["idempotent-replayed"]).toBe("true");
     expect(historicalReplay.response.json()).toEqual(rejected.response.json());
     expect(await proofSnapshot()).toEqual(afterSecondDecision);
+  });
+
+  it("appends one correction draft while preserving its exact terminal predecessor", async () => {
+    const url = `/v1/hr/timesheets/${timesheetId}/corrections`;
+    const body = {
+      expectedRootVersion: 1,
+      expectedTimesheetVersionId: timesheetVersionId,
+      expectedVersion: 4,
+    };
+    const before = await proofSnapshot();
+    const predecessor = await governed(ids.tenant, ids.operator, async (client) => {
+      const result = await client.query(
+        `SELECT timesheet_version_id::text,supersedes_version_id::text,version,status,
+                assigned_approver_worker_profile_id::text,submitted_at,total_minutes,row_version
+         FROM hr_timesheet_versions
+         WHERE tenant_id=$1 AND timesheet_id=$2 AND timesheet_version_id=$3`,
+        [ids.tenant, timesheetId, timesheetVersionId],
+      );
+      return result.rows[0];
+    });
+    expect(["approved", "rejected"]).toContain(predecessor.status);
+
+    expectProblem(await mutation(body, randomUUID(), "POST", url), 403, "POLICY_DENIED");
+    await governed(ids.tenant, ids.operator, (client) =>
+      client.query(
+        `DELETE FROM membership_capabilities
+         WHERE tenant_id=$1 AND principal_id=$2
+           AND capability_id='hr.timesheet.create_correction'`,
+        [ids.tenant, ids.operator],
+      ),
+    );
+    try {
+      expectProblem(
+        await mutation(body, randomUUID(), "POST", url, ids.operator),
+        403,
+        "POLICY_DENIED",
+      );
+      expect(await proofSnapshot()).toEqual(before);
+    } finally {
+      await governed(ids.tenant, ids.operator, (client) =>
+        client.query(
+          `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+           VALUES ($1,$2,'hr.timesheet.create_correction')`,
+          [ids.tenant, ids.operator],
+        ),
+      );
+    }
+
+    const keys = [randomUUID(), randomUUID()];
+    const attempts = await Promise.all(
+      keys.map((key) => mutation(body, key, "POST", url, ids.operator)),
+    );
+    const created = byStatus(attempts, 201);
+    expectProblem(byStatus(attempts, 409), 409, "TIMESHEET_VERSION_CONFLICT");
+    const winnerKey = keys[attempts.indexOf(created)] ?? "";
+    const correction = created.response.json();
+    expect(correction).toMatchObject({
+      currentVersion: {
+        assignedApproverWorkerProfileId: null,
+        entries: [],
+        rowVersion: 1,
+        status: "draft",
+        submittedAt: null,
+        supersedesVersionId: timesheetVersionId,
+        totalMinutes: 0,
+        version: 2,
+      },
+      rootVersion: 2,
+      timesheetId,
+    });
+    const replay = await mutation(body, winnerKey, "POST", url, ids.operator);
+    expect(replay.response.statusCode, replay.response.body).toBe(200);
+    expect(replay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(replay.response.json()).toEqual(correction);
+    expect(await proofSnapshot()).toEqual({
+      ...before,
+      evidence: Number(before.evidence) + 2,
+      non_billable: Number(before.non_billable) + 1,
+      outbox: Number(before.outbox) + 1,
+      version_subjects: Number(before.version_subjects) + 1,
+      versioned: Number(before.versioned) + 1,
+      versions: Number(before.versions) + 1,
+    });
+    const stored = await governed(ids.tenant, ids.operator, async (client) => {
+      const result = await client.query(
+        `SELECT timesheet_version_id::text,supersedes_version_id::text,version,status,
+                assigned_approver_worker_profile_id::text,submitted_at,total_minutes,row_version
+         FROM hr_timesheet_versions
+         WHERE tenant_id=$1 AND timesheet_id=$2 ORDER BY version`,
+        [ids.tenant, timesheetId],
+      );
+      return result.rows;
+    });
+    expect(stored).toEqual([
+      predecessor,
+      expect.objectContaining({
+        assigned_approver_worker_profile_id: null,
+        row_version: 1,
+        status: "draft",
+        submitted_at: null,
+        supersedes_version_id: timesheetVersionId,
+        timesheet_version_id: correction.currentVersion.timesheetVersionId,
+        total_minutes: 0,
+        version: 2,
+      }),
+    ]);
+    const proof = await governed(ids.tenant, ids.operator, async (client) => {
+      const result = await client.query(
+        `SELECT evidence.actor_principal_id::text,evidence.correlation_id::text,
+                evidence.event_type,evidence.subject_id::text,evidence.subject_type,
+                evidence.prior_state,evidence.new_state,
+                outbox.aggregate_id::text,outbox.aggregate_type,outbox.aggregate_version,
+                outbox.payload
+         FROM evidence_events evidence JOIN outbox_events outbox
+           ON outbox.tenant_id=evidence.tenant_id
+          AND outbox.correlation_id=evidence.correlation_id
+          AND outbox.event_type=evidence.event_type
+          AND outbox.aggregate_id=evidence.subject_id
+          AND outbox.aggregate_type=evidence.subject_type
+         WHERE evidence.tenant_id=$1 AND evidence.event_type='hr.timesheet.create_correction'
+           AND evidence.subject_id=$2`,
+        [ids.tenant, correction.currentVersion.timesheetVersionId],
+      );
+      return result.rows;
+    });
+    expect(proof).toEqual([
+      expect.objectContaining({
+        actor_principal_id: ids.operator,
+        aggregate_id: correction.currentVersion.timesheetVersionId,
+        aggregate_type: "hr.timesheet.version",
+        aggregate_version: 2,
+        correlation_id: winnerKey,
+        event_type: "hr.timesheet.create_correction",
+        new_state: "draft",
+        payload: expect.objectContaining({
+          action: "create_correction",
+          afterVersion: 2,
+          beforeVersion: 1,
+          billingState: "non_billable",
+          timesheetId,
+        }),
+        prior_state: predecessor.status,
+        subject_id: correction.currentVersion.timesheetVersionId,
+        subject_type: "hr.timesheet.version",
+      }),
+    ]);
+    const edited = await mutation(
+      {
+        entries: [{ entryDate: "2028-08-01", minutes: 30 }],
+        expectedRootVersion: 2,
+        expectedTimesheetVersionId: correction.currentVersion.timesheetVersionId,
+        expectedVersion: 1,
+      },
+      randomUUID(),
+      "PATCH",
+      `/v1/hr/timesheets/${timesheetId}/draft`,
+    );
+    expect(edited.response.statusCode, edited.response.body).toBe(200);
+    const submitted = await mutation(
+      {
+        expectedRootVersion: 2,
+        expectedTimesheetVersionId: correction.currentVersion.timesheetVersionId,
+        expectedVersion: 2,
+      },
+      randomUUID(),
+      "POST",
+      `/v1/hr/timesheets/${timesheetId}/submit`,
+    );
+    expect(submitted.response.statusCode, submitted.response.body).toBe(200);
+    const approved = await mutation(
+      {
+        decisionNote: "Correction reviewed",
+        expectedRootVersion: 2,
+        expectedTimesheetVersionId: correction.currentVersion.timesheetVersionId,
+        expectedVersion: 3,
+      },
+      randomUUID(),
+      "POST",
+      `/v1/hr/timesheets/${timesheetId}/approve`,
+      ids.manager,
+    );
+    expect(approved.response.statusCode, approved.response.body).toBe(200);
+    const durableReplay = await mutation(body, winnerKey, "POST", url, ids.operator);
+    expect(durableReplay.response.statusCode, durableReplay.response.body).toBe(200);
+    expect(durableReplay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(durableReplay.response.json()).toEqual(correction);
   });
 });

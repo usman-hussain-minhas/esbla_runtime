@@ -13,12 +13,14 @@ import {
 import {
   type HrTimesheetApproveBody,
   type HrTimesheetCreateBody,
+  type HrTimesheetCreateCorrectionBody,
   type HrTimesheetEditDraftBody,
   type HrTimesheetPath,
   type HrTimesheetRejectBody,
   type HrTimesheetSubmitBody,
   hrTimesheetApproveBodySchema,
   hrTimesheetCreateBodySchema,
+  hrTimesheetCreateCorrectionBodySchema,
   hrTimesheetEditDraftBodySchema,
   hrTimesheetPathSchema,
   hrTimesheetRejectBodySchema,
@@ -26,6 +28,7 @@ import {
   hrTimesheetSubmitBodySchema,
   parseHrTimesheetApproveBody,
   parseHrTimesheetCreateBody,
+  parseHrTimesheetCreateCorrectionBody,
   parseHrTimesheetEditDraftBody,
   parseHrTimesheetPath,
   parseHrTimesheetRejectBody,
@@ -37,6 +40,7 @@ import {
   approveTimesheet,
   configureTimesheetService,
   createTimesheet,
+  createTimesheetCorrection,
   deactivateTimesheetService,
   editTimesheetDraft,
   getTimesheetServiceControl,
@@ -117,6 +121,7 @@ export function registerTimesheetRoutes({
   for (const schema of [
     hrTimesheetApproveBodySchema,
     hrTimesheetCreateBodySchema,
+    hrTimesheetCreateCorrectionBodySchema,
     hrTimesheetEditDraftBodySchema,
     hrTimesheetRejectBodySchema,
     hrTimesheetSubmitBodySchema,
@@ -236,6 +241,48 @@ export function registerTimesheetRoutes({
       );
       reply.header("idempotent-replayed", String(result.replayed));
       return reply.code(200).send(parseHrTimesheetResponse(result.timesheet));
+    },
+  );
+
+  server.post<{
+    Body: HrTimesheetCreateCorrectionBody;
+    Params: HrTimesheetPath;
+  }>(
+    "/v1/hr/timesheets/:timesheetId/corrections",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          mutationContext(request);
+          strict(parseHrTimesheetPath, request.params);
+          strict(parseHrTimesheetCreateCorrectionBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrTimesheetCreateCorrectionRequestV1#" },
+        params: { $ref: "HrTimesheetPathV1#" },
+        response: {
+          200: { $ref: "HrTimesheetResponseV1#" },
+          201: { $ref: "HrTimesheetResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = mutationContext(request);
+      const result = await createTimesheetCorrection(
+        pool,
+        context,
+        strict(parseHrTimesheetPath, request.params).timesheetId,
+        {
+          ...strict(parseHrTimesheetCreateCorrectionBody, request.body),
+          idempotencyKey: context.correlationId,
+        },
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply
+        .code(result.replayed ? 200 : 201)
+        .send(parseHrTimesheetResponse(result.timesheet));
     },
   );
 

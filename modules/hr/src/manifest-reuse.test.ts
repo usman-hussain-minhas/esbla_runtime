@@ -54,6 +54,7 @@ describe("HR passenger manifest reuse contract", () => {
       "hr.timesheet.approve",
       "hr.timesheet.configure_service",
       "hr.timesheet.create",
+      "hr.timesheet.create_correction",
       "hr.timesheet.deactivate_service",
       "hr.timesheet.edit_draft",
       "hr.timesheet.reject",

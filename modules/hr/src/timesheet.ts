@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   type HrTimesheetApproveBody,
   type HrTimesheetCreateBody,
+  type HrTimesheetCreateCorrectionBody,
   type HrTimesheetDecisionBody,
   type HrTimesheetEditDraftBody,
   type HrTimesheetRejectBody,
@@ -40,7 +41,8 @@ const SUBJECT_RECEIPT = "hr.timesheet.idempotency";
 const WORK_TYPE = "hr.timesheet.approval";
 type EmployeeAction = "create" | "edit_draft" | "submit";
 type ManagerAction = "approve" | "reject";
-type TimesheetAction = EmployeeAction | ManagerAction;
+type OperatorAction = "create_correction";
+type TimesheetAction = EmployeeAction | ManagerAction | OperatorAction;
 interface Receipt {
   readonly action: TimesheetAction;
   readonly eventType: string;
@@ -364,6 +366,7 @@ async function readReplay(
   transaction: TenantTransaction,
   receipt: Receipt,
   replayInput:
+    | HrTimesheetCreateCorrectionBody
     | HrTimesheetDecisionBody
     | HrTimesheetEditDraftBody
     | HrTimesheetSubmitBody
@@ -429,7 +432,12 @@ async function readReplay(
     !Array.isArray(recorded.payload)
       ? (recorded.payload as Record<string, unknown>)
       : null;
-  const beforeVersion = receipt.action === "create" ? null : replayInput?.expectedVersion;
+  const beforeVersion =
+    receipt.action === "create"
+      ? null
+      : receipt.action === "create_correction"
+        ? replayInput?.expectedRootVersion
+        : replayInput?.expectedVersion;
   const afterVersion = (beforeVersion ?? 0) + 1;
   const transition =
     receipt.action === "approve"
@@ -441,6 +449,11 @@ async function readReplay(
           : receipt.action === "edit_draft"
             ? (["draft", "draft"] as const)
             : ([null, "draft"] as const);
+  const transitionCurrent =
+    receipt.action === "create_correction"
+      ? (recorded?.prior_state === "approved" || recorded?.prior_state === "rejected") &&
+        recorded?.new_state === "draft"
+      : recorded?.prior_state === transition[0] && recorded?.new_state === transition[1];
   if (
     proof.rows.length !== 1 ||
     !recorded ||
@@ -456,8 +469,7 @@ async function readReplay(
     recorded.aggregate_type !== SUBJECT_VERSION ||
     recorded.subject_type !== SUBJECT_VERSION ||
     recorded.aggregate_version !== afterVersion ||
-    recorded.prior_state !== transition[0] ||
-    recorded.new_state !== transition[1] ||
+    !transitionCurrent ||
     !UUID_PATTERN.test(String(payload.timesheetId))
   ) {
     throw idempotencyConflict();
@@ -466,7 +478,12 @@ async function readReplay(
   const timesheetVersionId =
     receipt.action === "create"
       ? deriveStableUuid("hr.timesheet.version.v1", receipt.receiptId)
-      : normalizeUuid(replayInput?.expectedTimesheetVersionId ?? "", "expectedTimesheetVersionId");
+      : receipt.action === "create_correction"
+        ? deriveStableUuid("hr.timesheet.correction.version.v1", receipt.receiptId)
+        : normalizeUuid(
+            replayInput?.expectedTimesheetVersionId ?? "",
+            "expectedTimesheetVersionId",
+          );
   if (recorded.aggregate_id !== timesheetVersionId) throw idempotencyConflict();
   const current = await mapTimesheet(transaction, timesheetId, timesheetVersionId);
   let result: HrTimesheetResponse;
@@ -483,6 +500,20 @@ async function readReplay(
         totalMinutes: 0,
       },
       rootVersion: 1,
+    });
+  } else if (replayInput && receipt.action === "create_correction") {
+    result = parseHrTimesheetResponse({
+      ...current,
+      currentVersion: {
+        ...current.currentVersion,
+        assignedApproverWorkerProfileId: null,
+        entries: [],
+        rowVersion: 1,
+        status: "draft",
+        submittedAt: null,
+        totalMinutes: 0,
+      },
+      rootVersion: afterVersion,
     });
   } else if (replayInput && (receipt.action === "approve" || receipt.action === "reject")) {
     result = parseHrTimesheetResponse({
@@ -994,6 +1025,149 @@ export async function submitTimesheet(
         "submitted",
         selectedVersion.row_version,
         timesheet.currentVersion.rowVersion,
+      );
+      return { billingState: HR_TIMESHEET_BILLING_STATE, replayed: false, timesheet };
+    });
+  } catch (error) {
+    return translate(error);
+  }
+}
+
+async function authorizeOperator(
+  transaction: TenantTransaction,
+  action: OperatorAction,
+): Promise<void> {
+  const actionKey = `hr.timesheet.${action}`;
+  const capability = await transaction.client.query(
+    `SELECT capability_id FROM membership_capabilities
+     WHERE tenant_id=$1 AND principal_id=$2 AND capability_id=$3`,
+    [transaction.context.tenantId, transaction.context.actorPrincipalId, actionKey],
+  );
+  const registered = hrManifest.capabilities.some(
+    ({ exposure, id }) => exposure === "tenant" && id === actionKey,
+  );
+  assertPolicyAllowed(
+    evaluatePolicy(
+      {
+        actionKey,
+        input: { capabilityCurrent: registered && capability.rows.length === 1 },
+        resourceKey: HR_TIMESHEET_SERVICE_KEY,
+        transaction,
+      },
+      [
+        {
+          effect: "allow",
+          id: `current_hr_operator_${action}`,
+          matches: (request, actor) => actor.roleKey === "hr_operator" && request.capabilityCurrent,
+        },
+      ],
+    ),
+    transaction,
+    actionKey,
+    HR_TIMESHEET_SERVICE_KEY,
+  );
+}
+
+export async function createTimesheetCorrection(
+  pool: Pool,
+  context: OperationContext,
+  timesheetIdInput: string,
+  input: HrTimesheetCreateCorrectionBody & { readonly idempotencyKey: string },
+): Promise<TimesheetMutationResult> {
+  const timesheetId = normalizeUuid(timesheetIdInput, "timesheetId");
+  try {
+    return await withTimesheetTransaction(pool, context, async (transaction) => {
+      await authorizeOperator(transaction, "create_correction");
+      const receipt = await prepareReceipt(transaction, "create_correction", input.idempotencyKey, [
+        timesheetId,
+        input,
+      ]);
+      const replay = await readReplay(transaction, receipt, input);
+      if (replay) {
+        return { billingState: HR_TIMESHEET_BILLING_STATE, replayed: true, timesheet: replay };
+      }
+      const versionId = normalizeUuid(
+        input.expectedTimesheetVersionId,
+        "expectedTimesheetVersionId",
+      );
+      const root = await transaction.client.query<RootRow>(
+        `SELECT timesheet_id,worker_profile_id,period_start::text,period_end::text,
+                current_version_id,row_version
+         FROM hr_timesheets WHERE tenant_id=$1 AND timesheet_id=$2 FOR UPDATE`,
+        [transaction.context.tenantId, timesheetId],
+      );
+      const selectedRoot = root.rows[0];
+      if (!selectedRoot) throw notFound();
+      if (
+        selectedRoot.row_version !== input.expectedRootVersion ||
+        selectedRoot.current_version_id !== versionId
+      ) {
+        throw versionConflict();
+      }
+      const predecessor = await transaction.client.query<VersionRow>(
+        `SELECT timesheet_version_id,timesheet_id,supersedes_version_id,version,status,
+                assigned_approver_worker_profile_id,submitted_at,total_minutes,row_version
+         FROM hr_timesheet_versions
+         WHERE tenant_id=$1 AND timesheet_id=$2 AND timesheet_version_id=$3 FOR UPDATE`,
+        [transaction.context.tenantId, timesheetId, versionId],
+      );
+      const selectedPredecessor = predecessor.rows[0];
+      if (
+        !selectedPredecessor ||
+        !["approved", "rejected"].includes(selectedPredecessor.status) ||
+        selectedPredecessor.row_version !== input.expectedVersion
+      ) {
+        throw versionConflict();
+      }
+      const successors = await transaction.client.query(
+        `SELECT timesheet_version_id FROM hr_timesheet_versions
+         WHERE tenant_id=$1 AND timesheet_id=$2 AND supersedes_version_id=$3
+         ORDER BY timesheet_version_id LIMIT 2`,
+        [transaction.context.tenantId, timesheetId, versionId],
+      );
+      if (successors.rows.length !== 0) throw versionConflict();
+      const correctionVersionId = deriveStableUuid(
+        "hr.timesheet.correction.version.v1",
+        receipt.receiptId,
+      );
+      const correctionNumber = selectedPredecessor.version + 1;
+      await transaction.client.query(
+        `INSERT INTO hr_timesheet_versions
+           (timesheet_version_id,tenant_id,timesheet_id,supersedes_version_id,version)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [
+          correctionVersionId,
+          transaction.context.tenantId,
+          timesheetId,
+          versionId,
+          correctionNumber,
+        ],
+      );
+      const advanced = await transaction.client.query(
+        `UPDATE hr_timesheets
+         SET current_version_id=$3,row_version=row_version+1
+         WHERE tenant_id=$1 AND timesheet_id=$2 AND current_version_id=$4 AND row_version=$5
+         RETURNING row_version`,
+        [
+          transaction.context.tenantId,
+          timesheetId,
+          correctionVersionId,
+          versionId,
+          selectedRoot.row_version,
+        ],
+      );
+      if (advanced.rows.length !== 1) throw versionConflict();
+      const timesheet = await mapTimesheet(transaction, timesheetId);
+      await recordResult(
+        transaction,
+        receipt,
+        timesheet,
+        correctionVersionId,
+        SUBJECT_VERSION,
+        selectedPredecessor.status,
+        "draft",
+        selectedRoot.row_version,
+        correctionNumber,
       );
       return { billingState: HR_TIMESHEET_BILLING_STATE, replayed: false, timesheet };
     });
