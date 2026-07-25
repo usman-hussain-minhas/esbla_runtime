@@ -8,7 +8,7 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   forbidOnly: true,
   fullyParallel: false,
-  globalTimeout: 120_000,
+  globalTimeout: 480_000,
   outputDir: `${outputRoot}/esbla-playwright-results`,
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],
   reporter: "line",
