@@ -109,6 +109,70 @@ test("employee creates, edits, submits, and reloads a rendered weekly Timesheet"
   }
 });
 
+test("HR operator creates one explicit correction successor with persistent history", async ({
+  browser,
+}) => {
+  const employee = await openActor(
+    browser,
+    fixture.employmentEmployeeOrigin,
+    fixture.employmentEmployeeLabel,
+  );
+  const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
+  const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
+  try {
+    const timesheetId = await createAndSubmit(
+      employee,
+      "2029-01-08",
+      "2029-01-14",
+      "2029-01-08",
+      "Correction journey",
+    );
+    await manager.page.goto(`${manager.origin}/workspace/my-work`);
+    await manager.page
+      .getByRole("listitem")
+      .filter({ hasText: "2029-01-08 to 2029-01-14" })
+      .getByRole("link", { name: "Review Timesheet" })
+      .click();
+    await manager.page.getByLabel("Approval note").fill("Terminal predecessor");
+    await post(manager, "Approve Timesheet");
+    await expect(manager.page.locator(".leave-status")).toHaveText("Approved");
+
+    await operator.page.goto(`${operator.origin}/workspace/hr`);
+    await operator.page.getByRole("link", { name: "Timesheet corrections" }).click();
+    await expect(
+      operator.page.getByRole("heading", { name: "Timesheet corrections" }),
+    ).toBeVisible();
+    await operator.page.getByLabel("Timesheet ID").fill(timesheetId);
+    await operator.page.getByRole("button", { name: "Open Timesheet" }).click();
+    await expect(operator.page).toHaveURL(
+      new RegExp(`/workspace/hr/timesheets/by-id/${timesheetId}\\?returnTo=corrections`),
+    );
+    await expect(operator.page.locator(".leave-status")).toHaveText("Approved");
+    await expect(operator.page.getByText("Version 1: Approved")).toBeVisible();
+    await post(operator, "Create correction draft");
+    await expect(operator.page.locator(".leave-status")).toHaveText("Draft");
+    await expect(operator.page.getByText("Version 2: Draft")).toBeVisible();
+    await expect(operator.page.getByText("Version 1: Approved")).toBeVisible();
+    await expect(operator.page.getByText("Terminal predecessor")).toBeVisible();
+
+    await employee.page.goto(
+      `${employee.origin}/workspace/hr/timesheets/by-id/${timesheetId}?returnTo=own`,
+    );
+    await expect(employee.page.locator(".leave-status")).toHaveText("Draft");
+    await expect(employee.page.getByText("Version 2: Draft")).toBeVisible();
+    await expect(employee.page.getByText("Version 1: Approved")).toBeVisible();
+    await employee.page.reload();
+    await expect(employee.page.locator(".leave-status")).toHaveText("Draft");
+
+    await employee.page.goto(`${employee.origin}/workspace/hr/timesheets/admin/corrections`);
+    await expect(
+      employee.page.getByRole("heading", { name: "Timesheet unavailable" }),
+    ).toBeVisible();
+  } finally {
+    await closeActors(employee, manager, operator);
+  }
+});
+
 test("manager decides assigned Timesheets and tenant settings alter rejection behavior", async ({
   browser,
 }) => {

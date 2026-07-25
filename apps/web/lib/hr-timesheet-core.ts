@@ -24,6 +24,8 @@ const ENTRY_FIELD = /^(entryDate|entryDescription|entryId|entryMinutes|entryVers
 const MAX_INTEGER = 2_147_483_647;
 type Search = Readonly<Record<string, string | readonly string[] | undefined>>;
 
+export const TIMESHEET_CORRECTIONS_SURFACE_PATH =
+  "/workspace/hr/timesheets/admin/corrections" as const;
 export const TIMESHEET_AUTHORIZED_ACTIONS = Object.freeze([
   "activate_service",
   "approve",
@@ -70,6 +72,13 @@ export type TimesheetAction =
       body: HrTimesheetSubmitBody;
       idempotencyKey: string;
       operation: "submit";
+      timesheetId: string;
+    }>
+  | Readonly<{
+      body: HrTimesheetSubmitBody;
+      idempotencyKey: string;
+      operation: "create_correction";
+      returnTo: "corrections";
       timesheetId: string;
     }>
   | Readonly<{
@@ -260,7 +269,7 @@ export async function decodeTimesheetMutation(
 ): Promise<HrTimesheetResponse> {
   const replay = response.headers.get("idempotent-replayed");
   const valid =
-    operation === "create"
+    operation === "create" || operation === "create_correction"
       ? (response.status === 201 && replay === "false") ||
         (response.status === 200 && replay === "true")
       : response.status === 200 && (replay === "false" || replay === "true");
@@ -451,6 +460,7 @@ export function validateTimesheetAction(
     }
     if (
       operation !== "approve" &&
+      operation !== "create_correction" &&
       operation !== "edit_draft" &&
       operation !== "reject" &&
       operation !== "submit"
@@ -467,6 +477,20 @@ export function validateTimesheetAction(
       "timesheetId",
     ]);
     const expectedBody = expected(value);
+    if (operation === "create_correction") {
+      exact(value, new Set([...common, "returnTo"]));
+      if (value.returnTo !== "corrections") throw 0;
+      return {
+        ok: true,
+        value: {
+          body: expectedBody,
+          idempotencyKey,
+          operation,
+          returnTo: "corrections",
+          timesheetId,
+        },
+      };
+    }
     if (operation === "edit_draft") {
       const indexes = new Set<number>();
       for (const key of Object.keys(value)) {
@@ -536,6 +560,14 @@ export function validateTimesheetAction(
     };
   } catch {
     return failure();
+  }
+}
+
+export function buildTimesheetCorrectionDetailHref(value: unknown): string {
+  try {
+    return `/workspace/hr/timesheets/by-id/${uuid(value)}?returnTo=corrections`;
+  } catch {
+    throw new TimesheetUiError("validation", 400);
   }
 }
 

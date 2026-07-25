@@ -23,7 +23,10 @@ import {
 } from "../../../lib/hr-shift-assignment";
 import { hasShiftAction } from "../../../lib/hr-shift-assignment-core";
 import { loadOwnTimesheets, loadTimesheetServiceControl } from "../../../lib/hr-timesheet";
-import { hasTimesheetAction } from "../../../lib/hr-timesheet-core";
+import {
+  hasTimesheetAction,
+  TIMESHEET_CORRECTIONS_SURFACE_PATH,
+} from "../../../lib/hr-timesheet-core";
 import { loadAuthorizedWorkforceList } from "../../../lib/hr-workforce-profile-list";
 import { loadWorkforceProfileServiceControl } from "../../../lib/hr-workforce-profile-service-control";
 
@@ -105,6 +108,7 @@ export default async function HrHubPage() {
     ...new Set([...ownTimesheets.authorizedActions, ...timesheetServiceControl.authorizedActions]),
   ];
   const canViewOwnTimesheets = hasTimesheetAction(timesheetActions, "list_own");
+  const canCreateTimesheetCorrection = hasTimesheetAction(timesheetActions, "create_correction");
   const canControlTimesheets = (
     ["activate_service", "configure_service", "deactivate_service", "view_service_control"] as const
   ).some((action) => hasTimesheetAction(timesheetActions, action));
@@ -254,7 +258,7 @@ export default async function HrHubPage() {
             </div>
           </li>
         ) : null}
-        {canViewOwnTimesheets || canControlTimesheets ? (
+        {canViewOwnTimesheets || canCreateTimesheetCorrection || canControlTimesheets ? (
           <li className="work-queue-item">
             <div className="work-queue-primary">
               <div>
@@ -274,6 +278,11 @@ export default async function HrHubPage() {
                 <a className="text-command" href="/workspace/hr/timesheets">
                   My Timesheets
                   <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
+                </a>
+              ) : null}
+              {canCreateTimesheetCorrection ? (
+                <a className="text-command" href={TIMESHEET_CORRECTIONS_SURFACE_PATH}>
+                  Timesheet corrections
                 </a>
               ) : null}
               {canControlTimesheets ? (

@@ -6,6 +6,7 @@ import type {
 import { describe, expect, it } from "vitest";
 import {
   buildOwnTimesheetPath,
+  buildTimesheetCorrectionDetailHref,
   buildTimesheetDetailPath,
   decodeTimesheetDetail,
   decodeTimesheetList,
@@ -14,6 +15,7 @@ import {
   decodeTimesheetServiceMutation,
   isTimesheetServiceOperation,
   parseTimesheetActions,
+  TIMESHEET_CORRECTIONS_SURFACE_PATH,
   TimesheetUiError,
   validateTimesheetAction,
   validateTimesheetServiceAction,
@@ -79,6 +81,7 @@ function json(value: unknown, status = 200, headers: Record<string, string> = {}
 
 describe("Timesheet rendered boundary", () => {
   it("accepts only a canonical current-authority projection", () => {
+    expect(TIMESHEET_CORRECTIONS_SURFACE_PATH).toBe("/workspace/hr/timesheets/admin/corrections");
     expect(
       parseTimesheetActions(
         json({}, 200, {
@@ -116,6 +119,18 @@ describe("Timesheet rendered boundary", () => {
     await expect(
       decodeTimesheetMutation(json(root, 201, { "idempotent-replayed": "true" }), "create"),
     ).rejects.toBeInstanceOf(TimesheetUiError);
+    await expect(
+      decodeTimesheetMutation(
+        json(root, 201, { "idempotent-replayed": "false" }),
+        "create_correction",
+      ),
+    ).resolves.toEqual(root);
+    await expect(
+      decodeTimesheetMutation(
+        json(root, 200, { "idempotent-replayed": "true" }),
+        "create_correction",
+      ),
+    ).resolves.toEqual(root);
   });
 
   it("maps only strict Problem Details into sanitized UI errors", async () => {
@@ -137,7 +152,7 @@ describe("Timesheet rendered boundary", () => {
     });
   });
 
-  it("validates exact employee and manager form semantics", () => {
+  it("validates exact employee, manager, and correction form semantics", () => {
     const idempotencyKey = "60000000-0000-4000-8000-000000000001";
     const expectedForm = {
       expectedRootVersion: "1",
@@ -201,6 +216,16 @@ describe("Timesheet rendered boundary", () => {
     ).toMatchObject({ ok: true, value: { body: { decisionNote: null }, operation: "reject" } });
     expect(
       validateTimesheetAction({
+        ...expectedForm,
+        operation: "create_correction",
+        returnTo: "corrections",
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: { operation: "create_correction", returnTo: "corrections" },
+    });
+    expect(
+      validateTimesheetAction({
         idempotencyKey,
         operation: "create",
         periodEnd: "2027-07-12",
@@ -216,6 +241,19 @@ describe("Timesheet rendered boundary", () => {
         returnTo: "https://outside.invalid",
       }),
     ).toMatchObject({ ok: false, state: { kind: "validation" } });
+    expect(
+      validateTimesheetAction({
+        ...expectedForm,
+        operation: "create_correction",
+        returnTo: "my-work",
+      }),
+    ).toMatchObject({ ok: false, state: { kind: "validation" } });
+    expect(buildTimesheetCorrectionDetailHref(root.timesheetId)).toBe(
+      `/workspace/hr/timesheets/by-id/${root.timesheetId}?returnTo=corrections`,
+    );
+    expect(() => buildTimesheetCorrectionDetailHref([root.timesheetId])).toThrowError(
+      TimesheetUiError,
+    );
   });
 
   it("decodes and validates exact Timesheet service-control actions", async () => {
