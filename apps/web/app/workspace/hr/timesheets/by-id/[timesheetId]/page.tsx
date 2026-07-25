@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { loadTimesheetDetail } from "../../../../../../lib/hr-timesheet";
-import { hasTimesheetAction } from "../../../../../../lib/hr-timesheet-core";
+import {
+  hasTimesheetAction,
+  TIMESHEET_CORRECTIONS_SURFACE_PATH,
+} from "../../../../../../lib/hr-timesheet-core";
 import { TimesheetResult } from "../../result";
 
 interface Props {
@@ -32,12 +35,15 @@ export default async function TimesheetDetailPage({ params, searchParams }: Prop
   const returnTo = one(parameters.returnTo);
   const returnContext = one(parameters.returnContext);
   const fromMyWork = returnTo === "my-work" || returnContext === "my-work";
+  const fromCorrections = returnTo === "corrections";
   const back =
     returnTo === "own"
       ? "/workspace/hr/timesheets"
-      : fromMyWork
-        ? "/workspace/my-work"
-        : "/workspace/hr";
+      : fromCorrections
+        ? TIMESHEET_CORRECTIONS_SURFACE_PATH
+        : fromMyWork
+          ? "/workspace/my-work"
+          : "/workspace/hr";
   const result = one(parameters.result);
   const detail = state.status === "success" ? state.detail : null;
   const canApprove =
@@ -48,10 +54,18 @@ export default async function TimesheetDetailPage({ params, searchParams }: Prop
     detail?.accessScope === "assigned" &&
     detail.currentVersion.status === "submitted" &&
     hasTimesheetAction(state.authorizedActions, "reject");
+  const canCreateCorrection =
+    detail?.accessScope === "tenant" &&
+    (detail.currentVersion.status === "approved" || detail.currentVersion.status === "rejected") &&
+    hasTimesheetAction(state.authorizedActions, "create_correction");
   return (
     <section aria-labelledby="timesheet-detail-heading" className="work-surface">
       <a className="text-command detail-back" href={back}>
-        {fromMyWork ? "Back to My Work" : "Back to Timesheets"}
+        {fromMyWork
+          ? "Back to My Work"
+          : fromCorrections
+            ? "Back to Timesheet corrections"
+            : "Back to Timesheets"}
       </a>
       <header className="surface-heading">
         <div>
@@ -144,6 +158,42 @@ export default async function TimesheetDetailPage({ params, searchParams }: Prop
               </a>
             ) : null}
           </section>
+          {canCreateCorrection ? (
+            <section
+              aria-labelledby="timesheet-correction-heading"
+              className="leave-detail-section"
+            >
+              <h2 id="timesheet-correction-heading">Create a correction version</h2>
+              <p className="field-hint">
+                This preserves the terminal version and creates one empty successor draft for the
+                employee to complete and submit.
+              </p>
+              <form
+                action="/workspace/hr/timesheets/action"
+                className="leave-request-form"
+                method="post"
+              >
+                <input name="operation" type="hidden" value="create_correction" />
+                <input name="timesheetId" type="hidden" value={state.detail.timesheetId} />
+                <input name="idempotencyKey" type="hidden" value={randomUUID()} />
+                <input name="expectedRootVersion" type="hidden" value={state.detail.rootVersion} />
+                <input
+                  name="expectedTimesheetVersionId"
+                  type="hidden"
+                  value={state.detail.currentVersion.timesheetVersionId}
+                />
+                <input
+                  name="expectedVersion"
+                  type="hidden"
+                  value={state.detail.currentVersion.rowVersion}
+                />
+                <input name="returnTo" type="hidden" value="corrections" />
+                <button className="command-button command-button-primary" type="submit">
+                  Create correction draft
+                </button>
+              </form>
+            </section>
+          ) : null}
           {canApprove || canReject ? (
             <section aria-labelledby="timesheet-decision-heading" className="leave-detail-section">
               <h2 id="timesheet-decision-heading">Manager decision</h2>

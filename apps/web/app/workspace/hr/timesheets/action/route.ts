@@ -5,6 +5,7 @@ import {
 } from "../../../../../lib/hr-timesheet";
 import {
   isTimesheetServiceOperation,
+  TIMESHEET_CORRECTIONS_SURFACE_PATH,
   type TimesheetAction,
   timesheetStateForError,
   validateTimesheetAction,
@@ -28,6 +29,13 @@ function destination(action: TimesheetAction, success: boolean, timesheetId?: st
     return success && selectedId
       ? `/workspace/hr/timesheets/by-id/${selectedId}?returnTo=own&result=current`
       : `/workspace/hr/timesheets?edit=${selectedId ?? ""}&result=operational_error`;
+  }
+  if (action.operation === "create_correction") {
+    return selectedId
+      ? `/workspace/hr/timesheets/by-id/${selectedId}?returnTo=corrections&result=${
+          success ? "current" : "operational_error"
+        }`
+      : `${TIMESHEET_CORRECTIONS_SURFACE_PATH}?result=operational_error`;
   }
   if (action.operation === "approve" || action.operation === "reject") {
     const query = new URLSearchParams({
@@ -59,6 +67,12 @@ function failedDestination(value: Readonly<Record<string, string>>, kind: string
     return `/workspace/hr/timesheets/by-id/${selectedId}?${new URLSearchParams({
       result: kind,
       returnTo: "my-work",
+    })}`;
+  }
+  if (selectedId && value.operation === "create_correction" && value.returnTo === "corrections") {
+    return `/workspace/hr/timesheets/by-id/${selectedId}?${new URLSearchParams({
+      result: kind,
+      returnTo: "corrections",
     })}`;
   }
   return `/workspace/hr/timesheets?${query}`;

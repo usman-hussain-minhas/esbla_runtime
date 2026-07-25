@@ -121,7 +121,11 @@ export async function executeTimesheetAction(
     action.operation === "create"
       ? "/v1/hr/timesheets"
       : `/v1/hr/timesheets/${encodeURIComponent(action.timesheetId)}/${
-          action.operation === "edit_draft" ? "draft" : action.operation
+          action.operation === "edit_draft"
+            ? "draft"
+            : action.operation === "create_correction"
+              ? "corrections"
+              : action.operation
         }`;
   return await decodeTimesheetMutation(
     await fetchDevelopmentApi({
