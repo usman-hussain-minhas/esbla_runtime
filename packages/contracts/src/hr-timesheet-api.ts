@@ -28,6 +28,7 @@ export interface HrTimesheetEditDraftBody {
 }
 
 export type HrTimesheetSubmitBody = Omit<HrTimesheetEditDraftBody, "entries">;
+export type HrTimesheetCreateCorrectionBody = HrTimesheetSubmitBody;
 
 export interface HrTimesheetDecisionBody extends HrTimesheetSubmitBody {
   readonly decisionNote?: string | null;
@@ -108,6 +109,14 @@ export const hrTimesheetEditDraftBodySchema = {
 
 export const hrTimesheetSubmitBodySchema = {
   $id: "HrTimesheetSubmitRequestV1",
+  additionalProperties: false,
+  properties: expectedProperties,
+  required: ["expectedRootVersion", "expectedTimesheetVersionId", "expectedVersion"],
+  type: "object",
+} as const;
+
+export const hrTimesheetCreateCorrectionBodySchema = {
+  $id: "HrTimesheetCreateCorrectionRequestV1",
   additionalProperties: false,
   properties: expectedProperties,
   required: ["expectedRootVersion", "expectedTimesheetVersionId", "expectedVersion"],
@@ -279,6 +288,12 @@ export function parseHrTimesheetSubmitBody(value: unknown): HrTimesheetSubmitBod
     expectedTimesheetVersionId: string(input.expectedTimesheetVersionId, uuidExpression),
     expectedVersion: positive(input.expectedVersion),
   };
+}
+
+export function parseHrTimesheetCreateCorrectionBody(
+  value: unknown,
+): HrTimesheetCreateCorrectionBody {
+  return parseHrTimesheetSubmitBody(value);
 }
 
 function parseHrTimesheetDecisionBody(value: unknown): HrTimesheetDecisionBody {

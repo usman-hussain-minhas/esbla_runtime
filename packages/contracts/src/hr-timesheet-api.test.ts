@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseHrTimesheetApproveBody,
+  parseHrTimesheetCreateCorrectionBody,
   parseHrTimesheetEditDraftBody,
   parseHrTimesheetRejectBody,
 } from "./hr-timesheet-api.js";
@@ -43,5 +44,17 @@ describe("HR Timesheet API contract", () => {
     expect(() =>
       parseHrTimesheetApproveBody({ ...expected, decisionNote: "x".repeat(2001) }),
     ).toThrow(TypeError);
+  });
+
+  it("parses exact correction currentness without accepting extra fields", () => {
+    const expected = {
+      expectedRootVersion: 1,
+      expectedTimesheetVersionId: id("000000000001"),
+      expectedVersion: 4,
+    };
+    expect(parseHrTimesheetCreateCorrectionBody(expected)).toEqual(expected);
+    expect(() => parseHrTimesheetCreateCorrectionBody({ ...expected, copyEntries: true })).toThrow(
+      TypeError,
+    );
   });
 });

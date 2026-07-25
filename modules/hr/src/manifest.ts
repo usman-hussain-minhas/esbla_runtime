@@ -35,6 +35,7 @@ export const hrManifest = defineModuleManifest({
     Object.freeze({ exposure: "tenant", id: "hr.timesheet.approve" }),
     Object.freeze({ exposure: "admin", id: "hr.timesheet.configure_service" }),
     Object.freeze({ exposure: "tenant", id: "hr.timesheet.create" }),
+    Object.freeze({ exposure: "tenant", id: "hr.timesheet.create_correction" }),
     Object.freeze({ exposure: "admin", id: "hr.timesheet.deactivate_service" }),
     Object.freeze({ exposure: "tenant", id: "hr.timesheet.edit_draft" }),
     Object.freeze({ exposure: "tenant", id: "hr.timesheet.reject" }),
