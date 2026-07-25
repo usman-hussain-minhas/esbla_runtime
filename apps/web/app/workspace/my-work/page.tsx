@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { HrAssignedLeaveRequestSummary } from "@esbla/contracts/hr-leave-api";
+import type { HrTimesheetListItem } from "@esbla/contracts/hr-timesheet-api";
 import type { AssignedWorkspaceTaskSummary } from "@esbla/contracts/workspace-task-api";
 import { ArrowRight, ClipboardCheck, Clock3 } from "lucide-react";
 import { loadAssignedProviderView } from "../../../lib/assigned-provider-core";
 import { getAssignedLeaveRequests } from "../../../lib/hr-leave-assigned-list";
 import { buildHrLeaveDetailHref } from "../../../lib/hr-leave-navigation-core";
+import { getAssignedTimesheets } from "../../../lib/hr-timesheet";
 import { getAssignedWorkspaceTasks } from "../../../lib/workspace-task-assigned-list";
 import { LeaveApprovalAction } from "./leave-approval-action";
 import { LeaveRejectionAction } from "./leave-rejection-action";
@@ -84,6 +86,55 @@ function TaskQueueItem({ item }: { readonly item: AssignedWorkspaceTaskSummary }
   );
 }
 
+function minutes(value: number): string {
+  return `${Math.floor(value / 60)}h ${value % 60}m`;
+}
+
+function TimesheetQueueItem({ item }: { readonly item: HrTimesheetListItem }) {
+  return (
+    <li className="work-queue-item" key={item.workItemId}>
+      <div className="work-queue-primary">
+        <div>
+          <p className="work-queue-kicker">Timesheet approval</p>
+          <h2>
+            {item.periodStart} to {item.periodEnd}
+          </h2>
+          <p className="work-queue-dates">{minutes(item.totalMinutes)}</p>
+        </div>
+        <span className="work-status">
+          <Clock3 aria-hidden="true" size={15} strokeWidth={1.8} />
+          Needs review
+        </span>
+      </div>
+      <dl className="work-queue-meta">
+        <div>
+          <dt>Worker profile</dt>
+          <dd>{item.workerProfileId}</dd>
+        </div>
+        <div>
+          <dt>Submitted</dt>
+          <dd>
+            {item.submittedAt ? (
+              <time dateTime={item.submittedAt}>{formatDateTime(item.submittedAt)}</time>
+            ) : (
+              "Unavailable"
+            )}
+          </dd>
+        </div>
+      </dl>
+      <div className="work-queue-actions">
+        <a
+          className="text-command work-detail-link"
+          href={`/workspace/hr/timesheets/by-id/${item.timesheetId}?returnContext=my-work`}
+        >
+          Review Timesheet
+          <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
+        </a>
+      </div>
+    </li>
+  );
+}
+
 function QueueNotice({ heading, summary }: { readonly heading: string; readonly summary: string }) {
   return (
     <div className="empty-worklist">
@@ -100,6 +151,7 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
   const parameters = await searchParams;
   const view = await loadAssignedProviderView({
     loadHr: (cursor) => getAssignedLeaveRequests(cursor),
+    loadTimesheet: (cursor) => getAssignedTimesheets(cursor),
     loadWorkspace: (cursor) => getAssignedWorkspaceTasks(cursor),
     searchParams: parameters,
   });
@@ -206,10 +258,31 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
               summary="No leave approvals are shown at this position."
             />
           )}
+
+          {view.timesheet.unavailable ? (
+            <QueueNotice
+              heading="Timesheet approvals unavailable"
+              summary="This queue is unavailable right now."
+            />
+          ) : !view.timesheet.empty ? (
+            <ol aria-label="Assigned Timesheet approvals" className="work-queue">
+              {view.timesheet.page.items.map((item) => (
+                <TimesheetQueueItem item={item} key={item.workItemId} />
+              ))}
+            </ol>
+          ) : (
+            <QueueNotice
+              heading="No Timesheet approvals on this page"
+              summary="No Timesheet approvals are shown at this position."
+            />
+          )}
         </>
       )}
 
-      {view.nextApprovalsHref || view.nextTasksHref || view.startOverHref ? (
+      {view.nextApprovalsHref ||
+      view.nextTasksHref ||
+      view.nextTimesheetsHref ||
+      view.startOverHref ? (
         <nav aria-label="Assigned approval pages" className="list-pagination">
           {view.startOverHref ? (
             <a className="text-command" href={view.startOverHref}>
@@ -226,6 +299,11 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
           {view.nextTasksHref ? (
             <a className="text-command" href={view.nextTasksHref}>
               Next tasks
+            </a>
+          ) : null}
+          {view.nextTimesheetsHref ? (
+            <a className="text-command" href={view.nextTimesheetsHref}>
+              Next Timesheets
             </a>
           ) : null}
         </nav>

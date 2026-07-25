@@ -3,11 +3,20 @@ import type {
   HrLeaveRequestCursor,
 } from "@esbla/contracts/hr-leave-api";
 import type {
+  HrTimesheetAssignedCursor,
+  HrTimesheetListResponse,
+} from "@esbla/contracts/hr-timesheet-api";
+import type {
   AssignedWorkspaceTaskPage,
   WorkspaceTaskCursor,
 } from "@esbla/contracts/workspace-task-api";
 
-export type AssignedProvider = "hr_leave_assigned" | "workspace_task_assigned";
+type AssignedTimesheetPage = Extract<HrTimesheetListResponse, { readonly kind: "assigned" }>;
+
+export type AssignedProvider =
+  | "hr_leave_assigned"
+  | "hr_timesheet_assigned"
+  | "workspace_task_assigned";
 export type AssignedProviderUnavailableReason = "inactive" | "ineligible";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -20,7 +29,9 @@ export class AssignedProviderUnavailableError extends Error {
 
   constructor(provider: AssignedProvider, reason: AssignedProviderUnavailableReason) {
     if (
-      (provider !== "hr_leave_assigned" && provider !== "workspace_task_assigned") ||
+      !["hr_leave_assigned", "hr_timesheet_assigned", "workspace_task_assigned"].includes(
+        provider,
+      ) ||
       (reason !== "inactive" && reason !== "ineligible") ||
       (provider === "workspace_task_assigned" && reason !== "inactive")
     ) {
@@ -49,6 +60,7 @@ export type AssignedProviderSearchParams = Readonly<
 
 export interface AssignedProviderCursors {
   readonly hr: HrLeaveRequestCursor | undefined;
+  readonly timesheet: HrTimesheetAssignedCursor | undefined;
   readonly workspace: WorkspaceTaskCursor | undefined;
 }
 
@@ -60,8 +72,10 @@ export interface AssignedProviderViewModel {
   readonly hr: AssignedProviderState<HrAssignedLeaveRequestPage>;
   readonly nextApprovalsHref: string | null;
   readonly nextTasksHref: string | null;
+  readonly nextTimesheetsHref: string | null;
   readonly queuesClear: boolean;
   readonly startOverHref: string | null;
+  readonly timesheet: AssignedProviderState<AssignedTimesheetPage>;
   readonly totalShown: number;
   readonly workspace: AssignedProviderState<AssignedWorkspaceTaskPage>;
 }
@@ -70,6 +84,9 @@ export interface LoadAssignedProviderViewOptions {
   readonly loadHr: (
     cursor: HrLeaveRequestCursor | undefined,
   ) => Promise<HrAssignedLeaveRequestPage>;
+  readonly loadTimesheet: (
+    cursor: HrTimesheetAssignedCursor | undefined,
+  ) => Promise<AssignedTimesheetPage>;
   readonly loadWorkspace: (
     cursor: WorkspaceTaskCursor | undefined,
   ) => Promise<AssignedWorkspaceTaskPage>;
@@ -126,6 +143,25 @@ function validateWorkspaceCursor(value: unknown): WorkspaceTaskCursor {
   return { createdAt: value.createdAt, taskId: value.taskId };
 }
 
+function validateTimesheetCursor(value: unknown): HrTimesheetAssignedCursor {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("submittedAt" in value) ||
+    !("timesheetVersionId" in value) ||
+    typeof value.submittedAt !== "string" ||
+    typeof value.timesheetVersionId !== "string" ||
+    !isStrictTimestamp(value.submittedAt) ||
+    !UUID_PATTERN.test(value.timesheetVersionId)
+  ) {
+    throw new AssignedProviderCursorError("hr_timesheet_assigned");
+  }
+  return {
+    submittedAt: value.submittedAt,
+    timesheetVersionId: value.timesheetVersionId,
+  };
+}
+
 function parseHrCursor(
   searchParams: AssignedProviderSearchParams,
 ): HrLeaveRequestCursor | undefined {
@@ -156,12 +192,29 @@ function parseWorkspaceCursor(
   });
 }
 
+function parseTimesheetCursor(
+  searchParams: AssignedProviderSearchParams,
+): HrTimesheetAssignedCursor | undefined {
+  const idPresent = hasOwn(searchParams, "cursorTimesheetVersionId");
+  const timestampPresent = hasOwn(searchParams, "cursorTimesheetSubmittedAt");
+  if (!idPresent && !timestampPresent) return undefined;
+  if (!idPresent || !timestampPresent) {
+    throw new AssignedProviderCursorError("hr_timesheet_assigned");
+  }
+  return validateTimesheetCursor({
+    submittedAt: searchParams.cursorTimesheetSubmittedAt,
+    timesheetVersionId: searchParams.cursorTimesheetVersionId,
+  });
+}
+
 export function parseAssignedProviderCursors(
   searchParams: AssignedProviderSearchParams,
 ): AssignedProviderCursors {
   let hr: HrLeaveRequestCursor | undefined;
+  let timesheet: HrTimesheetAssignedCursor | undefined;
   let workspace: WorkspaceTaskCursor | undefined;
   let hrError: unknown;
+  let timesheetError: unknown;
   let workspaceError: unknown;
 
   try {
@@ -174,10 +227,16 @@ export function parseAssignedProviderCursors(
   } catch (error) {
     workspaceError = error;
   }
+  try {
+    timesheet = parseTimesheetCursor(searchParams);
+  } catch (error) {
+    timesheetError = error;
+  }
 
   if (hrError !== undefined) throw hrError;
   if (workspaceError !== undefined) throw workspaceError;
-  return Object.freeze({ hr, workspace });
+  if (timesheetError !== undefined) throw timesheetError;
+  return Object.freeze({ hr, timesheet, workspace });
 }
 
 type Settlement<Value> =
@@ -223,8 +282,13 @@ function validateWorkspacePage(page: AssignedWorkspaceTaskPage): void {
   if (page.nextCursor !== null) validateWorkspaceCursor(page.nextCursor);
 }
 
+function validateTimesheetPage(page: AssignedTimesheetPage): void {
+  if (page.nextCursor !== null) validateTimesheetCursor(page.nextCursor);
+}
+
 function myWorkHref(
   hr: HrLeaveRequestCursor | undefined,
+  timesheet: HrTimesheetAssignedCursor | undefined,
   workspace: WorkspaceTaskCursor | undefined,
 ): string {
   const parameters = new URLSearchParams();
@@ -236,6 +300,10 @@ function myWorkHref(
     parameters.set("cursorCreatedAt", workspace.createdAt);
     parameters.set("cursorTaskId", workspace.taskId);
   }
+  if (timesheet) {
+    parameters.set("cursorTimesheetSubmittedAt", timesheet.submittedAt);
+    parameters.set("cursorTimesheetVersionId", timesheet.timesheetVersionId);
+  }
   return `/workspace/my-work?${parameters.toString()}`;
 }
 
@@ -245,9 +313,11 @@ export async function loadAssignedProviderView(
   const cursors = parseAssignedProviderCursors(options.searchParams);
   const hrSettlementPromise = settle(() => options.loadHr(cursors.hr));
   const workspaceSettlementPromise = settle(() => options.loadWorkspace(cursors.workspace));
-  const [hrSettlement, workspaceSettlement] = await Promise.all([
+  const timesheetSettlementPromise = settle(() => options.loadTimesheet(cursors.timesheet));
+  const [hrSettlement, workspaceSettlement, timesheetSettlement] = await Promise.all([
     hrSettlementPromise,
     workspaceSettlementPromise,
+    timesheetSettlementPromise,
   ]);
 
   const hr = classifySettlement(hrSettlement, "hr_leave_assigned", validateHrPage);
@@ -256,36 +326,65 @@ export async function loadAssignedProviderView(
     "workspace_task_assigned",
     validateWorkspacePage,
   );
+  const timesheet = classifySettlement(
+    timesheetSettlement,
+    "hr_timesheet_assigned",
+    validateTimesheetPage,
+  );
 
   const hrCount = hr.unavailable ? 0 : hr.page.items.length;
   const workspaceCount = workspace.unavailable ? 0 : workspace.page.items.length;
+  const timesheetCount = timesheet.unavailable ? 0 : timesheet.page.items.length;
   const nextApprovalsHref =
     !hr.unavailable && hr.page.nextCursor
-      ? myWorkHref(hr.page.nextCursor, workspace.unavailable ? undefined : cursors.workspace)
+      ? myWorkHref(
+          hr.page.nextCursor,
+          timesheet.unavailable ? undefined : cursors.timesheet,
+          workspace.unavailable ? undefined : cursors.workspace,
+        )
       : null;
   const nextTasksHref =
     !workspace.unavailable && workspace.page.nextCursor
-      ? myWorkHref(hr.unavailable ? undefined : cursors.hr, workspace.page.nextCursor)
+      ? myWorkHref(
+          hr.unavailable ? undefined : cursors.hr,
+          timesheet.unavailable ? undefined : cursors.timesheet,
+          workspace.page.nextCursor,
+        )
+      : null;
+  const nextTimesheetsHref =
+    !timesheet.unavailable && timesheet.page.nextCursor
+      ? myWorkHref(
+          hr.unavailable ? undefined : cursors.hr,
+          timesheet.page.nextCursor,
+          workspace.unavailable ? undefined : cursors.workspace,
+        )
       : null;
   const hasAvailableCurrentCursor =
     (!hr.unavailable && cursors.hr !== undefined) ||
-    (!workspace.unavailable && cursors.workspace !== undefined);
+    (!workspace.unavailable && cursors.workspace !== undefined) ||
+    (!timesheet.unavailable && cursors.timesheet !== undefined);
 
   return Object.freeze({
     hr,
     nextApprovalsHref,
     nextTasksHref,
+    nextTimesheetsHref,
     queuesClear:
       !hr.unavailable &&
       !workspace.unavailable &&
+      !timesheet.unavailable &&
       hrCount === 0 &&
       workspaceCount === 0 &&
+      timesheetCount === 0 &&
       cursors.hr === undefined &&
       cursors.workspace === undefined &&
+      cursors.timesheet === undefined &&
       hr.page.nextCursor === null &&
-      workspace.page.nextCursor === null,
+      workspace.page.nextCursor === null &&
+      timesheet.page.nextCursor === null,
     startOverHref: hasAvailableCurrentCursor ? "/workspace/my-work" : null,
-    totalShown: hrCount + workspaceCount,
+    timesheet,
+    totalShown: hrCount + workspaceCount + timesheetCount,
     workspace,
   });
 }

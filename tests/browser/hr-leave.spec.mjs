@@ -1356,7 +1356,6 @@ test("Shift roster renders across operator, employee and manager authority", asy
     await closeActors(employee, manager, operator);
   }
 });
-
 test("tenant admin controls Attendance settings while record access remains separate", async ({
   browser,
 }) => {
@@ -1370,9 +1369,11 @@ test("tenant admin controls Attendance settings while record access remains sepa
   const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
   const submit = async (actor, name) => {
     const response = actor.page.waitForResponse(
-      (candidate) => new URL(candidate.url()).pathname === "/workspace/hr/attendance/action",
+      (candidate) =>
+        candidate.request().method() === "POST" &&
+        new URL(candidate.url()).pathname === "/workspace/hr/attendance/action",
     );
-    await actor.page.getByRole("button", { exact: true, name }).press("Enter");
+    await actor.page.getByRole("button", { exact: true, name }).click();
     expect((await response).status()).toBe(303);
     await expect(actor.page.locator(".success-banner")).toBeFocused();
   };
@@ -1423,7 +1424,6 @@ test("tenant admin controls Attendance settings while record access remains sepa
     await closeActors(actionAdmin, admin, employee, operator);
   }
 });
-
 test("Attendance renders manual facts and persistent correction history by current role", async ({
   browser,
 }) => {

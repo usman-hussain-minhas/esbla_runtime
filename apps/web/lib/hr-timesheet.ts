@@ -1,21 +1,30 @@
 import "server-only";
 
 import type {
+  HrTimesheetAssignedCursor,
   HrTimesheetListResponse,
   HrTimesheetResponse,
 } from "@esbla/contracts/hr-timesheet-api";
 import { fetchDevelopmentApi } from "./development-session";
+import {
+  buildAssignedTimesheetListPath,
+  decodeAssignedTimesheetListResponse,
+} from "./hr-timesheet-assigned-list-core";
 import {
   buildOwnTimesheetPath,
   buildTimesheetDetailPath,
   decodeTimesheetDetail,
   decodeTimesheetList,
   decodeTimesheetMutation,
+  decodeTimesheetServiceControl,
+  decodeTimesheetServiceMutation,
   hasTimesheetAction,
   parseTimesheetActions,
   type TimesheetAction,
   type TimesheetAuthorizedAction,
   type TimesheetFailureState,
+  type TimesheetServiceAction,
+  type TimesheetServiceControl,
   TimesheetUiError,
   timesheetStateForError,
 } from "./hr-timesheet-core";
@@ -27,11 +36,22 @@ export type TimesheetOwnListState = Authority &
   ({ readonly page: OwnTimesheetPage; readonly status: "success" } | TimesheetFailureState);
 export type TimesheetDetailState = Authority &
   ({ readonly detail: HrTimesheetResponse; readonly status: "success" } | TimesheetFailureState);
+export type TimesheetServiceControlState = Authority &
+  (
+    | { readonly control: TimesheetServiceControl; readonly status: "success" }
+    | TimesheetFailureState
+  );
 
 const NO_ACTIONS: readonly TimesheetAuthorizedAction[] = Object.freeze([]);
 
 function actions(response: Response): readonly TimesheetAuthorizedAction[] {
   return parseTimesheetActions(response);
+}
+
+export function getAssignedTimesheets(cursor?: HrTimesheetAssignedCursor) {
+  return decodeAssignedTimesheetListResponse(
+    fetchDevelopmentApi({ method: "GET", path: buildAssignedTimesheetListPath(cursor) }),
+  );
 }
 
 export async function loadOwnTimesheets(search: Search = {}): Promise<TimesheetOwnListState> {
@@ -73,6 +93,27 @@ export async function loadTimesheetDetail(
   }
 }
 
+export async function loadTimesheetServiceControl(): Promise<TimesheetServiceControlState> {
+  let authorizedActions = NO_ACTIONS;
+  try {
+    const response = await fetchDevelopmentApi({
+      method: "GET",
+      path: "/v1/hr/timesheets/service-control",
+    });
+    authorizedActions = actions(response);
+    if (response.status === 200 && !hasTimesheetAction(authorizedActions, "view_service_control")) {
+      throw new TimesheetUiError("operational_error");
+    }
+    return {
+      authorizedActions,
+      control: await decodeTimesheetServiceControl(response),
+      status: "success",
+    };
+  } catch (error) {
+    return { ...timesheetStateForError(error), authorizedActions };
+  }
+}
+
 export async function executeTimesheetAction(
   action: TimesheetAction,
 ): Promise<HrTimesheetResponse> {
@@ -90,5 +131,23 @@ export async function executeTimesheetAction(
       path,
     }),
     action.operation,
+  );
+}
+
+export async function executeTimesheetServiceAction(
+  action: TimesheetServiceAction,
+): Promise<TimesheetServiceControl> {
+  const suffix =
+    action.operation === "configure_service"
+      ? "settings"
+      : action.operation.replace("_service", "");
+  return await decodeTimesheetServiceMutation(
+    await fetchDevelopmentApi({
+      body: action.body,
+      idempotencyKey: action.idempotencyKey,
+      method: action.operation === "configure_service" ? "PATCH" : "POST",
+      path: `/v1/hr/timesheets/service-control/${suffix}`,
+    }),
+    action,
   );
 }
