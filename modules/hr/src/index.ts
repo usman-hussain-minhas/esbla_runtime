@@ -27,6 +27,7 @@ export * from "./shift-assignment.js";
 export * from "./shift-assignment-queries.js";
 export * from "./shift-assignment-service-control.js";
 export * from "./timesheet.js";
+export * from "./timesheet-queries.js";
 export * from "./timesheet-service-control.js";
 export * from "./types.js";
 export * from "./workforce-commands.js";

@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   parseHrTimesheetApproveBody,
+  parseHrTimesheetAssignedListQuery,
   parseHrTimesheetCreateCorrectionBody,
+  parseHrTimesheetDetailQuery,
   parseHrTimesheetEditDraftBody,
+  parseHrTimesheetOwnListQuery,
   parseHrTimesheetRejectBody,
 } from "./hr-timesheet-api.js";
 
@@ -56,5 +59,30 @@ describe("HR Timesheet API contract", () => {
     expect(() => parseHrTimesheetCreateCorrectionBody({ ...expected, copyEntries: true })).toThrow(
       TypeError,
     );
+  });
+
+  it("requires paired, bounded provider-local cursors", () => {
+    const ownCursor = {
+      cursorPeriodStart: "2028-08-22",
+      cursorTimesheetId: id("000000000001"),
+      pageSize: 50,
+    };
+    const assignedCursor = {
+      cursorSubmittedAt: "2028-08-22T10:00:00.123456Z",
+      cursorTimesheetVersionId: id("000000000002"),
+    };
+    expect(parseHrTimesheetOwnListQuery(ownCursor)).toEqual(ownCursor);
+    expect(parseHrTimesheetAssignedListQuery(assignedCursor)).toEqual(assignedCursor);
+    expect(() => parseHrTimesheetOwnListQuery({ cursorPeriodStart: "2028-08-22" })).toThrow(
+      TypeError,
+    );
+    expect(() =>
+      parseHrTimesheetAssignedListQuery({
+        cursorSubmittedAt: "2028-08-22T10:00:00Z",
+        cursorTimesheetVersionId: id("000000000002"),
+      }),
+    ).toThrow(TypeError);
+    expect(() => parseHrTimesheetDetailQuery({ cursorVersion: 2 })).toThrow(TypeError);
+    expect(() => parseHrTimesheetDetailQuery({ pageSize: 51 })).toThrow(TypeError);
   });
 });
