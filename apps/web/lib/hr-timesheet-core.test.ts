@@ -4,6 +4,8 @@ import type {
 } from "@esbla/contracts/hr-timesheet-api";
 import { describe, expect, it } from "vitest";
 import {
+  buildOwnTimesheetPath,
+  buildTimesheetDetailPath,
   decodeTimesheetDetail,
   decodeTimesheetList,
   decodeTimesheetMutation,
@@ -162,5 +164,20 @@ describe("Timesheet rendered boundary", () => {
         surprise: "not allowed",
       }),
     ).toMatchObject({ ok: false, state: { kind: "validation" } });
+  });
+
+  it("fails closed on partial or non-scalar list and history cursors", () => {
+    expect(() =>
+      buildOwnTimesheetPath({
+        cursorPeriodStart: [root.periodStart],
+        cursorTimesheetId: [root.timesheetId],
+      }),
+    ).toThrowError(TimesheetUiError);
+    expect(() =>
+      buildTimesheetDetailPath(root.timesheetId, {
+        cursorTimesheetVersionId: [root.currentVersion.timesheetVersionId],
+        cursorVersion: ["1"],
+      }),
+    ).toThrowError(TimesheetUiError);
   });
 });

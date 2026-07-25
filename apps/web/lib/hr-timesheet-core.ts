@@ -349,12 +349,12 @@ export function validateTimesheetAction(
 export function buildOwnTimesheetPath(search: Search): string {
   try {
     const query = new URLSearchParams();
-    const periodStart = scalar(search.cursorPeriodStart);
-    const timesheetId = scalar(search.cursorTimesheetId);
-    if ((periodStart === undefined) !== (timesheetId === undefined)) throw 0;
-    if (periodStart !== undefined) {
-      query.set("cursorPeriodStart", date(periodStart));
-      query.set("cursorTimesheetId", uuid(timesheetId));
+    const periodStartPresent = Object.hasOwn(search, "cursorPeriodStart");
+    const timesheetIdPresent = Object.hasOwn(search, "cursorTimesheetId");
+    if (periodStartPresent !== timesheetIdPresent) throw 0;
+    if (periodStartPresent) {
+      query.set("cursorPeriodStart", date(search.cursorPeriodStart));
+      query.set("cursorTimesheetId", uuid(search.cursorTimesheetId));
     }
     return `/v1/hr/timesheets/own${query.size ? `?${query}` : ""}`;
   } catch {
@@ -365,12 +365,12 @@ export function buildOwnTimesheetPath(search: Search): string {
 export function buildTimesheetDetailPath(timesheetId: string, search: Search): string {
   try {
     const query = new URLSearchParams();
-    const versionId = scalar(search.cursorTimesheetVersionId);
-    const version = scalar(search.cursorVersion);
-    if ((versionId === undefined) !== (version === undefined)) throw 0;
-    if (versionId !== undefined) {
-      query.set("cursorTimesheetVersionId", uuid(versionId));
-      query.set("cursorVersion", String(positive(version)));
+    const versionIdPresent = Object.hasOwn(search, "cursorTimesheetVersionId");
+    const versionPresent = Object.hasOwn(search, "cursorVersion");
+    if (versionIdPresent !== versionPresent) throw 0;
+    if (versionIdPresent) {
+      query.set("cursorTimesheetVersionId", uuid(search.cursorTimesheetVersionId));
+      query.set("cursorVersion", String(positive(search.cursorVersion)));
     }
     return `/v1/hr/timesheets/by-id/${uuid(timesheetId)}${query.size ? `?${query}` : ""}`;
   } catch {
