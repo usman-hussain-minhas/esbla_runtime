@@ -1,3 +1,4 @@
+import type { HrServiceControl } from "@esbla/contracts/hr-service-control-api";
 import type {
   HrTimesheetListResponse,
   HrTimesheetResponse,
@@ -9,9 +10,13 @@ import {
   decodeTimesheetDetail,
   decodeTimesheetList,
   decodeTimesheetMutation,
+  decodeTimesheetServiceControl,
+  decodeTimesheetServiceMutation,
+  isTimesheetServiceOperation,
   parseTimesheetActions,
   TimesheetUiError,
   validateTimesheetAction,
+  validateTimesheetServiceAction,
 } from "./hr-timesheet-core";
 
 const root = {
@@ -51,6 +56,19 @@ const assigned = {
   kind: "assigned",
   nextCursor: null,
 } satisfies HrTimesheetListResponse;
+const control = {
+  activationState: "active",
+  activationVersion: 1,
+  serviceKey: "timesheet",
+  settings: {
+    maxDailyMinutes: 720,
+    periodCadence: "weekly",
+    rejectionNoteRequired: true,
+  },
+  settingsVersion: 1,
+  updatedAt: "2027-07-01T00:00:00.000Z",
+  version: 1,
+} satisfies HrServiceControl;
 
 function json(value: unknown, status = 200, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(value), {
@@ -119,8 +137,15 @@ describe("Timesheet rendered boundary", () => {
     });
   });
 
-  it("validates exact create, edit, and submit form semantics", () => {
+  it("validates exact employee and manager form semantics", () => {
     const idempotencyKey = "60000000-0000-4000-8000-000000000001";
+    const expectedForm = {
+      expectedRootVersion: "1",
+      expectedTimesheetVersionId: root.currentVersion.timesheetVersionId,
+      expectedVersion: "1",
+      idempotencyKey,
+      timesheetId: root.timesheetId,
+    };
     expect(
       validateTimesheetAction({
         idempotencyKey,
@@ -147,14 +172,33 @@ describe("Timesheet rendered boundary", () => {
     });
     expect(
       validateTimesheetAction({
-        expectedRootVersion: "1",
-        expectedTimesheetVersionId: root.currentVersion.timesheetVersionId,
-        expectedVersion: "1",
-        idempotencyKey,
+        ...expectedForm,
         operation: "submit",
-        timesheetId: root.timesheetId,
       }),
     ).toMatchObject({ ok: true, value: { operation: "submit" } });
+    expect(
+      validateTimesheetAction({
+        ...expectedForm,
+        decisionNote: "  Reviewed against recorded facts  ",
+        operation: "approve",
+        returnTo: "my-work",
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        body: { decisionNote: "Reviewed against recorded facts" },
+        operation: "approve",
+        returnTo: "my-work",
+      },
+    });
+    expect(
+      validateTimesheetAction({
+        ...expectedForm,
+        decisionNote: "",
+        operation: "reject",
+        returnTo: "my-work",
+      }),
+    ).toMatchObject({ ok: true, value: { body: { decisionNote: null }, operation: "reject" } });
     expect(
       validateTimesheetAction({
         idempotencyKey,
@@ -164,6 +208,49 @@ describe("Timesheet rendered boundary", () => {
         surprise: "not allowed",
       }),
     ).toMatchObject({ ok: false, state: { kind: "validation" } });
+    expect(
+      validateTimesheetAction({
+        ...expectedForm,
+        decisionNote: "Reviewed",
+        operation: "approve",
+        returnTo: "https://outside.invalid",
+      }),
+    ).toMatchObject({ ok: false, state: { kind: "validation" } });
+  });
+
+  it("decodes and validates exact Timesheet service-control actions", async () => {
+    await expect(decodeTimesheetServiceControl(json(control))).resolves.toEqual(control);
+    const configured = {
+      ...control,
+      settings: { ...control.settings, rejectionNoteRequired: false },
+      settingsVersion: 2,
+      version: 2,
+    };
+    const action = {
+      body: {
+        expectedSettingsVersion: 1,
+        settings: configured.settings,
+      },
+      idempotencyKey: "60000000-0000-4000-8000-000000000002",
+      operation: "configure_service",
+    } as const;
+    await expect(
+      decodeTimesheetServiceMutation(
+        json(configured, 200, { "idempotent-replayed": "false" }),
+        action,
+      ),
+    ).resolves.toEqual(configured);
+    expect(
+      validateTimesheetServiceAction({
+        expectedSettingsVersion: "1",
+        idempotencyKey: action.idempotencyKey,
+        maxDailyMinutes: "720",
+        operation: "configure_service",
+        periodCadence: "weekly",
+        rejectionNoteRequired: "false",
+      }),
+    ).toEqual({ ok: true, value: action });
+    expect(isTimesheetServiceOperation("deactivate_service")).toBe(true);
   });
 
   it("fails closed on partial or non-scalar list and history cursors", () => {

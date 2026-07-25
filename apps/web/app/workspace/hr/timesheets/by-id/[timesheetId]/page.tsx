@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { loadTimesheetDetail } from "../../../../../../lib/hr-timesheet";
+import { hasTimesheetAction } from "../../../../../../lib/hr-timesheet-core";
 import { TimesheetResult } from "../../result";
 
 interface Props {
@@ -13,7 +15,7 @@ const resultCopy = {
   inactive: "Timesheet is inactive. Existing history remains preserved.",
   not_found: "This Timesheet is not available.",
   operational_error: "The Timesheet action was not confirmed. Review current values.",
-  validation: "Review the requested Timesheet version.",
+  validation: "Dates, entries, or submitted values are invalid.",
 } as const;
 function one(value: string | string[] | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
@@ -28,13 +30,28 @@ export default async function TimesheetDetailPage({ params, searchParams }: Prop
   const [{ timesheetId }, parameters] = await Promise.all([params, searchParams]);
   const state = await loadTimesheetDetail(timesheetId, parameters);
   const returnTo = one(parameters.returnTo);
-  const back = returnTo === "own" ? "/workspace/hr/timesheets" : "/workspace/hr";
+  const returnContext = one(parameters.returnContext);
+  const fromMyWork = returnTo === "my-work" || returnContext === "my-work";
+  const back =
+    returnTo === "own"
+      ? "/workspace/hr/timesheets"
+      : fromMyWork
+        ? "/workspace/my-work"
+        : "/workspace/hr";
   const result = one(parameters.result);
   const detail = state.status === "success" ? state.detail : null;
+  const canApprove =
+    detail?.accessScope === "assigned" &&
+    detail.currentVersion.status === "submitted" &&
+    hasTimesheetAction(state.authorizedActions, "approve");
+  const canReject =
+    detail?.accessScope === "assigned" &&
+    detail.currentVersion.status === "submitted" &&
+    hasTimesheetAction(state.authorizedActions, "reject");
   return (
     <section aria-labelledby="timesheet-detail-heading" className="work-surface">
       <a className="text-command detail-back" href={back}>
-        Back to Timesheets
+        {fromMyWork ? "Back to My Work" : "Back to Timesheets"}
       </a>
       <header className="surface-heading">
         <div>
@@ -118,7 +135,7 @@ export default async function TimesheetDetailPage({ params, searchParams }: Prop
               <a
                 className="text-command"
                 href={`?${new URLSearchParams({
-                  ...(returnTo ? { returnTo } : {}),
+                  ...(fromMyWork ? { returnContext: "my-work" } : returnTo ? { returnTo } : {}),
                   cursorTimesheetVersionId: state.detail.history.nextCursor.timesheetVersionId,
                   cursorVersion: String(state.detail.history.nextCursor.version),
                 })}`}
@@ -127,6 +144,91 @@ export default async function TimesheetDetailPage({ params, searchParams }: Prop
               </a>
             ) : null}
           </section>
+          {canApprove || canReject ? (
+            <section aria-labelledby="timesheet-decision-heading" className="leave-detail-section">
+              <h2 id="timesheet-decision-heading">Manager decision</h2>
+              <p className="field-hint">
+                Your current manager role and assigned authority are rechecked when the decision is
+                recorded.
+              </p>
+              {canApprove ? (
+                <form
+                  action="/workspace/hr/timesheets/action"
+                  className="leave-request-form"
+                  method="post"
+                >
+                  <input name="operation" type="hidden" value="approve" />
+                  <input name="timesheetId" type="hidden" value={state.detail.timesheetId} />
+                  <input name="idempotencyKey" type="hidden" value={randomUUID()} />
+                  <input
+                    name="expectedRootVersion"
+                    type="hidden"
+                    value={state.detail.rootVersion}
+                  />
+                  <input
+                    name="expectedTimesheetVersionId"
+                    type="hidden"
+                    value={state.detail.currentVersion.timesheetVersionId}
+                  />
+                  <input
+                    name="expectedVersion"
+                    type="hidden"
+                    value={state.detail.currentVersion.rowVersion}
+                  />
+                  <input name="returnTo" type="hidden" value={fromMyWork ? "my-work" : "detail"} />
+                  <div className="form-field">
+                    <label htmlFor="timesheet-approval-note">Approval note</label>
+                    <textarea id="timesheet-approval-note" maxLength={2000} name="decisionNote" />
+                  </div>
+                  <button className="command-button command-button-primary" type="submit">
+                    Approve Timesheet
+                  </button>
+                </form>
+              ) : null}
+              {canReject ? (
+                <form
+                  action="/workspace/hr/timesheets/action"
+                  className="leave-request-form"
+                  method="post"
+                >
+                  <input name="operation" type="hidden" value="reject" />
+                  <input name="timesheetId" type="hidden" value={state.detail.timesheetId} />
+                  <input name="idempotencyKey" type="hidden" value={randomUUID()} />
+                  <input
+                    name="expectedRootVersion"
+                    type="hidden"
+                    value={state.detail.rootVersion}
+                  />
+                  <input
+                    name="expectedTimesheetVersionId"
+                    type="hidden"
+                    value={state.detail.currentVersion.timesheetVersionId}
+                  />
+                  <input
+                    name="expectedVersion"
+                    type="hidden"
+                    value={state.detail.currentVersion.rowVersion}
+                  />
+                  <input name="returnTo" type="hidden" value={fromMyWork ? "my-work" : "detail"} />
+                  <div className="form-field">
+                    <label htmlFor="timesheet-rejection-note">Rejection note</label>
+                    <textarea
+                      aria-describedby="timesheet-rejection-note-hint"
+                      id="timesheet-rejection-note"
+                      maxLength={2000}
+                      name="decisionNote"
+                    />
+                    <p className="field-hint" id="timesheet-rejection-note-hint">
+                      Required only when the tenant setting is enabled.
+                    </p>
+                  </div>
+                  <button className="command-button command-button-danger" type="submit">
+                    Reject Timesheet
+                  </button>
+                </form>
+              ) : null}
+            </section>
+          ) : null}
         </div>
       )}
     </section>

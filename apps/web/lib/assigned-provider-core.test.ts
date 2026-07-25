@@ -3,6 +3,10 @@ import type {
   HrLeaveRequestCursor,
 } from "@esbla/contracts/hr-leave-api";
 import type {
+  HrTimesheetAssignedCursor,
+  HrTimesheetListResponse,
+} from "@esbla/contracts/hr-timesheet-api";
+import type {
   AssignedWorkspaceTaskPage,
   WorkspaceTaskCursor,
 } from "@esbla/contracts/workspace-task-api";
@@ -11,9 +15,12 @@ import {
   type AssignedProvider,
   AssignedProviderCursorError,
   AssignedProviderUnavailableError,
+  type LoadAssignedProviderViewOptions,
   loadAssignedProviderView,
   parseAssignedProviderCursors,
 } from "./assigned-provider-core";
+
+type AssignedTimesheetPage = Extract<HrTimesheetListResponse, { readonly kind: "assigned" }>;
 
 const hrCurrent = {
   leaveRequestId: "11111111-1111-4111-8111-111111111111",
@@ -31,6 +38,14 @@ const workspaceNext = {
   createdAt: "2026-07-13T00:00:00.000Z",
   taskId: "44444444-4444-4444-8444-444444444444",
 } satisfies WorkspaceTaskCursor;
+const timesheetCurrent = {
+  submittedAt: "2026-07-14T00:00:00.000Z",
+  timesheetVersionId: "99999999-9999-4999-8999-999999999999",
+} satisfies HrTimesheetAssignedCursor;
+const timesheetNext = {
+  submittedAt: "2026-07-15T00:00:00.000Z",
+  timesheetVersionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+} satisfies HrTimesheetAssignedCursor;
 
 const hrItem = {
   categoryCode: "annual",
@@ -53,7 +68,6 @@ const workspaceItem = {
   version: 1,
   workItemId: "88888888-8888-4888-8888-888888888888",
 } as const;
-
 function hrPage(
   items: HrAssignedLeaveRequestPage["items"] = [],
   nextCursor: HrLeaveRequestCursor | null = null,
@@ -68,9 +82,17 @@ function workspacePage(
   return { items, nextCursor };
 }
 
+function timesheetPage(
+  items: AssignedTimesheetPage["items"] = [],
+  nextCursor: HrTimesheetAssignedCursor | null = null,
+): AssignedTimesheetPage {
+  return { items, kind: "assigned", nextCursor };
+}
+
 function searchParams(
   hr: HrLeaveRequestCursor | undefined = undefined,
   workspace: WorkspaceTaskCursor | undefined = undefined,
+  timesheet: HrTimesheetAssignedCursor | undefined = undefined,
 ) {
   return {
     ...(hr
@@ -85,7 +107,23 @@ function searchParams(
           cursorTaskId: workspace.taskId,
         }
       : {}),
+    ...(timesheet
+      ? {
+          cursorTimesheetSubmittedAt: timesheet.submittedAt,
+          cursorTimesheetVersionId: timesheet.timesheetVersionId,
+        }
+      : {}),
   };
+}
+
+function loadView(
+  options: Omit<LoadAssignedProviderViewOptions, "loadTimesheet"> &
+    Partial<Pick<LoadAssignedProviderViewOptions, "loadTimesheet">>,
+) {
+  return loadAssignedProviderView({
+    loadTimesheet: async () => timesheetPage(),
+    ...options,
+  });
 }
 
 function deferred<T>() {
@@ -122,10 +160,14 @@ describe("assigned provider core", () => {
   it("parses only genuinely absent or complete scalar cursor families", () => {
     expect(parseAssignedProviderCursors({ unrelated: "value" })).toEqual({
       hr: undefined,
+      timesheet: undefined,
       workspace: undefined,
     });
-    expect(parseAssignedProviderCursors(searchParams(hrCurrent, workspaceCurrent))).toEqual({
+    expect(
+      parseAssignedProviderCursors(searchParams(hrCurrent, workspaceCurrent, timesheetCurrent)),
+    ).toEqual({
       hr: hrCurrent,
+      timesheet: timesheetCurrent,
       workspace: workspaceCurrent,
     });
     expect(
@@ -218,6 +260,11 @@ describe("assigned provider core", () => {
       "workspace_task_assigned",
     ],
     [
+      "Timesheet partial",
+      { cursorTimesheetVersionId: timesheetCurrent.timesheetVersionId },
+      "hr_timesheet_assigned",
+    ],
+    [
       "cross-family pair",
       {
         cursorCreatedAt: workspaceCurrent.createdAt,
@@ -251,19 +298,28 @@ describe("assigned provider core", () => {
     ["HR", { cursorLeaveRequestId: "bad", cursorSubmittedAt: "bad" }],
     ["Workspace", { cursorCreatedAt: "bad", cursorTaskId: "bad" }],
     [
-      "both",
+      "all",
       {
         cursorCreatedAt: "bad",
         cursorLeaveRequestId: "bad",
         cursorSubmittedAt: "bad",
         cursorTaskId: "bad",
+        cursorTimesheetSubmittedAt: "bad",
+        cursorTimesheetVersionId: "bad",
+      },
+    ],
+    [
+      "Timesheet",
+      {
+        cursorTimesheetSubmittedAt: "bad",
+        cursorTimesheetVersionId: "bad",
       },
     ],
   ])("rejects invalid %s cursors before either loader runs", async (_label, parameters) => {
     const loadHr = vi.fn(async () => hrPage());
     const loadWorkspace = vi.fn(async () => workspacePage());
     await expect(
-      loadAssignedProviderView({ loadHr, loadWorkspace, searchParams: parameters }),
+      loadView({ loadHr, loadWorkspace, searchParams: parameters }),
     ).rejects.toBeInstanceOf(AssignedProviderCursorError);
     expect(loadHr).not.toHaveBeenCalled();
     expect(loadWorkspace).not.toHaveBeenCalled();
@@ -300,7 +356,7 @@ describe("assigned provider core", () => {
       }
       return Promise.resolve(workspacePage([workspaceItem]));
     });
-    const result = loadAssignedProviderView({ loadHr, loadWorkspace, searchParams: {} });
+    const result = loadView({ loadHr, loadWorkspace, searchParams: {} });
     if (outcome === "hr-fatal") await expect(result).rejects.toBe(hrFatal);
     else if (outcome === "workspace-fatal") await expect(result).rejects.toBe(workspaceFatal);
     else {
@@ -331,9 +387,7 @@ describe("assigned provider core", () => {
     const loadWorkspace = vi.fn((): Promise<AssignedWorkspaceTaskPage> => {
       throw workspaceFatal;
     });
-    await expect(
-      loadAssignedProviderView({ loadHr, loadWorkspace, searchParams: {} }),
-    ).rejects.toBe(hrFatal);
+    await expect(loadView({ loadHr, loadWorkspace, searchParams: {} })).rejects.toBe(hrFatal);
     expect(loadHr).toHaveBeenCalledTimes(1);
     expect(loadWorkspace).toHaveBeenCalledTimes(1);
   });
@@ -346,7 +400,7 @@ describe("assigned provider core", () => {
       throw hrFatal;
     });
     const loadWorkspace = vi.fn(() => workspace.promise);
-    const subject = loadAssignedProviderView({ loadHr, loadWorkspace, searchParams: {} });
+    const subject = loadView({ loadHr, loadWorkspace, searchParams: {} });
     let settled = false;
     void subject
       .finally(() => {
@@ -370,7 +424,7 @@ describe("assigned provider core", () => {
     const loadWorkspace = vi.fn((): Promise<AssignedWorkspaceTaskPage> => {
       throw workspaceFatal;
     });
-    const subject = loadAssignedProviderView({ loadHr, loadWorkspace, searchParams: {} });
+    const subject = loadView({ loadHr, loadWorkspace, searchParams: {} });
     let settled = false;
     void subject
       .finally(() => {
@@ -390,7 +444,7 @@ describe("assigned provider core", () => {
     const hr = deferred<HrAssignedLeaveRequestPage>();
     const hrFatal = new Error("hr-later-fatal");
     const workspaceFatal = new Error("workspace-first-fatal");
-    const subject = loadAssignedProviderView({
+    const subject = loadView({
       loadHr: () => hr.promise,
       loadWorkspace: async () => {
         throw workspaceFatal;
@@ -415,7 +469,7 @@ describe("assigned provider core", () => {
     const workspaceFatal = new Error("workspace-later-fatal");
     const workspace = deferred<AssignedWorkspaceTaskPage>();
     const loadWorkspace = vi.fn(() => workspace.promise);
-    const subject = loadAssignedProviderView({
+    const subject = loadView({
       loadHr: async () => {
         throw hrFatal;
       },
@@ -440,7 +494,7 @@ describe("assigned provider core", () => {
       reason: "inactive",
     };
     await expect(
-      loadAssignedProviderView({
+      loadView({
         loadHr: async () => {
           throw duck;
         },
@@ -450,7 +504,7 @@ describe("assigned provider core", () => {
     ).rejects.toBe(duck);
     const mismatch = new AssignedProviderUnavailableError("workspace_task_assigned", "inactive");
     await expect(
-      loadAssignedProviderView({
+      loadView({
         loadHr: async () => {
           throw mismatch;
         },
@@ -461,14 +515,14 @@ describe("assigned provider core", () => {
   });
 
   it("keeps unavailable reasons out of the immutable public view model", async () => {
-    const inactive = await loadAssignedProviderView({
+    const inactive = await loadView({
       loadHr: async () => {
         throw new AssignedProviderUnavailableError("hr_leave_assigned", "inactive");
       },
       loadWorkspace: async () => workspacePage(),
       searchParams: {},
     });
-    const ineligible = await loadAssignedProviderView({
+    const ineligible = await loadView({
       loadHr: async () => {
         throw new AssignedProviderUnavailableError("hr_leave_assigned", "ineligible");
       },
@@ -490,7 +544,7 @@ describe("assigned provider core", () => {
     [1, 0, true, true, 1, false],
     [1, 1, true, true, 2, false],
   ])("computes count and clear truth for HR %i Workspace %i availability %s/%s", async (hrCount, workspaceCount, hrAvailable, workspaceAvailable, total, clear) => {
-    const view = await loadAssignedProviderView({
+    const view = await loadView({
       loadHr: async () => {
         if (!hrAvailable) {
           throw new AssignedProviderUnavailableError("hr_leave_assigned", "inactive");
@@ -512,28 +566,41 @@ describe("assigned provider core", () => {
   });
 
   it("builds independent next links from advancing next and foreign current cursors", async () => {
-    const view = await loadAssignedProviderView({
+    const view = await loadView({
       loadHr: async () => hrPage([], hrNext),
+      loadTimesheet: async () => timesheetPage([], timesheetNext),
       loadWorkspace: async () => workspacePage([], workspaceNext),
-      searchParams: searchParams(hrCurrent, workspaceCurrent),
+      searchParams: searchParams(hrCurrent, workspaceCurrent, timesheetCurrent),
     });
     expect(Object.fromEntries(query(view.nextApprovalsHref))).toEqual({
       cursorCreatedAt: workspaceCurrent.createdAt,
       cursorLeaveRequestId: hrNext.leaveRequestId,
       cursorSubmittedAt: hrNext.submittedAt,
       cursorTaskId: workspaceCurrent.taskId,
+      cursorTimesheetSubmittedAt: timesheetCurrent.submittedAt,
+      cursorTimesheetVersionId: timesheetCurrent.timesheetVersionId,
     });
     expect(Object.fromEntries(query(view.nextTasksHref))).toEqual({
       cursorCreatedAt: workspaceNext.createdAt,
       cursorLeaveRequestId: hrCurrent.leaveRequestId,
       cursorSubmittedAt: hrCurrent.submittedAt,
       cursorTaskId: workspaceNext.taskId,
+      cursorTimesheetSubmittedAt: timesheetCurrent.submittedAt,
+      cursorTimesheetVersionId: timesheetCurrent.timesheetVersionId,
+    });
+    expect(Object.fromEntries(query(view.nextTimesheetsHref))).toEqual({
+      cursorCreatedAt: workspaceCurrent.createdAt,
+      cursorLeaveRequestId: hrCurrent.leaveRequestId,
+      cursorSubmittedAt: hrCurrent.submittedAt,
+      cursorTaskId: workspaceCurrent.taskId,
+      cursorTimesheetSubmittedAt: timesheetNext.submittedAt,
+      cursorTimesheetVersionId: timesheetNext.timesheetVersionId,
     });
     expect(view.startOverHref).toBe("/workspace/my-work");
   });
 
   it("does not claim cursor-positioned empty pages prove both queues are clear", async () => {
-    const view = await loadAssignedProviderView({
+    const view = await loadView({
       loadHr: async () => hrPage(),
       loadWorkspace: async () => workspacePage(),
       searchParams: searchParams(hrCurrent, workspaceCurrent),
@@ -543,7 +610,7 @@ describe("assigned provider core", () => {
   });
 
   it("does not claim empty initial pages with next cursors prove both queues are clear", async () => {
-    const view = await loadAssignedProviderView({
+    const view = await loadView({
       loadHr: async () => hrPage([], hrNext),
       loadWorkspace: async () => workspacePage([], workspaceNext),
       searchParams: {},
@@ -554,7 +621,7 @@ describe("assigned provider core", () => {
   });
 
   it("drops only an unavailable source cursor and preserves an available empty source cursor", async () => {
-    const hrUnavailable = await loadAssignedProviderView({
+    const hrUnavailable = await loadView({
       loadHr: async () => {
         throw new AssignedProviderUnavailableError("hr_leave_assigned", "inactive");
       },
@@ -567,7 +634,7 @@ describe("assigned provider core", () => {
     });
     expect(hrUnavailable.startOverHref).toBe("/workspace/my-work");
 
-    const workspaceUnavailable = await loadAssignedProviderView({
+    const workspaceUnavailable = await loadView({
       loadHr: async () => hrPage([], hrNext),
       loadWorkspace: async () => {
         throw new AssignedProviderUnavailableError("workspace_task_assigned", "inactive");
@@ -580,7 +647,7 @@ describe("assigned provider core", () => {
     });
     expect(workspaceUnavailable.startOverHref).toBe("/workspace/my-work");
 
-    const bothUnavailable = await loadAssignedProviderView({
+    const bothUnavailable = await loadView({
       loadHr: async () => {
         throw new AssignedProviderUnavailableError("hr_leave_assigned", "inactive");
       },
@@ -601,7 +668,7 @@ describe("assigned provider core", () => {
     ["Workspace", hrNext, { ...workspaceNext, createdAt: "2026-01-01T24:00:00.000Z" }],
   ])("revalidates malformed returned %s next cursors before building hrefs", async (_label, hr, ws) => {
     await expect(
-      loadAssignedProviderView({
+      loadView({
         loadHr: async () => hrPage([], hr),
         loadWorkspace: async () => workspacePage([], ws),
         searchParams: {},

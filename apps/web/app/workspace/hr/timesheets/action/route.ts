@@ -1,9 +1,14 @@
 import { isSameOriginSubmission } from "../../../../../lib/hr-leave-submit-core";
-import { executeTimesheetAction } from "../../../../../lib/hr-timesheet";
 import {
+  executeTimesheetAction,
+  executeTimesheetServiceAction,
+} from "../../../../../lib/hr-timesheet";
+import {
+  isTimesheetServiceOperation,
   type TimesheetAction,
   timesheetStateForError,
   validateTimesheetAction,
+  validateTimesheetServiceAction,
 } from "../../../../../lib/hr-timesheet-core";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +29,15 @@ function destination(action: TimesheetAction, success: boolean, timesheetId?: st
       ? `/workspace/hr/timesheets/by-id/${selectedId}?returnTo=own&result=current`
       : `/workspace/hr/timesheets?edit=${selectedId ?? ""}&result=operational_error`;
   }
+  if (action.operation === "approve" || action.operation === "reject") {
+    const query = new URLSearchParams({
+      result: success ? "current" : "operational_error",
+      returnTo: action.returnTo,
+    });
+    return selectedId
+      ? `/workspace/hr/timesheets/by-id/${selectedId}?${query}`
+      : "/workspace/my-work?result=operational_error";
+  }
   return "/workspace/hr/timesheets?result=operational_error";
 }
 
@@ -37,6 +51,16 @@ function failedDestination(value: Readonly<Record<string, string>>, kind: string
     result: kind,
     ...(selectedId ? { edit: selectedId } : {}),
   });
+  if (
+    selectedId &&
+    (value.operation === "approve" || value.operation === "reject") &&
+    value.returnTo === "my-work"
+  ) {
+    return `/workspace/hr/timesheets/by-id/${selectedId}?${new URLSearchParams({
+      result: kind,
+      returnTo: "my-work",
+    })}`;
+  }
   return `/workspace/hr/timesheets?${query}`;
 }
 
@@ -78,6 +102,20 @@ export async function POST(request: Request): Promise<Response> {
     }
   } catch {
     return redirect("/workspace/hr/timesheets?result=validation");
+  }
+  if (isTimesheetServiceOperation(value.operation)) {
+    const validation = validateTimesheetServiceAction(value);
+    if (!validation.ok) {
+      return redirect(`/workspace/hr/timesheets/settings?result=${validation.state.kind}`);
+    }
+    try {
+      await executeTimesheetServiceAction(validation.value);
+      return redirect("/workspace/hr/timesheets/settings?result=current");
+    } catch (error) {
+      return redirect(
+        `/workspace/hr/timesheets/settings?result=${timesheetStateForError(error).kind}`,
+      );
+    }
   }
   const validation = validateTimesheetAction(value);
   if (!validation.ok) return redirect(failedDestination(value, validation.state.kind));

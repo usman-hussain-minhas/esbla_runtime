@@ -22,7 +22,7 @@ import {
   loadShiftServiceControl,
 } from "../../../lib/hr-shift-assignment";
 import { hasShiftAction } from "../../../lib/hr-shift-assignment-core";
-import { loadOwnTimesheets } from "../../../lib/hr-timesheet";
+import { loadOwnTimesheets, loadTimesheetServiceControl } from "../../../lib/hr-timesheet";
 import { hasTimesheetAction } from "../../../lib/hr-timesheet-core";
 import { loadAuthorizedWorkforceList } from "../../../lib/hr-workforce-profile-list";
 import { loadWorkforceProfileServiceControl } from "../../../lib/hr-workforce-profile-service-control";
@@ -40,6 +40,7 @@ export default async function HrHubPage() {
     reportAttendance,
     attendanceServiceControl,
     ownTimesheets,
+    timesheetServiceControl,
   ] = await Promise.all([
     loadAuthorizedWorkforceList({}, "direct_reports"),
     loadAuthorizedWorkforceList({}, "workforce"),
@@ -55,6 +56,7 @@ export default async function HrHubPage() {
     loadReportAttendance(),
     loadAttendanceServiceControl(),
     loadOwnTimesheets(),
+    loadTimesheetServiceControl(),
   ]);
   const canDiscoverWorkforceSettings =
     workforceServiceControl.status === "success" ||
@@ -99,7 +101,13 @@ export default async function HrHubPage() {
   const canControlAttendance = (
     ["activate_service", "configure_service", "deactivate_service", "view_service_control"] as const
   ).some((action) => hasAttendanceAction(attendanceActions, action));
-  const canViewOwnTimesheets = hasTimesheetAction(ownTimesheets.authorizedActions, "list_own");
+  const timesheetActions = [
+    ...new Set([...ownTimesheets.authorizedActions, ...timesheetServiceControl.authorizedActions]),
+  ];
+  const canViewOwnTimesheets = hasTimesheetAction(timesheetActions, "list_own");
+  const canControlTimesheets = (
+    ["activate_service", "configure_service", "deactivate_service", "view_service_control"] as const
+  ).some((action) => hasTimesheetAction(timesheetActions, action));
   return (
     <section aria-labelledby="hr-hub-heading" className="work-surface">
       <header className="surface-heading">
@@ -246,7 +254,7 @@ export default async function HrHubPage() {
             </div>
           </li>
         ) : null}
-        {canViewOwnTimesheets ? (
+        {canViewOwnTimesheets || canControlTimesheets ? (
           <li className="work-queue-item">
             <div className="work-queue-primary">
               <div>
@@ -266,6 +274,12 @@ export default async function HrHubPage() {
                 <a className="text-command" href="/workspace/hr/timesheets">
                   My Timesheets
                   <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
+                </a>
+              ) : null}
+              {canControlTimesheets ? (
+                <a className="text-command" href="/workspace/hr/timesheets/settings">
+                  <Settings2 aria-hidden="true" size={15} strokeWidth={1.8} />
+                  Timesheet settings
                 </a>
               ) : null}
             </div>

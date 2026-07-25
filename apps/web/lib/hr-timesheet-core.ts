@@ -1,8 +1,15 @@
 import { type ApiProblemDetails, parseApiProblemDetails } from "@esbla/contracts";
+import {
+  type HrServiceControl,
+  type HrTimesheetSettings,
+  parseHrServiceControl,
+} from "@esbla/contracts/hr-service-control-api";
 import type {
+  HrTimesheetApproveBody,
   HrTimesheetCreateBody,
   HrTimesheetEditDraftBody,
   HrTimesheetListResponse,
+  HrTimesheetRejectBody,
   HrTimesheetResponse,
   HrTimesheetSubmitBody,
 } from "@esbla/contracts/hr-timesheet-api";
@@ -64,6 +71,47 @@ export type TimesheetAction =
       idempotencyKey: string;
       operation: "submit";
       timesheetId: string;
+    }>
+  | Readonly<{
+      body: HrTimesheetApproveBody;
+      idempotencyKey: string;
+      operation: "approve";
+      returnTo: "detail" | "my-work";
+      timesheetId: string;
+    }>
+  | Readonly<{
+      body: HrTimesheetRejectBody;
+      idempotencyKey: string;
+      operation: "reject";
+      returnTo: "detail" | "my-work";
+      timesheetId: string;
+    }>;
+export type TimesheetServiceControl = Extract<
+  HrServiceControl,
+  { readonly serviceKey: "timesheet" }
+>;
+export type TimesheetServiceOperation =
+  | "activate_service"
+  | "configure_service"
+  | "deactivate_service";
+export type TimesheetServiceAction =
+  | Readonly<{
+      body: Readonly<{ expectedVersion: number | null }>;
+      idempotencyKey: string;
+      operation: "activate_service";
+    }>
+  | Readonly<{
+      body: Readonly<{
+        expectedSettingsVersion: number;
+        settings: HrTimesheetSettings;
+      }>;
+      idempotencyKey: string;
+      operation: "configure_service";
+    }>
+  | Readonly<{
+      body: Readonly<{ expectedVersion: number }>;
+      idempotencyKey: string;
+      operation: "deactivate_service";
     }>;
 export type TimesheetActionValidation =
   | Readonly<{ ok: true; value: TimesheetAction }>
@@ -226,6 +274,54 @@ export async function decodeTimesheetMutation(
   }
 }
 
+export async function decodeTimesheetServiceControl(
+  response: Response,
+): Promise<TimesheetServiceControl> {
+  const value = await body(response, response.status === 200);
+  try {
+    const control = parseHrServiceControl(value);
+    if (
+      control.serviceKey !== "timesheet" ||
+      control.version !== control.activationVersion + control.settingsVersion - 1
+    ) {
+      throw 0;
+    }
+    return control as TimesheetServiceControl;
+  } catch {
+    throw new TimesheetUiError("operational_error");
+  }
+}
+
+export async function decodeTimesheetServiceMutation(
+  response: Response,
+  action: TimesheetServiceAction,
+): Promise<TimesheetServiceControl> {
+  const replay = response.headers.get("idempotent-replayed");
+  if (response.status !== 200) return await decodeTimesheetServiceControl(response);
+  if (replay !== "false" && replay !== "true") {
+    throw new TimesheetUiError("operational_error");
+  }
+  const control = await decodeTimesheetServiceControl(response);
+  const expectedActivationVersion =
+    action.operation === "configure_service" ? null : (action.body.expectedVersion ?? 0) + 1;
+  const valid =
+    action.operation === "activate_service"
+      ? control.activationState === "active" &&
+        control.activationVersion === expectedActivationVersion &&
+        (action.body.expectedVersion !== null ||
+          (control.version === 1 && control.settingsVersion === 1))
+      : action.operation === "deactivate_service"
+        ? control.activationState === "inactive" &&
+          control.activationVersion === expectedActivationVersion
+        : control.activationState === "active" &&
+          control.settingsVersion === action.body.expectedSettingsVersion + 1 &&
+          control.settings.maxDailyMinutes === action.body.settings.maxDailyMinutes &&
+          control.settings.periodCadence === "weekly" &&
+          control.settings.rejectionNoteRequired === action.body.settings.rejectionNoteRequired;
+  if (!valid) throw new TimesheetUiError("operational_error");
+  return control;
+}
+
 function scalar(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
@@ -255,8 +351,85 @@ function expected(value: Readonly<Record<string, string>>) {
     expectedVersion: positive(value.expectedVersion),
   };
 }
+function decisionNote(value: unknown): string | null {
+  if (value === undefined || value === "") return null;
+  if (typeof value !== "string") throw 0;
+  const selected = value.trim();
+  if (selected.length < 1) return null;
+  if (selected.length > 2000) throw 0;
+  return selected;
+}
 function failure(): TimesheetActionValidation {
   return { ok: false, state: timesheetStateForError(new TimesheetUiError("validation", 400)) };
+}
+
+export function isTimesheetServiceOperation(value: unknown): value is TimesheetServiceOperation {
+  return ["activate_service", "configure_service", "deactivate_service"].includes(String(value));
+}
+
+export function validateTimesheetServiceAction(
+  value: Readonly<Record<string, string>>,
+):
+  | Readonly<{ ok: false; state: TimesheetFailureState }>
+  | Readonly<{ ok: true; value: TimesheetServiceAction }> {
+  try {
+    const operation = value.operation;
+    const idempotencyKey = uuid(value.idempotencyKey);
+    if (!isTimesheetServiceOperation(operation)) throw 0;
+    if (operation === "activate_service") {
+      exact(value, new Set(["expectedVersion", "idempotencyKey", "operation"]));
+      const expectedVersion = value.expectedVersion === "" ? null : positive(value.expectedVersion);
+      return {
+        ok: true,
+        value: { body: { expectedVersion }, idempotencyKey, operation },
+      };
+    }
+    if (operation === "deactivate_service") {
+      exact(value, new Set(["expectedVersion", "idempotencyKey", "operation"]));
+      return {
+        ok: true,
+        value: {
+          body: { expectedVersion: positive(value.expectedVersion) },
+          idempotencyKey,
+          operation,
+        },
+      };
+    }
+    exact(
+      value,
+      new Set([
+        "expectedSettingsVersion",
+        "idempotencyKey",
+        "maxDailyMinutes",
+        "operation",
+        "periodCadence",
+        "rejectionNoteRequired",
+      ]),
+    );
+    if (
+      value.periodCadence !== "weekly" ||
+      (value.rejectionNoteRequired !== "true" && value.rejectionNoteRequired !== "false")
+    ) {
+      throw 0;
+    }
+    return {
+      ok: true,
+      value: {
+        body: {
+          expectedSettingsVersion: positive(value.expectedSettingsVersion),
+          settings: {
+            maxDailyMinutes: positive(value.maxDailyMinutes, 1440),
+            periodCadence: "weekly",
+            rejectionNoteRequired: value.rejectionNoteRequired === "true",
+          },
+        },
+        idempotencyKey,
+        operation,
+      },
+    };
+  } catch {
+    return { ok: false, state: timesheetStateForError(new TimesheetUiError("validation", 400)) };
+  }
 }
 
 export function validateTimesheetAction(
@@ -276,7 +449,12 @@ export function validateTimesheetAction(
         throw 0;
       return { ok: true, value: { body: { periodEnd, periodStart }, idempotencyKey, operation } };
     }
-    if (operation !== "edit_draft" && operation !== "submit") {
+    if (
+      operation !== "approve" &&
+      operation !== "edit_draft" &&
+      operation !== "reject" &&
+      operation !== "submit"
+    ) {
       return failure();
     }
     const timesheetId = uuid(value.timesheetId);
@@ -332,6 +510,21 @@ export function validateTimesheetAction(
           body: { ...expectedBody, entries },
           idempotencyKey,
           operation,
+          timesheetId,
+        },
+      };
+    }
+    if (operation === "approve" || operation === "reject") {
+      exact(value, new Set([...common, "decisionNote", "returnTo"]));
+      const returnTo = value.returnTo;
+      if (returnTo !== "detail" && returnTo !== "my-work") throw 0;
+      return {
+        ok: true,
+        value: {
+          body: { ...expectedBody, decisionNote: decisionNote(value.decisionNote) },
+          idempotencyKey,
+          operation,
+          returnTo,
           timesheetId,
         },
       };
