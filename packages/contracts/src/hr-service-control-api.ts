@@ -39,6 +39,10 @@ export interface HrEmploymentRecordSettings {
   readonly effectiveRangeOverlapAllowed: false;
   readonly employmentTypeCodes: string;
 }
+export interface HrExpenseClaimSettings {
+  readonly categoryCodes: string;
+  readonly rejectionNoteRequired: boolean;
+}
 export interface HrShiftAssignmentSettings {
   readonly overlapAllowed: false;
   readonly rosterHorizonDays: number;
@@ -55,6 +59,10 @@ export const hrEmploymentRecordSettingsDefaults: HrEmploymentRecordSettings = Ob
 export const hrAttendanceSettingsDefaults: HrAttendanceSettings = Object.freeze({
   correctionNoteRequired: true,
   manualObservationKinds: "presence_start,presence_end",
+});
+export const hrExpenseClaimSettingsDefaults: HrExpenseClaimSettings = Object.freeze({
+  categoryCodes: "other",
+  rejectionNoteRequired: true,
 });
 export const hrShiftAssignmentSettingsDefaults: HrShiftAssignmentSettings = Object.freeze({
   overlapAllowed: false,
@@ -80,6 +88,10 @@ export type HrServiceConfigureBody =
     }>
   | Readonly<{
       expectedSettingsVersion: number;
+      settings: HrExpenseClaimSettings;
+    }>
+  | Readonly<{
+      expectedSettingsVersion: number;
       settings: HrShiftAssignmentSettings;
     }>
   | Readonly<{
@@ -98,6 +110,7 @@ export type HrServiceControl = HrServiceControlBase &
     | { readonly serviceKey: "attendance"; readonly settings: HrAttendanceSettings }
     | { readonly serviceKey: "workforce_profile"; readonly settings: HrWorkforceProfileSettings }
     | { readonly serviceKey: "employment_record"; readonly settings: HrEmploymentRecordSettings }
+    | { readonly serviceKey: "expense_claim_boundary"; readonly settings: HrExpenseClaimSettings }
     | { readonly serviceKey: "shift_assignment"; readonly settings: HrShiftAssignmentSettings }
     | { readonly serviceKey: "timesheet"; readonly settings: HrTimesheetSettings }
     | {
@@ -105,6 +118,7 @@ export type HrServiceControl = HrServiceControlBase &
           HrServiceKey,
           | "attendance"
           | "employment_record"
+          | "expense_claim_boundary"
           | "shift_assignment"
           | "timesheet"
           | "workforce_profile"
@@ -191,6 +205,18 @@ const employmentRecordSettingsSchema = {
   required: ["effectiveRangeOverlapAllowed", "employmentTypeCodes"],
   type: "object",
 } as const;
+const expenseClaimSettingsSchema = {
+  additionalProperties: false,
+  properties: {
+    categoryCodes: {
+      pattern: "^[^\\s,]+(?:,[^\\s,]+)*$",
+      type: "string",
+    },
+    rejectionNoteRequired: { type: "boolean" },
+  },
+  required: ["categoryCodes", "rejectionNoteRequired"],
+  type: "object",
+} as const;
 const shiftAssignmentSettingsSchema = {
   additionalProperties: false,
   properties: {
@@ -225,6 +251,7 @@ export const hrServiceConfigureBodySchema = {
         attendanceSettingsSchema,
         workforceProfileSettingsSchema,
         employmentRecordSettingsSchema,
+        expenseClaimSettingsSchema,
         shiftAssignmentSettingsSchema,
         timesheetSettingsSchema,
       ],
@@ -261,6 +288,13 @@ export const hrServiceControlSchema = {
     },
     {
       properties: {
+        serviceKey: { const: "expense_claim_boundary" },
+        settings: expenseClaimSettingsSchema,
+      },
+      type: "object",
+    },
+    {
+      properties: {
         serviceKey: { const: "shift_assignment" },
         settings: shiftAssignmentSettingsSchema,
       },
@@ -280,6 +314,7 @@ export const hrServiceControlSchema = {
             enum: [
               "attendance",
               "employment_record",
+              "expense_claim_boundary",
               "shift_assignment",
               "timesheet",
               "workforce_profile",
@@ -300,6 +335,7 @@ export const hrServiceControlSchema = {
         attendanceSettingsSchema,
         workforceProfileSettingsSchema,
         employmentRecordSettingsSchema,
+        expenseClaimSettingsSchema,
         shiftAssignmentSettingsSchema,
         timesheetSettingsSchema,
         emptyServiceSettingsSchema,
@@ -460,6 +496,25 @@ function parseEmploymentRecordSettings(value: unknown, label: string): HrEmploym
   return value as unknown as HrEmploymentRecordSettings;
 }
 
+function parseExpenseClaimSettings(value: unknown, label: string): HrExpenseClaimSettings {
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
+  assertExactKeys(value, ["categoryCodes", "rejectionNoteRequired"], label);
+  if (
+    typeof value.categoryCodes !== "string" ||
+    value.categoryCodes
+      .split(",")
+      .some(
+        (code) =>
+          code.length === 0 || code.length > 64 || code.trim() !== code || /[\s,]/.test(code),
+      ) ||
+    new Set(value.categoryCodes.split(",")).size !== value.categoryCodes.split(",").length ||
+    typeof value.rejectionNoteRequired !== "boolean"
+  ) {
+    throw new TypeError(`${label} is invalid`);
+  }
+  return value as unknown as HrExpenseClaimSettings;
+}
+
 function parseShiftAssignmentSettings(value: unknown, label: string): HrShiftAssignmentSettings {
   if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
   assertExactKeys(value, ["overlapAllowed", "rosterHorizonDays"], label);
@@ -569,6 +624,8 @@ export function parseHrServiceConfigureBody(value: unknown): HrServiceConfigureB
     parseAttendanceSettings(value.settings, "HrServiceConfigureRequestV1.settings");
   } else if (Object.hasOwn(value.settings, "effectiveRangeOverlapAllowed")) {
     parseEmploymentRecordSettings(value.settings, "HrServiceConfigureRequestV1.settings");
+  } else if (Object.hasOwn(value.settings, "categoryCodes")) {
+    parseExpenseClaimSettings(value.settings, "HrServiceConfigureRequestV1.settings");
   } else if (
     Object.hasOwn(value.settings, "overlapAllowed") ||
     Object.hasOwn(value.settings, "rosterHorizonDays")
@@ -601,6 +658,8 @@ export function parseHrServiceControl(value: unknown): HrServiceControl {
     parseWorkforceProfileSettings(value.settings, "HrServiceControlResponseV1.settings");
   } else if (value.serviceKey === "employment_record") {
     parseEmploymentRecordSettings(value.settings, "HrServiceControlResponseV1.settings");
+  } else if (value.serviceKey === "expense_claim_boundary") {
+    parseExpenseClaimSettings(value.settings, "HrServiceControlResponseV1.settings");
   } else if (value.serviceKey === "shift_assignment") {
     parseShiftAssignmentSettings(value.settings, "HrServiceControlResponseV1.settings");
   } else if (value.serviceKey === "timesheet") {

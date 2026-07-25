@@ -1,6 +1,7 @@
 import {
   EmploymentError,
   HrAttendanceError,
+  HrExpenseClaimError,
   HrLeaveError,
   HrShiftAssignmentError,
   HrTimesheetError,
@@ -142,6 +143,14 @@ function statusForError(error: Error): number {
     }
     return 409;
   }
+  if (error instanceof HrExpenseClaimError) {
+    if (error.code === "EXPENSE_INPUT_INVALID") return 400;
+    if (error.code === "EXPENSE_SERVICE_CONTROL_NOT_FOUND") return 404;
+    if (error.code === "EXPENSE_DEPENDENCY_INACTIVE" || error.code === "EXPENSE_SERVICE_INACTIVE") {
+      return 503;
+    }
+    return 409;
+  }
   if (error instanceof WorkspaceTaskError) {
     if (error.code === "WORKSPACE_TASK_INPUT_INVALID") return 400;
     if (error.code === "WORKSPACE_TASK_NOT_FOUND") return 404;
@@ -167,6 +176,7 @@ function codeForError(error: Error): string {
     error instanceof AuthError ||
     error instanceof EmploymentError ||
     error instanceof HrAttendanceError ||
+    error instanceof HrExpenseClaimError ||
     error instanceof HrLeaveError ||
     error instanceof HrShiftAssignmentError ||
     error instanceof HrTimesheetError ||

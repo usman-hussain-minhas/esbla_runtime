@@ -141,6 +141,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import type { Pool } from "pg";
 import { AuthError, type RequestAuthenticator } from "./auth.js";
 import { registerEmploymentRoutes } from "./hr-employment-routes.js";
+import { registerExpenseClaimRoutes } from "./hr-expense-claim-routes.js";
 import { registerShiftAssignmentRoutes } from "./hr-shift-assignment-routes.js";
 import { registerTimesheetRoutes } from "./hr-timesheet-routes.js";
 import { sendProblem } from "./problems.js";
@@ -351,6 +352,13 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
   });
 
   registerEmploymentRoutes({
+    authenticate,
+    migrationReadPool: options.migrationReadPool ?? options.pool,
+    pool: options.pool,
+    runtimeEnvironment: options.runtimeEnvironment ?? "production",
+    server,
+  });
+  registerExpenseClaimRoutes({
     authenticate,
     migrationReadPool: options.migrationReadPool ?? options.pool,
     pool: options.pool,
