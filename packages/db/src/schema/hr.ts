@@ -61,6 +61,13 @@ export const hrTimesheetStatus = pgEnum("hr_timesheet_status", [
   "rejected",
 ]);
 export const hrTimesheetDecision = pgEnum("hr_timesheet_decision", ["approved", "rejected"]);
+export const hrExpenseClaimStatus = pgEnum("hr_expense_claim_status", [
+  "draft",
+  "submitted",
+  "approved",
+  "rejected",
+]);
+export const hrExpenseClaimDecision = pgEnum("hr_expense_claim_decision", ["approved", "rejected"]);
 
 type PgTableExtras = PgTableExtraConfigValue[];
 
@@ -959,6 +966,244 @@ export const hrTimesheetApprovals = pgTable(
     ),
     check(
       "hr_timesheet_approvals_note_valid",
+      sql`${table.decisionNote} IS NULL
+          OR char_length(trim(${table.decisionNote})) BETWEEN 1 AND 2000`,
+    ),
+  ],
+).enableRLS();
+
+export const hrExpenseClaimServiceControl = pgTable(
+  "hr_expense_claim_service_control",
+  {
+    serviceControlId: uuid("service_control_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    serviceKey: text("service_key").default("expense_claim_boundary").notNull(),
+    settingsVersion: integer("settings_version").default(1).notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.serviceKey],
+      foreignColumns: [serviceActivations.tenantId, serviceActivations.serviceKey],
+      name: "hr_expense_claim_service_control_activation_fk",
+    }).onDelete("restrict"),
+    uniqueIndex("uq_hr_expense_claim_boundary_service_control_tenant_key").on(
+      table.tenantId,
+      table.serviceKey,
+    ),
+    check(
+      "hr_expense_claim_service_control_key_exact",
+      sql`${table.serviceKey} = 'expense_claim_boundary'`,
+    ),
+    check(
+      "hr_expense_claim_service_control_settings_version_positive",
+      sql`${table.settingsVersion} > 0`,
+    ),
+    check("hr_expense_claim_service_control_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const hrExpenseClaims = pgTable(
+  "hr_expense_claims",
+  {
+    expenseClaimId: uuid("expense_claim_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    workerProfileId: uuid("worker_profile_id").notNull(),
+    currentVersionId: uuid("current_version_id").notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table): PgTableExtras => [
+    unique("uq_hr_expense_claims_composite_identity").on(table.tenantId, table.expenseClaimId),
+    foreignKey({
+      columns: [table.tenantId, table.workerProfileId],
+      foreignColumns: [hrWorkforceProfiles.tenantId, hrWorkforceProfiles.workerProfileId],
+      name: "hr_expense_claims_worker_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.expenseClaimId, table.currentVersionId],
+      foreignColumns: [
+        hrExpenseClaimVersions.tenantId,
+        hrExpenseClaimVersions.expenseClaimId,
+        hrExpenseClaimVersions.expenseClaimVersionId,
+      ],
+      name: "hr_expense_claims_current_version_same_root_fk",
+    }).onDelete("restrict"),
+    index("idx_hr_expense_claims_tenant_worker_created").on(
+      table.tenantId,
+      table.workerProfileId,
+      table.createdAt.desc(),
+      table.expenseClaimId.desc(),
+    ),
+    check("hr_expense_claims_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const hrExpenseClaimVersions = pgTable(
+  "hr_expense_claim_versions",
+  {
+    expenseClaimVersionId: uuid("expense_claim_version_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    expenseClaimId: uuid("expense_claim_id").notNull(),
+    supersedesVersionId: uuid("supersedes_version_id"),
+    version: integer("version").notNull(),
+    currencyCode: text("currency_code").notNull(),
+    status: hrExpenseClaimStatus("status").default("draft").notNull(),
+    assignedApproverWorkerProfileId: uuid("assigned_approver_worker_profile_id"),
+    submittedAt: timestamp("submitted_at", { mode: "date", withTimezone: true }),
+    totalAmountMinor: integer("total_amount_minor").default(0).notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table): PgTableExtras => [
+    foreignKey({
+      columns: [table.tenantId, table.expenseClaimId],
+      foreignColumns: [hrExpenseClaims.tenantId, hrExpenseClaims.expenseClaimId],
+      name: "hr_expense_versions_claim_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.expenseClaimId, table.supersedesVersionId],
+      foreignColumns: [table.tenantId, table.expenseClaimId, table.expenseClaimVersionId],
+      name: "hr_expense_versions_predecessor_same_root_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.assignedApproverWorkerProfileId],
+      foreignColumns: [hrWorkforceProfiles.tenantId, hrWorkforceProfiles.workerProfileId],
+      name: "hr_expense_versions_approver_same_tenant_fk",
+    }).onDelete("restrict"),
+    unique("uq_hr_expense_versions_composite_identity").on(
+      table.tenantId,
+      table.expenseClaimId,
+      table.expenseClaimVersionId,
+    ),
+    unique("uq_hr_expense_versions_tenant_identity").on(
+      table.tenantId,
+      table.expenseClaimVersionId,
+    ),
+    uniqueIndex("uq_hr_expense_versions_tenant_claim_number").on(
+      table.tenantId,
+      table.expenseClaimId,
+      table.version,
+    ),
+    uniqueIndex("uq_hr_expense_versions_tenant_successor")
+      .on(table.tenantId, table.expenseClaimId, table.supersedesVersionId)
+      .where(sql`${table.supersedesVersionId} IS NOT NULL`),
+    index("idx_hr_expense_versions_tenant_approver_submitted").on(
+      table.tenantId,
+      table.assignedApproverWorkerProfileId,
+      table.status,
+      table.submittedAt,
+      table.expenseClaimVersionId,
+    ),
+    index("idx_hr_expense_versions_tenant_claim_cursor").on(
+      table.tenantId,
+      table.expenseClaimId,
+      table.version.desc(),
+      table.expenseClaimVersionId.desc(),
+    ),
+    check(
+      "hr_expense_versions_predecessor_version_consistent",
+      sql`(${table.version} = 1 AND ${table.supersedesVersionId} IS NULL)
+          OR (${table.version} > 1 AND ${table.supersedesVersionId} IS NOT NULL)`,
+    ),
+    check(
+      "hr_expense_versions_submission_consistent",
+      sql`(${table.status} = 'draft'
+            AND ${table.assignedApproverWorkerProfileId} IS NULL
+            AND ${table.submittedAt} IS NULL)
+          OR (${table.status} IN ('submitted', 'approved', 'rejected')
+            AND ${table.assignedApproverWorkerProfileId} IS NOT NULL
+            AND ${table.submittedAt} IS NOT NULL)`,
+    ),
+    check("hr_expense_versions_currency_valid", sql`${table.currencyCode} ~ '^[A-Z]{3}$'`),
+    check(
+      "hr_expense_versions_total_amount_valid",
+      sql`${table.totalAmountMinor} BETWEEN 0 AND 2147483647`,
+    ),
+    check("hr_expense_versions_version_positive", sql`${table.version} > 0`),
+    check("hr_expense_versions_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const hrExpenseClaimLines = pgTable(
+  "hr_expense_claim_lines",
+  {
+    expenseLineId: uuid("expense_line_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    expenseClaimVersionId: uuid("expense_claim_version_id").notNull(),
+    expenseDate: date("expense_date", { mode: "string" }).notNull(),
+    categoryCode: text("category_code").notNull(),
+    amountMinor: integer("amount_minor").notNull(),
+    description: text("description"),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.expenseClaimVersionId],
+      foreignColumns: [
+        hrExpenseClaimVersions.tenantId,
+        hrExpenseClaimVersions.expenseClaimVersionId,
+      ],
+      name: "hr_expense_lines_version_same_tenant_fk",
+    }).onDelete("restrict"),
+    index("idx_hr_expense_lines_tenant_version_date").on(
+      table.tenantId,
+      table.expenseClaimVersionId,
+      table.expenseDate,
+      table.expenseLineId,
+    ),
+    check(
+      "hr_expense_lines_category_valid",
+      sql`char_length(trim(${table.categoryCode})) BETWEEN 1 AND 64
+          AND ${table.categoryCode} !~ '[,[:space:]]'`,
+    ),
+    check("hr_expense_lines_amount_valid", sql`${table.amountMinor} BETWEEN 1 AND 2147483647`),
+    check(
+      "hr_expense_lines_description_valid",
+      sql`${table.description} IS NULL
+          OR char_length(trim(${table.description})) BETWEEN 1 AND 500`,
+    ),
+    check("hr_expense_lines_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const hrExpenseClaimApprovals = pgTable(
+  "hr_expense_claim_approvals",
+  {
+    expenseApprovalId: uuid("expense_approval_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id").notNull(),
+    expenseClaimVersionId: uuid("expense_claim_version_id").notNull(),
+    approverWorkerProfileId: uuid("approver_worker_profile_id").notNull(),
+    decision: hrExpenseClaimDecision("decision").notNull(),
+    decisionNote: text("decision_note"),
+    decidedAt: timestamp("decided_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    correlationId: uuid("correlation_id").notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.expenseClaimVersionId],
+      foreignColumns: [
+        hrExpenseClaimVersions.tenantId,
+        hrExpenseClaimVersions.expenseClaimVersionId,
+      ],
+      name: "hr_expense_approvals_version_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.approverWorkerProfileId],
+      foreignColumns: [hrWorkforceProfiles.tenantId, hrWorkforceProfiles.workerProfileId],
+      name: "hr_expense_approvals_approver_same_tenant_fk",
+    }).onDelete("restrict"),
+    uniqueIndex("uq_hr_expense_approvals_tenant_version").on(
+      table.tenantId,
+      table.expenseClaimVersionId,
+    ),
+    check(
+      "hr_expense_approvals_note_valid",
       sql`${table.decisionNote} IS NULL
           OR char_length(trim(${table.decisionNote})) BETWEEN 1 AND 2000`,
     ),
