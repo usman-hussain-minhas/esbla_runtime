@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import {
+  type HrExpenseClaimSettings,
   type HrServiceConfigureBody,
   type HrServiceControl,
-  type HrTimesheetSettings,
-  hrTimesheetSettingsDefaults,
+  hrExpenseClaimSettingsDefaults,
   parseHrServiceControl,
 } from "@esbla/contracts/hr-service-control-api";
 import {
@@ -29,41 +29,23 @@ import {
 } from "./activation-readiness.js";
 import { hrManifest } from "./manifest.js";
 
-export const HR_TIMESHEET_SERVICE_KEY = "timesheet";
-export const HR_TIMESHEET_BILLING_STATE = "non_billable";
-
-const CONTROL_SUBJECT = "hr.timesheet.service_control";
-const RECEIPT_NAMESPACE = "hr.timesheet.service_control.idempotency.v1";
-const INTERNAL_ACTIVATION_EVENT = "platform.service_activation.changed";
-const MAX_DAILY_MINUTES_KEY = "hr.timesheet.max_daily_minutes";
-const PERIOD_CADENCE_KEY = "hr.timesheet.period_cadence";
-const REJECTION_NOTE_REQUIRED_KEY = "hr.timesheet.rejection_note_required";
-const RETENTION_EVENT = "hr.timesheet.retention.qualified";
-const RETENTION_SUBJECT = "hr.timesheet.retention_qualification";
-const RETENTION_SUBJECT_ID = "ce2fb833-0dff-8e0b-a54e-29b33022ac26";
+export const HR_EXPENSE_CLAIM_SERVICE_KEY = "expense_claim_boundary";
+export const HR_EXPENSE_CLAIM_BILLING_STATE = "non_billable";
+const CONTROL_SUBJECT = "hr.expense.service_control";
+const RECEIPT_NAMESPACE = "hr.expense.service_control.idempotency.v1";
+const CATEGORY_CODES_KEY = "hr.expense.category_codes";
+const REJECTION_NOTE_REQUIRED_KEY = "hr.expense.rejection_note_required";
+const RETENTION_EVENT = "hr.expense.retention.qualified";
+const RETENTION_SUBJECT = "hr.expense.retention_qualification";
+const RETENTION_SUBJECT_ID = "3f0ee29f-3b49-4749-98b0-42d06bd52d66";
 const CONTROL_ACTIONS = Object.freeze([
   "activate_service",
   "configure_service",
   "deactivate_service",
   "view_service_control",
 ] as const);
-export const HR_TIMESHEET_AUTHORIZED_ACTIONS = Object.freeze([
-  "activate_service",
-  "approve",
-  "configure_service",
-  "create",
-  "create_correction",
-  "deactivate_service",
-  "edit_draft",
-  "list_assigned",
-  "list_own",
-  "reject",
-  "submit",
-  "view_detail",
-  "view_service_control",
-] as const);
-const REQUIRED_TIMESHEET_CAPABILITIES =
-  "admin:hr.timesheet.activate_service,tenant:hr.timesheet.approve,admin:hr.timesheet.configure_service,tenant:hr.timesheet.create,tenant:hr.timesheet.create_correction,admin:hr.timesheet.deactivate_service,tenant:hr.timesheet.edit_draft,tenant:hr.timesheet.list_assigned,tenant:hr.timesheet.list_own,tenant:hr.timesheet.reject,tenant:hr.timesheet.submit,tenant:hr.timesheet.view_detail,admin:hr.timesheet.view_service_control".split(
+const REQUIRED_EXPENSE_CAPABILITIES =
+  "admin:hr.expense.activate_service,tenant:hr.expense.approve,admin:hr.expense.configure_service,tenant:hr.expense.create,tenant:hr.expense.create_correction,admin:hr.expense.deactivate_service,tenant:hr.expense.edit_draft,tenant:hr.expense.list_assigned,tenant:hr.expense.list_own,tenant:hr.expense.reject,tenant:hr.expense.submit,tenant:hr.expense.view_detail,admin:hr.expense.view_service_control".split(
     ",",
   );
 const REQUIRED_WORKFORCE_CAPABILITIES =
@@ -78,7 +60,7 @@ const REQUIRED_WORKSPACE_CAPABILITIES =
   "tenant:workspace.task.complete,tenant:workspace.task.create,tenant:workspace.task.list_assigned,tenant:workspace.task.view".split(
     ",",
   );
-const TIMESHEET_REQUIRED_MIGRATIONS = [
+const EXPENSE_REQUIRED_MIGRATIONS = [
   ...HR_WORKFORCE_PROFILE_REQUIRED_MIGRATIONS,
   {
     createdAt: 1783670597328,
@@ -100,38 +82,51 @@ const TIMESHEET_REQUIRED_MIGRATIONS = [
     hash: "642ff06564f73c935ef15daa893603c021715654291f11fa5265d86b896635ed",
     id: "0022",
   },
+  {
+    createdAt: 1784998847879,
+    hash: "cb6a89c61d1ddeba66095eb7337fb44b860ee00ea5840e83fca9613c56e46e44",
+    id: "0023",
+  },
+  {
+    createdAt: 1784999500000,
+    hash: "195b1a7f5496522a87945bcdfb3bbd1df10e586c580704b8c868aa70c1693658",
+    id: "0024",
+  },
 ] as const;
+
 type ControlAction = (typeof CONTROL_ACTIONS)[number];
-export type HrTimesheetAuthorizedAction = (typeof HR_TIMESHEET_AUTHORIZED_ACTIONS)[number];
 type MutationAction = Exclude<ControlAction, "view_service_control">;
-export type HrTimesheetActivationMode = "non_production" | "production";
-export type HrTimesheetErrorCode =
-  | "TIMESHEET_APPROVER_UNAVAILABLE"
-  | "TIMESHEET_CONFLICT"
-  | "TIMESHEET_DEPENDENCY_INACTIVE"
-  | "TIMESHEET_INPUT_INVALID"
-  | "TIMESHEET_NOT_FOUND"
-  | "TIMESHEET_SERVICE_CONTROL_NOT_FOUND"
-  | "TIMESHEET_SERVICE_INACTIVE"
-  | "TIMESHEET_VERSION_CONFLICT";
-export class HrTimesheetError extends Error {
+export type HrExpenseClaimActivationMode = "non_production" | "production";
+export type HrExpenseClaimErrorCode =
+  | "EXPENSE_CONFLICT"
+  | "EXPENSE_DEPENDENCY_INACTIVE"
+  | "EXPENSE_INPUT_INVALID"
+  | "EXPENSE_SERVICE_CONTROL_NOT_FOUND"
+  | "EXPENSE_SERVICE_INACTIVE"
+  | "EXPENSE_VERSION_CONFLICT";
+
+export class HrExpenseClaimError extends Error {
   constructor(
-    readonly code: HrTimesheetErrorCode,
+    readonly code: HrExpenseClaimErrorCode,
     message: string,
   ) {
     super(message);
-    this.name = "HrTimesheetError";
+    this.name = "HrExpenseClaimError";
   }
 }
-export interface TimesheetServiceLifecycleInput {
+
+export interface ExpenseClaimServiceLifecycleInput {
   readonly expectedVersion: number | null;
 }
-export interface TimesheetServiceControlResult {
-  readonly billingState: typeof HR_TIMESHEET_BILLING_STATE;
-  readonly control: HrServiceControl;
+export interface ExpenseClaimServiceControlResult {
+  readonly billingState: typeof HR_EXPENSE_CLAIM_BILLING_STATE;
+  readonly control: HrServiceControl & {
+    readonly serviceKey: typeof HR_EXPENSE_CLAIM_SERVICE_KEY;
+    readonly settings: HrExpenseClaimSettings;
+  };
   readonly replayed: boolean;
 }
-export interface TimesheetDependencyManifest {
+export interface ExpenseClaimDependencyManifest {
   readonly activation: string;
   readonly capabilities: readonly {
     readonly exposure: string;
@@ -141,7 +136,7 @@ export interface TimesheetDependencyManifest {
   readonly id: string;
 }
 interface ControlSnapshot {
-  readonly control: HrServiceControl;
+  readonly control: ExpenseClaimServiceControlResult["control"];
   readonly serviceControlId: string;
 }
 interface ControlRow {
@@ -156,22 +151,32 @@ interface ControlRow {
   readonly settings_version: number;
   readonly updated_at: Date | string;
 }
-function inputInvalid(message: string): HrTimesheetError {
-  return new HrTimesheetError("TIMESHEET_INPUT_INVALID", message);
+type ExpenseConfigureBody = Extract<
+  HrServiceConfigureBody,
+  { readonly settings: HrExpenseClaimSettings }
+>;
+
+function inputInvalid(message: string): HrExpenseClaimError {
+  return new HrExpenseClaimError("EXPENSE_INPUT_INVALID", message);
 }
-function controlConflict(message = "Timesheet service control is invalid"): HrTimesheetError {
-  return new HrTimesheetError("TIMESHEET_CONFLICT", message);
+function controlConflict(
+  message = "Expense Claim service control is invalid",
+): HrExpenseClaimError {
+  return new HrExpenseClaimError("EXPENSE_CONFLICT", message);
 }
-function versionConflict(): HrTimesheetError {
-  return new HrTimesheetError("TIMESHEET_VERSION_CONFLICT", "Timesheet version conflict");
+function versionConflict(): HrExpenseClaimError {
+  return new HrExpenseClaimError("EXPENSE_VERSION_CONFLICT", "Expense Claim version conflict");
 }
-function serviceInactive(): HrTimesheetError {
-  return new HrTimesheetError("TIMESHEET_SERVICE_INACTIVE", "Timesheet service is inactive");
+function serviceInactive(): HrExpenseClaimError {
+  return new HrExpenseClaimError(
+    "EXPENSE_SERVICE_INACTIVE",
+    "Expense Claim Boundary service is inactive",
+  );
 }
 function idempotencyConflict(): PlatformError {
   return new PlatformError(
     "IDEMPOTENCY_CONFLICT",
-    "Idempotency key was already used with different Timesheet service-control data",
+    "Idempotency key was already used with different Expense Claim service-control data",
   );
 }
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -206,37 +211,41 @@ function timestamp(value: Date | string): string {
   if (Number.isNaN(selected.valueOf())) throw controlConflict();
   return selected.toISOString();
 }
-function normalizeSettings(value: unknown): HrTimesheetSettings {
+function normalizeSettings(value: unknown): HrExpenseClaimSettings {
   if (
     !isRecord(value) ||
-    !exactKeys(value, ["maxDailyMinutes", "periodCadence", "rejectionNoteRequired"]) ||
-    !Number.isSafeInteger(value.maxDailyMinutes) ||
-    (value.maxDailyMinutes as number) < 1 ||
-    (value.maxDailyMinutes as number) > 1440 ||
-    value.periodCadence !== "weekly" ||
+    !exactKeys(value, ["categoryCodes", "rejectionNoteRequired"]) ||
+    typeof value.categoryCodes !== "string" ||
+    value.categoryCodes
+      .split(",")
+      .some(
+        (code) =>
+          code.length === 0 || code.length > 64 || code.trim() !== code || /[\s,]/.test(code),
+      ) ||
+    new Set(value.categoryCodes.split(",")).size !== value.categoryCodes.split(",").length ||
     typeof value.rejectionNoteRequired !== "boolean"
   ) {
-    throw inputInvalid("Timesheet settings input is invalid");
+    throw inputInvalid("Expense Claim settings input is invalid");
   }
-  return value as unknown as HrTimesheetSettings;
+  return value as unknown as HrExpenseClaimSettings;
 }
-function validateControl(value: unknown): HrServiceControl {
+function validateControl(value: unknown): ExpenseClaimServiceControlResult["control"] {
   try {
     const control = parseHrServiceControl(value);
     if (
-      control.serviceKey !== HR_TIMESHEET_SERVICE_KEY ||
+      control.serviceKey !== HR_EXPENSE_CLAIM_SERVICE_KEY ||
       control.version !== control.activationVersion + control.settingsVersion - 1
     ) {
       throw controlConflict();
     }
     return control;
   } catch (error) {
-    if (error instanceof HrTimesheetError) throw error;
+    if (error instanceof HrExpenseClaimError) throw error;
     throw controlConflict();
   }
 }
 function exactCapabilities(
-  manifest: TimesheetDependencyManifest,
+  manifest: ExpenseClaimDependencyManifest,
   prefix: string,
   required: readonly string[],
 ): boolean {
@@ -251,52 +260,92 @@ function exactCapabilities(
 async function dependencyCatalogCurrent(transaction: TenantTransaction): Promise<boolean> {
   const result = await transaction.client.query<{ current: boolean }>(
     `WITH workspace AS (
-       SELECT relation.oid FROM pg_catalog.pg_class relation JOIN pg_catalog.pg_namespace namespace ON namespace.oid=relation.relnamespace
-       WHERE namespace.nspname='public' AND relation.relname='workspace_tasks' AND relation.relkind='r'
-         AND relation.relpersistence='p' AND relation.relrowsecurity AND relation.relforcerowsecurity
+       SELECT relation.oid FROM pg_catalog.pg_class relation
+       JOIN pg_catalog.pg_namespace namespace ON namespace.oid=relation.relnamespace
+       WHERE namespace.nspname='public' AND relation.relname='workspace_tasks'
+         AND relation.relkind='r' AND relation.relpersistence='p'
+         AND relation.relrowsecurity AND relation.relforcerowsecurity
      ), evidence AS (
-       SELECT relation.oid,relation.relowner FROM pg_catalog.pg_class relation JOIN pg_catalog.pg_namespace namespace ON namespace.oid=relation.relnamespace
+       SELECT relation.oid,relation.relowner FROM pg_catalog.pg_class relation
+       JOIN pg_catalog.pg_namespace namespace ON namespace.oid=relation.relnamespace
        WHERE namespace.nspname='public' AND relation.relname='evidence_events'
      ) SELECT (SELECT count(*)=1 FROM workspace)
-       AND (SELECT count(*)=1 FROM pg_catalog.pg_policy policy,workspace WHERE policy.polrelid=workspace.oid)
-       AND (SELECT count(*)=1 FROM pg_catalog.pg_policy policy,workspace WHERE policy.polrelid=workspace.oid
-         AND policy.polname='workspace_tasks_tenant_isolation' AND policy.polcmd='*' AND policy.polpermissive AND policy.polroles=ARRAY[0::oid]
-         AND replace(pg_catalog.pg_get_expr(policy.polqual,policy.polrelid),'public.','')='(tenant_id = esbla_current_tenant_id())'
-         AND replace(pg_catalog.pg_get_expr(policy.polwithcheck,policy.polrelid),'public.','')='(tenant_id = esbla_current_tenant_id())')
-       AND EXISTS (SELECT 1 FROM pg_catalog.pg_index record JOIN pg_catalog.pg_class index ON index.oid=record.indexrelid,workspace
-         WHERE record.indrelid=workspace.oid AND index.relname='workspace_tasks_assignee_open_idx' AND record.indisvalid AND record.indisready AND record.indislive
-         AND replace(pg_catalog.pg_get_indexdef(index.oid),'::public.','::')='CREATE INDEX workspace_tasks_assignee_open_idx ON public.workspace_tasks USING btree (tenant_id, assignee_principal_id, due_on, created_at, task_id) WHERE (status = ''open''::workspace_task_status)')
-       AND (SELECT count(*)=2 FROM pg_catalog.pg_trigger trigger JOIN pg_catalog.pg_proc function ON function.oid=trigger.tgfoid,workspace
-         WHERE trigger.tgrelid=workspace.oid AND NOT trigger.tgisinternal AND trigger.tgenabled='O' AND function.proname='esbla_enforce_workspace_task_state'
-         AND NOT function.prosecdef AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(function.prosrc,'UTF8')),'hex')='645b379ea313d15e68b2d141dc330a38760fce8db84f19b7dbbf0e6a4b97c5b2'
-         AND ((trigger.tgname='workspace_tasks_enforce_state' AND trigger.tgtype=31) OR (trigger.tgname='workspace_tasks_reject_truncate' AND trigger.tgtype=34)))
-       AND (SELECT count(*)=2 FROM pg_catalog.pg_trigger trigger,workspace WHERE trigger.tgrelid=workspace.oid AND NOT trigger.tgisinternal)
-       AND EXISTS (SELECT 1 FROM evidence JOIN pg_catalog.pg_trigger trigger ON trigger.tgrelid=evidence.oid JOIN pg_catalog.pg_proc function ON function.oid=trigger.tgfoid
-         WHERE trigger.tgname='evidence_events_protect_hr_timesheet_retention' AND NOT trigger.tgisinternal AND trigger.tgenabled='O' AND trigger.tgtype=7
-         AND function.proname='esbla_protect_hr_timesheet_retention_evidence' AND function.proowner=evidence.relowner AND NOT function.prosecdef
-         AND function.proconfig=ARRAY['search_path=pg_catalog'] AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(function.prosrc,'UTF8')),'hex')='b7e37e9bb0e6ee2e7e9f724483795f4468a62af1baf99daf88697ca6f7140c6a'
-         AND SESSION_USER<>pg_catalog.pg_get_userbyid(evidence.relowner) AND NOT EXISTS (
-           SELECT 1 FROM pg_catalog.aclexplode(COALESCE(function.proacl,pg_catalog.acldefault('f',function.proowner))) privilege
-           WHERE privilege.privilege_type='EXECUTE' AND privilege.grantee<>function.proowner))
-       AND (SELECT count(*)=2 FROM evidence JOIN pg_catalog.pg_trigger trigger ON trigger.tgrelid=evidence.oid JOIN pg_catalog.pg_proc function ON function.oid=trigger.tgfoid
-         WHERE NOT trigger.tgisinternal AND trigger.tgenabled='O' AND function.proname='esbla_reject_evidence_mutation' AND function.proowner=evidence.relowner AND NOT function.prosecdef AND function.proconfig IS NULL
-         AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(function.prosrc,'UTF8')),'hex')='30fa45fd4e7b290856e6776f2ca0e376335461622705a01f8b19b30683cdf53b'
-         AND ((trigger.tgname='evidence_events_reject_update_delete' AND trigger.tgtype=27) OR (trigger.tgname='evidence_events_reject_truncate' AND trigger.tgtype=34)))
-       AND (SELECT count(*)=3 FROM evidence JOIN pg_catalog.pg_trigger trigger ON trigger.tgrelid=evidence.oid WHERE NOT trigger.tgisinternal) AS current`,
+       AND (SELECT count(*)=1 FROM pg_catalog.pg_policy policy,workspace
+            WHERE policy.polrelid=workspace.oid)
+       AND (SELECT count(*)=1 FROM pg_catalog.pg_policy policy,workspace
+         WHERE policy.polrelid=workspace.oid
+           AND policy.polname='workspace_tasks_tenant_isolation' AND policy.polcmd='*'
+           AND policy.polpermissive AND policy.polroles=ARRAY[0::oid]
+           AND replace(pg_catalog.pg_get_expr(policy.polqual,policy.polrelid),'public.','')
+             ='(tenant_id = esbla_current_tenant_id())'
+           AND replace(pg_catalog.pg_get_expr(policy.polwithcheck,policy.polrelid),'public.','')
+             ='(tenant_id = esbla_current_tenant_id())')
+       AND EXISTS (
+         SELECT 1 FROM pg_catalog.pg_index record
+         JOIN pg_catalog.pg_class index ON index.oid=record.indexrelid,workspace
+         WHERE record.indrelid=workspace.oid
+           AND index.relname='workspace_tasks_assignee_open_idx'
+           AND record.indisvalid AND record.indisready AND record.indislive
+           AND replace(pg_catalog.pg_get_indexdef(index.oid),'::public.','::')
+             ='CREATE INDEX workspace_tasks_assignee_open_idx ON public.workspace_tasks USING btree (tenant_id, assignee_principal_id, due_on, created_at, task_id) WHERE (status = ''open''::workspace_task_status)'
+       )
+       AND (SELECT count(*)=2 FROM pg_catalog.pg_trigger trigger
+         JOIN pg_catalog.pg_proc function ON function.oid=trigger.tgfoid,workspace
+         WHERE trigger.tgrelid=workspace.oid AND NOT trigger.tgisinternal
+           AND trigger.tgenabled='O' AND function.proname='esbla_enforce_workspace_task_state'
+           AND NOT function.prosecdef
+           AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(function.prosrc,'UTF8')),'hex')
+             ='645b379ea313d15e68b2d141dc330a38760fce8db84f19b7dbbf0e6a4b97c5b2'
+           AND ((trigger.tgname='workspace_tasks_enforce_state' AND trigger.tgtype=31)
+             OR (trigger.tgname='workspace_tasks_reject_truncate' AND trigger.tgtype=34)))
+       AND (SELECT count(*)=2 FROM pg_catalog.pg_trigger trigger,workspace
+            WHERE trigger.tgrelid=workspace.oid AND NOT trigger.tgisinternal)
+       AND EXISTS (
+         SELECT 1 FROM evidence
+         JOIN pg_catalog.pg_trigger trigger ON trigger.tgrelid=evidence.oid
+         JOIN pg_catalog.pg_proc function ON function.oid=trigger.tgfoid
+         WHERE trigger.tgname='evidence_events_protect_hr_timesheet_retention'
+           AND NOT trigger.tgisinternal AND trigger.tgenabled='O' AND trigger.tgtype=7
+           AND function.proname='esbla_protect_hr_timesheet_retention_evidence'
+           AND function.proowner=evidence.relowner AND NOT function.prosecdef
+           AND function.proconfig=ARRAY['search_path=pg_catalog']
+           AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(function.prosrc,'UTF8')),'hex')
+             ='b7e37e9bb0e6ee2e7e9f724483795f4468a62af1baf99daf88697ca6f7140c6a'
+           AND SESSION_USER<>pg_catalog.pg_get_userbyid(evidence.relowner)
+           AND NOT EXISTS (
+             SELECT 1 FROM pg_catalog.aclexplode(
+               COALESCE(function.proacl,pg_catalog.acldefault('f',function.proowner))
+             ) privilege
+             WHERE privilege.privilege_type='EXECUTE'
+               AND privilege.grantee<>function.proowner
+           )
+       )
+       AND (SELECT count(*)=2 FROM evidence
+         JOIN pg_catalog.pg_trigger trigger ON trigger.tgrelid=evidence.oid
+         JOIN pg_catalog.pg_proc function ON function.oid=trigger.tgfoid
+         WHERE NOT trigger.tgisinternal AND trigger.tgenabled='O'
+           AND function.proname='esbla_reject_evidence_mutation'
+           AND function.proowner=evidence.relowner AND NOT function.prosecdef
+           AND function.proconfig IS NULL
+           AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(function.prosrc,'UTF8')),'hex')
+             ='30fa45fd4e7b290856e6776f2ca0e376335461622705a01f8b19b30683cdf53b'
+           AND ((trigger.tgname='evidence_events_reject_update_delete' AND trigger.tgtype=27)
+             OR (trigger.tgname='evidence_events_reject_truncate' AND trigger.tgtype=34)))
+       AND (SELECT count(*)=3 FROM evidence
+         JOIN pg_catalog.pg_trigger trigger ON trigger.tgrelid=evidence.oid
+         WHERE NOT trigger.tgisinternal) AS current`,
   );
   return result.rows[0]?.current === true;
 }
 async function semanticReadiness(
   transaction: TenantTransaction,
-  mode: HrTimesheetActivationMode,
-  workspaceManifest: TimesheetDependencyManifest,
+  mode: HrExpenseClaimActivationMode,
+  workspaceManifest: ExpenseClaimDependencyManifest,
 ): Promise<ActivationPreflight> {
   const reasons: string[] = [];
-  const hrSnapshot = hrManifest as TimesheetDependencyManifest;
-  const coreSnapshot = platformCoreManifest as TimesheetDependencyManifest;
-  if (
-    !exactCapabilities(hrSnapshot, "hr.timesheet.", [...REQUIRED_TIMESHEET_CAPABILITIES].sort())
-  ) {
+  const hrSnapshot = hrManifest as ExpenseClaimDependencyManifest;
+  const coreSnapshot = platformCoreManifest as ExpenseClaimDependencyManifest;
+  if (!exactCapabilities(hrSnapshot, "hr.expense.", [...REQUIRED_EXPENSE_CAPABILITIES].sort())) {
     reasons.push("service_not_eligible");
   }
   if (
@@ -338,66 +387,45 @@ async function authorizeAdmin(
   transaction: TenantTransaction,
   action: ControlAction,
 ): Promise<PolicyDecision> {
-  const actionKey = `hr.timesheet.${action}`;
+  const actionKey = `hr.expense.${action}`;
   const manifestCurrent = hrManifest.capabilities.some(
     ({ exposure, id }) => exposure === "admin" && id === actionKey,
   );
   const capability = await transaction.client.query<{ current: boolean }>(
-    "SELECT public.esbla_hr_timesheet_service_admin_current($1) AS current",
+    "SELECT public.esbla_hr_expense_claim_service_admin_current($1) AS current",
     [actionKey],
   );
   const input = { capabilityCurrent: manifestCurrent && capability.rows[0]?.current === true };
   const rules = [
     {
       effect: "allow" as const,
-      id: `current_tenant_admin_${action}_timesheet`,
+      id: `current_tenant_admin_${action}_expense`,
       matches: (_input: typeof input, actor: { roleKey: string }) =>
         actor.roleKey === "tenant_admin" && input.capabilityCurrent,
     },
   ];
   const decision = evaluatePolicy(
-    { actionKey, input, resourceKey: HR_TIMESHEET_SERVICE_KEY, transaction },
+    { actionKey, input, resourceKey: HR_EXPENSE_CLAIM_SERVICE_KEY, transaction },
     rules,
   );
-  assertPolicyAllowed(decision, transaction, actionKey, HR_TIMESHEET_SERVICE_KEY);
+  assertPolicyAllowed(decision, transaction, actionKey, HR_EXPENSE_CLAIM_SERVICE_KEY);
   if (action === "configure_service" || action === "view_service_control") return decision;
   const platformAction = `platform.service_activation.${
     action === "activate_service" ? "activate" : "deactivate"
   }`;
   const platformDecision = evaluatePolicy(
-    { actionKey: platformAction, input, resourceKey: HR_TIMESHEET_SERVICE_KEY, transaction },
+    { actionKey: platformAction, input, resourceKey: HR_EXPENSE_CLAIM_SERVICE_KEY, transaction },
     rules,
   );
-  assertPolicyAllowed(platformDecision, transaction, platformAction, HR_TIMESHEET_SERVICE_KEY);
+  assertPolicyAllowed(platformDecision, transaction, platformAction, HR_EXPENSE_CLAIM_SERVICE_KEY);
   return platformDecision;
 }
-const TIMESHEET_ACTION_ROLES: Readonly<Record<HrTimesheetAuthorizedAction, readonly string[]>> =
-  Object.freeze({
-    activate_service: Object.freeze(["tenant_admin"]),
-    approve: Object.freeze(["manager"]),
-    configure_service: Object.freeze(["tenant_admin"]),
-    create: Object.freeze(["employee"]),
-    create_correction: Object.freeze(["hr_operator"]),
-    deactivate_service: Object.freeze(["tenant_admin"]),
-    edit_draft: Object.freeze(["employee"]),
-    list_assigned: Object.freeze(["manager"]),
-    list_own: Object.freeze(["employee"]),
-    reject: Object.freeze(["manager"]),
-    submit: Object.freeze(["employee"]),
-    view_detail: Object.freeze(["employee", "hr_operator", "manager"]),
-    view_service_control: Object.freeze(["tenant_admin"]),
-  });
-
-/**
- * Projects current role and capability state for advisory rendering only. Every action still
- * performs its own transactional policy and object-authority checks.
- */
-export async function inspectTimesheetActionAuthority(
+export async function inspectExpenseClaimServiceControlAuthority(
   pool: Pool,
   context: OperationContext,
-): Promise<readonly HrTimesheetAuthorizedAction[]> {
+): Promise<readonly ControlAction[]> {
   return await withTenantTransaction(pool, context, async (transaction) => {
-    const capabilityIds = HR_TIMESHEET_AUTHORIZED_ACTIONS.map((action) => `hr.timesheet.${action}`);
+    const capabilityIds = CONTROL_ACTIONS.map((action) => `hr.expense.${action}`);
     const result = await transaction.client.query<{ capability_id: string }>(
       `SELECT capability_id FROM membership_capabilities
        WHERE tenant_id=$1 AND principal_id=$2 AND capability_id=ANY($3::text[])
@@ -406,24 +434,18 @@ export async function inspectTimesheetActionAuthority(
     );
     const current = new Set(result.rows.map(({ capability_id }) => capability_id));
     return Object.freeze(
-      HR_TIMESHEET_AUTHORIZED_ACTIONS.filter((action) => {
-        const capabilityId = `hr.timesheet.${action}`;
+      CONTROL_ACTIONS.filter((action) => {
+        const capabilityId = `hr.expense.${action}`;
         return (
-          TIMESHEET_ACTION_ROLES[action].includes(transaction.actor.roleKey) &&
+          transaction.actor.roleKey === "tenant_admin" &&
           current.has(capabilityId) &&
-          hrManifest.capabilities.some(({ id }) => id === capabilityId)
+          hrManifest.capabilities.some(
+            ({ exposure, id }) => exposure === "admin" && id === capabilityId,
+          )
         );
       }),
     );
   });
-}
-
-export async function inspectTimesheetServiceControlAuthority(
-  pool: Pool,
-  context: OperationContext,
-): Promise<readonly ControlAction[]> {
-  const actions = await inspectTimesheetActionAuthority(pool, context);
-  return Object.freeze(CONTROL_ACTIONS.filter((action) => actions.includes(action)));
 }
 async function requireActiveDependencies(transaction: TenantTransaction): Promise<void> {
   const result = await transaction.client
@@ -443,40 +465,36 @@ async function requireActiveDependencies(transaction: TenantTransaction): Promis
     result.rows.map(({ service_key }) => service_key).join(",") !==
       "workforce_profile,workspace.task"
   ) {
-    throw new HrTimesheetError("TIMESHEET_DEPENDENCY_INACTIVE", "Timesheet dependency is inactive");
+    throw new HrExpenseClaimError(
+      "EXPENSE_DEPENDENCY_INACTIVE",
+      "Expense Claim dependency is inactive",
+    );
   }
 }
-function settingsFromRows(rows: readonly ControlRow[], version: number): HrTimesheetSettings {
+function settingsFromRows(rows: readonly ControlRow[], version: number): HrExpenseClaimSettings {
   const selected = rows.filter((row) => row.setting_key !== null);
   if (version === 1) {
     if (rows.length !== 1 || selected.length !== 0) throw controlConflict();
-    return { ...hrTimesheetSettingsDefaults };
+    return { ...hrExpenseClaimSettingsDefaults };
   }
   const byKey = new Map(selected.map((row) => [String(row.setting_key), row]));
-  const maxDaily = byKey.get(MAX_DAILY_MINUTES_KEY);
-  const cadence = byKey.get(PERIOD_CADENCE_KEY);
+  const categories = byKey.get(CATEGORY_CODES_KEY);
   const rejection = byKey.get(REJECTION_NOTE_REQUIRED_KEY);
   if (
-    rows.length !== 3 ||
-    maxDaily?.setting_value_type !== "integer" ||
-    !Number.isSafeInteger(maxDaily.setting_value) ||
-    (maxDaily.setting_value as number) < 1 ||
-    (maxDaily.setting_value as number) > 1440 ||
-    maxDaily.setting_version !== version - 1 ||
-    cadence?.setting_value_type !== "enum" ||
-    cadence.setting_value !== "weekly" ||
-    cadence.setting_version !== version - 1 ||
+    rows.length !== 2 ||
+    categories?.setting_value_type !== "text" ||
+    typeof categories.setting_value !== "string" ||
+    categories.setting_version !== version - 1 ||
     rejection?.setting_value_type !== "boolean" ||
     typeof rejection.setting_value !== "boolean" ||
     rejection.setting_version !== version - 1
   ) {
-    throw controlConflict("Timesheet settings are not current");
+    throw controlConflict("Expense Claim settings are not current");
   }
-  return {
-    maxDailyMinutes: maxDaily.setting_value as number,
-    periodCadence: "weekly",
+  return normalizeSettings({
+    categoryCodes: categories.setting_value,
     rejectionNoteRequired: rejection.setting_value,
-  };
+  });
 }
 async function readControl(
   transaction: TenantTransaction,
@@ -488,18 +506,15 @@ async function readControl(
             activation.version AS activation_version,setting.setting_key,
             setting.value AS setting_value,setting.value_type::text AS setting_value_type,
             setting.version AS setting_version
-     FROM hr_timesheet_service_control control
+     FROM hr_expense_claim_service_control control
      JOIN service_activations activation
        ON activation.tenant_id=control.tenant_id AND activation.service_key=control.service_key
      LEFT JOIN tenant_settings setting
        ON setting.tenant_id=control.tenant_id
       AND setting.setting_key=ANY($2::text[])
-     WHERE control.tenant_id=$1 AND control.service_key='timesheet'
-     ORDER BY setting.setting_key LIMIT 4`,
-    [
-      transaction.context.tenantId,
-      [MAX_DAILY_MINUTES_KEY, PERIOD_CADENCE_KEY, REJECTION_NOTE_REQUIRED_KEY],
-    ],
+     WHERE control.tenant_id=$1 AND control.service_key='expense_claim_boundary'
+     ORDER BY setting.setting_key LIMIT 3`,
+    [transaction.context.tenantId, [CATEGORY_CODES_KEY, REJECTION_NOTE_REQUIRED_KEY]],
   );
   const row = result.rows[0];
   if (!row) {
@@ -508,7 +523,7 @@ async function readControl(
   }
   if (
     !activation ||
-    activation.serviceKey !== HR_TIMESHEET_SERVICE_KEY ||
+    activation.serviceKey !== HR_EXPENSE_CLAIM_SERVICE_KEY ||
     activation.state !== row.activation_state ||
     activation.version !== row.activation_version ||
     row.row_version !== row.activation_version + row.settings_version - 1 ||
@@ -523,19 +538,24 @@ async function readControl(
   ) {
     throw controlConflict();
   }
-  const control = validateControl({
-    activationState: row.activation_state,
-    activationVersion: row.activation_version,
-    serviceKey: HR_TIMESHEET_SERVICE_KEY,
-    settings: settingsFromRows(result.rows, row.settings_version),
-    settingsVersion: row.settings_version,
-    updatedAt: timestamp(row.updated_at),
-    version: row.row_version,
-  });
-  return { control, serviceControlId: row.service_control_id };
+  return {
+    control: validateControl({
+      activationState: row.activation_state,
+      activationVersion: row.activation_version,
+      serviceKey: HR_EXPENSE_CLAIM_SERVICE_KEY,
+      settings: settingsFromRows(result.rows, row.settings_version),
+      settingsVersion: row.settings_version,
+      updatedAt: timestamp(row.updated_at),
+      version: row.row_version,
+    }),
+    serviceControlId: row.service_control_id,
+  };
 }
-function result(control: HrServiceControl, replayed: boolean): TimesheetServiceControlResult {
-  return { billingState: HR_TIMESHEET_BILLING_STATE, control, replayed };
+function result(
+  control: ExpenseClaimServiceControlResult["control"],
+  replayed: boolean,
+): ExpenseClaimServiceControlResult {
+  return { billingState: HR_EXPENSE_CLAIM_BILLING_STATE, control, replayed };
 }
 function receiptId(transaction: TenantTransaction, action: MutationAction): string {
   return deriveStableUuid(
@@ -550,9 +570,9 @@ async function readReplay(
   transaction: TenantTransaction,
   action: MutationAction,
   semantics: string,
-): Promise<HrServiceControl | null> {
+): Promise<ExpenseClaimServiceControlResult["control"] | null> {
   const id = receiptId(transaction, action);
-  const eventType = `hr.timesheet.${action}`;
+  const eventType = `hr.expense.${action}`;
   const proof = await transaction.client.query<{
     aggregate_version: number;
     correlation_id: string;
@@ -601,7 +621,7 @@ async function readReplay(
     payload.receiptId !== id ||
     payload.afterVersion !== row.aggregate_version ||
     payload.beforeVersion !== (row.aggregate_version === 1 ? null : row.aggregate_version - 1) ||
-    payload.billingState !== HR_TIMESHEET_BILLING_STATE ||
+    payload.billingState !== HR_EXPENSE_CLAIM_BILLING_STATE ||
     payload.payloadVersion !== 1 ||
     payload.semantics !== semantics ||
     row.correlation_id !== transaction.context.correlationId
@@ -639,7 +659,7 @@ async function recordResult(
   newState: string,
 ): Promise<void> {
   const id = receiptId(transaction, action);
-  const eventType = `hr.timesheet.${action}`;
+  const eventType = `hr.expense.${action}`;
   await recordMutationProof(transaction, {
     evidence: {
       eventType,
@@ -657,7 +677,7 @@ async function recordResult(
         action,
         afterVersion: snapshot.control.version,
         beforeVersion: snapshot.control.version === 1 ? null : snapshot.control.version - 1,
-        billingState: HR_TIMESHEET_BILLING_STATE,
+        billingState: HR_EXPENSE_CLAIM_BILLING_STATE,
         control: snapshot.control,
         controlSha256: sha256(snapshot.control),
         payloadVersion: 1,
@@ -669,10 +689,10 @@ async function recordResult(
 }
 async function lifecycle(
   transaction: TenantTransaction,
-  input: TimesheetServiceLifecycleInput,
+  input: ExpenseClaimServiceLifecycleInput,
   action: "activate_service" | "deactivate_service",
   preflight?: () => Promise<ActivationPreflight>,
-): Promise<TimesheetServiceControlResult> {
+): Promise<ExpenseClaimServiceControlResult> {
   const authorization = await authorizeAdmin(transaction, action);
   if (action === "deactivate_service" && transaction.lockedServiceActivation?.state !== "active") {
     const replay = await readReplay(transaction, action, action);
@@ -683,11 +703,11 @@ async function lifecycle(
   const targetState = action === "activate_service" ? "active" : "inactive";
   const activation = await setServiceActivation(transaction, {
     authorization,
-    evidenceEventType: `evidence.hr.timesheet.service.${targetState}`,
+    evidenceEventType: `evidence.hr.expense.service.${targetState}`,
     expectedVersion: input.expectedVersion,
-    outboxEventType: INTERNAL_ACTIVATION_EVENT,
+    outboxEventType: "platform.service_activation.changed",
     ...(preflight ? { preflight } : {}),
-    serviceKey: HR_TIMESHEET_SERVICE_KEY,
+    serviceKey: HR_EXPENSE_CLAIM_SERVICE_KEY,
     targetState,
   });
   if (activation.replayed) {
@@ -696,7 +716,7 @@ async function lifecycle(
     return result(replay, true);
   }
   const snapshot = await readControl(transaction, activation);
-  if (!snapshot) throw controlConflict("Timesheet service control is missing");
+  if (!snapshot) throw controlConflict("Expense Claim service control is missing");
   await recordResult(transaction, action, action, snapshot, priorState, targetState);
   return result(snapshot.control, false);
 }
@@ -705,9 +725,9 @@ async function probeActivationReplay(
   runtimePool: Pool,
   migrationReadPool: Pool,
   context: OperationContext,
-  input: TimesheetServiceLifecycleInput,
-): Promise<TimesheetServiceControlResult | null> {
-  const preflightRequired = new Error("Timesheet activation readiness phase is required");
+  input: ExpenseClaimServiceLifecycleInput,
+): Promise<ExpenseClaimServiceControlResult | null> {
+  const preflightRequired = new Error("Expense Claim activation readiness phase is required");
   try {
     return await withTenantTransaction(
       runtimePool,
@@ -721,7 +741,7 @@ async function probeActivationReplay(
         }),
       {
         migrationBarrier: "shared",
-        serviceActivationKey: HR_TIMESHEET_SERVICE_KEY,
+        serviceActivationKey: HR_EXPENSE_CLAIM_SERVICE_KEY,
         serviceActivationLock: "update",
       },
     );
@@ -731,17 +751,17 @@ async function probeActivationReplay(
   }
 }
 
-export async function activateTimesheetService(
+export async function activateExpenseClaimService(
   runtimePool: Pool,
   migrationReadPool: Pool,
   context: OperationContext,
-  input: TimesheetServiceLifecycleInput,
-  mode: HrTimesheetActivationMode,
-  workspaceManifest: TimesheetDependencyManifest,
-): Promise<TimesheetServiceControlResult> {
+  input: ExpenseClaimServiceLifecycleInput,
+  mode: HrExpenseClaimActivationMode,
+  workspaceManifest: ExpenseClaimDependencyManifest,
+): Promise<ExpenseClaimServiceControlResult> {
   if (input.expectedVersion !== null) assertVersion(input.expectedVersion, "expectedVersion");
   if (mode !== "non_production" && mode !== "production") {
-    throw inputInvalid("Timesheet activation mode is invalid");
+    throw inputInvalid("Expense Claim activation mode is invalid");
   }
   const replay = await probeActivationReplay(runtimePool, migrationReadPool, context, input);
   if (replay) return replay;
@@ -763,7 +783,7 @@ export async function activateTimesheetService(
           migrationClient = null;
           return await inspectActivationReadiness(transaction, client, {
             catalog: HR_WORKFORCE_PROFILE_CATALOG_REQUIREMENTS,
-            migrations: TIMESHEET_REQUIRED_MIGRATIONS,
+            migrations: EXPENSE_REQUIRED_MIGRATIONS,
             runtimeTablePrivileges: [
               {
                 delete: false,
@@ -781,7 +801,7 @@ export async function activateTimesheetService(
         }),
       {
         migrationBarrier: "shared",
-        serviceActivationKey: HR_TIMESHEET_SERVICE_KEY,
+        serviceActivationKey: HR_EXPENSE_CLAIM_SERVICE_KEY,
         serviceActivationLock: "update",
       },
     );
@@ -789,24 +809,26 @@ export async function activateTimesheetService(
     migrationClient?.release();
   }
 }
-export async function deactivateTimesheetService(
+export async function deactivateExpenseClaimService(
   pool: Pool,
   context: OperationContext,
-  input: TimesheetServiceLifecycleInput & { readonly expectedVersion: number },
-): Promise<TimesheetServiceControlResult> {
+  input: ExpenseClaimServiceLifecycleInput & { readonly expectedVersion: number },
+): Promise<ExpenseClaimServiceControlResult> {
   assertVersion(input.expectedVersion, "expectedVersion");
   return await withTenantTransaction(
     pool,
     context,
     async (transaction) => await lifecycle(transaction, input, "deactivate_service"),
-    { serviceActivationKey: HR_TIMESHEET_SERVICE_KEY, serviceActivationLock: "update" },
+    {
+      serviceActivationKey: HR_EXPENSE_CLAIM_SERVICE_KEY,
+      serviceActivationLock: "update",
+    },
   );
 }
-
-export async function getTimesheetServiceControl(
+export async function getExpenseClaimServiceControl(
   pool: Pool,
   context: OperationContext,
-): Promise<TimesheetServiceControlResult> {
+): Promise<ExpenseClaimServiceControlResult> {
   return await withTenantTransaction(
     pool,
     context,
@@ -817,21 +839,23 @@ export async function getTimesheetServiceControl(
         : null;
       const snapshot = await readControl(transaction, activation);
       if (!snapshot) {
-        throw new HrTimesheetError(
-          "TIMESHEET_SERVICE_CONTROL_NOT_FOUND",
-          "Timesheet service control was not found",
+        throw new HrExpenseClaimError(
+          "EXPENSE_SERVICE_CONTROL_NOT_FOUND",
+          "Expense Claim service control was not found",
         );
       }
       return result(snapshot.control, false);
     },
-    { serviceActivationKey: HR_TIMESHEET_SERVICE_KEY, serviceActivationLock: "share" },
+    {
+      serviceActivationKey: HR_EXPENSE_CLAIM_SERVICE_KEY,
+      serviceActivationLock: "share",
+    },
   );
 }
-
 function translateConfigureError(error: unknown): never {
-  if (error instanceof HrTimesheetError || error instanceof PlatformError) throw error;
+  if (error instanceof HrExpenseClaimError || error instanceof PlatformError) throw error;
   if (postgresCode(error, "22003", "22023")) {
-    throw inputInvalid("Timesheet settings input is invalid");
+    throw inputInvalid("Expense Claim settings input is invalid");
   }
   if (postgresCode(error, "42501")) {
     throw new PlatformError("POLICY_DENIED", "Policy decision denied the action");
@@ -840,12 +864,11 @@ function translateConfigureError(error: unknown): never {
   if (postgresCode(error, "55000")) throw controlConflict();
   throw error;
 }
-
-export async function configureTimesheetService(
+export async function configureExpenseClaimService(
   pool: Pool,
   context: OperationContext,
-  input: HrServiceConfigureBody,
-): Promise<TimesheetServiceControlResult> {
+  input: ExpenseConfigureBody,
+): Promise<ExpenseClaimServiceControlResult> {
   assertVersion(input.expectedSettingsVersion, "expectedSettingsVersion");
   const settings = normalizeSettings(input.settings);
   return await withTenantTransaction(
@@ -860,7 +883,7 @@ export async function configureTimesheetService(
       );
       await transaction.client.query(
         "SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1::text,0))",
-        [`hr.timesheet.settings.v1:${transaction.context.tenantId}`],
+        [`hr.expense.settings.v1:${transaction.context.tenantId}`],
       );
       const semantics = sha256({
         expectedSettingsVersion: input.expectedSettingsVersion,
@@ -871,13 +894,8 @@ export async function configureTimesheetService(
       if (transaction.lockedServiceActivation?.state !== "active") throw serviceInactive();
       try {
         await transaction.client.query(
-          "SELECT public.esbla_configure_hr_timesheet_settings($1,$2,$3,$4)",
-          [
-            input.expectedSettingsVersion,
-            settings.maxDailyMinutes,
-            settings.periodCadence,
-            settings.rejectionNoteRequired,
-          ],
+          "SELECT public.esbla_configure_hr_expense_claim_settings($1,$2,$3)",
+          [input.expectedSettingsVersion, settings.categoryCodes, settings.rejectionNoteRequired],
         );
       } catch (error) {
         translateConfigureError(error);
@@ -886,7 +904,7 @@ export async function configureTimesheetService(
         ? { ...transaction.lockedServiceActivation, replayed: false }
         : null;
       const snapshot = await readControl(transaction, activation);
-      if (!snapshot) throw controlConflict("Timesheet service control is missing");
+      if (!snapshot) throw controlConflict("Expense Claim service control is missing");
       await recordResult(
         transaction,
         "configure_service",
@@ -897,6 +915,9 @@ export async function configureTimesheetService(
       );
       return result(snapshot.control, false);
     },
-    { serviceActivationKey: HR_TIMESHEET_SERVICE_KEY, serviceActivationLock: "share" },
+    {
+      serviceActivationKey: HR_EXPENSE_CLAIM_SERVICE_KEY,
+      serviceActivationLock: "share",
+    },
   );
 }

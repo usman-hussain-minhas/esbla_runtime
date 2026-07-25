@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   hrAttendanceSettingsDefaults,
   hrEmploymentRecordSettingsDefaults,
+  hrExpenseClaimSettingsDefaults,
   hrServiceActivateBodySchema,
   hrServiceConfigureBodySchema,
   hrServiceControlQuerySchema,
@@ -51,6 +52,11 @@ const attendanceSettings = {
 const timesheetSettings = {
   maxDailyMinutes: 1440,
   periodCadence: "weekly",
+  rejectionNoteRequired: true,
+} as const;
+
+const expenseClaimSettings = {
+  categoryCodes: "other,travel",
   rejectionNoteRequired: true,
 } as const;
 
@@ -238,6 +244,38 @@ describe("shared HR service-control contracts", () => {
     }
   });
 
+  it("accepts only exact opaque Expense category and rejection-note settings", () => {
+    expect(hrExpenseClaimSettingsDefaults).toEqual({
+      categoryCodes: "other",
+      rejectionNoteRequired: true,
+    });
+    expect(JSON.stringify(hrServiceConfigureBodySchema)).toContain(
+      '"pattern":"^[^\\\\s,]+(?:,[^\\\\s,]+)*$"',
+    );
+    expect(Object.isFrozen(hrExpenseClaimSettingsDefaults)).toBe(true);
+    const body = { expectedSettingsVersion: 2, settings: expenseClaimSettings };
+    const response = {
+      ...serviceControl,
+      serviceKey: "expense_claim_boundary",
+      settings: expenseClaimSettings,
+    } as const;
+    expect(parseHrServiceConfigureBody(body)).toBe(body);
+    expect(parseHrServiceControl(response)).toBe(response);
+    for (const settings of [
+      { ...expenseClaimSettings, categoryCodes: "" },
+      { ...expenseClaimSettings, categoryCodes: "other," },
+      { ...expenseClaimSettings, categoryCodes: "other, other" },
+      { ...expenseClaimSettings, categoryCodes: "other,other" },
+      { ...expenseClaimSettings, rejectionNoteRequired: "true" },
+      { categoryCodes: "other" },
+      { rejectionNoteRequired: true },
+      { ...expenseClaimSettings, taxCategory: true },
+    ]) {
+      expect(() => parseHrServiceConfigureBody({ ...body, settings })).toThrow();
+      expect(() => parseHrServiceControl({ ...response, settings })).toThrow();
+    }
+  });
+
   it("publishes Shift settings consistently in configure and control schemas", () => {
     const settingsSchema = {
       additionalProperties: false,
@@ -264,6 +302,7 @@ describe("shared HR service-control contracts", () => {
             enum: [
               "attendance",
               "employment_record",
+              "expense_claim_boundary",
               "shift_assignment",
               "timesheet",
               "workforce_profile",
@@ -292,11 +331,13 @@ describe("shared HR service-control contracts", () => {
               ? serviceControl.settings
               : serviceKey === "employment_record"
                 ? employmentRecordSettings
-                : serviceKey === "shift_assignment"
-                  ? shiftAssignmentSettings
-                  : serviceKey === "timesheet"
-                    ? timesheetSettings
-                    : {},
+                : serviceKey === "expense_claim_boundary"
+                  ? expenseClaimSettings
+                  : serviceKey === "shift_assignment"
+                    ? shiftAssignmentSettings
+                    : serviceKey === "timesheet"
+                      ? timesheetSettings
+                      : {},
       };
       expect(parseHrServiceControl(response)).toBe(response);
     }

@@ -169,6 +169,13 @@
       "when": 1784998847879,
       "tag": "0023_chubby_pandemic",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1784999500000,
+      "tag": "0024_expense_claim_service_control",
+      "breakpoints": true
     }
   ]
 }
