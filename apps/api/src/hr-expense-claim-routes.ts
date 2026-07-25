@@ -1,4 +1,20 @@
 import {
+  type HrExpenseClaimCreateBody,
+  type HrExpenseClaimEditDraftBody,
+  type HrExpenseClaimPath,
+  type HrExpenseClaimSubmitBody,
+  hrExpenseClaimCreateBodySchema,
+  hrExpenseClaimEditDraftBodySchema,
+  hrExpenseClaimPathSchema,
+  hrExpenseClaimResponseSchema,
+  hrExpenseClaimSubmitBodySchema,
+  parseHrExpenseClaimCreateBody,
+  parseHrExpenseClaimEditDraftBody,
+  parseHrExpenseClaimPath,
+  parseHrExpenseClaimResponse,
+  parseHrExpenseClaimSubmitBody,
+} from "@esbla/contracts/hr-expense-claim-api";
+import {
   type HrExpenseClaimSettings,
   type HrServiceActivateBody,
   type HrServiceConfigureBody,
@@ -13,9 +29,12 @@ import {
 import {
   activateExpenseClaimService,
   configureExpenseClaimService,
+  createExpenseClaim,
   deactivateExpenseClaimService,
+  editExpenseClaimDraft,
   getExpenseClaimServiceControl,
   inspectExpenseClaimServiceControlAuthority,
+  submitExpenseClaim,
 } from "@esbla/hr";
 import type { OperationContext } from "@esbla/platform-core";
 import { workspaceManifest } from "@esbla/workspace";
@@ -83,6 +102,15 @@ export function registerExpenseClaimRoutes({
   runtimeEnvironment,
   server,
 }: RegisterExpenseClaimRoutesOptions): void {
+  for (const schema of [
+    hrExpenseClaimCreateBodySchema,
+    hrExpenseClaimEditDraftBodySchema,
+    hrExpenseClaimPathSchema,
+    hrExpenseClaimResponseSchema,
+    hrExpenseClaimSubmitBodySchema,
+  ]) {
+    server.addSchema(schema);
+  }
   const attachExpenseClaimActions = async (request: FastifyRequest, reply: FastifyReply) => {
     const actions = await inspectExpenseClaimServiceControlAuthority(
       pool,
@@ -90,6 +118,116 @@ export function registerExpenseClaimRoutes({
     );
     reply.header("x-esbla-expense-actions", JSON.stringify(actions));
   };
+
+  server.post<{ Body: HrExpenseClaimCreateBody }>(
+    "/v1/hr/expense-claims",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          mutationContext(request);
+          strict(parseHrExpenseClaimCreateBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrExpenseCreateRequestV1#" },
+        response: {
+          200: { $ref: "HrExpenseClaimResponseV1#" },
+          201: { $ref: "HrExpenseClaimResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = mutationContext(request);
+      const result = await createExpenseClaim(pool, context, {
+        ...strict(parseHrExpenseClaimCreateBody, request.body),
+        idempotencyKey: context.correlationId,
+      });
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply
+        .code(result.replayed ? 200 : 201)
+        .send(parseHrExpenseClaimResponse(result.expenseClaim));
+    },
+  );
+
+  server.patch<{
+    Body: HrExpenseClaimEditDraftBody;
+    Params: HrExpenseClaimPath;
+  }>(
+    "/v1/hr/expense-claims/:expenseClaimId/draft",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          mutationContext(request);
+          strict(parseHrExpenseClaimPath, request.params);
+          strict(parseHrExpenseClaimEditDraftBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrExpenseEditDraftRequestV1#" },
+        params: { $ref: "HrExpenseClaimPathV1#" },
+        response: {
+          200: { $ref: "HrExpenseClaimResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = mutationContext(request);
+      const result = await editExpenseClaimDraft(
+        pool,
+        context,
+        strict(parseHrExpenseClaimPath, request.params).expenseClaimId,
+        {
+          ...strict(parseHrExpenseClaimEditDraftBody, request.body),
+          idempotencyKey: context.correlationId,
+        },
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(parseHrExpenseClaimResponse(result.expenseClaim));
+    },
+  );
+
+  server.post<{
+    Body: HrExpenseClaimSubmitBody;
+    Params: HrExpenseClaimPath;
+  }>(
+    "/v1/hr/expense-claims/:expenseClaimId/submit",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          mutationContext(request);
+          strict(parseHrExpenseClaimPath, request.params);
+          strict(parseHrExpenseClaimSubmitBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrExpenseSubmitRequestV1#" },
+        params: { $ref: "HrExpenseClaimPathV1#" },
+        response: {
+          200: { $ref: "HrExpenseClaimResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = mutationContext(request);
+      const result = await submitExpenseClaim(
+        pool,
+        context,
+        strict(parseHrExpenseClaimPath, request.params).expenseClaimId,
+        {
+          ...strict(parseHrExpenseClaimSubmitBody, request.body),
+          idempotencyKey: context.correlationId,
+        },
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(parseHrExpenseClaimResponse(result.expenseClaim));
+    },
+  );
 
   server.get<{ Querystring: HrServiceControlQuery }>(
     CONTROL_ROUTE,

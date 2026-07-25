@@ -145,7 +145,10 @@ function statusForError(error: Error): number {
   }
   if (error instanceof HrExpenseClaimError) {
     if (error.code === "EXPENSE_INPUT_INVALID") return 400;
-    if (error.code === "EXPENSE_SERVICE_CONTROL_NOT_FOUND") return 404;
+    if (error.code === "EXPENSE_NOT_FOUND" || error.code === "EXPENSE_SERVICE_CONTROL_NOT_FOUND") {
+      return 404;
+    }
+    if (error.code === "EXPENSE_APPROVER_UNAVAILABLE") return 422;
     if (error.code === "EXPENSE_DEPENDENCY_INACTIVE" || error.code === "EXPENSE_SERVICE_INACTIVE") {
       return 503;
     }
