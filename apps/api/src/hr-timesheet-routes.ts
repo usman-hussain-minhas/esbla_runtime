@@ -11,29 +11,37 @@ import {
   parseHrServiceDeactivateBody,
 } from "@esbla/contracts/hr-service-control-api";
 import {
+  type HrTimesheetApproveBody,
   type HrTimesheetCreateBody,
   type HrTimesheetEditDraftBody,
   type HrTimesheetPath,
+  type HrTimesheetRejectBody,
   type HrTimesheetSubmitBody,
+  hrTimesheetApproveBodySchema,
   hrTimesheetCreateBodySchema,
   hrTimesheetEditDraftBodySchema,
   hrTimesheetPathSchema,
+  hrTimesheetRejectBodySchema,
   hrTimesheetResponseSchema,
   hrTimesheetSubmitBodySchema,
+  parseHrTimesheetApproveBody,
   parseHrTimesheetCreateBody,
   parseHrTimesheetEditDraftBody,
   parseHrTimesheetPath,
+  parseHrTimesheetRejectBody,
   parseHrTimesheetResponse,
   parseHrTimesheetSubmitBody,
 } from "@esbla/contracts/hr-timesheet-api";
 import {
   activateTimesheetService,
+  approveTimesheet,
   configureTimesheetService,
   createTimesheet,
   deactivateTimesheetService,
   editTimesheetDraft,
   getTimesheetServiceControl,
   inspectTimesheetServiceControlAuthority,
+  rejectTimesheet,
   submitTimesheet,
 } from "@esbla/hr";
 import type { OperationContext } from "@esbla/platform-core";
@@ -107,8 +115,10 @@ export function registerTimesheetRoutes({
   server,
 }: RegisterTimesheetRoutesOptions): void {
   for (const schema of [
+    hrTimesheetApproveBodySchema,
     hrTimesheetCreateBodySchema,
     hrTimesheetEditDraftBodySchema,
+    hrTimesheetRejectBodySchema,
     hrTimesheetSubmitBodySchema,
     hrTimesheetPathSchema,
     hrTimesheetResponseSchema,
@@ -221,6 +231,84 @@ export function registerTimesheetRoutes({
         strict(parseHrTimesheetPath, request.params).timesheetId,
         {
           ...strict(parseHrTimesheetSubmitBody, request.body),
+          idempotencyKey: context.correlationId,
+        },
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(parseHrTimesheetResponse(result.timesheet));
+    },
+  );
+
+  server.post<{
+    Body: HrTimesheetApproveBody;
+    Params: HrTimesheetPath;
+  }>(
+    "/v1/hr/timesheets/:timesheetId/approve",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          mutationContext(request);
+          strict(parseHrTimesheetPath, request.params);
+          strict(parseHrTimesheetApproveBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrTimesheetApproveRequestV1#" },
+        params: { $ref: "HrTimesheetPathV1#" },
+        response: {
+          200: { $ref: "HrTimesheetResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = mutationContext(request);
+      const result = await approveTimesheet(
+        pool,
+        context,
+        strict(parseHrTimesheetPath, request.params).timesheetId,
+        {
+          ...strict(parseHrTimesheetApproveBody, request.body),
+          idempotencyKey: context.correlationId,
+        },
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return reply.code(200).send(parseHrTimesheetResponse(result.timesheet));
+    },
+  );
+
+  server.post<{
+    Body: HrTimesheetRejectBody;
+    Params: HrTimesheetPath;
+  }>(
+    "/v1/hr/timesheets/:timesheetId/reject",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          mutationContext(request);
+          strict(parseHrTimesheetPath, request.params);
+          strict(parseHrTimesheetRejectBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "HrTimesheetRejectRequestV1#" },
+        params: { $ref: "HrTimesheetPathV1#" },
+        response: {
+          200: { $ref: "HrTimesheetResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = mutationContext(request);
+      const result = await rejectTimesheet(
+        pool,
+        context,
+        strict(parseHrTimesheetPath, request.params).timesheetId,
+        {
+          ...strict(parseHrTimesheetRejectBody, request.body),
           idempotencyKey: context.correlationId,
         },
       );

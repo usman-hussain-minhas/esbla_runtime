@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import {
+  type HrTimesheetApproveBody,
   type HrTimesheetCreateBody,
+  type HrTimesheetDecisionBody,
   type HrTimesheetEditDraftBody,
+  type HrTimesheetRejectBody,
   type HrTimesheetResponse,
   type HrTimesheetSubmitBody,
   parseHrTimesheetResponse,
@@ -9,6 +12,7 @@ import {
 import {
   appendEvidence,
   assertPolicyAllowed,
+  completeWorkItem,
   createWorkItem,
   deriveStableUuid,
   evaluatePolicy,
@@ -17,6 +21,7 @@ import {
   PlatformError,
   recordMutationProof,
   resolveSetting,
+  type SettingDefinition,
   type TenantTransaction,
   withTenantTransaction,
 } from "@esbla/platform-core";
@@ -34,8 +39,10 @@ const SUBJECT_VERSION = "hr.timesheet.version";
 const SUBJECT_RECEIPT = "hr.timesheet.idempotency";
 const WORK_TYPE = "hr.timesheet.approval";
 type EmployeeAction = "create" | "edit_draft" | "submit";
+type ManagerAction = "approve" | "reject";
+type TimesheetAction = EmployeeAction | ManagerAction;
 interface Receipt {
-  readonly action: EmployeeAction;
+  readonly action: TimesheetAction;
   readonly eventType: string;
   readonly receiptId: string;
   readonly semanticSha256: string;
@@ -66,6 +73,14 @@ interface EntryRow {
   readonly row_version: number;
   readonly timesheet_entry_id: string;
 }
+interface WorkRow {
+  readonly assignee_principal_id: string;
+  readonly status: "cancelled" | "completed" | "open";
+  readonly subject_id: string;
+  readonly subject_type: string;
+  readonly work_item_id: string;
+  readonly work_type: string;
+}
 type DetailRow = RootRow &
   Omit<VersionRow, "row_version"> & {
     readonly version_row_version: number;
@@ -92,6 +107,13 @@ const periodCadence = Object.freeze({
   validate: (value: string) => value === "weekly",
   valueType: "enum" as const,
 });
+const rejectionNoteRequired = Object.freeze({
+  allowTenantOverride: true,
+  defaultValue: true,
+  key: "hr.timesheet.rejection_note_required",
+  validate: (value: boolean) => typeof value === "boolean",
+  valueType: "boolean",
+} satisfies SettingDefinition<boolean>);
 
 function inputInvalid(message: string): HrTimesheetError {
   return new HrTimesheetError("TIMESHEET_INPUT_INVALID", message);
@@ -152,6 +174,14 @@ function normalizeDescription(value: string | null | undefined): string | null {
   const selected = value.trim();
   if (selected.length < 1 || selected.length > 500) {
     throw inputInvalid("Timesheet entry description must contain 1 to 500 characters");
+  }
+  return selected;
+}
+function normalizeDecisionNote(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const selected = value.trim();
+  if (selected.length < 1 || selected.length > 2000) {
+    throw inputInvalid("Timesheet decision note must contain 1 to 2000 characters");
   }
   return selected;
 }
@@ -307,7 +337,7 @@ async function mapTimesheet(
 
 async function prepareReceipt(
   transaction: TenantTransaction,
-  action: EmployeeAction,
+  action: TimesheetAction,
   idempotencyKey: string,
   semantics: unknown,
 ): Promise<Receipt> {
@@ -333,7 +363,11 @@ async function prepareReceipt(
 async function readReplay(
   transaction: TenantTransaction,
   receipt: Receipt,
-  replayInput: HrTimesheetEditDraftBody | HrTimesheetSubmitBody | null = null,
+  replayInput:
+    | HrTimesheetDecisionBody
+    | HrTimesheetEditDraftBody
+    | HrTimesheetSubmitBody
+    | null = null,
 ): Promise<HrTimesheetResponse | null> {
   const found = await transaction.client.query<{
     actor_principal_id: string;
@@ -398,11 +432,15 @@ async function readReplay(
   const beforeVersion = receipt.action === "create" ? null : replayInput?.expectedVersion;
   const afterVersion = (beforeVersion ?? 0) + 1;
   const transition =
-    receipt.action === "submit"
-      ? (["draft", "submitted"] as const)
-      : receipt.action === "edit_draft"
-        ? (["draft", "draft"] as const)
-        : ([null, "draft"] as const);
+    receipt.action === "approve"
+      ? (["submitted", "approved"] as const)
+      : receipt.action === "reject"
+        ? (["submitted", "rejected"] as const)
+        : receipt.action === "submit"
+          ? (["draft", "submitted"] as const)
+          : receipt.action === "edit_draft"
+            ? (["draft", "draft"] as const)
+            : ([null, "draft"] as const);
   if (
     proof.rows.length !== 1 ||
     !recorded ||
@@ -445,6 +483,16 @@ async function readReplay(
         totalMinutes: 0,
       },
       rootVersion: 1,
+    });
+  } else if (replayInput && (receipt.action === "approve" || receipt.action === "reject")) {
+    result = parseHrTimesheetResponse({
+      ...current,
+      currentVersion: {
+        ...current.currentVersion,
+        rowVersion: afterVersion,
+        status: receipt.action === "approve" ? "approved" : "rejected",
+      },
+      rootVersion: replayInput.expectedRootVersion,
     });
   } else if (replayInput && "entries" in replayInput) {
     const entries = replayInput.entries
@@ -952,4 +1000,228 @@ export async function submitTimesheet(
   } catch (error) {
     return translate(error);
   }
+}
+
+async function managerProfile(
+  transaction: TenantTransaction,
+  action: ManagerAction,
+): Promise<string> {
+  const actionKey = `hr.timesheet.${action}`;
+  const capability = await transaction.client.query(
+    `SELECT capability_id FROM membership_capabilities
+     WHERE tenant_id=$1 AND principal_id=$2 AND capability_id=$3`,
+    [transaction.context.tenantId, transaction.context.actorPrincipalId, actionKey],
+  );
+  const profile = await transaction.client.query<{ worker_profile_id: string }>(
+    `SELECT worker_profile_id FROM hr_worker_profiles
+     WHERE tenant_id=$1 AND principal_id=$2 AND workforce_status='active'
+     ORDER BY worker_profile_id LIMIT 2 FOR SHARE`,
+    [transaction.context.tenantId, transaction.context.actorPrincipalId],
+  );
+  const registered = hrManifest.capabilities.some(
+    ({ exposure, id }) => exposure === "tenant" && id === actionKey,
+  );
+  assertPolicyAllowed(
+    evaluatePolicy(
+      {
+        actionKey,
+        input: {
+          capabilityCurrent: registered && capability.rows.length === 1,
+          profileCurrent: profile.rows.length === 1,
+        },
+        resourceKey: HR_TIMESHEET_SERVICE_KEY,
+        transaction,
+      },
+      [
+        {
+          effect: "allow",
+          id: `current_manager_${action}`,
+          matches: (request, actor) =>
+            actor.roleKey === "manager" && request.capabilityCurrent && request.profileCurrent,
+        },
+      ],
+    ),
+    transaction,
+    actionKey,
+    HR_TIMESHEET_SERVICE_KEY,
+  );
+  const selected = profile.rows[0];
+  if (!selected) throw new PlatformError("POLICY_DENIED", "Timesheet manager authority was denied");
+  return selected.worker_profile_id;
+}
+
+async function rejectionNoteIsRequired(transaction: TenantTransaction): Promise<boolean> {
+  await transaction.client.query(
+    "SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1::text,0))",
+    [`hr.timesheet.settings.v1:${transaction.context.tenantId}`],
+  );
+  return (await resolveSetting(transaction, rejectionNoteRequired)).value;
+}
+
+async function decideTimesheet(
+  pool: Pool,
+  context: OperationContext,
+  timesheetIdInput: string,
+  input: HrTimesheetDecisionBody & { readonly idempotencyKey: string },
+  action: ManagerAction,
+): Promise<TimesheetMutationResult> {
+  const timesheetId = normalizeUuid(timesheetIdInput, "timesheetId");
+  const decisionNote = normalizeDecisionNote(input.decisionNote);
+  try {
+    return await withTimesheetTransaction(pool, context, async (transaction) => {
+      const approverWorkerProfileId = await managerProfile(transaction, action);
+      const noteRequired = action === "reject" ? await rejectionNoteIsRequired(transaction) : false;
+      const receipt = await prepareReceipt(transaction, action, input.idempotencyKey, [
+        timesheetId,
+        input.expectedRootVersion,
+        normalizeUuid(input.expectedTimesheetVersionId, "expectedTimesheetVersionId"),
+        input.expectedVersion,
+        decisionNote,
+      ]);
+      const root = await transaction.client.query<RootRow>(
+        `SELECT timesheet_id,worker_profile_id,period_start::text,period_end::text,
+                current_version_id,row_version
+         FROM hr_timesheets WHERE tenant_id=$1 AND timesheet_id=$2 FOR UPDATE`,
+        [transaction.context.tenantId, timesheetId],
+      );
+      const selectedRoot = root.rows[0];
+      if (!selectedRoot) throw notFound();
+      const versionId = normalizeUuid(
+        input.expectedTimesheetVersionId,
+        "expectedTimesheetVersionId",
+      );
+      if (
+        selectedRoot.row_version !== input.expectedRootVersion ||
+        selectedRoot.current_version_id !== versionId
+      ) {
+        throw versionConflict();
+      }
+      const version = await transaction.client.query<VersionRow>(
+        `SELECT timesheet_version_id,timesheet_id,supersedes_version_id,version,status,
+                assigned_approver_worker_profile_id,submitted_at,total_minutes,row_version
+         FROM hr_timesheet_versions
+         WHERE tenant_id=$1 AND timesheet_id=$2 AND timesheet_version_id=$3 FOR UPDATE`,
+        [transaction.context.tenantId, timesheetId, versionId],
+      );
+      const selectedVersion = version.rows[0];
+      if (!selectedVersion) throw versionConflict();
+      const work = await transaction.client.query<WorkRow>(
+        `SELECT work_item_id,assignee_principal_id,status,work_type,subject_type,subject_id
+         FROM work_items
+         WHERE tenant_id=$1 AND work_type=$2 AND subject_type=$3 AND subject_id=$4
+         FOR UPDATE`,
+        [transaction.context.tenantId, WORK_TYPE, SUBJECT_VERSION, versionId],
+      );
+      const selectedWork = work.rows[0];
+      const assignmentCurrent =
+        work.rows.length === 1 &&
+        selectedVersion.assigned_approver_worker_profile_id === approverWorkerProfileId &&
+        selectedWork?.assignee_principal_id === transaction.context.actorPrincipalId &&
+        selectedWork.work_type === WORK_TYPE &&
+        selectedWork.subject_type === SUBJECT_VERSION &&
+        selectedWork.subject_id === versionId &&
+        selectedWork.status !== "cancelled";
+      const actionKey = `hr.timesheet.${action}`;
+      assertPolicyAllowed(
+        evaluatePolicy(
+          {
+            actionKey,
+            input: { assignmentCurrent },
+            resourceKey: versionId,
+            transaction,
+          },
+          [
+            {
+              effect: "allow",
+              id: `exact_assigned_manager_${action}`,
+              matches: (request, actor) => actor.roleKey === "manager" && request.assignmentCurrent,
+            },
+          ],
+        ),
+        transaction,
+        actionKey,
+        versionId,
+      );
+      const replay = await readReplay(transaction, receipt, input);
+      if (replay) {
+        return { billingState: HR_TIMESHEET_BILLING_STATE, replayed: true, timesheet: replay };
+      }
+      if (noteRequired && !decisionNote) {
+        throw inputInvalid("A Timesheet rejection note is required by tenant policy");
+      }
+      if (
+        selectedVersion.status !== "submitted" ||
+        selectedVersion.row_version !== input.expectedVersion ||
+        selectedWork?.status !== "open"
+      ) {
+        throw versionConflict();
+      }
+      const targetStatus = action === "approve" ? "approved" : "rejected";
+      await transaction.client.query(
+        `INSERT INTO hr_timesheet_approvals
+           (timesheet_approval_id,tenant_id,timesheet_version_id,
+            approver_worker_profile_id,decision,decision_note,correlation_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [
+          deriveStableUuid("hr.timesheet.approval.v1", receipt.receiptId),
+          transaction.context.tenantId,
+          versionId,
+          approverWorkerProfileId,
+          targetStatus,
+          decisionNote,
+          transaction.context.correlationId,
+        ],
+      );
+      const updated = await transaction.client.query(
+        `UPDATE hr_timesheet_versions
+         SET status=$4,updated_at=GREATEST(now(),updated_at + interval '1 microsecond'),
+             row_version=row_version+1
+         WHERE tenant_id=$1 AND timesheet_id=$2 AND timesheet_version_id=$3
+           AND status='submitted' AND row_version=$5
+         RETURNING row_version`,
+        [
+          transaction.context.tenantId,
+          timesheetId,
+          versionId,
+          targetStatus,
+          selectedVersion.row_version,
+        ],
+      );
+      if (updated.rows.length !== 1) throw versionConflict();
+      await completeWorkItem(transaction, selectedWork.work_item_id);
+      const timesheet = await mapTimesheet(transaction, timesheetId);
+      await recordResult(
+        transaction,
+        receipt,
+        timesheet,
+        versionId,
+        SUBJECT_VERSION,
+        "submitted",
+        targetStatus,
+        selectedVersion.row_version,
+        timesheet.currentVersion.rowVersion,
+      );
+      return { billingState: HR_TIMESHEET_BILLING_STATE, replayed: false, timesheet };
+    });
+  } catch (error) {
+    return translate(error);
+  }
+}
+
+export async function approveTimesheet(
+  pool: Pool,
+  context: OperationContext,
+  timesheetId: string,
+  input: HrTimesheetApproveBody & { readonly idempotencyKey: string },
+): Promise<TimesheetMutationResult> {
+  return await decideTimesheet(pool, context, timesheetId, input, "approve");
+}
+
+export async function rejectTimesheet(
+  pool: Pool,
+  context: OperationContext,
+  timesheetId: string,
+  input: HrTimesheetRejectBody & { readonly idempotencyKey: string },
+): Promise<TimesheetMutationResult> {
+  return await decideTimesheet(pool, context, timesheetId, input, "reject");
 }

@@ -33,6 +33,7 @@ let applicationRole = "";
 let migrationPool: Pool;
 let pool: Pool;
 let server: FastifyInstance;
+let managerProfileId = "";
 let timesheetId = "";
 let timesheetVersionId = "";
 let workerProfileId = "";
@@ -160,6 +161,42 @@ function expectProblem(
   expect(Object.keys(result.response.json())).toHaveLength(7);
 }
 
+async function submitWeeklyTimesheet(periodStart: string, periodEnd: string, entryDate: string) {
+  const created = await mutation(
+    { periodEnd, periodStart },
+    randomUUID(),
+    "POST",
+    "/v1/hr/timesheets",
+  );
+  expect(created.response.statusCode, created.response.body).toBe(201);
+  const draft = created.response.json();
+  const url = `/v1/hr/timesheets/${draft.timesheetId}`;
+  const edited = await mutation(
+    {
+      entries: [{ entryDate, minutes: 60 }],
+      expectedRootVersion: 1,
+      expectedTimesheetVersionId: draft.currentVersion.timesheetVersionId,
+      expectedVersion: 1,
+    },
+    randomUUID(),
+    "PATCH",
+    `${url}/draft`,
+  );
+  expect(edited.response.statusCode, edited.response.body).toBe(200);
+  const submitted = await mutation(
+    {
+      expectedRootVersion: 1,
+      expectedTimesheetVersionId: draft.currentVersion.timesheetVersionId,
+      expectedVersion: 2,
+    },
+    randomUUID(),
+    "POST",
+    `${url}/submit`,
+  );
+  expect(submitted.response.statusCode, submitted.response.body).toBe(200);
+  return submitted.response.json();
+}
+
 async function proofSnapshot() {
   return await governed(ids.tenant, ids.operator, async (client) => {
     const result = await client.query(
@@ -167,8 +204,13 @@ async function proofSnapshot() {
          (SELECT count(*)::integer FROM hr_timesheets WHERE tenant_id=$1) roots,
          (SELECT count(*)::integer FROM hr_timesheet_versions WHERE tenant_id=$1) versions,
          (SELECT count(*)::integer FROM hr_timesheet_entries WHERE tenant_id=$1) entries,
+         (SELECT count(*)::integer FROM hr_timesheet_approvals WHERE tenant_id=$1) approvals,
          (SELECT count(*)::integer FROM work_items WHERE tenant_id=$1
             AND subject_type='hr.timesheet.version') work,
+         (SELECT count(*)::integer FROM work_items WHERE tenant_id=$1
+            AND subject_type='hr.timesheet.version' AND status='open') open_work,
+         (SELECT count(*)::integer FROM work_items WHERE tenant_id=$1
+            AND subject_type='hr.timesheet.version' AND status='completed') completed_work,
          (SELECT count(*)::integer FROM evidence_events WHERE tenant_id=$1
             AND event_type LIKE 'hr.timesheet.%') evidence,
          (SELECT count(*)::integer FROM outbox_events WHERE tenant_id=$1
@@ -200,7 +242,8 @@ beforeAll(async () => {
   await migrationPool.query(
     `GRANT SELECT ON membership_capabilities,tenant_settings,hr_reporting_relationships TO ${applicationRole};
      GRANT SELECT,UPDATE ON hr_worker_profiles,service_activations TO ${applicationRole};
-     GRANT SELECT,INSERT ON evidence_events,outbox_events,work_items TO ${applicationRole}`,
+     GRANT SELECT,INSERT ON evidence_events,outbox_events TO ${applicationRole};
+     GRANT SELECT,INSERT,UPDATE ON work_items TO ${applicationRole}`,
   );
   pool = createDatabasePool(runtimeUrl, { max: 8 });
   await migrationPool.query(
@@ -236,6 +279,11 @@ beforeAll(async () => {
       ],
     );
     await client.query(
+      `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+       SELECT $1,$2,capability FROM unnest($3::text[]) capability`,
+      [ids.tenant, ids.manager, ["hr.timesheet.approve", "hr.timesheet.reject"]],
+    );
+    await client.query(
       "INSERT INTO tenant_settings (tenant_id,setting_key,value_type,value) VALUES ($1,'hr.timesheet.max_daily_minutes','integer','300')",
       [ids.tenant],
     );
@@ -245,7 +293,7 @@ beforeAll(async () => {
       [ids.tenant],
     );
     workerProfileId = await activeProfile(client, ids.tenant, ids.employee);
-    const managerProfileId = await activeProfile(client, ids.tenant, ids.manager);
+    managerProfileId = await activeProfile(client, ids.tenant, ids.manager);
     const relationship = await client.query<{ reporting_relationship_id: string }>(
       `INSERT INTO hr_reporting_relationships
          (tenant_id,worker_profile_id,manager_worker_profile_id,relationship_status,relationship_version)
@@ -416,9 +464,12 @@ describe("Timesheet employee workflow API", () => {
       expect(retried.response.json()).toEqual(expected);
     }
     expect(await proofSnapshot()).toEqual({
+      approvals: 0,
+      completed_work: 0,
       entries: 2,
       evidence: 6,
       non_billable: 3,
+      open_work: 1,
       outbox: 3,
       roots: 1,
       version_subjects: 3,
@@ -463,5 +514,290 @@ describe("Timesheet employee workflow API", () => {
       await serviceState("active");
     }
     expect(await proofSnapshot()).toEqual(before);
+  });
+
+  it("fails stale manager authority closed and records exactly one atomic terminal decision", async () => {
+    const expected = {
+      expectedRootVersion: 1,
+      expectedTimesheetVersionId: timesheetVersionId,
+      expectedVersion: 3,
+    };
+    const approve = { ...expected, decisionNote: "Reviewed" };
+    const reject = { ...expected, decisionNote: "Needs correction" };
+    const approveUrl = `/v1/hr/timesheets/${timesheetId}/approve`;
+    const rejectUrl = `/v1/hr/timesheets/${timesheetId}/reject`;
+    const before = await proofSnapshot();
+
+    expectProblem(await mutation(approve, randomUUID(), "POST", approveUrl), 403, "POLICY_DENIED");
+    await governed(ids.tenant, ids.operator, (client) =>
+      client.query("UPDATE memberships SET role_key='employee' WHERE principal_id=$1", [
+        ids.manager,
+      ]),
+    );
+    try {
+      expectProblem(
+        await mutation(approve, randomUUID(), "POST", approveUrl, ids.manager),
+        403,
+        "POLICY_DENIED",
+      );
+    } finally {
+      await governed(ids.tenant, ids.operator, (client) =>
+        client.query("UPDATE memberships SET role_key='manager' WHERE principal_id=$1", [
+          ids.manager,
+        ]),
+      );
+    }
+    await governed(ids.tenant, ids.operator, (client) =>
+      client.query(
+        `DELETE FROM membership_capabilities
+         WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='hr.timesheet.approve'`,
+        [ids.tenant, ids.manager],
+      ),
+    );
+    try {
+      expectProblem(
+        await mutation(approve, randomUUID(), "POST", approveUrl, ids.manager),
+        403,
+        "POLICY_DENIED",
+      );
+    } finally {
+      await governed(ids.tenant, ids.operator, (client) =>
+        client.query(
+          `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+           VALUES ($1,$2,'hr.timesheet.approve')`,
+          [ids.tenant, ids.manager],
+        ),
+      );
+    }
+    await governed(ids.tenant, ids.operator, (client) =>
+      client.query(
+        `UPDATE work_items SET assignee_principal_id=$3
+         WHERE tenant_id=$1 AND subject_type='hr.timesheet.version' AND subject_id=$2`,
+        [ids.tenant, timesheetVersionId, ids.operator],
+      ),
+    );
+    try {
+      expectProblem(
+        await mutation(approve, randomUUID(), "POST", approveUrl, ids.manager),
+        403,
+        "POLICY_DENIED",
+      );
+    } finally {
+      await governed(ids.tenant, ids.operator, (client) =>
+        client.query(
+          `UPDATE work_items SET assignee_principal_id=$3
+           WHERE tenant_id=$1 AND subject_type='hr.timesheet.version' AND subject_id=$2`,
+          [ids.tenant, timesheetVersionId, ids.manager],
+        ),
+      );
+    }
+    expectProblem(
+      await mutation(
+        { ...expected, decisionNote: null },
+        randomUUID(),
+        "POST",
+        rejectUrl,
+        ids.manager,
+      ),
+      400,
+      "TIMESHEET_INPUT_INVALID",
+    );
+    await migrationPool.query(`REVOKE UPDATE ON work_items FROM ${applicationRole}`);
+    try {
+      expectProblem(
+        await mutation(approve, randomUUID(), "POST", approveUrl, ids.manager),
+        403,
+        "POLICY_DENIED",
+      );
+      expect(await proofSnapshot()).toEqual(before);
+    } finally {
+      await migrationPool.query(`GRANT UPDATE ON work_items TO ${applicationRole}`);
+    }
+
+    const approveKey = randomUUID();
+    const rejectKey = randomUUID();
+    const decisions = await Promise.all([
+      mutation(approve, approveKey, "POST", approveUrl, ids.manager),
+      mutation(reject, rejectKey, "POST", rejectUrl, ids.manager),
+    ]);
+    const decided = byStatus(decisions, 200);
+    expectProblem(byStatus(decisions, 409), 409, "TIMESHEET_VERSION_CONFLICT");
+    const winner =
+      decided === decisions[0]
+        ? { body: approve, key: approveKey, status: "approved", url: approveUrl }
+        : { body: reject, key: rejectKey, status: "rejected", url: rejectUrl };
+    expect(decided.response.json().currentVersion).toMatchObject({
+      rowVersion: 4,
+      status: winner.status,
+    });
+    await governed(ids.tenant, ids.operator, (client) =>
+      client.query("UPDATE memberships SET role_key='employee' WHERE principal_id=$1", [
+        ids.manager,
+      ]),
+    );
+    try {
+      expectProblem(
+        await mutation(winner.body, winner.key, "POST", winner.url, ids.manager),
+        403,
+        "POLICY_DENIED",
+      );
+    } finally {
+      await governed(ids.tenant, ids.operator, (client) =>
+        client.query("UPDATE memberships SET role_key='manager' WHERE principal_id=$1", [
+          ids.manager,
+        ]),
+      );
+    }
+    const replay = await mutation(winner.body, winner.key, "POST", winner.url, ids.manager);
+    expect(replay.response.statusCode, replay.response.body).toBe(200);
+    expect(replay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(replay.response.json()).toEqual(decided.response.json());
+    expect(await proofSnapshot()).toEqual({
+      ...before,
+      approvals: Number(before.approvals) + 1,
+      completed_work: 1,
+      evidence: Number(before.evidence) + 2,
+      non_billable: Number(before.non_billable) + 1,
+      open_work: 0,
+      outbox: Number(before.outbox) + 1,
+      version_subjects: Number(before.version_subjects) + 1,
+      versioned: Number(before.versioned) + 1,
+    });
+    const approval = await governed(ids.tenant, ids.operator, async (client) => {
+      const result = await client.query(
+        `SELECT approver_worker_profile_id::text,decision,decision_note,correlation_id::text
+         FROM hr_timesheet_approvals
+         WHERE tenant_id=$1 AND timesheet_version_id=$2`,
+        [ids.tenant, timesheetVersionId],
+      );
+      return result.rows;
+    });
+    expect(approval).toEqual([
+      expect.objectContaining({
+        approver_worker_profile_id: managerProfileId,
+        correlation_id: winner.key,
+        decision: winner.status,
+        decision_note: winner.body.decisionNote,
+      }),
+    ]);
+    const decisionProof = await governed(ids.tenant, ids.operator, async (client) => {
+      const result = await client.query(
+        `SELECT evidence.actor_principal_id::text,evidence.correlation_id::text,
+                evidence.event_type,evidence.subject_id::text,evidence.subject_type,
+                evidence.prior_state,evidence.new_state,
+                outbox.aggregate_id::text,outbox.aggregate_type,outbox.aggregate_version,
+                outbox.payload
+         FROM evidence_events evidence JOIN outbox_events outbox
+           ON outbox.tenant_id=evidence.tenant_id
+          AND outbox.correlation_id=evidence.correlation_id
+          AND outbox.event_type=evidence.event_type
+          AND outbox.aggregate_id=evidence.subject_id
+          AND outbox.aggregate_type=evidence.subject_type
+         WHERE evidence.tenant_id=$1 AND evidence.event_type=$2
+           AND evidence.subject_type='hr.timesheet.version'
+           AND evidence.subject_id=$3`,
+        [
+          ids.tenant,
+          `hr.timesheet.${winner.status === "approved" ? "approve" : "reject"}`,
+          timesheetVersionId,
+        ],
+      );
+      return result.rows;
+    });
+    expect(decisionProof).toEqual([
+      expect.objectContaining({
+        actor_principal_id: ids.manager,
+        aggregate_id: timesheetVersionId,
+        aggregate_type: "hr.timesheet.version",
+        aggregate_version: 4,
+        correlation_id: winner.key,
+        event_type: `hr.timesheet.${winner.status === "approved" ? "approve" : "reject"}`,
+        new_state: winner.status,
+        payload: expect.objectContaining({
+          action: winner.status === "approved" ? "approve" : "reject",
+          afterVersion: 4,
+          beforeVersion: 3,
+          billingState: "non_billable",
+          timesheetId,
+        }),
+        prior_state: "submitted",
+        subject_id: timesheetVersionId,
+        subject_type: "hr.timesheet.version",
+      }),
+    ]);
+    await expect(
+      governed(ids.tenant, ids.operator, (client) =>
+        client.query(
+          `UPDATE hr_timesheet_approvals SET decision_note='changed'
+           WHERE tenant_id=$1 AND timesheet_version_id=$2`,
+          [ids.tenant, timesheetVersionId],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "55000" });
+    await expect(
+      governed(ids.tenant, ids.operator, (client) =>
+        client.query(
+          "DELETE FROM hr_timesheet_approvals WHERE tenant_id=$1 AND timesheet_version_id=$2",
+          [ids.tenant, timesheetVersionId],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "55000" });
+
+    await governed(ids.tenant, ids.operator, (client) =>
+      client.query(
+        `INSERT INTO tenant_settings (tenant_id,setting_key,value_type,value)
+         VALUES ($1,'hr.timesheet.rejection_note_required','boolean','false')
+         ON CONFLICT (tenant_id,setting_key) DO UPDATE
+         SET value=EXCLUDED.value,version=tenant_settings.version+1`,
+        [ids.tenant],
+      ),
+    );
+    const second = await submitWeeklyTimesheet("2028-08-08", "2028-08-14", "2028-08-08");
+    const secondRejectKey = randomUUID();
+    const rejected = await mutation(
+      {
+        expectedRootVersion: 1,
+        expectedTimesheetVersionId: second.currentVersion.timesheetVersionId,
+        expectedVersion: 3,
+      },
+      secondRejectKey,
+      "POST",
+      `/v1/hr/timesheets/${second.timesheetId}/reject`,
+      ids.manager,
+    );
+    expect(rejected.response.statusCode, rejected.response.body).toBe(200);
+    expect(rejected.response.json().currentVersion.status).toBe("rejected");
+    const note = await governed(ids.tenant, ids.operator, async (client) => {
+      const result = await client.query<{ decision_note: string | null }>(
+        `SELECT decision_note FROM hr_timesheet_approvals
+         WHERE tenant_id=$1 AND timesheet_version_id=$2`,
+        [ids.tenant, second.currentVersion.timesheetVersionId],
+      );
+      return result.rows[0]?.decision_note;
+    });
+    expect(note).toBeNull();
+    const afterSecondDecision = await proofSnapshot();
+    await governed(ids.tenant, ids.operator, (client) =>
+      client.query(
+        `UPDATE tenant_settings SET value='true',version=version+1
+         WHERE tenant_id=$1 AND setting_key='hr.timesheet.rejection_note_required'`,
+        [ids.tenant],
+      ),
+    );
+    const historicalReplay = await mutation(
+      {
+        expectedRootVersion: 1,
+        expectedTimesheetVersionId: second.currentVersion.timesheetVersionId,
+        expectedVersion: 3,
+      },
+      secondRejectKey,
+      "POST",
+      `/v1/hr/timesheets/${second.timesheetId}/reject`,
+      ids.manager,
+    );
+    expect(historicalReplay.response.statusCode, historicalReplay.response.body).toBe(200);
+    expect(historicalReplay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(historicalReplay.response.json()).toEqual(rejected.response.json());
+    expect(await proofSnapshot()).toEqual(afterSecondDecision);
   });
 });

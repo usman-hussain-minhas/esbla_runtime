@@ -29,6 +29,13 @@ export interface HrTimesheetEditDraftBody {
 
 export type HrTimesheetSubmitBody = Omit<HrTimesheetEditDraftBody, "entries">;
 
+export interface HrTimesheetDecisionBody extends HrTimesheetSubmitBody {
+  readonly decisionNote?: string | null;
+}
+
+export type HrTimesheetApproveBody = HrTimesheetDecisionBody;
+export type HrTimesheetRejectBody = HrTimesheetDecisionBody;
+
 export interface HrTimesheetPath {
   readonly timesheetId: string;
 }
@@ -103,6 +110,29 @@ export const hrTimesheetSubmitBodySchema = {
   $id: "HrTimesheetSubmitRequestV1",
   additionalProperties: false,
   properties: expectedProperties,
+  required: ["expectedRootVersion", "expectedTimesheetVersionId", "expectedVersion"],
+  type: "object",
+} as const;
+
+const decisionProperties = {
+  decisionNote: {
+    anyOf: [{ maxLength: 2000, minLength: 1, type: "string" }, { type: "null" }],
+  },
+  ...expectedProperties,
+} as const;
+
+export const hrTimesheetApproveBodySchema = {
+  $id: "HrTimesheetApproveRequestV1",
+  additionalProperties: false,
+  properties: decisionProperties,
+  required: ["expectedRootVersion", "expectedTimesheetVersionId", "expectedVersion"],
+  type: "object",
+} as const;
+
+export const hrTimesheetRejectBodySchema = {
+  $id: "HrTimesheetRejectRequestV1",
+  additionalProperties: false,
+  properties: decisionProperties,
   required: ["expectedRootVersion", "expectedTimesheetVersionId", "expectedVersion"],
   type: "object",
 } as const;
@@ -249,6 +279,38 @@ export function parseHrTimesheetSubmitBody(value: unknown): HrTimesheetSubmitBod
     expectedTimesheetVersionId: string(input.expectedTimesheetVersionId, uuidExpression),
     expectedVersion: positive(input.expectedVersion),
   };
+}
+
+function parseHrTimesheetDecisionBody(value: unknown): HrTimesheetDecisionBody {
+  const input = record(value);
+  const keys =
+    input.decisionNote === undefined
+      ? ["expectedRootVersion", "expectedTimesheetVersionId", "expectedVersion"]
+      : ["decisionNote", "expectedRootVersion", "expectedTimesheetVersionId", "expectedVersion"];
+  exact(input, keys);
+  if (
+    input.decisionNote !== undefined &&
+    input.decisionNote !== null &&
+    (typeof input.decisionNote !== "string" ||
+      input.decisionNote.length < 1 ||
+      input.decisionNote.length > 2000)
+  ) {
+    throw new TypeError();
+  }
+  return {
+    ...(input.decisionNote === undefined ? {} : { decisionNote: input.decisionNote }),
+    expectedRootVersion: positive(input.expectedRootVersion),
+    expectedTimesheetVersionId: string(input.expectedTimesheetVersionId, uuidExpression),
+    expectedVersion: positive(input.expectedVersion),
+  };
+}
+
+export function parseHrTimesheetApproveBody(value: unknown): HrTimesheetApproveBody {
+  return parseHrTimesheetDecisionBody(value);
+}
+
+export function parseHrTimesheetRejectBody(value: unknown): HrTimesheetRejectBody {
+  return parseHrTimesheetDecisionBody(value);
 }
 
 export function parseHrTimesheetPath(value: unknown): HrTimesheetPath {

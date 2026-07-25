@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseHrTimesheetEditDraftBody } from "./hr-timesheet-api.js";
+import {
+  parseHrTimesheetApproveBody,
+  parseHrTimesheetEditDraftBody,
+  parseHrTimesheetRejectBody,
+} from "./hr-timesheet-api.js";
 
 const id = (suffix: string) => `13000000-0000-4000-8000-${suffix}`;
 
@@ -21,6 +25,23 @@ describe("HR Timesheet API contract", () => {
         ...expected,
         entries: [{ entryDate: "2028-08-01", expectedVersion: 1, minutes: 480 }],
       }),
+    ).toThrow(TypeError);
+  });
+
+  it("parses strict manager decisions with optional bounded notes", () => {
+    const expected = {
+      expectedRootVersion: 1,
+      expectedTimesheetVersionId: id("000000000001"),
+      expectedVersion: 3,
+    };
+    expect(parseHrTimesheetApproveBody({ ...expected, decisionNote: "Reviewed" })).toEqual({
+      ...expected,
+      decisionNote: "Reviewed",
+    });
+    expect(parseHrTimesheetRejectBody(expected)).toEqual(expected);
+    expect(() => parseHrTimesheetRejectBody({ ...expected, unknown: true })).toThrow(TypeError);
+    expect(() =>
+      parseHrTimesheetApproveBody({ ...expected, decisionNote: "x".repeat(2001) }),
     ).toThrow(TypeError);
   });
 });
