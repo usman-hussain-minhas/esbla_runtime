@@ -14,6 +14,11 @@
       "development": "./src/development-principal.ts",
       "import": "./dist/development-principal.js"
     },
+    "./hr-expense-claim-api": {
+      "types": "./src/hr-expense-claim-api.ts",
+      "development": "./src/hr-expense-claim-api.ts",
+      "import": "./dist/hr-expense-claim-api.js"
+    },
     "./hr-leave-api": {
       "types": "./src/hr-leave-api.ts",
       "development": "./src/hr-leave-api.ts",
