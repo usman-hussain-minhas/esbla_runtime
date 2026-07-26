@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { loadExpenseClaimDetail } from "../../../../../../lib/hr-expense-claim";
+import { hasExpenseAction } from "../../../../../../lib/hr-expense-claim-core";
 import { ExpenseResult } from "../../result";
 
 interface Props {
@@ -30,10 +32,25 @@ export default async function ExpenseClaimDetailPage({ params, searchParams }: P
   const [{ expenseClaimId }, parameters] = await Promise.all([params, searchParams]);
   const state = await loadExpenseClaimDetail(expenseClaimId, parameters);
   const returnTo = one(parameters.returnTo);
-  const fromMyWork = returnTo === "my-work";
+  const returnContext = one(parameters.returnContext);
+  const fromMyWork = returnTo === "my-work" || returnContext === "my-work";
   const back = fromMyWork ? "/workspace/my-work" : "/workspace/hr/expenses";
   const result = one(parameters.result);
   const detail = state.status === "success" ? state.detail : null;
+  const canApprove =
+    detail?.accessScope === "assigned" &&
+    detail.decisionEligible === true &&
+    detail.currentVersion.status === "submitted" &&
+    hasExpenseAction(state.authorizedActions, "approve");
+  const canReject =
+    detail?.accessScope === "assigned" &&
+    detail.decisionEligible === true &&
+    detail.currentVersion.status === "submitted" &&
+    hasExpenseAction(state.authorizedActions, "reject");
+  const canCreateCorrection =
+    detail?.accessScope === "own" &&
+    (detail.currentVersion.status === "approved" || detail.currentVersion.status === "rejected") &&
+    hasExpenseAction(state.authorizedActions, "create_correction");
   return (
     <section aria-labelledby="expense-detail-heading" className="work-surface">
       <a className="text-command detail-back" href={back}>
@@ -126,7 +143,7 @@ export default async function ExpenseClaimDetailPage({ params, searchParams }: P
               <a
                 className="text-command"
                 href={`?${new URLSearchParams({
-                  ...(fromMyWork ? { returnTo: "my-work" } : { returnTo: "own" }),
+                  ...(fromMyWork ? { returnContext: "my-work" } : { returnTo: "own" }),
                   cursorExpenseClaimVersionId:
                     state.detail.history.nextCursor.expenseClaimVersionId,
                   cursorVersion: String(state.detail.history.nextCursor.version),
@@ -136,6 +153,124 @@ export default async function ExpenseClaimDetailPage({ params, searchParams }: P
               </a>
             ) : null}
           </section>
+          {canCreateCorrection ? (
+            <section aria-labelledby="expense-correction-heading" className="leave-detail-section">
+              <h2 id="expense-correction-heading">Create a correction version</h2>
+              <p className="field-hint">
+                This preserves the terminal version and creates its sole successor draft for you to
+                complete and submit.
+              </p>
+              <form
+                action="/workspace/hr/expenses/action"
+                className="leave-request-form"
+                method="post"
+              >
+                <input name="operation" type="hidden" value="create_correction" />
+                <input name="expenseClaimId" type="hidden" value={state.detail.expenseClaimId} />
+                <input name="idempotencyKey" type="hidden" value={randomUUID()} />
+                <input name="expectedRootVersion" type="hidden" value={state.detail.rootVersion} />
+                <input
+                  name="expectedExpenseClaimVersionId"
+                  type="hidden"
+                  value={state.detail.currentVersion.expenseClaimVersionId}
+                />
+                <input
+                  name="expectedVersion"
+                  type="hidden"
+                  value={state.detail.currentVersion.rowVersion}
+                />
+                <input name="returnTo" type="hidden" value="own" />
+                <button className="command-button command-button-primary" type="submit">
+                  Create correction draft
+                </button>
+              </form>
+            </section>
+          ) : null}
+          {canApprove || canReject ? (
+            <section aria-labelledby="expense-decision-heading" className="leave-detail-section">
+              <h2 id="expense-decision-heading">Manager decision</h2>
+              <p className="field-hint">
+                Your current manager role and assigned authority are rechecked when the decision is
+                recorded.
+              </p>
+              {canApprove ? (
+                <form
+                  action="/workspace/hr/expenses/action"
+                  className="leave-request-form"
+                  method="post"
+                >
+                  <input name="operation" type="hidden" value="approve" />
+                  <input name="expenseClaimId" type="hidden" value={state.detail.expenseClaimId} />
+                  <input name="idempotencyKey" type="hidden" value={randomUUID()} />
+                  <input
+                    name="expectedRootVersion"
+                    type="hidden"
+                    value={state.detail.rootVersion}
+                  />
+                  <input
+                    name="expectedExpenseClaimVersionId"
+                    type="hidden"
+                    value={state.detail.currentVersion.expenseClaimVersionId}
+                  />
+                  <input
+                    name="expectedVersion"
+                    type="hidden"
+                    value={state.detail.currentVersion.rowVersion}
+                  />
+                  <input name="returnTo" type="hidden" value={fromMyWork ? "my-work" : "detail"} />
+                  <div className="form-field">
+                    <label htmlFor="expense-approval-note">Approval note</label>
+                    <textarea id="expense-approval-note" maxLength={2000} name="decisionNote" />
+                  </div>
+                  <button className="command-button command-button-primary" type="submit">
+                    Approve Expense Claim
+                  </button>
+                </form>
+              ) : null}
+              {canReject ? (
+                <form
+                  action="/workspace/hr/expenses/action"
+                  className="leave-request-form"
+                  method="post"
+                >
+                  <input name="operation" type="hidden" value="reject" />
+                  <input name="expenseClaimId" type="hidden" value={state.detail.expenseClaimId} />
+                  <input name="idempotencyKey" type="hidden" value={randomUUID()} />
+                  <input
+                    name="expectedRootVersion"
+                    type="hidden"
+                    value={state.detail.rootVersion}
+                  />
+                  <input
+                    name="expectedExpenseClaimVersionId"
+                    type="hidden"
+                    value={state.detail.currentVersion.expenseClaimVersionId}
+                  />
+                  <input
+                    name="expectedVersion"
+                    type="hidden"
+                    value={state.detail.currentVersion.rowVersion}
+                  />
+                  <input name="returnTo" type="hidden" value={fromMyWork ? "my-work" : "detail"} />
+                  <div className="form-field">
+                    <label htmlFor="expense-rejection-note">Rejection note</label>
+                    <textarea
+                      aria-describedby="expense-rejection-note-hint"
+                      id="expense-rejection-note"
+                      maxLength={2000}
+                      name="decisionNote"
+                    />
+                    <p className="field-hint" id="expense-rejection-note-hint">
+                      Required only when the tenant setting is enabled.
+                    </p>
+                  </div>
+                  <button className="command-button command-button-danger" type="submit">
+                    Reject Expense Claim
+                  </button>
+                </form>
+              ) : null}
+            </section>
+          ) : null}
         </div>
       )}
     </section>

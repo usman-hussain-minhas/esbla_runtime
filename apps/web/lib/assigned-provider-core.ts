@@ -1,4 +1,8 @@
 import type {
+  HrExpenseClaimAssignedCursor,
+  HrExpenseClaimListResponse,
+} from "@esbla/contracts/hr-expense-claim-api";
+import type {
   HrAssignedLeaveRequestPage,
   HrLeaveRequestCursor,
 } from "@esbla/contracts/hr-leave-api";
@@ -12,8 +16,10 @@ import type {
 } from "@esbla/contracts/workspace-task-api";
 
 type AssignedTimesheetPage = Extract<HrTimesheetListResponse, { readonly kind: "assigned" }>;
+type AssignedExpensePage = Extract<HrExpenseClaimListResponse, { readonly kind: "assigned" }>;
 
 export type AssignedProvider =
+  | "hr_expense_assigned"
   | "hr_leave_assigned"
   | "hr_timesheet_assigned"
   | "workspace_task_assigned";
@@ -29,9 +35,12 @@ export class AssignedProviderUnavailableError extends Error {
 
   constructor(provider: AssignedProvider, reason: AssignedProviderUnavailableReason) {
     if (
-      !["hr_leave_assigned", "hr_timesheet_assigned", "workspace_task_assigned"].includes(
-        provider,
-      ) ||
+      ![
+        "hr_expense_assigned",
+        "hr_leave_assigned",
+        "hr_timesheet_assigned",
+        "workspace_task_assigned",
+      ].includes(provider) ||
       (reason !== "inactive" && reason !== "ineligible") ||
       (provider === "workspace_task_assigned" && reason !== "inactive")
     ) {
@@ -59,6 +68,7 @@ export type AssignedProviderSearchParams = Readonly<
 >;
 
 export interface AssignedProviderCursors {
+  readonly expense: HrExpenseClaimAssignedCursor | undefined;
   readonly hr: HrLeaveRequestCursor | undefined;
   readonly timesheet: HrTimesheetAssignedCursor | undefined;
   readonly workspace: WorkspaceTaskCursor | undefined;
@@ -69,8 +79,10 @@ export type AssignedProviderState<Page> =
   | { readonly unavailable: true };
 
 export interface AssignedProviderViewModel {
+  readonly expense: AssignedProviderState<AssignedExpensePage>;
   readonly hr: AssignedProviderState<HrAssignedLeaveRequestPage>;
   readonly nextApprovalsHref: string | null;
+  readonly nextExpensesHref: string | null;
   readonly nextTasksHref: string | null;
   readonly nextTimesheetsHref: string | null;
   readonly queuesClear: boolean;
@@ -81,6 +93,9 @@ export interface AssignedProviderViewModel {
 }
 
 export interface LoadAssignedProviderViewOptions {
+  readonly loadExpense: (
+    cursor: HrExpenseClaimAssignedCursor | undefined,
+  ) => Promise<AssignedExpensePage>;
   readonly loadHr: (
     cursor: HrLeaveRequestCursor | undefined,
   ) => Promise<HrAssignedLeaveRequestPage>;
@@ -162,6 +177,25 @@ function validateTimesheetCursor(value: unknown): HrTimesheetAssignedCursor {
   };
 }
 
+function validateExpenseCursor(value: unknown): HrExpenseClaimAssignedCursor {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("expenseClaimVersionId" in value) ||
+    !("submittedAt" in value) ||
+    typeof value.expenseClaimVersionId !== "string" ||
+    typeof value.submittedAt !== "string" ||
+    !UUID_PATTERN.test(value.expenseClaimVersionId) ||
+    !isStrictTimestamp(value.submittedAt)
+  ) {
+    throw new AssignedProviderCursorError("hr_expense_assigned");
+  }
+  return {
+    expenseClaimVersionId: value.expenseClaimVersionId,
+    submittedAt: value.submittedAt,
+  };
+}
+
 function parseHrCursor(
   searchParams: AssignedProviderSearchParams,
 ): HrLeaveRequestCursor | undefined {
@@ -207,12 +241,29 @@ function parseTimesheetCursor(
   });
 }
 
+function parseExpenseCursor(
+  searchParams: AssignedProviderSearchParams,
+): HrExpenseClaimAssignedCursor | undefined {
+  const idPresent = hasOwn(searchParams, "cursorExpenseClaimVersionId");
+  const timestampPresent = hasOwn(searchParams, "cursorExpenseSubmittedAt");
+  if (!idPresent && !timestampPresent) return undefined;
+  if (!idPresent || !timestampPresent) {
+    throw new AssignedProviderCursorError("hr_expense_assigned");
+  }
+  return validateExpenseCursor({
+    expenseClaimVersionId: searchParams.cursorExpenseClaimVersionId,
+    submittedAt: searchParams.cursorExpenseSubmittedAt,
+  });
+}
+
 export function parseAssignedProviderCursors(
   searchParams: AssignedProviderSearchParams,
 ): AssignedProviderCursors {
+  let expense: HrExpenseClaimAssignedCursor | undefined;
   let hr: HrLeaveRequestCursor | undefined;
   let timesheet: HrTimesheetAssignedCursor | undefined;
   let workspace: WorkspaceTaskCursor | undefined;
+  let expenseError: unknown;
   let hrError: unknown;
   let timesheetError: unknown;
   let workspaceError: unknown;
@@ -232,11 +283,17 @@ export function parseAssignedProviderCursors(
   } catch (error) {
     timesheetError = error;
   }
+  try {
+    expense = parseExpenseCursor(searchParams);
+  } catch (error) {
+    expenseError = error;
+  }
 
   if (hrError !== undefined) throw hrError;
   if (workspaceError !== undefined) throw workspaceError;
   if (timesheetError !== undefined) throw timesheetError;
-  return Object.freeze({ hr, timesheet, workspace });
+  if (expenseError !== undefined) throw expenseError;
+  return Object.freeze({ expense, hr, timesheet, workspace });
 }
 
 type Settlement<Value> =
@@ -286,9 +343,14 @@ function validateTimesheetPage(page: AssignedTimesheetPage): void {
   if (page.nextCursor !== null) validateTimesheetCursor(page.nextCursor);
 }
 
+function validateExpensePage(page: AssignedExpensePage): void {
+  if (page.nextCursor !== null) validateExpenseCursor(page.nextCursor);
+}
+
 function myWorkHref(
   hr: HrLeaveRequestCursor | undefined,
   timesheet: HrTimesheetAssignedCursor | undefined,
+  expense: HrExpenseClaimAssignedCursor | undefined,
   workspace: WorkspaceTaskCursor | undefined,
 ): string {
   const parameters = new URLSearchParams();
@@ -304,6 +366,10 @@ function myWorkHref(
     parameters.set("cursorTimesheetSubmittedAt", timesheet.submittedAt);
     parameters.set("cursorTimesheetVersionId", timesheet.timesheetVersionId);
   }
+  if (expense) {
+    parameters.set("cursorExpenseClaimVersionId", expense.expenseClaimVersionId);
+    parameters.set("cursorExpenseSubmittedAt", expense.submittedAt);
+  }
   return `/workspace/my-work?${parameters.toString()}`;
 }
 
@@ -314,11 +380,14 @@ export async function loadAssignedProviderView(
   const hrSettlementPromise = settle(() => options.loadHr(cursors.hr));
   const workspaceSettlementPromise = settle(() => options.loadWorkspace(cursors.workspace));
   const timesheetSettlementPromise = settle(() => options.loadTimesheet(cursors.timesheet));
-  const [hrSettlement, workspaceSettlement, timesheetSettlement] = await Promise.all([
-    hrSettlementPromise,
-    workspaceSettlementPromise,
-    timesheetSettlementPromise,
-  ]);
+  const expenseSettlementPromise = settle(() => options.loadExpense(cursors.expense));
+  const [hrSettlement, workspaceSettlement, timesheetSettlement, expenseSettlement] =
+    await Promise.all([
+      hrSettlementPromise,
+      workspaceSettlementPromise,
+      timesheetSettlementPromise,
+      expenseSettlementPromise,
+    ]);
 
   const hr = classifySettlement(hrSettlement, "hr_leave_assigned", validateHrPage);
   const workspace = classifySettlement(
@@ -331,7 +400,9 @@ export async function loadAssignedProviderView(
     "hr_timesheet_assigned",
     validateTimesheetPage,
   );
+  const expense = classifySettlement(expenseSettlement, "hr_expense_assigned", validateExpensePage);
 
+  const expenseCount = expense.unavailable ? 0 : expense.page.items.length;
   const hrCount = hr.unavailable ? 0 : hr.page.items.length;
   const workspaceCount = workspace.unavailable ? 0 : workspace.page.items.length;
   const timesheetCount = timesheet.unavailable ? 0 : timesheet.page.items.length;
@@ -340,6 +411,7 @@ export async function loadAssignedProviderView(
       ? myWorkHref(
           hr.page.nextCursor,
           timesheet.unavailable ? undefined : cursors.timesheet,
+          expense.unavailable ? undefined : cursors.expense,
           workspace.unavailable ? undefined : cursors.workspace,
         )
       : null;
@@ -348,6 +420,7 @@ export async function loadAssignedProviderView(
       ? myWorkHref(
           hr.unavailable ? undefined : cursors.hr,
           timesheet.unavailable ? undefined : cursors.timesheet,
+          expense.unavailable ? undefined : cursors.expense,
           workspace.page.nextCursor,
         )
       : null;
@@ -356,35 +429,52 @@ export async function loadAssignedProviderView(
       ? myWorkHref(
           hr.unavailable ? undefined : cursors.hr,
           timesheet.page.nextCursor,
+          expense.unavailable ? undefined : cursors.expense,
+          workspace.unavailable ? undefined : cursors.workspace,
+        )
+      : null;
+  const nextExpensesHref =
+    !expense.unavailable && expense.page.nextCursor
+      ? myWorkHref(
+          hr.unavailable ? undefined : cursors.hr,
+          timesheet.unavailable ? undefined : cursors.timesheet,
+          expense.page.nextCursor,
           workspace.unavailable ? undefined : cursors.workspace,
         )
       : null;
   const hasAvailableCurrentCursor =
     (!hr.unavailable && cursors.hr !== undefined) ||
     (!workspace.unavailable && cursors.workspace !== undefined) ||
-    (!timesheet.unavailable && cursors.timesheet !== undefined);
+    (!timesheet.unavailable && cursors.timesheet !== undefined) ||
+    (!expense.unavailable && cursors.expense !== undefined);
 
   return Object.freeze({
+    expense,
     hr,
     nextApprovalsHref,
+    nextExpensesHref,
     nextTasksHref,
     nextTimesheetsHref,
     queuesClear:
       !hr.unavailable &&
       !workspace.unavailable &&
       !timesheet.unavailable &&
+      !expense.unavailable &&
       hrCount === 0 &&
       workspaceCount === 0 &&
       timesheetCount === 0 &&
+      expenseCount === 0 &&
       cursors.hr === undefined &&
       cursors.workspace === undefined &&
       cursors.timesheet === undefined &&
+      cursors.expense === undefined &&
       hr.page.nextCursor === null &&
       workspace.page.nextCursor === null &&
-      timesheet.page.nextCursor === null,
+      timesheet.page.nextCursor === null &&
+      expense.page.nextCursor === null,
     startOverHref: hasAvailableCurrentCursor ? "/workspace/my-work" : null,
     timesheet,
-    totalShown: hrCount + workspaceCount + timesheetCount,
+    totalShown: hrCount + workspaceCount + timesheetCount + expenseCount,
     workspace,
   });
 }
