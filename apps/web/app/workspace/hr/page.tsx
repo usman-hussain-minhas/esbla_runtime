@@ -3,6 +3,7 @@ import {
   BriefcaseBusiness,
   CalendarDays,
   Clock3,
+  ReceiptText,
   Settings2,
   UserRound,
   UserRoundPlus,
@@ -16,6 +17,8 @@ import {
 import { hasAttendanceAction } from "../../../lib/hr-attendance-core";
 import { loadEmploymentList } from "../../../lib/hr-employment-record";
 import { hasEmploymentAction } from "../../../lib/hr-employment-record-core";
+import { loadOwnExpenseClaims } from "../../../lib/hr-expense-claim";
+import { hasExpenseAction } from "../../../lib/hr-expense-claim-core";
 import {
   loadOwnShifts,
   loadRosterShifts,
@@ -44,6 +47,7 @@ export default async function HrHubPage() {
     attendanceServiceControl,
     ownTimesheets,
     timesheetServiceControl,
+    ownExpenses,
   ] = await Promise.all([
     loadAuthorizedWorkforceList({}, "direct_reports"),
     loadAuthorizedWorkforceList({}, "workforce"),
@@ -60,6 +64,7 @@ export default async function HrHubPage() {
     loadAttendanceServiceControl(),
     loadOwnTimesheets(),
     loadTimesheetServiceControl(),
+    loadOwnExpenseClaims(),
   ]);
   const canDiscoverWorkforceSettings =
     workforceServiceControl.status === "success" ||
@@ -112,6 +117,7 @@ export default async function HrHubPage() {
   const canControlTimesheets = (
     ["activate_service", "configure_service", "deactivate_service", "view_service_control"] as const
   ).some((action) => hasTimesheetAction(timesheetActions, action));
+  const canViewOwnExpenses = hasExpenseAction(ownExpenses.authorizedActions, "list_own");
   return (
     <section aria-labelledby="hr-hub-heading" className="work-surface">
       <header className="surface-heading">
@@ -291,6 +297,29 @@ export default async function HrHubPage() {
                   Timesheet settings
                 </a>
               ) : null}
+            </div>
+          </li>
+        ) : null}
+        {canViewOwnExpenses ? (
+          <li className="work-queue-item">
+            <div className="work-queue-primary">
+              <div>
+                <p className="work-queue-kicker">Expense Claim Boundary</p>
+                <h2>Bounded claim facts</h2>
+                <p className="work-queue-dates">
+                  Record claim lines without receipts, Finance handoff, reimbursement, payment, or
+                  money movement.
+                </p>
+              </div>
+              <span aria-hidden="true" className="empty-worklist-icon">
+                <ReceiptText size={25} strokeWidth={1.7} />
+              </span>
+            </div>
+            <div className="work-queue-actions">
+              <a className="text-command" href="/workspace/hr/expenses">
+                My Expense Claims
+                <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
+              </a>
             </div>
           </li>
         ) : null}
