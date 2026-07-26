@@ -1,8 +1,13 @@
-import { executeExpenseAction } from "../../../../../lib/hr-expense-claim";
+import {
+  executeExpenseAction,
+  executeExpenseServiceAction,
+} from "../../../../../lib/hr-expense-claim";
 import {
   type ExpenseAction,
   expenseStateForError,
+  isExpenseServiceOperation,
   validateExpenseAction,
+  validateExpenseServiceAction,
 } from "../../../../../lib/hr-expense-claim-core";
 import { isSameOriginSubmission } from "../../../../../lib/hr-leave-submit-core";
 
@@ -26,6 +31,22 @@ function destination(action: ExpenseAction, success: boolean, expenseClaimId?: s
       ? `/workspace/hr/expenses/by-id/${selectedId}?returnTo=own&result=current`
       : `/workspace/hr/expenses?edit=${selectedId ?? ""}&result=operational_error`;
   }
+  if (action.operation === "create_correction") {
+    return selectedId
+      ? `/workspace/hr/expenses/by-id/${selectedId}?returnTo=own&result=${
+          success ? "current" : "operational_error"
+        }`
+      : "/workspace/hr/expenses?result=operational_error";
+  }
+  if (action.operation === "approve" || action.operation === "reject") {
+    const query = new URLSearchParams({
+      result: success ? "current" : "operational_error",
+      returnTo: action.returnTo,
+    });
+    return selectedId
+      ? `/workspace/hr/expenses/by-id/${selectedId}?${query}`
+      : "/workspace/my-work?result=operational_error";
+  }
   return "/workspace/hr/expenses?result=operational_error";
 }
 
@@ -34,6 +55,22 @@ function failedDestination(value: Readonly<Record<string, string>>, kind: string
     typeof value.expenseClaimId === "string" && UUID.test(value.expenseClaimId)
       ? value.expenseClaimId.toLowerCase()
       : null;
+  if (
+    selectedId &&
+    (value.operation === "approve" || value.operation === "reject") &&
+    (value.returnTo === "detail" || value.returnTo === "my-work")
+  ) {
+    return `/workspace/hr/expenses/by-id/${selectedId}?${new URLSearchParams({
+      result: kind,
+      returnTo: value.returnTo,
+    })}`;
+  }
+  if (selectedId && value.operation === "create_correction" && value.returnTo === "own") {
+    return `/workspace/hr/expenses/by-id/${selectedId}?${new URLSearchParams({
+      result: kind,
+      returnTo: "own",
+    })}`;
+  }
   return `/workspace/hr/expenses?${new URLSearchParams({
     result: kind,
     ...(selectedId ? { edit: selectedId } : {}),
@@ -80,6 +117,18 @@ export async function POST(request: Request): Promise<Response> {
     }
   } catch {
     return redirect("/workspace/hr/expenses?result=validation");
+  }
+  if (isExpenseServiceOperation(value.operation)) {
+    const validation = validateExpenseServiceAction(value);
+    if (!validation.ok) {
+      return redirect(`/workspace/hr/expenses/settings?result=${validation.state.kind}`);
+    }
+    try {
+      await executeExpenseServiceAction(validation.value);
+      return redirect("/workspace/hr/expenses/settings?result=current");
+    } catch (error) {
+      return redirect(`/workspace/hr/expenses/settings?result=${expenseStateForError(error).kind}`);
+    }
   }
   const validation = validateExpenseAction(value);
   if (!validation.ok) return redirect(failedDestination(value, validation.state.kind));

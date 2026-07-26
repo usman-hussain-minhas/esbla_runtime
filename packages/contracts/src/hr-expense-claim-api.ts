@@ -128,6 +128,7 @@ export interface HrExpenseClaimHistoryPage {
 export interface HrExpenseClaimResponse {
   readonly accessScope?: "assigned" | "own";
   readonly currentVersion: HrExpenseClaimCurrentVersion;
+  readonly decisionEligible?: boolean;
   readonly expenseClaimId: string;
   readonly history?: HrExpenseClaimHistoryPage;
   readonly rootVersion: number;
@@ -414,6 +415,7 @@ export const hrExpenseClaimResponseSchema = {
       ],
       type: "object",
     },
+    decisionEligible: { type: "boolean" },
     expenseClaimId: uuid,
     history: historyPageSchema,
     rootVersion: version,
@@ -836,6 +838,7 @@ export function parseHrExpenseClaimResponse(value: unknown): HrExpenseClaimRespo
       ? [
           "accessScope",
           "currentVersion",
+          ...(Object.hasOwn(root, "decisionEligible") ? ["decisionEligible"] : []),
           "expenseClaimId",
           "history",
           "rootVersion",
@@ -862,6 +865,8 @@ export function parseHrExpenseClaimResponse(value: unknown): HrExpenseClaimRespo
     (typeof root.accessScope !== "string" || !["assigned", "own"].includes(root.accessScope))
   )
     throw new TypeError();
+  if (Object.hasOwn(root, "decisionEligible") && typeof root.decisionEligible !== "boolean")
+    throw new TypeError();
   return {
     ...(enriched ? { accessScope: root.accessScope as "assigned" | "own" } : {}),
     currentVersion: {
@@ -876,6 +881,9 @@ export function parseHrExpenseClaimResponse(value: unknown): HrExpenseClaimRespo
       totalAmountMinor: boundedAmount(current.totalAmountMinor, true),
       version: positive(current.version),
     },
+    ...(Object.hasOwn(root, "decisionEligible")
+      ? { decisionEligible: root.decisionEligible as boolean }
+      : {}),
     expenseClaimId: string(root.expenseClaimId, uuidExpression),
     ...(enriched ? { history: parseHistory(root.history) } : {}),
     rootVersion: positive(root.rootVersion),

@@ -117,7 +117,11 @@ export default async function HrHubPage() {
   const canControlTimesheets = (
     ["activate_service", "configure_service", "deactivate_service", "view_service_control"] as const
   ).some((action) => hasTimesheetAction(timesheetActions, action));
-  const canViewOwnExpenses = hasExpenseAction(ownExpenses.authorizedActions, "list_own");
+  const expenseActions = ownExpenses.authorizedActions;
+  const canViewOwnExpenses = hasExpenseAction(expenseActions, "list_own");
+  const canControlExpenses = (
+    ["activate_service", "configure_service", "deactivate_service", "view_service_control"] as const
+  ).some((action) => hasExpenseAction(expenseActions, action));
   return (
     <section aria-labelledby="hr-hub-heading" className="work-surface">
       <header className="surface-heading">
@@ -300,7 +304,7 @@ export default async function HrHubPage() {
             </div>
           </li>
         ) : null}
-        {canViewOwnExpenses ? (
+        {canViewOwnExpenses || canControlExpenses ? (
           <li className="work-queue-item">
             <div className="work-queue-primary">
               <div>
@@ -316,10 +320,18 @@ export default async function HrHubPage() {
               </span>
             </div>
             <div className="work-queue-actions">
-              <a className="text-command" href="/workspace/hr/expenses">
-                My Expense Claims
-                <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
-              </a>
+              {canViewOwnExpenses ? (
+                <a className="text-command" href="/workspace/hr/expenses">
+                  My Expense Claims
+                  <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
+                </a>
+              ) : null}
+              {canControlExpenses ? (
+                <a className="text-command" href="/workspace/hr/expenses/settings">
+                  <Settings2 aria-hidden="true" size={15} strokeWidth={1.8} />
+                  Expense Claim settings
+                </a>
+              ) : null}
             </div>
           </li>
         ) : null}

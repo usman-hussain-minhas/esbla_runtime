@@ -234,6 +234,7 @@ function normalizeSettings(value: unknown): HrExpenseClaimSettings {
     !isRecord(value) ||
     !exactKeys(value, ["categoryCodes", "rejectionNoteRequired"]) ||
     typeof value.categoryCodes !== "string" ||
+    value.categoryCodes.split(",").length > 50 ||
     value.categoryCodes
       .split(",")
       .some(

@@ -1,8 +1,11 @@
 import { type ApiProblemDetails, parseApiProblemDetails } from "@esbla/contracts";
 import type {
+  HrExpenseClaimApproveBody,
   HrExpenseClaimCreateBody,
+  HrExpenseClaimCreateCorrectionBody,
   HrExpenseClaimEditDraftBody,
   HrExpenseClaimListResponse,
+  HrExpenseClaimRejectBody,
   HrExpenseClaimResponse,
   HrExpenseClaimSubmitBody,
 } from "@esbla/contracts/hr-expense-claim-api";
@@ -10,6 +13,11 @@ import {
   parseHrExpenseClaimListResponse,
   parseHrExpenseClaimResponse,
 } from "@esbla/contracts/hr-expense-claim-api";
+import {
+  type HrExpenseClaimSettings,
+  type HrServiceControl,
+  parseHrServiceControl,
+} from "@esbla/contracts/hr-service-control-api";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -51,7 +59,6 @@ export interface ExpenseFailureState {
   readonly status: "error";
   readonly title: string;
 }
-type ExpectedBody = HrExpenseClaimSubmitBody;
 export type ExpenseAction =
   | Readonly<{
       body: HrExpenseClaimCreateBody;
@@ -69,6 +76,54 @@ export type ExpenseAction =
       expenseClaimId: string;
       idempotencyKey: string;
       operation: "submit";
+    }>
+  | Readonly<{
+      body: HrExpenseClaimCreateCorrectionBody;
+      expenseClaimId: string;
+      idempotencyKey: string;
+      operation: "create_correction";
+      returnTo: "own";
+    }>
+  | Readonly<{
+      body: HrExpenseClaimApproveBody;
+      expenseClaimId: string;
+      idempotencyKey: string;
+      operation: "approve";
+      returnTo: "detail" | "my-work";
+    }>
+  | Readonly<{
+      body: HrExpenseClaimRejectBody;
+      expenseClaimId: string;
+      idempotencyKey: string;
+      operation: "reject";
+      returnTo: "detail" | "my-work";
+    }>;
+export type ExpenseServiceControl = Extract<
+  HrServiceControl,
+  { readonly serviceKey: "expense_claim_boundary" }
+>;
+export type ExpenseServiceOperation =
+  | "activate_service"
+  | "configure_service"
+  | "deactivate_service";
+export type ExpenseServiceAction =
+  | Readonly<{
+      body: Readonly<{ expectedVersion: number | null }>;
+      idempotencyKey: string;
+      operation: "activate_service";
+    }>
+  | Readonly<{
+      body: Readonly<{
+        expectedSettingsVersion: number;
+        settings: HrExpenseClaimSettings;
+      }>;
+      idempotencyKey: string;
+      operation: "configure_service";
+    }>
+  | Readonly<{
+      body: Readonly<{ expectedVersion: number }>;
+      idempotencyKey: string;
+      operation: "deactivate_service";
     }>;
 export type ExpenseActionValidation =
   | Readonly<{ ok: true; value: ExpenseAction }>
@@ -78,6 +133,7 @@ export class ExpenseUiError extends Error {
   constructor(
     readonly kind: ExpenseFailureKind,
     readonly httpStatus = 503,
+    readonly assignedUnavailableReason?: "inactive" | "ineligible",
   ) {
     super("Expense Claim request failed");
     this.name = "ExpenseUiError";
@@ -143,10 +199,10 @@ export function parseExpenseActions(response: Response): readonly ExpenseAuthori
 }
 
 function problemError(problem: ApiProblemDetails): ExpenseUiError {
-  if (
-    problem.status === 403 &&
-    ["ACTOR_NOT_ACTIVE_MEMBER", "POLICY_DENIED"].includes(problem.code)
-  ) {
+  if (problem.status === 403 && problem.code === "POLICY_DENIED") {
+    return new ExpenseUiError("denied", 403, "ineligible");
+  }
+  if (problem.status === 403 && problem.code === "ACTOR_NOT_ACTIVE_MEMBER") {
     return new ExpenseUiError("denied", 403);
   }
   if (
@@ -156,7 +212,7 @@ function problemError(problem: ApiProblemDetails): ExpenseUiError {
     return new ExpenseUiError("not_found", 404);
   }
   if (problem.status === 503 && problem.code === "EXPENSE_SERVICE_INACTIVE") {
-    return new ExpenseUiError("inactive");
+    return new ExpenseUiError("inactive", 503, "inactive");
   }
   if (
     problem.status === 503 &&
@@ -237,7 +293,8 @@ export async function decodeExpenseDetail(response: Response): Promise<HrExpense
   const value = await body(response, response.status === 200);
   try {
     const detail = parseHrExpenseClaimResponse(value);
-    if (!detail.accessScope || !detail.history) throw 0;
+    if (!detail.accessScope || !detail.history || typeof detail.decisionEligible !== "boolean")
+      throw 0;
     return detail;
   } catch {
     throw new ExpenseUiError("operational_error");
@@ -250,7 +307,7 @@ export async function decodeExpenseMutation(
 ): Promise<HrExpenseClaimResponse> {
   const replay = response.headers.get("idempotent-replayed");
   const valid =
-    operation === "create"
+    operation === "create" || operation === "create_correction"
       ? (response.status === 201 && replay === "false") ||
         (response.status === 200 && replay === "true")
       : response.status === 200 && (replay === "false" || replay === "true");
@@ -262,6 +319,51 @@ export async function decodeExpenseMutation(
   } catch {
     throw new ExpenseUiError("operational_error");
   }
+}
+
+export async function decodeExpenseServiceControl(
+  response: Response,
+): Promise<ExpenseServiceControl> {
+  const value = await body(response, response.status === 200);
+  try {
+    const control = parseHrServiceControl(value);
+    if (
+      control.serviceKey !== "expense_claim_boundary" ||
+      control.version !== control.activationVersion + control.settingsVersion - 1
+    ) {
+      throw 0;
+    }
+    return control as ExpenseServiceControl;
+  } catch {
+    throw new ExpenseUiError("operational_error");
+  }
+}
+
+export async function decodeExpenseServiceMutation(
+  response: Response,
+  action: ExpenseServiceAction,
+): Promise<ExpenseServiceControl> {
+  const replay = response.headers.get("idempotent-replayed");
+  if (response.status !== 200) return await decodeExpenseServiceControl(response);
+  if (replay !== "false" && replay !== "true") throw new ExpenseUiError("operational_error");
+  const control = await decodeExpenseServiceControl(response);
+  const expectedActivationVersion =
+    action.operation === "configure_service" ? null : (action.body.expectedVersion ?? 0) + 1;
+  const valid =
+    action.operation === "activate_service"
+      ? control.activationState === "active" &&
+        control.activationVersion === expectedActivationVersion &&
+        (action.body.expectedVersion !== null ||
+          (control.version === 1 && control.settingsVersion === 1))
+      : action.operation === "deactivate_service"
+        ? control.activationState === "inactive" &&
+          control.activationVersion === expectedActivationVersion
+        : control.activationState === "active" &&
+          control.settingsVersion === action.body.expectedSettingsVersion + 1 &&
+          control.settings.categoryCodes === action.body.settings.categoryCodes &&
+          control.settings.rejectionNoteRequired === action.body.settings.rejectionNoteRequired;
+  if (!valid) throw new ExpenseUiError("operational_error");
+  return control;
 }
 
 function date(value: unknown): string {
@@ -290,7 +392,7 @@ function positive(value: unknown, maximum = MAX_INTEGER): number {
 function exact(value: Readonly<Record<string, string>>, allowed: ReadonlySet<string>): void {
   if (Object.keys(value).some((key) => !allowed.has(key))) throw 0;
 }
-function expected(value: Readonly<Record<string, string>>): ExpectedBody {
+function expected(value: Readonly<Record<string, string>>): HrExpenseClaimSubmitBody {
   return {
     expectedExpenseClaimVersionId: uuid(value.expectedExpenseClaimVersionId),
     expectedRootVersion: positive(value.expectedRootVersion),
@@ -309,6 +411,78 @@ function failure(): ExpenseActionValidation {
   return { ok: false, state: expenseStateForError(new ExpenseUiError("validation", 400)) };
 }
 
+export function isExpenseServiceOperation(value: unknown): value is ExpenseServiceOperation {
+  return ["activate_service", "configure_service", "deactivate_service"].includes(String(value));
+}
+
+export function validateExpenseServiceAction(
+  value: Readonly<Record<string, string>>,
+):
+  | Readonly<{ ok: false; state: ExpenseFailureState }>
+  | Readonly<{ ok: true; value: ExpenseServiceAction }> {
+  try {
+    const operation = value.operation;
+    const idempotencyKey = uuid(value.idempotencyKey);
+    if (!isExpenseServiceOperation(operation)) throw 0;
+    if (operation === "activate_service") {
+      exact(value, new Set(["expectedVersion", "idempotencyKey", "operation"]));
+      const expectedVersion = value.expectedVersion === "" ? null : positive(value.expectedVersion);
+      return { ok: true, value: { body: { expectedVersion }, idempotencyKey, operation } };
+    }
+    if (operation === "deactivate_service") {
+      exact(value, new Set(["expectedVersion", "idempotencyKey", "operation"]));
+      return {
+        ok: true,
+        value: {
+          body: { expectedVersion: positive(value.expectedVersion) },
+          idempotencyKey,
+          operation,
+        },
+      };
+    }
+    exact(
+      value,
+      new Set([
+        "categoryCodes",
+        "expectedSettingsVersion",
+        "idempotencyKey",
+        "operation",
+        "rejectionNoteRequired",
+      ]),
+    );
+    const categoryCodes = value.categoryCodes;
+    const codes = categoryCodes?.split(",") ?? [];
+    if (
+      typeof categoryCodes !== "string" ||
+      codes.length > 50 ||
+      codes.some((code) => code.length < 1 || code.length > 64 || !/^[^\s,]+$/.test(code)) ||
+      new Set(codes).size !== codes.length ||
+      (value.rejectionNoteRequired !== "true" && value.rejectionNoteRequired !== "false")
+    ) {
+      throw 0;
+    }
+    return {
+      ok: true,
+      value: {
+        body: {
+          expectedSettingsVersion: positive(value.expectedSettingsVersion),
+          settings: {
+            categoryCodes,
+            rejectionNoteRequired: value.rejectionNoteRequired === "true",
+          },
+        },
+        idempotencyKey,
+        operation,
+      },
+    };
+  } catch {
+    return {
+      ok: false,
+      state: expenseStateForError(new ExpenseUiError("validation", 400)),
+    };
+  }
+}
+
 export function validateExpenseAction(
   value: Readonly<Record<string, string>>,
 ): ExpenseActionValidation {
@@ -324,7 +498,13 @@ export function validateExpenseAction(
         value: { body: { currencyCode }, idempotencyKey, operation },
       };
     }
-    if (operation !== "edit_draft" && operation !== "submit") {
+    if (
+      operation !== "approve" &&
+      operation !== "create_correction" &&
+      operation !== "edit_draft" &&
+      operation !== "reject" &&
+      operation !== "submit"
+    ) {
       return failure();
     }
     const expenseClaimId = uuid(value.expenseClaimId);
@@ -337,6 +517,35 @@ export function validateExpenseAction(
       "operation",
     ]);
     const expectedBody = expected(value);
+    if (operation === "create_correction") {
+      exact(value, new Set([...common, "returnTo"]));
+      if (value.returnTo !== "own") throw 0;
+      return {
+        ok: true,
+        value: {
+          body: expectedBody,
+          expenseClaimId,
+          idempotencyKey,
+          operation,
+          returnTo: "own",
+        },
+      };
+    }
+    if (operation === "approve" || operation === "reject") {
+      exact(value, new Set([...common, "decisionNote", "returnTo"]));
+      const returnTo = value.returnTo;
+      if (returnTo !== "detail" && returnTo !== "my-work") throw 0;
+      return {
+        ok: true,
+        value: {
+          body: { ...expectedBody, decisionNote: note(value.decisionNote, 2000) },
+          expenseClaimId,
+          idempotencyKey,
+          operation,
+          returnTo,
+        },
+      };
+    }
     if (operation === "edit_draft") {
       const indexes = new Set<number>();
       for (const key of Object.keys(value)) {
@@ -402,6 +611,21 @@ export function buildOwnExpensePath(search: Search): string {
       query.set("cursorExpenseClaimId", uuid(search.cursorExpenseClaimId));
     }
     return `/v1/hr/expense-claims/own${query.size ? `?${query}` : ""}`;
+  } catch {
+    throw new ExpenseUiError("validation", 400);
+  }
+}
+
+export function buildAssignedExpensePath(
+  cursor?: Readonly<{ expenseClaimVersionId: string; submittedAt: string }>,
+): string {
+  try {
+    const query = new URLSearchParams({ pageSize: "50" });
+    if (cursor) {
+      query.set("cursorExpenseClaimVersionId", uuid(cursor.expenseClaimVersionId));
+      query.set("cursorSubmittedAt", timestamp(cursor.submittedAt));
+    }
+    return `/v1/hr/expense-claims/assigned?${query}`;
   } catch {
     throw new ExpenseUiError("validation", 400);
   }

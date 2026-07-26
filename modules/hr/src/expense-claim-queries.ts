@@ -499,15 +499,22 @@ export async function getAuthorizedExpenseClaimDetail(
                 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') submitted_at,
               version.supersedes_version_id,version.total_amount_minor,
               version.row_version version_row_version,
-              NULL::uuid work_item_id
+              work.work_item_id
        FROM hr_expense_claims root
        JOIN hr_expense_claim_versions version
          ON version.tenant_id=root.tenant_id
         AND version.expense_claim_id=root.expense_claim_id
         AND version.expense_claim_version_id=root.current_version_id
+       LEFT JOIN work_items work
+         ON work.tenant_id=version.tenant_id
+        AND work.subject_id=version.expense_claim_version_id
+        AND work.subject_type='${SUBJECT_TYPE}'
+        AND work.work_type='${WORK_TYPE}'
+        AND work.assignee_principal_id=$3
+        AND work.status='open'
        WHERE root.tenant_id=$1 AND root.expense_claim_id=$2
        LIMIT 1 FOR SHARE OF root,version`,
-      [transaction.context.tenantId, expenseClaimId],
+      [transaction.context.tenantId, expenseClaimId, transaction.context.actorPrincipalId],
     );
     const root = selected.rows[0];
     if (!root || root.worker_profile_id !== owner) notFound();
@@ -572,6 +579,11 @@ export async function getAuthorizedExpenseClaimDetail(
         totalAmountMinor: root.total_amount_minor,
         version: root.version,
       },
+      decisionEligible:
+        role === "manager" &&
+        root.status === "submitted" &&
+        root.assigned_approver_worker_profile_id === actorWorkerProfileId &&
+        root.work_item_id !== null,
       expenseClaimId: root.expense_claim_id,
       history: {
         items: history.rows.map(mapHistory),

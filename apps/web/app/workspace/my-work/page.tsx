@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
+import type { HrExpenseClaimListItem } from "@esbla/contracts/hr-expense-claim-api";
 import type { HrAssignedLeaveRequestSummary } from "@esbla/contracts/hr-leave-api";
 import type { HrTimesheetListItem } from "@esbla/contracts/hr-timesheet-api";
 import type { AssignedWorkspaceTaskSummary } from "@esbla/contracts/workspace-task-api";
 import { ArrowRight, ClipboardCheck, Clock3 } from "lucide-react";
 import { loadAssignedProviderView } from "../../../lib/assigned-provider-core";
+import { getAssignedExpenseClaims } from "../../../lib/hr-expense-claim";
 import { getAssignedLeaveRequests } from "../../../lib/hr-leave-assigned-list";
 import { buildHrLeaveDetailHref } from "../../../lib/hr-leave-navigation-core";
 import { getAssignedTimesheets } from "../../../lib/hr-timesheet";
@@ -135,6 +137,53 @@ function TimesheetQueueItem({ item }: { readonly item: HrTimesheetListItem }) {
   );
 }
 
+function expenseAmount(value: number, currency: string): string {
+  return `${new Intl.NumberFormat("en").format(value)} ${currency} minor units`;
+}
+
+function ExpenseQueueItem({ item }: { readonly item: HrExpenseClaimListItem }) {
+  return (
+    <li className="work-queue-item" key={item.workItemId}>
+      <div className="work-queue-primary">
+        <div>
+          <p className="work-queue-kicker">Expense Claim approval</p>
+          <h2>{expenseAmount(item.totalAmountMinor, item.currencyCode)}</h2>
+          <p className="work-queue-dates">Version {item.version}</p>
+        </div>
+        <span className="work-status">
+          <Clock3 aria-hidden="true" size={15} strokeWidth={1.8} />
+          Needs review
+        </span>
+      </div>
+      <dl className="work-queue-meta">
+        <div>
+          <dt>Worker profile</dt>
+          <dd>{item.workerProfileId}</dd>
+        </div>
+        <div>
+          <dt>Submitted</dt>
+          <dd>
+            {item.submittedAt ? (
+              <time dateTime={item.submittedAt}>{formatDateTime(item.submittedAt)}</time>
+            ) : (
+              "Unavailable"
+            )}
+          </dd>
+        </div>
+      </dl>
+      <div className="work-queue-actions">
+        <a
+          className="text-command work-detail-link"
+          href={`/workspace/hr/expenses/by-id/${item.expenseClaimId}?returnContext=my-work`}
+        >
+          Review Expense Claim
+          <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
+        </a>
+      </div>
+    </li>
+  );
+}
+
 function QueueNotice({ heading, summary }: { readonly heading: string; readonly summary: string }) {
   return (
     <div className="empty-worklist">
@@ -150,6 +199,7 @@ function QueueNotice({ heading, summary }: { readonly heading: string; readonly 
 export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
   const parameters = await searchParams;
   const view = await loadAssignedProviderView({
+    loadExpense: (cursor) => getAssignedExpenseClaims(cursor),
     loadHr: (cursor) => getAssignedLeaveRequests(cursor),
     loadTimesheet: (cursor) => getAssignedTimesheets(cursor),
     loadWorkspace: (cursor) => getAssignedWorkspaceTasks(cursor),
@@ -276,10 +326,29 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
               summary="No Timesheet approvals are shown at this position."
             />
           )}
+
+          {view.expense.unavailable ? (
+            <QueueNotice
+              heading="Expense Claim approvals unavailable"
+              summary="This queue is unavailable right now."
+            />
+          ) : !view.expense.empty ? (
+            <ol aria-label="Assigned Expense Claim approvals" className="work-queue">
+              {view.expense.page.items.map((item) => (
+                <ExpenseQueueItem item={item} key={item.workItemId} />
+              ))}
+            </ol>
+          ) : (
+            <QueueNotice
+              heading="No Expense Claim approvals on this page"
+              summary="No Expense Claim approvals are shown at this position."
+            />
+          )}
         </>
       )}
 
       {view.nextApprovalsHref ||
+      view.nextExpensesHref ||
       view.nextTasksHref ||
       view.nextTimesheetsHref ||
       view.startOverHref ? (
@@ -304,6 +373,11 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
           {view.nextTimesheetsHref ? (
             <a className="text-command" href={view.nextTimesheetsHref}>
               Next Timesheets
+            </a>
+          ) : null}
+          {view.nextExpensesHref ? (
+            <a className="text-command" href={view.nextExpensesHref}>
+              Next Expense Claims
             </a>
           ) : null}
         </nav>

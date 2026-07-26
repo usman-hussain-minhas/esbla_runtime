@@ -1,4 +1,8 @@
 import type {
+  HrExpenseClaimAssignedCursor,
+  HrExpenseClaimListResponse,
+} from "@esbla/contracts/hr-expense-claim-api";
+import type {
   HrAssignedLeaveRequestPage,
   HrLeaveRequestCursor,
 } from "@esbla/contracts/hr-leave-api";
@@ -20,6 +24,7 @@ import {
   parseAssignedProviderCursors,
 } from "./assigned-provider-core";
 
+type AssignedExpensePage = Extract<HrExpenseClaimListResponse, { readonly kind: "assigned" }>;
 type AssignedTimesheetPage = Extract<HrTimesheetListResponse, { readonly kind: "assigned" }>;
 
 const hrCurrent = {
@@ -46,6 +51,14 @@ const timesheetNext = {
   submittedAt: "2026-07-15T00:00:00.000Z",
   timesheetVersionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 } satisfies HrTimesheetAssignedCursor;
+const expenseCurrent = {
+  expenseClaimVersionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  submittedAt: "2026-07-16T00:00:00.000Z",
+} satisfies HrExpenseClaimAssignedCursor;
+const expenseNext = {
+  expenseClaimVersionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  submittedAt: "2026-07-17T00:00:00.000Z",
+} satisfies HrExpenseClaimAssignedCursor;
 
 const hrItem = {
   categoryCode: "annual",
@@ -89,10 +102,18 @@ function timesheetPage(
   return { items, kind: "assigned", nextCursor };
 }
 
+function expensePage(
+  items: AssignedExpensePage["items"] = [],
+  nextCursor: HrExpenseClaimAssignedCursor | null = null,
+): AssignedExpensePage {
+  return { items, kind: "assigned", nextCursor };
+}
+
 function searchParams(
   hr: HrLeaveRequestCursor | undefined = undefined,
   workspace: WorkspaceTaskCursor | undefined = undefined,
   timesheet: HrTimesheetAssignedCursor | undefined = undefined,
+  expense: HrExpenseClaimAssignedCursor | undefined = undefined,
 ) {
   return {
     ...(hr
@@ -113,14 +134,21 @@ function searchParams(
           cursorTimesheetVersionId: timesheet.timesheetVersionId,
         }
       : {}),
+    ...(expense
+      ? {
+          cursorExpenseClaimVersionId: expense.expenseClaimVersionId,
+          cursorExpenseSubmittedAt: expense.submittedAt,
+        }
+      : {}),
   };
 }
 
 function loadView(
-  options: Omit<LoadAssignedProviderViewOptions, "loadTimesheet"> &
-    Partial<Pick<LoadAssignedProviderViewOptions, "loadTimesheet">>,
+  options: Omit<LoadAssignedProviderViewOptions, "loadExpense" | "loadTimesheet"> &
+    Partial<Pick<LoadAssignedProviderViewOptions, "loadExpense" | "loadTimesheet">>,
 ) {
   return loadAssignedProviderView({
+    loadExpense: async () => expensePage(),
     loadTimesheet: async () => timesheetPage(),
     ...options,
   });
@@ -159,13 +187,17 @@ describe("assigned provider core", () => {
 
   it("parses only genuinely absent or complete scalar cursor families", () => {
     expect(parseAssignedProviderCursors({ unrelated: "value" })).toEqual({
+      expense: undefined,
       hr: undefined,
       timesheet: undefined,
       workspace: undefined,
     });
     expect(
-      parseAssignedProviderCursors(searchParams(hrCurrent, workspaceCurrent, timesheetCurrent)),
+      parseAssignedProviderCursors(
+        searchParams(hrCurrent, workspaceCurrent, timesheetCurrent, expenseCurrent),
+      ),
     ).toEqual({
+      expense: expenseCurrent,
       hr: hrCurrent,
       timesheet: timesheetCurrent,
       workspace: workspaceCurrent,
@@ -265,6 +297,11 @@ describe("assigned provider core", () => {
       "hr_timesheet_assigned",
     ],
     [
+      "Expense partial",
+      { cursorExpenseClaimVersionId: expenseCurrent.expenseClaimVersionId },
+      "hr_expense_assigned",
+    ],
+    [
       "cross-family pair",
       {
         cursorCreatedAt: workspaceCurrent.createdAt,
@@ -304,6 +341,8 @@ describe("assigned provider core", () => {
         cursorLeaveRequestId: "bad",
         cursorSubmittedAt: "bad",
         cursorTaskId: "bad",
+        cursorExpenseClaimVersionId: "bad",
+        cursorExpenseSubmittedAt: "bad",
         cursorTimesheetSubmittedAt: "bad",
         cursorTimesheetVersionId: "bad",
       },
@@ -313,6 +352,13 @@ describe("assigned provider core", () => {
       {
         cursorTimesheetSubmittedAt: "bad",
         cursorTimesheetVersionId: "bad",
+      },
+    ],
+    [
+      "Expense",
+      {
+        cursorExpenseClaimVersionId: "bad",
+        cursorExpenseSubmittedAt: "bad",
       },
     ],
   ])("rejects invalid %s cursors before either loader runs", async (_label, parameters) => {
@@ -487,6 +533,38 @@ describe("assigned provider core", () => {
     await expect(subject).rejects.toBe(hrFatal);
   });
 
+  it("settles Expense before preserving the established HR-first fatal priority", async () => {
+    const hrFatal = new Error("hr-fatal");
+    const expenseFatal = new Error("expense-later-fatal");
+    const expense = deferred<AssignedExpensePage>();
+    const subject = loadView({
+      loadExpense: () => expense.promise,
+      loadHr: async () => {
+        throw hrFatal;
+      },
+      loadWorkspace: async () => workspacePage(),
+      searchParams: {},
+    });
+    await expect(
+      Promise.race([
+        subject.catch((error: unknown) => error),
+        new Promise((resolve) => setTimeout(() => resolve("still-pending"), 50)),
+      ]),
+    ).resolves.toBe("still-pending");
+    expense.reject(expenseFatal);
+    await expect(subject).rejects.toBe(hrFatal);
+    await expect(
+      loadView({
+        loadExpense: async () => {
+          throw expenseFatal;
+        },
+        loadHr: async () => hrPage(),
+        loadWorkspace: async () => workspacePage(),
+        searchParams: {},
+      }),
+    ).rejects.toBe(expenseFatal);
+  });
+
   it("treats duck-typed or provider-mismatched unavailable errors as fatal", async () => {
     const duck = {
       name: "AssignedProviderUnavailableError",
@@ -567,13 +645,16 @@ describe("assigned provider core", () => {
 
   it("builds independent next links from advancing next and foreign current cursors", async () => {
     const view = await loadView({
+      loadExpense: async () => expensePage([], expenseNext),
       loadHr: async () => hrPage([], hrNext),
       loadTimesheet: async () => timesheetPage([], timesheetNext),
       loadWorkspace: async () => workspacePage([], workspaceNext),
-      searchParams: searchParams(hrCurrent, workspaceCurrent, timesheetCurrent),
+      searchParams: searchParams(hrCurrent, workspaceCurrent, timesheetCurrent, expenseCurrent),
     });
     expect(Object.fromEntries(query(view.nextApprovalsHref))).toEqual({
       cursorCreatedAt: workspaceCurrent.createdAt,
+      cursorExpenseClaimVersionId: expenseCurrent.expenseClaimVersionId,
+      cursorExpenseSubmittedAt: expenseCurrent.submittedAt,
       cursorLeaveRequestId: hrNext.leaveRequestId,
       cursorSubmittedAt: hrNext.submittedAt,
       cursorTaskId: workspaceCurrent.taskId,
@@ -582,6 +663,8 @@ describe("assigned provider core", () => {
     });
     expect(Object.fromEntries(query(view.nextTasksHref))).toEqual({
       cursorCreatedAt: workspaceNext.createdAt,
+      cursorExpenseClaimVersionId: expenseCurrent.expenseClaimVersionId,
+      cursorExpenseSubmittedAt: expenseCurrent.submittedAt,
       cursorLeaveRequestId: hrCurrent.leaveRequestId,
       cursorSubmittedAt: hrCurrent.submittedAt,
       cursorTaskId: workspaceNext.taskId,
@@ -590,11 +673,23 @@ describe("assigned provider core", () => {
     });
     expect(Object.fromEntries(query(view.nextTimesheetsHref))).toEqual({
       cursorCreatedAt: workspaceCurrent.createdAt,
+      cursorExpenseClaimVersionId: expenseCurrent.expenseClaimVersionId,
+      cursorExpenseSubmittedAt: expenseCurrent.submittedAt,
       cursorLeaveRequestId: hrCurrent.leaveRequestId,
       cursorSubmittedAt: hrCurrent.submittedAt,
       cursorTaskId: workspaceCurrent.taskId,
       cursorTimesheetSubmittedAt: timesheetNext.submittedAt,
       cursorTimesheetVersionId: timesheetNext.timesheetVersionId,
+    });
+    expect(Object.fromEntries(query(view.nextExpensesHref))).toEqual({
+      cursorCreatedAt: workspaceCurrent.createdAt,
+      cursorExpenseClaimVersionId: expenseNext.expenseClaimVersionId,
+      cursorExpenseSubmittedAt: expenseNext.submittedAt,
+      cursorLeaveRequestId: hrCurrent.leaveRequestId,
+      cursorSubmittedAt: hrCurrent.submittedAt,
+      cursorTaskId: workspaceCurrent.taskId,
+      cursorTimesheetSubmittedAt: timesheetCurrent.submittedAt,
+      cursorTimesheetVersionId: timesheetCurrent.timesheetVersionId,
     });
     expect(view.startOverHref).toBe("/workspace/my-work");
   });
@@ -674,5 +769,17 @@ describe("assigned provider core", () => {
         searchParams: {},
       }),
     ).rejects.toBeInstanceOf(AssignedProviderCursorError);
+  });
+
+  it("revalidates a malformed returned Expense cursor before building hrefs", async () => {
+    await expect(
+      loadView({
+        loadExpense: async () =>
+          expensePage([], { ...expenseNext, submittedAt: "2026-02-30T00:00:00.000Z" }),
+        loadHr: async () => hrPage(),
+        loadWorkspace: async () => workspacePage(),
+        searchParams: {},
+      }),
+    ).rejects.toMatchObject({ provider: "hr_expense_assigned" });
   });
 });
