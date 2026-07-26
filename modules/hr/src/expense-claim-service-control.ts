@@ -38,6 +38,21 @@ const REJECTION_NOTE_REQUIRED_KEY = "hr.expense.rejection_note_required";
 const RETENTION_EVENT = "hr.expense.retention.qualified";
 const RETENTION_SUBJECT = "hr.expense.retention_qualification";
 const RETENTION_SUBJECT_ID = "3f0ee29f-3b49-4749-98b0-42d06bd52d66";
+export const HR_EXPENSE_CLAIM_AUTHORIZED_ACTIONS = Object.freeze([
+  "activate_service",
+  "approve",
+  "configure_service",
+  "create",
+  "create_correction",
+  "deactivate_service",
+  "edit_draft",
+  "list_assigned",
+  "list_own",
+  "reject",
+  "submit",
+  "view_detail",
+  "view_service_control",
+] as const);
 const CONTROL_ACTIONS = Object.freeze([
   "activate_service",
   "configure_service",
@@ -95,6 +110,7 @@ const EXPENSE_REQUIRED_MIGRATIONS = [
 ] as const;
 
 type ControlAction = (typeof CONTROL_ACTIONS)[number];
+export type HrExpenseClaimAuthorizedAction = (typeof HR_EXPENSE_CLAIM_AUTHORIZED_ACTIONS)[number];
 type MutationAction = Exclude<ControlAction, "view_service_control">;
 export type HrExpenseClaimActivationMode = "non_production" | "production";
 export type HrExpenseClaimErrorCode =
@@ -422,12 +438,35 @@ async function authorizeAdmin(
   assertPolicyAllowed(platformDecision, transaction, platformAction, HR_EXPENSE_CLAIM_SERVICE_KEY);
   return platformDecision;
 }
-export async function inspectExpenseClaimServiceControlAuthority(
+const EXPENSE_ACTION_ROLES: Readonly<Record<HrExpenseClaimAuthorizedAction, readonly string[]>> =
+  Object.freeze({
+    activate_service: Object.freeze(["tenant_admin"]),
+    approve: Object.freeze(["manager"]),
+    configure_service: Object.freeze(["tenant_admin"]),
+    create: Object.freeze(["employee"]),
+    create_correction: Object.freeze(["employee"]),
+    deactivate_service: Object.freeze(["tenant_admin"]),
+    edit_draft: Object.freeze(["employee"]),
+    list_assigned: Object.freeze(["manager"]),
+    list_own: Object.freeze(["employee"]),
+    reject: Object.freeze(["manager"]),
+    submit: Object.freeze(["employee"]),
+    view_detail: Object.freeze(["employee", "manager"]),
+    view_service_control: Object.freeze(["tenant_admin"]),
+  });
+
+/**
+ * Projects current role and capability state for advisory rendering only. Every action still
+ * performs its own transactional policy and object-authority checks.
+ */
+export async function inspectExpenseClaimActionAuthority(
   pool: Pool,
   context: OperationContext,
-): Promise<readonly ControlAction[]> {
+): Promise<readonly HrExpenseClaimAuthorizedAction[]> {
   return await withTenantTransaction(pool, context, async (transaction) => {
-    const capabilityIds = CONTROL_ACTIONS.map((action) => `hr.expense.${action}`);
+    const capabilityIds = HR_EXPENSE_CLAIM_AUTHORIZED_ACTIONS.map(
+      (action) => `hr.expense.${action}`,
+    );
     const result = await transaction.client.query<{ capability_id: string }>(
       `SELECT capability_id FROM membership_capabilities
        WHERE tenant_id=$1 AND principal_id=$2 AND capability_id=ANY($3::text[])
@@ -436,18 +475,24 @@ export async function inspectExpenseClaimServiceControlAuthority(
     );
     const current = new Set(result.rows.map(({ capability_id }) => capability_id));
     return Object.freeze(
-      CONTROL_ACTIONS.filter((action) => {
+      HR_EXPENSE_CLAIM_AUTHORIZED_ACTIONS.filter((action) => {
         const capabilityId = `hr.expense.${action}`;
         return (
-          transaction.actor.roleKey === "tenant_admin" &&
+          EXPENSE_ACTION_ROLES[action].includes(transaction.actor.roleKey) &&
           current.has(capabilityId) &&
-          hrManifest.capabilities.some(
-            ({ exposure, id }) => exposure === "admin" && id === capabilityId,
-          )
+          hrManifest.capabilities.some(({ id }) => id === capabilityId)
         );
       }),
     );
   });
+}
+
+export async function inspectExpenseClaimServiceControlAuthority(
+  pool: Pool,
+  context: OperationContext,
+): Promise<readonly ControlAction[]> {
+  const actions = await inspectExpenseClaimActionAuthority(pool, context);
+  return Object.freeze(CONTROL_ACTIONS.filter((action) => actions.includes(action)));
 }
 async function requireActiveDependencies(transaction: TenantTransaction): Promise<void> {
   const result = await transaction.client

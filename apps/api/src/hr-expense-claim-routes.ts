@@ -56,7 +56,7 @@ import {
   editExpenseClaimDraft,
   getAuthorizedExpenseClaimDetail,
   getExpenseClaimServiceControl,
-  inspectExpenseClaimServiceControlAuthority,
+  inspectExpenseClaimActionAuthority,
   listAssignedExpenseClaims,
   listOwnExpenseClaims,
   rejectExpenseClaim,
@@ -157,10 +157,7 @@ export function registerExpenseClaimRoutes({
     server.addSchema(schema);
   }
   const attachExpenseClaimActions = async (request: FastifyRequest, reply: FastifyReply) => {
-    const actions = await inspectExpenseClaimServiceControlAuthority(
-      pool,
-      operationContext(request),
-    );
+    const actions = await inspectExpenseClaimActionAuthority(pool, operationContext(request));
     reply.header("x-esbla-expense-actions", JSON.stringify(actions));
   };
 

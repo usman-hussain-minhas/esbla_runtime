@@ -411,16 +411,21 @@ export async function seedHrLeaveFixture() {
         `GRANT SELECT, INSERT, UPDATE ON work_items, hr_leave_requests,
           hr_worker_profiles, hr_employment_records TO ${applicationRole}`,
       );
+      await client.query(`GRANT SELECT ON workspace_tasks TO ${applicationRole}`);
       await client.query(
         `GRANT SELECT ON hr_employment_record_service_control,
-          hr_shift_assignment_service_control, hr_attendance_service_control TO ${applicationRole}`,
+          hr_shift_assignment_service_control, hr_attendance_service_control,
+          hr_expense_claim_service_control TO ${applicationRole}`,
       );
       await client.query(
         `GRANT SELECT, INSERT ON hr_employment_record_versions TO ${applicationRole};
          GRANT SELECT, INSERT, UPDATE ON hr_shift_assignments,
           hr_shift_roster_versions TO ${applicationRole};
          GRANT SELECT, INSERT ON hr_attendance_observations,
-          hr_attendance_corrections TO ${applicationRole}`,
+          hr_attendance_corrections TO ${applicationRole};
+         GRANT SELECT, INSERT, UPDATE, DELETE ON hr_expense_claims,
+          hr_expense_claim_versions, hr_expense_claim_lines TO ${applicationRole};
+         GRANT SELECT, INSERT ON hr_expense_claim_approvals TO ${applicationRole}`,
       );
       await client.query(
         `GRANT SELECT, INSERT ON evidence_events, outbox_events TO ${applicationRole}`,
@@ -519,7 +524,11 @@ export async function seedHrLeaveFixture() {
                 ($1, $5, 'hr.timesheet.activate_service'),
                 ($1, $5, 'hr.timesheet.configure_service'),
                 ($1, $5, 'hr.timesheet.deactivate_service'),
-                ($1, $5, 'hr.timesheet.view_service_control')`,
+                ($1, $5, 'hr.timesheet.view_service_control'),
+                ($1, $5, 'hr.expense.activate_service'),
+                ($1, $5, 'hr.expense.configure_service'),
+                ($1, $5, 'hr.expense.deactivate_service'),
+                ($1, $5, 'hr.expense.view_service_control')`,
         [
           fixture.tenantId,
           fixture.employeePrincipalId,
@@ -547,6 +556,12 @@ export async function seedHrLeaveFixture() {
             "hr.timesheet.list_own",
             "hr.timesheet.submit",
             "hr.timesheet.view_detail",
+            "hr.expense.create",
+            "hr.expense.create_correction",
+            "hr.expense.edit_draft",
+            "hr.expense.list_own",
+            "hr.expense.submit",
+            "hr.expense.view_detail",
             "hr.shift.list_roster",
             "hr.shift.view_detail",
           ],
@@ -557,6 +572,11 @@ export async function seedHrLeaveFixture() {
             "hr.timesheet.list_assigned",
             "hr.timesheet.reject",
             "hr.timesheet.view_detail",
+            "hr.expense.approve",
+            "hr.expense.list_assigned",
+            "hr.expense.reject",
+            "hr.expense.view_detail",
+            "workspace.task.list_assigned",
             "hr.shift.list_roster",
             "hr.shift.view_detail",
           ],
@@ -610,7 +630,9 @@ export async function seedHrLeaveFixture() {
                 ($1, 'workforce_profile', 'active', 1),
                 ($1, 'employment_record', 'active', 1),
                 ($1, 'shift_assignment', 'active', 1),
-                ($1, 'timesheet', 'active', 1)`,
+                ($1, 'timesheet', 'active', 1),
+                ($1, 'workspace.task', 'active', 1),
+                ($1, 'expense_claim_boundary', 'active', 1)`,
         [fixture.tenantId],
       );
       await client.query(
