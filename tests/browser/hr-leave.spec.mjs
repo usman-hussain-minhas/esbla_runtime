@@ -95,7 +95,7 @@ async function openAssignedWork(actor, leaveRequestId) {
   await expect(actor.page.getByRole("heading", { name: "Assigned work" })).toBeVisible();
   await expect(actor.page.getByLabel("Development identity status")).toHaveText(actor.label);
   await expect(
-    actor.page.getByRole("heading", { name: "Workspace tasks unavailable" }),
+    actor.page.getByRole("heading", { name: "No workspace tasks on this page" }),
   ).toBeVisible();
   const card = assignedCard(actor.page, leaveRequestId);
   await expect(card).toHaveCount(1);

@@ -1184,6 +1184,9 @@ describe.sequential("Expense Claim assigned-manager decision API", () => {
 
     const ownFirst = await signedGet("/v1/hr/expense-claims/own?pageSize=1", ids.employee);
     expect(ownFirst.response.statusCode, ownFirst.response.body).toBe(200);
+    expect(ownFirst.response.headers["x-esbla-expense-actions"]).toBe(
+      '["create","create_correction","edit_draft","list_own","submit","view_detail"]',
+    );
     expect(ownFirst.response.json()).toMatchObject({
       items: [{ workItemId: null, workerProfileId }],
       kind: "own",
@@ -1204,6 +1207,9 @@ describe.sequential("Expense Claim assigned-manager decision API", () => {
 
     const assignedFirst = await signedGet("/v1/hr/expense-claims/assigned?pageSize=1", ids.manager);
     expect(assignedFirst.response.statusCode, assignedFirst.response.body).toBe(200);
+    expect(assignedFirst.response.headers["x-esbla-expense-actions"]).toBe(
+      '["approve","list_assigned","reject","view_detail"]',
+    );
     expect(assignedFirst.response.json()).toMatchObject({
       items: [{ status: "submitted", workerProfileId }],
       kind: "assigned",
