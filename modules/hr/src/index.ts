@@ -21,6 +21,7 @@ export * from "./employment.js";
 export * from "./employment-service-control.js";
 export * from "./errors.js";
 export * from "./expense-claim.js";
+export * from "./expense-claim-queries.js";
 export * from "./expense-claim-service-control.js";
 export * from "./manifest.js";
 export * from "./queries.js";

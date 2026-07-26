@@ -96,20 +96,25 @@ describe("Expense Claim Boundary API contract", () => {
         type: "string",
       },
     );
-    expect(
-      hrExpenseClaimListResponseSchema.oneOf[0].properties.items.items.properties.workItemId,
-    ).toEqual({ type: "null" });
-    expect(
-      hrExpenseClaimListResponseSchema.oneOf[1].properties.items.items.properties,
-    ).toMatchObject({
-      status: { const: "submitted" },
-      submittedAt: { format: "date-time", type: "string" },
+    expect(hrExpenseClaimListResponseSchema.properties.items.items.properties).toMatchObject({
+      status: { enum: ["approved", "draft", "rejected", "submitted"] },
+      submittedAt: {
+        anyOf: [{ format: "date-time", type: "string" }, { type: "null" }],
+      },
       workItemId: {
-        pattern:
-          "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
-        type: "string",
+        anyOf: [
+          {
+            pattern:
+              "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            type: "string",
+          },
+          { type: "null" },
+        ],
       },
     });
+    expect(hrExpenseClaimListResponseSchema.oneOf.map(({ properties }) => properties.kind)).toEqual(
+      [{ const: "own" }, { const: "assigned" }],
+    );
   });
 
   it("accepts an ISO currency and strict bounded line replacement", () => {

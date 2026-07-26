@@ -1,23 +1,34 @@
 import {
   type HrExpenseClaimApproveBody,
+  type HrExpenseClaimAssignedListQuery,
   type HrExpenseClaimCreateBody,
   type HrExpenseClaimCreateCorrectionBody,
+  type HrExpenseClaimDetailQuery,
   type HrExpenseClaimEditDraftBody,
+  type HrExpenseClaimOwnListQuery,
   type HrExpenseClaimPath,
   type HrExpenseClaimRejectBody,
   type HrExpenseClaimSubmitBody,
   hrExpenseClaimApproveBodySchema,
+  hrExpenseClaimAssignedListQuerySchema,
   hrExpenseClaimCreateBodySchema,
   hrExpenseClaimCreateCorrectionBodySchema,
+  hrExpenseClaimDetailQuerySchema,
   hrExpenseClaimEditDraftBodySchema,
+  hrExpenseClaimListResponseSchema,
+  hrExpenseClaimOwnListQuerySchema,
   hrExpenseClaimPathSchema,
   hrExpenseClaimRejectBodySchema,
   hrExpenseClaimResponseSchema,
   hrExpenseClaimSubmitBodySchema,
   parseHrExpenseClaimApproveBody,
+  parseHrExpenseClaimAssignedListQuery,
   parseHrExpenseClaimCreateBody,
   parseHrExpenseClaimCreateCorrectionBody,
+  parseHrExpenseClaimDetailQuery,
   parseHrExpenseClaimEditDraftBody,
+  parseHrExpenseClaimListResponse,
+  parseHrExpenseClaimOwnListQuery,
   parseHrExpenseClaimPath,
   parseHrExpenseClaimRejectBody,
   parseHrExpenseClaimResponse,
@@ -43,8 +54,11 @@ import {
   createExpenseClaimCorrection,
   deactivateExpenseClaimService,
   editExpenseClaimDraft,
+  getAuthorizedExpenseClaimDetail,
   getExpenseClaimServiceControl,
   inspectExpenseClaimServiceControlAuthority,
+  listAssignedExpenseClaims,
+  listOwnExpenseClaims,
   rejectExpenseClaim,
   submitExpenseClaim,
 } from "@esbla/hr";
@@ -88,6 +102,18 @@ function strict<T>(parse: (value: unknown) => T, value: unknown): T {
   }
 }
 
+function queryIntegers(value: unknown, fields: readonly string[]): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  const normalized: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+  for (const field of fields) {
+    const candidate = normalized[field];
+    if (typeof candidate === "string" && /^[1-9]\d*$/.test(candidate)) {
+      normalized[field] = Number(candidate);
+    }
+  }
+  return normalized;
+}
+
 function mutationContext(request: FastifyRequest): OperationContext {
   const value = request.headers["idempotency-key"];
   if (Array.isArray(value) || typeof value !== "string" || value.length === 0) {
@@ -115,10 +141,14 @@ export function registerExpenseClaimRoutes({
   server,
 }: RegisterExpenseClaimRoutesOptions): void {
   for (const schema of [
+    hrExpenseClaimAssignedListQuerySchema,
     hrExpenseClaimApproveBodySchema,
     hrExpenseClaimCreateBodySchema,
     hrExpenseClaimCreateCorrectionBodySchema,
+    hrExpenseClaimDetailQuerySchema,
     hrExpenseClaimEditDraftBodySchema,
+    hrExpenseClaimListResponseSchema,
+    hrExpenseClaimOwnListQuerySchema,
     hrExpenseClaimPathSchema,
     hrExpenseClaimResponseSchema,
     hrExpenseClaimRejectBodySchema,
@@ -164,6 +194,106 @@ export function registerExpenseClaimRoutes({
         .code(result.replayed ? 200 : 201)
         .send(parseHrExpenseClaimResponse(result.expenseClaim));
     },
+  );
+
+  server.get<{ Querystring: HrExpenseClaimOwnListQuery }>(
+    "/v1/hr/expense-claims/own",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          request.query = strict(
+            parseHrExpenseClaimOwnListQuery,
+            queryIntegers(request.query, ["pageSize"]),
+          );
+        },
+        attachExpenseClaimActions,
+      ],
+      schema: {
+        querystring: { $ref: "HrExpenseOwnListQueryV1#" },
+        response: {
+          200: { $ref: "HrExpenseListResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) =>
+      reply
+        .code(200)
+        .send(
+          parseHrExpenseClaimListResponse(
+            await listOwnExpenseClaims(pool, operationContext(request), request.query),
+          ),
+        ),
+  );
+
+  server.get<{ Querystring: HrExpenseClaimAssignedListQuery }>(
+    "/v1/hr/expense-claims/assigned",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          request.query = strict(
+            parseHrExpenseClaimAssignedListQuery,
+            queryIntegers(request.query, ["pageSize"]),
+          );
+        },
+        attachExpenseClaimActions,
+      ],
+      schema: {
+        querystring: { $ref: "HrExpenseAssignedListQueryV1#" },
+        response: {
+          200: { $ref: "HrExpenseListResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) =>
+      reply
+        .code(200)
+        .send(
+          parseHrExpenseClaimListResponse(
+            await listAssignedExpenseClaims(pool, operationContext(request), request.query),
+          ),
+        ),
+  );
+
+  server.get<{ Params: HrExpenseClaimPath; Querystring: HrExpenseClaimDetailQuery }>(
+    "/v1/hr/expense-claims/by-id/:expenseClaimId",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          strict(parseHrExpenseClaimPath, request.params);
+          request.query = strict(
+            parseHrExpenseClaimDetailQuery,
+            queryIntegers(request.query, ["cursorVersion", "pageSize"]),
+          );
+        },
+        attachExpenseClaimActions,
+      ],
+      schema: {
+        params: { $ref: "HrExpenseClaimPathV1#" },
+        querystring: { $ref: "HrExpenseDetailQueryV1#" },
+        response: {
+          200: { $ref: "HrExpenseClaimResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) =>
+      reply
+        .code(200)
+        .send(
+          parseHrExpenseClaimResponse(
+            await getAuthorizedExpenseClaimDetail(
+              pool,
+              operationContext(request),
+              strict(parseHrExpenseClaimPath, request.params).expenseClaimId,
+              request.query,
+            ),
+          ),
+        ),
   );
 
   server.patch<{

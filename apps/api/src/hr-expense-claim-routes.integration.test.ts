@@ -305,7 +305,8 @@ beforeAll(async () => {
   await migrateDatabase(createDatabase(migrationPool));
   await migrationPool.query(
     `GRANT SELECT ON membership_capabilities,tenant_settings,hr_expense_claim_service_control,hr_reporting_relationships TO ${applicationRole};
-     GRANT SELECT,UPDATE ON hr_worker_profiles,service_activations TO ${applicationRole};
+     GRANT SELECT,UPDATE ON hr_worker_profiles TO ${applicationRole};
+     GRANT SELECT,INSERT,UPDATE ON service_activations TO ${applicationRole};
      GRANT SELECT,INSERT,UPDATE,DELETE ON hr_expense_claims,hr_expense_claim_versions,hr_expense_claim_lines TO ${applicationRole};
      GRANT SELECT,INSERT ON hr_expense_claim_approvals TO ${applicationRole};
      GRANT SELECT,INSERT ON evidence_events,outbox_events TO ${applicationRole};
@@ -357,15 +358,18 @@ beforeAll(async () => {
       );
       await tenantClient.query(
         `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
-         VALUES ($1,$2,'hr.expense.create'),($1,$2,'hr.expense.edit_draft'),
-                ($1,$2,'hr.expense.submit'),($1,$2,'hr.expense.create_correction')`,
+          VALUES ($1,$2,'hr.expense.create'),($1,$2,'hr.expense.edit_draft'),
+                ($1,$2,'hr.expense.submit'),($1,$2,'hr.expense.create_correction'),
+                ($1,$2,'hr.expense.list_own'),($1,$2,'hr.expense.view_detail')`,
         [ids.tenant, ids.employee],
       );
       await tenantClient.query(
         `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
-         VALUES ($1,$2,'hr.expense.approve'),($1,$2,'hr.expense.reject'),
+          VALUES ($1,$2,'hr.expense.approve'),($1,$2,'hr.expense.reject'),
                 ($1,$2,'hr.expense.create_correction'),
-                ($1,$3,'hr.expense.approve'),($1,$3,'hr.expense.reject')`,
+                ($1,$2,'hr.expense.list_assigned'),($1,$2,'hr.expense.view_detail'),
+                ($1,$3,'hr.expense.approve'),($1,$3,'hr.expense.reject'),
+                ($1,$3,'hr.expense.list_assigned'),($1,$3,'hr.expense.view_detail')`,
         [ids.tenant, ids.manager, ids.unassignedManager],
       );
       await tenantClient.query(
@@ -432,14 +436,18 @@ afterAll(async () => {
   await migrationPool?.end();
 });
 describe("Expense Claim service-control API", () => {
-  it("fails activation until eligible and returns only registered control state", async () => {
+  it("activates only after exact eligibility and returns only registered control state", async () => {
     expectProblem(await signedGet(controlUrl), 404, "EXPENSE_SERVICE_CONTROL_NOT_FOUND");
     const before = await proofCounts();
-    const blocked = await mutate("activate", { expectedVersion: null });
-    expectProblem(blocked, 503, "ACTIVATION_DEPENDENCY_BLOCKED");
-    await expectActivationBlocked(domainActivate("non_production", null), ["service_not_eligible"]);
-    expect(await proofCounts()).toEqual(before);
-    await setActivation("expense_claim_boundary", "active", 1);
+    const activated = await mutate("activate", { expectedVersion: null });
+    expect(activated.response.statusCode, activated.response.body).toBe(200);
+    expect(activated.response.headers["idempotent-replayed"]).toBe("false");
+    expect(await proofCounts()).toEqual({
+      evidence: before.evidence + 1,
+      nonBillable: before.nonBillable + 1,
+      outbox: before.outbox + 1,
+      settings: before.settings,
+    });
     const current = await signedGet(controlUrl);
     expect(current.response.statusCode, current.response.body).toBe(200);
     expect(current.response.json()).toEqual({
@@ -563,7 +571,6 @@ describe("Expense Claim service-control API", () => {
       await migrationPool.query(setup);
       try {
         await expectActivationBlocked(domainActivate("non_production", 2), [
-          "service_not_eligible",
           "non_soft_dependency_not_eligible",
         ]);
       } finally {
@@ -584,7 +591,6 @@ describe("Expense Claim service-control API", () => {
       });
       expectProblem(missing, 503, "ACTIVATION_DEPENDENCY_BLOCKED");
       await expectActivationBlocked(domainActivate("production", 2), [
-        "service_not_eligible",
         "qualified_retention_evidence_unavailable",
       ]);
       const app = await pool.connect();
@@ -600,7 +606,10 @@ describe("Expense Claim service-control API", () => {
       await governed((client) =>
         client.query(retentionInsert, [ids.tenant, ids.admin, randomUUID()]),
       );
-      await expectActivationBlocked(domainActivate("production", 2), ["service_not_eligible"]);
+      await expect(domainActivate("production", 2)).resolves.toMatchObject({
+        control: { activationState: "active", activationVersion: 3 },
+        replayed: false,
+      });
     } finally {
       await production.close();
     }
@@ -610,13 +619,12 @@ describe("Expense Claim service-control API", () => {
         [ids.tenant],
       ),
     );
-    expect(activation.rows[0]).toEqual({ state: "inactive", version: 2 });
+    expect(activation.rows[0]).toEqual({ state: "active", version: 3 });
   });
 });
 
 describe.sequential("Expense Claim employee lifecycle API", () => {
   it("creates, edits, submits and replays one atomic non-money claim while denial stays inert", async () => {
-    await setActivation("expense_claim_boundary", "active", 3);
     await setActivation("workspace.task", "active", 3);
     await governed((client) =>
       client.query(
@@ -1145,5 +1153,200 @@ describe.sequential("Expense Claim assigned-manager decision API", () => {
         successors: 1,
       },
     ]);
+  });
+
+  it("lists own and assigned claims and returns role-scoped evidence-backed history", async () => {
+    const created = await claimMutation("POST", "/v1/hr/expense-claims", {
+      currencyCode: "PKR",
+    });
+    expect(created.response.statusCode, created.response.body).toBe(201);
+    const draft = created.response.json();
+    const expenseClaimId = String(draft.expenseClaimId);
+    const expenseClaimVersionId = String(draft.currentVersion.expenseClaimVersionId);
+    const edited = await claimMutation("PATCH", `/v1/hr/expense-claims/${expenseClaimId}/draft`, {
+      expectedExpenseClaimVersionId: expenseClaimVersionId,
+      expectedRootVersion: 1,
+      expectedVersion: 1,
+      lines: [{ amountMinor: 2_500, categoryCode: "other", expenseDate: "2028-08-04" }],
+    });
+    expect(edited.response.statusCode, edited.response.body).toBe(200);
+    const submitted = await claimMutation(
+      "POST",
+      `/v1/hr/expense-claims/${expenseClaimId}/submit`,
+      {
+        expectedExpenseClaimVersionId: expenseClaimVersionId,
+        expectedRootVersion: 1,
+        expectedVersion: 2,
+      },
+    );
+    expect(submitted.response.statusCode, submitted.response.body).toBe(200);
+    const beforeRead = await claimProofCounts();
+
+    const ownFirst = await signedGet("/v1/hr/expense-claims/own?pageSize=1", ids.employee);
+    expect(ownFirst.response.statusCode, ownFirst.response.body).toBe(200);
+    expect(ownFirst.response.json()).toMatchObject({
+      items: [{ workItemId: null, workerProfileId }],
+      kind: "own",
+    });
+    const ownCursor = ownFirst.response.json().nextCursor;
+    expect(ownCursor).not.toBeNull();
+    const ownSecond = await signedGet(
+      `/v1/hr/expense-claims/own?pageSize=1&cursorCreatedAt=${encodeURIComponent(
+        String(ownCursor.createdAt),
+      )}&cursorExpenseClaimId=${ownCursor.expenseClaimId}`,
+      ids.employee,
+    );
+    expect(ownSecond.response.statusCode, ownSecond.response.body).toBe(200);
+    expect(ownSecond.response.json()).toMatchObject({ kind: "own" });
+    expect(ownSecond.response.json().items[0]?.expenseClaimId).not.toBe(
+      ownFirst.response.json().items[0]?.expenseClaimId,
+    );
+
+    const assignedFirst = await signedGet("/v1/hr/expense-claims/assigned?pageSize=1", ids.manager);
+    expect(assignedFirst.response.statusCode, assignedFirst.response.body).toBe(200);
+    expect(assignedFirst.response.json()).toMatchObject({
+      items: [{ status: "submitted", workerProfileId }],
+      kind: "assigned",
+    });
+    expect(assignedFirst.response.json().items[0]?.workItemId).toMatch(/^[0-9a-f-]{36}$/);
+    const assignedCursor = assignedFirst.response.json().nextCursor;
+    expect(assignedCursor).not.toBeNull();
+    const assignedSecond = await signedGet(
+      `/v1/hr/expense-claims/assigned?pageSize=1&cursorSubmittedAt=${encodeURIComponent(
+        String(assignedCursor.submittedAt),
+      )}&cursorExpenseClaimVersionId=${assignedCursor.expenseClaimVersionId}`,
+      ids.manager,
+    );
+    expect(assignedSecond.response.statusCode, assignedSecond.response.body).toBe(200);
+    expect(assignedSecond.response.json()).toMatchObject({
+      items: [{ expenseClaimId, expenseClaimVersionId, status: "submitted", workerProfileId }],
+      kind: "assigned",
+    });
+
+    const employeeDetail = await signedGet(
+      `/v1/hr/expense-claims/by-id/${approvedExpenseClaimId}?pageSize=1`,
+      ids.employee,
+    );
+    expect(employeeDetail.response.statusCode, employeeDetail.response.body).toBe(200);
+    expect(employeeDetail.response.json()).toMatchObject({
+      accessScope: "own",
+      expenseClaimId: approvedExpenseClaimId,
+      history: {
+        items: [
+          {
+            status: "draft",
+            supersedesVersionId: approvedExpenseClaimVersionId,
+            version: 2,
+          },
+        ],
+      },
+      rootVersion: 2,
+      workerProfileId,
+    });
+    const historyCursor = employeeDetail.response.json().history.nextCursor;
+    expect(historyCursor).not.toBeNull();
+    const employeeHistory = await signedGet(
+      `/v1/hr/expense-claims/by-id/${approvedExpenseClaimId}?pageSize=1&cursorVersion=${
+        historyCursor.version
+      }&cursorExpenseClaimVersionId=${historyCursor.expenseClaimVersionId}`,
+      ids.employee,
+    );
+    expect(employeeHistory.response.statusCode, employeeHistory.response.body).toBe(200);
+    expect(employeeHistory.response.json().history.items).toEqual([
+      expect.objectContaining({
+        decidedAt: expect.any(String),
+        decisionNote: null,
+        expenseClaimVersionId: approvedExpenseClaimVersionId,
+        status: "approved",
+        version: 1,
+      }),
+    ]);
+    const managerDetail = await signedGet(
+      `/v1/hr/expense-claims/by-id/${approvedExpenseClaimId}`,
+      ids.manager,
+    );
+    expect(managerDetail.response.statusCode, managerDetail.response.body).toBe(200);
+    expect(managerDetail.response.json().accessScope).toBe("assigned");
+
+    const unassigned = await signedGet(
+      `/v1/hr/expense-claims/by-id/${approvedExpenseClaimId}`,
+      ids.unassignedManager,
+    );
+    expectProblem(unassigned, 404, "EXPENSE_NOT_FOUND");
+    const unassignedQueue = await signedGet(
+      "/v1/hr/expense-claims/assigned",
+      ids.unassignedManager,
+    );
+    expect(unassignedQueue.response.statusCode, unassignedQueue.response.body).toBe(200);
+    expect(unassignedQueue.response.json()).toEqual({
+      items: [],
+      kind: "assigned",
+      nextCursor: null,
+    });
+
+    await governed((client) =>
+      client.query(
+        "UPDATE memberships SET role_key='employee' WHERE tenant_id=$1 AND principal_id=$2",
+        [ids.tenant, ids.manager],
+      ),
+    );
+    expectProblem(
+      await signedGet("/v1/hr/expense-claims/assigned", ids.manager),
+      403,
+      "POLICY_DENIED",
+    );
+    expectProblem(
+      await signedGet(`/v1/hr/expense-claims/by-id/${approvedExpenseClaimId}`, ids.manager),
+      404,
+      "EXPENSE_NOT_FOUND",
+    );
+    await governed((client) =>
+      client.query(
+        "UPDATE memberships SET role_key='manager' WHERE tenant_id=$1 AND principal_id=$2",
+        [ids.tenant, ids.manager],
+      ),
+    );
+    expectProblem(
+      await signedGet(
+        "/v1/hr/expense-claims/own?cursorCreatedAt=2028-08-04T00:00:00.000Z",
+        ids.employee,
+      ),
+      400,
+      "REQUEST_VALIDATION_FAILED",
+    );
+
+    await governedOther((client) =>
+      client.query(
+        `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+         VALUES ($1,$2,'hr.expense.view_detail')
+         ON CONFLICT DO NOTHING`,
+        [ids.otherTenant, ids.otherEmployee],
+      ),
+    );
+    expectProblem(
+      await signedGet(
+        `/v1/hr/expense-claims/by-id/${approvedExpenseClaimId}`,
+        ids.otherEmployee,
+        ids.otherTenant,
+      ),
+      404,
+      "EXPENSE_NOT_FOUND",
+    );
+
+    await setActivation("expense_claim_boundary", "inactive", 6);
+    expectProblem(
+      await signedGet("/v1/hr/expense-claims/own", ids.employee),
+      503,
+      "EXPENSE_SERVICE_INACTIVE",
+    );
+    await setActivation("expense_claim_boundary", "active", 7);
+    await setActivation("workspace.task", "inactive", 6);
+    expectProblem(
+      await signedGet("/v1/hr/expense-claims/own", ids.employee),
+      503,
+      "EXPENSE_DEPENDENCY_INACTIVE",
+    );
+    await setActivation("workspace.task", "active", 7);
+    expect(await claimProofCounts()).toEqual(beforeRead);
   });
 });
