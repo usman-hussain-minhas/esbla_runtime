@@ -453,30 +453,12 @@ const listItemSchema = {
   ],
   type: "object",
 } as const;
-const ownListItemSchema = {
-  ...listItemSchema,
-  properties: {
-    ...listItemSchema.properties,
-    workItemId: { type: "null" },
-  },
-} as const;
-const assignedListItemSchema = {
-  ...listItemSchema,
-  properties: {
-    ...listItemSchema.properties,
-    status: { const: "submitted" },
-    submittedAt: { format: "date-time", type: "string" },
-    workItemId: uuid,
-  },
-} as const;
-
 export const hrExpenseClaimListResponseSchema = {
   $id: "HrExpenseListResponseV1",
   additionalProperties: false,
   oneOf: [
     {
       properties: {
-        items: { items: ownListItemSchema, maxItems: 50, type: "array" },
         kind: { const: "own" },
         nextCursor: {
           anyOf: [
@@ -497,7 +479,6 @@ export const hrExpenseClaimListResponseSchema = {
     },
     {
       properties: {
-        items: { items: assignedListItemSchema, maxItems: 50, type: "array" },
         kind: { const: "assigned" },
         nextCursor: {
           anyOf: [
