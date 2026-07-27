@@ -4,7 +4,11 @@ import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import { getOwnLeaveRequests } from "../../../../lib/hr-leave-list";
 import { buildHrLeaveDetailHref } from "../../../../lib/hr-leave-navigation-core";
-import { getDefaultSurfacePlacement, getWidgetDefinition, type SurfaceDefinition } from "../index";
+import {
+  getRegisteredSurfaceInstance,
+  getWidgetDefinition,
+  type SurfaceDefinition,
+} from "../index";
 import { SemanticIcon } from "../semantic-icons";
 import { type HrLeaveWidgetState, resolveHrLeaveWidgetFailureState } from "./hr-leave-widget-state";
 
@@ -39,12 +43,35 @@ function widgetStyle(placement: PresentationWidgetPlacement): WidgetStyle {
   };
 }
 
+function resolveLeaveWidget(
+  surfaceId: SurfaceDefinition["id"],
+  placement?: PresentationWidgetPlacement,
+) {
+  const registered = getRegisteredSurfaceInstance(surfaceId, "hr.leave.my-requests");
+  const definition = getWidgetDefinition(
+    registered.widgetDefinitionId,
+    registered.widgetDefinitionVersion,
+  );
+  if (
+    (placement &&
+      (placement.instanceId !== registered.instanceId ||
+        placement.widgetDefinitionId !== registered.widgetDefinitionId)) ||
+    definition.fullScreenRoute === null
+  ) {
+    throw new Error("Leave widget registry binding is invalid");
+  }
+  return {
+    definition,
+    fullScreenRoute: definition.fullScreenRoute,
+    instance: placement ?? registered,
+  };
+}
+
 export function HrLeaveMyRequestsWidgetLoading({
   placement,
   surfaceId,
 }: Pick<HrLeaveMyRequestsWidgetProps, "placement" | "surfaceId">) {
-  const definition = getWidgetDefinition("hr.leave.my-requests");
-  const instance = placement ?? getDefaultSurfacePlacement(surfaceId, definition.id);
+  const { definition, instance } = resolveLeaveWidget(surfaceId, placement);
   return (
     <article
       aria-busy="true"
@@ -77,8 +104,7 @@ export async function HrLeaveMyRequestsWidget({
   placement,
   surfaceId,
 }: HrLeaveMyRequestsWidgetProps) {
-  const definition = getWidgetDefinition("hr.leave.my-requests");
-  const instance = placement ?? getDefaultSurfacePlacement(surfaceId, definition.id);
+  const { definition, fullScreenRoute, instance } = resolveLeaveWidget(surfaceId, placement);
   const style = widgetStyle(instance);
 
   let content: ReactNode;
@@ -167,9 +193,9 @@ export async function HrLeaveMyRequestsWidget({
           <h2 id={`${instance.instanceId}-heading`}>{definition.displayName}</h2>
         </div>
         <a
-          aria-label="View all My leave requests"
+          aria-label={`View all ${definition.displayName}`}
           className="icon-command"
-          href="/workspace/hr/leave"
+          href={fullScreenRoute}
           title="View all"
         >
           <List aria-hidden="true" size={16} />

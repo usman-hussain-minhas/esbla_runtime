@@ -1,7 +1,28 @@
 import { PRESENTATION_BILLING_STATE } from "./platform-presentation-api.js";
+import {
+  type PresentationWidgetDefinition,
+  type PresentationWidgetSurfaceType,
+  validatePresentationWidgetRegistry,
+} from "./platform-presentation-widget.js";
 
 export const zenV1SurfaceIds = ["surface.mission-control", "surface.hr.mission-control"] as const;
 export type ZenV1SurfaceId = (typeof zenV1SurfaceIds)[number];
+
+export interface PresentationSurfaceDefinition {
+  readonly baseVersion: 1;
+  readonly columnCount: 12;
+  readonly compactColumnCount: 4;
+  readonly definitionHash: string;
+  readonly id: ZenV1SurfaceId;
+  readonly mediumColumnCount: 8;
+  readonly route: "/" | "/workspace/hr";
+  readonly serviceGroup: "hr" | "universal";
+}
+
+export type PresentationSurfaceDefinitionWithoutHash = Omit<
+  PresentationSurfaceDefinition,
+  "definitionHash"
+>;
 
 export interface PresentationWidgetPlacement {
   readonly column: number;
@@ -12,45 +33,156 @@ export interface PresentationWidgetPlacement {
   readonly widgetDefinitionId: string;
 }
 
+export interface PresentationSurfaceDefaultInstance extends PresentationWidgetPlacement {
+  readonly placementPolicy: "default_optional" | "default_required";
+  readonly sectionId: "overview";
+  readonly sourceOrder: number;
+  readonly widgetDefinitionVersion: number;
+}
+
 export interface ZenV1SurfaceContract {
   readonly basePlacements: readonly PresentationWidgetPlacement[];
   readonly baseVersion: 1;
+  readonly canonicalHash: string;
+  readonly defaultInstances: readonly PresentationSurfaceDefaultInstance[];
   readonly definitionHash: string;
   readonly surfaceId: ZenV1SurfaceId;
 }
 
-export const ZEN_V1_SURFACE_CONTRACTS = [
+export type ZenV1SurfaceContractWithoutHash = Omit<ZenV1SurfaceContract, "canonicalHash">;
+
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => compareCodeUnits(left, right))
+      .map(([key, child]) => [key, canonicalValue(child)]),
+  );
+}
+
+export function canonicalizePresentationSurfaceDefinition(
+  definition: PresentationSurfaceDefinitionWithoutHash,
+): string {
+  return JSON.stringify(canonicalValue(definition));
+}
+
+export function canonicalizePresentationSurfaceContract(
+  contract: ZenV1SurfaceContractWithoutHash,
+): string {
+  return JSON.stringify(canonicalValue(contract));
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+const UNIVERSAL_MISSION_CONTROL_SURFACE = {
+  baseVersion: 1,
+  columnCount: 12,
+  compactColumnCount: 4,
+  id: "surface.mission-control",
+  mediumColumnCount: 8,
+  route: "/",
+  serviceGroup: "universal",
+} as const satisfies PresentationSurfaceDefinitionWithoutHash;
+
+const HR_MISSION_CONTROL_SURFACE = {
+  baseVersion: 1,
+  columnCount: 12,
+  compactColumnCount: 4,
+  id: "surface.hr.mission-control",
+  mediumColumnCount: 8,
+  route: "/workspace/hr",
+  serviceGroup: "hr",
+} as const satisfies PresentationSurfaceDefinitionWithoutHash;
+
+export const PRESENTATION_SURFACE_DEFINITIONS = deepFreeze([
   {
-    basePlacements: [
-      {
-        column: 1,
-        columnSpan: 4,
-        instanceId: "mission-control.my-leave",
-        row: 4,
-        rowSpan: 3,
-        widgetDefinitionId: "hr.leave.my-requests",
-      },
-    ],
-    baseVersion: 1,
+    ...UNIVERSAL_MISSION_CONTROL_SURFACE,
     definitionHash: "c75bac3fed1b604fe9ebc9f39e1ccef45b2ad34570f5200ada0e8b77ab8b71fb",
-    surfaceId: "surface.mission-control",
   },
   {
-    basePlacements: [
-      {
-        column: 9,
-        columnSpan: 4,
-        instanceId: "hr-mission-control.my-leave",
-        row: 4,
-        rowSpan: 3,
-        widgetDefinitionId: "hr.leave.my-requests",
-      },
-    ],
-    baseVersion: 1,
+    ...HR_MISSION_CONTROL_SURFACE,
     definitionHash: "12e135cb9be3deeef974ec5af2362d7a8e68057bdba904976a29709afe601c36",
-    surfaceId: "surface.hr.mission-control",
   },
-] as const satisfies readonly ZenV1SurfaceContract[];
+] as const) satisfies readonly PresentationSurfaceDefinition[];
+
+const UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES = deepFreeze([
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "mission-control.my-leave",
+    placementPolicy: "default_optional",
+    row: 4,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 3,
+    widgetDefinitionId: "hr.leave.my-requests",
+    widgetDefinitionVersion: 1,
+  },
+] as const) satisfies readonly PresentationSurfaceDefaultInstance[];
+
+const HR_MISSION_CONTROL_DEFAULT_INSTANCES = deepFreeze([
+  {
+    column: 9,
+    columnSpan: 4,
+    instanceId: "hr-mission-control.my-leave",
+    placementPolicy: "default_optional",
+    row: 4,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 6,
+    widgetDefinitionId: "hr.leave.my-requests",
+    widgetDefinitionVersion: 1,
+  },
+] as const) satisfies readonly PresentationSurfaceDefaultInstance[];
+
+function placementFromDefaultInstance({
+  column,
+  columnSpan,
+  instanceId,
+  row,
+  rowSpan,
+  widgetDefinitionId,
+}: PresentationSurfaceDefaultInstance): PresentationWidgetPlacement {
+  return { column, columnSpan, instanceId, row, rowSpan, widgetDefinitionId };
+}
+
+const UNIVERSAL_MISSION_CONTROL_CONTRACT = {
+  basePlacements: [placementFromDefaultInstance(UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES[0])],
+  baseVersion: 1,
+  defaultInstances: UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES,
+  definitionHash: "c75bac3fed1b604fe9ebc9f39e1ccef45b2ad34570f5200ada0e8b77ab8b71fb",
+  surfaceId: "surface.mission-control",
+} as const satisfies ZenV1SurfaceContractWithoutHash;
+
+const HR_MISSION_CONTROL_CONTRACT = {
+  basePlacements: [placementFromDefaultInstance(HR_MISSION_CONTROL_DEFAULT_INSTANCES[0])],
+  baseVersion: 1,
+  defaultInstances: HR_MISSION_CONTROL_DEFAULT_INSTANCES,
+  definitionHash: "12e135cb9be3deeef974ec5af2362d7a8e68057bdba904976a29709afe601c36",
+  surfaceId: "surface.hr.mission-control",
+} as const satisfies ZenV1SurfaceContractWithoutHash;
+
+export const ZEN_V1_SURFACE_CONTRACTS = deepFreeze([
+  {
+    ...UNIVERSAL_MISSION_CONTROL_CONTRACT,
+    canonicalHash: "7a4c5954613fee26b0bad983f564910044e48984edd84c9160bb73948d5aa0a4",
+  },
+  {
+    ...HR_MISSION_CONTROL_CONTRACT,
+    canonicalHash: "7419ed984a5647920d4a699307bd36b8027b3e7b65a855845456d2c8530de497",
+  },
+] as const) satisfies readonly ZenV1SurfaceContract[];
 
 export type PresentationSurfaceLayoutSource = "code_default" | "user_overlay";
 
@@ -181,6 +313,39 @@ function safeInteger(value: unknown, minimum: number, maximum: number): value is
   return Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
 }
 
+export function parsePresentationSurfaceDefinition(value: unknown): PresentationSurfaceDefinition {
+  if (
+    !exactRecord(value, [
+      "baseVersion",
+      "columnCount",
+      "compactColumnCount",
+      "definitionHash",
+      "id",
+      "mediumColumnCount",
+      "route",
+      "serviceGroup",
+    ]) ||
+    value.baseVersion !== 1 ||
+    value.columnCount !== 12 ||
+    value.compactColumnCount !== 4 ||
+    value.mediumColumnCount !== 8 ||
+    typeof value.definitionHash !== "string" ||
+    !new RegExp(sha256Pattern).test(value.definitionHash) ||
+    !zenV1SurfaceIds.includes(value.id as ZenV1SurfaceId) ||
+    !(
+      (value.id === "surface.mission-control" &&
+        value.route === "/" &&
+        value.serviceGroup === "universal") ||
+      (value.id === "surface.hr.mission-control" &&
+        value.route === "/workspace/hr" &&
+        value.serviceGroup === "hr")
+    )
+  ) {
+    throw new Error("Invalid presentation surface definition");
+  }
+  return value as unknown as PresentationSurfaceDefinition;
+}
+
 function parsePlacement(value: unknown): PresentationWidgetPlacement {
   const keys = [
     "column",
@@ -216,6 +381,45 @@ function parsePlacement(value: unknown): PresentationWidgetPlacement {
   };
 }
 
+function parseDefaultInstance(value: unknown): PresentationSurfaceDefaultInstance {
+  if (
+    !exactRecord(value, [
+      "column",
+      "columnSpan",
+      "instanceId",
+      "placementPolicy",
+      "row",
+      "rowSpan",
+      "sectionId",
+      "sourceOrder",
+      "widgetDefinitionId",
+      "widgetDefinitionVersion",
+    ]) ||
+    (value.placementPolicy !== "default_optional" &&
+      value.placementPolicy !== "default_required") ||
+    value.sectionId !== "overview" ||
+    !safeInteger(value.sourceOrder, 1, 10_000) ||
+    !safeInteger(value.widgetDefinitionVersion, 1, 2_147_483_647)
+  ) {
+    throw new Error("Invalid presentation surface default instance");
+  }
+  const placement = parsePlacement({
+    column: value.column,
+    columnSpan: value.columnSpan,
+    instanceId: value.instanceId,
+    row: value.row,
+    rowSpan: value.rowSpan,
+    widgetDefinitionId: value.widgetDefinitionId,
+  });
+  return {
+    ...placement,
+    placementPolicy: value.placementPolicy,
+    sectionId: value.sectionId,
+    sourceOrder: value.sourceOrder,
+    widgetDefinitionVersion: value.widgetDefinitionVersion,
+  };
+}
+
 function parsePlacements(value: unknown): readonly PresentationWidgetPlacement[] {
   if (!Array.isArray(value) || value.length > 100) {
     throw new Error("Invalid presentation widget placements");
@@ -243,6 +447,105 @@ function parsePlacements(value: unknown): readonly PresentationWidgetPlacement[]
   return placements;
 }
 
+export function validatePresentationCompositionRegistries(
+  surfaceDefinitions: readonly PresentationSurfaceDefinition[],
+  surfaceContracts: readonly ZenV1SurfaceContract[],
+  widgetDefinitions: readonly PresentationWidgetDefinition[],
+): void {
+  if (
+    surfaceDefinitions.length !== zenV1SurfaceIds.length ||
+    surfaceContracts.length !== surfaceDefinitions.length ||
+    JSON.stringify(surfaceContracts.map(({ surfaceId }) => surfaceId)) !==
+      JSON.stringify(zenV1SurfaceIds)
+  ) {
+    throw new Error("Invalid presentation surface registry");
+  }
+  validatePresentationWidgetRegistry(widgetDefinitions);
+
+  const surfaceIds = new Set<string>();
+  const surfaceHashes = new Set<string>();
+  const routes = new Set<string>();
+  const surfaces = new Map<ZenV1SurfaceId, PresentationSurfaceDefinition>();
+  for (const candidate of surfaceDefinitions) {
+    const definition = parsePresentationSurfaceDefinition(candidate);
+    if (
+      surfaceIds.has(definition.id) ||
+      surfaceHashes.has(definition.definitionHash) ||
+      routes.has(definition.route)
+    ) {
+      throw new Error("Duplicate presentation surface definition");
+    }
+    surfaceIds.add(definition.id);
+    surfaceHashes.add(definition.definitionHash);
+    routes.add(definition.route);
+    surfaces.set(definition.id, definition);
+  }
+  if (JSON.stringify(surfaceDefinitions.map(({ id }) => id)) !== JSON.stringify(zenV1SurfaceIds)) {
+    throw new Error("Invalid presentation surface registry order");
+  }
+
+  const widgets = new Map(
+    widgetDefinitions.map((definition) => [
+      `${definition.id}@${definition.definitionVersion}`,
+      definition,
+    ]),
+  );
+  const contractSurfaceIds = new Set<string>();
+  const globalInstanceIds = new Set<string>();
+  for (const contract of surfaceContracts) {
+    const surface = surfaces.get(contract.surfaceId);
+    if (
+      !surface ||
+      contractSurfaceIds.has(contract.surfaceId) ||
+      contract.baseVersion !== surface.baseVersion ||
+      !new RegExp(sha256Pattern).test(contract.canonicalHash) ||
+      contract.definitionHash !== surface.definitionHash ||
+      contract.defaultInstances.length !== contract.basePlacements.length
+    ) {
+      throw new Error("Invalid presentation surface contract");
+    }
+    contractSurfaceIds.add(contract.surfaceId);
+
+    const instances = contract.defaultInstances.map(parseDefaultInstance);
+    if (
+      new Set(instances.map(({ sourceOrder }) => sourceOrder)).size !== instances.length ||
+      instances.some(
+        ({ sourceOrder }, index) =>
+          index > 0 && sourceOrder <= (instances[index - 1]?.sourceOrder ?? 0),
+      ) ||
+      JSON.stringify(instances.map(placementFromDefaultInstance)) !==
+        JSON.stringify(contract.basePlacements)
+    ) {
+      throw new Error("Invalid presentation surface default registry");
+    }
+    const surfaceType: PresentationWidgetSurfaceType =
+      surface.serviceGroup === "universal" ? "mission_control" : "service_group_mission_control";
+    for (const instance of instances) {
+      if (globalInstanceIds.has(instance.instanceId)) {
+        throw new Error("Duplicate presentation surface instance");
+      }
+      globalInstanceIds.add(instance.instanceId);
+      const widget = widgets.get(
+        `${instance.widgetDefinitionId}@${instance.widgetDefinitionVersion}`,
+      );
+      if (!widget) throw new Error("Unknown presentation widget definition");
+      if (!widget.supportedSurfaceTypes.includes(surfaceType)) {
+        throw new Error("Unsupported presentation widget surface");
+      }
+      const bounds = widget.layoutConstraints.desktop;
+      if (
+        instance.columnSpan < bounds.minimumColumnSpan ||
+        instance.columnSpan > bounds.maximumColumnSpan ||
+        instance.rowSpan < bounds.minimumRowSpan ||
+        instance.rowSpan > bounds.maximumRowSpan
+      ) {
+        throw new Error("Invalid presentation widget default geometry");
+      }
+    }
+    parsePlacements(contract.basePlacements);
+  }
+}
+
 function canonicalPlacements(placements: readonly PresentationWidgetPlacement[]): string {
   return JSON.stringify(
     placements.map((placement) => ({
@@ -268,6 +571,16 @@ export function parsePresentationSurfacePath(value: unknown): PresentationSurfac
     throw new Error("Invalid presentation surface path");
   }
   return { surfaceId: parseZenV1SurfaceId(value.surfaceId) };
+}
+
+export function getPresentationSurfaceDefinition(
+  surfaceId: ZenV1SurfaceId,
+): PresentationSurfaceDefinition {
+  const definition = PRESENTATION_SURFACE_DEFINITIONS.find(
+    (candidate) => candidate.id === surfaceId,
+  );
+  if (!definition) throw new Error("Unknown presentation surface definition");
+  return parsePresentationSurfaceDefinition(definition);
 }
 
 export function getZenV1SurfaceContract(surfaceId: ZenV1SurfaceId): ZenV1SurfaceContract {

@@ -36,6 +36,13 @@ server-rendered palette/high-contrast path is its first live consumer. This
 slice does not generalize persistence: server-authoritative storage, CAS and the
 Settings face remain later T3/T6 work.
 
+T3-2 moves the two proven surfaces, their ordered default-instance metadata and
+the Leave widget into shared, deeply immutable code-manifest registries. Generic
+schema/binding validation and server-startup canonical-hash checks fail closed;
+the Zen web consumer derives its definitions from those registries instead of
+duplicating them. This slice deliberately registers no unimplemented HR face
+and stores no executable manifest in PostgreSQL.
+
 ## Requirement trace
 
 | ID | Runtime implementation | Proof in this walking slice |
@@ -44,8 +51,8 @@ Settings face remain later T3/T6 work.
 | `ZEN-NAV-001` | `/` renders `surface.mission-control` | browser navigation |
 | `ZEN-NAV-002` | service-group navigation requires fresh activation plus a current code-owned domain read capability from any included HR service; widget placement separately requires the exact widget capabilities | integration and browser denial, including action-only absence |
 | `ZEN-RESP-001` | 12-column desktop, 8-column tablet and 4-column phone grammar at the exact 1100/768 boundaries, with safe-area chrome and persistent User/System | source and browser boundary checks |
-| `ZEN-SURF-001` | code-owned version-one bases plus tenant-scoped personal overlays with CAS | database integration, reload and restart proof |
-| `ZEN-WIDGET-001` | full immutable `hr.leave.my-requests` manifest with startup hash validation and a closed semantic-icon resolver; PostgreSQL stores no executable definition | contract/unit/schema checks |
+| `ZEN-SURF-001` | shared code-owned version-one surface manifests and ordered default-instance metadata, startup hash/binding validation, plus tenant-scoped personal overlays with CAS | contract, platform-core, database integration, reload and restart proof |
+| `ZEN-WIDGET-001` | generic immutable widget-manifest registry with exact `hr.leave.my-requests` V1 semantics, layout metadata, startup hash/binding validation and a closed semantic-icon resolver; PostgreSQL stores no executable definition | contract/unit/schema checks |
 | `ZEN-WIDGET-002` | real Leave provider renders loading, empty, populated and sanitized failure states | unit and browser |
 | `ZEN-FULL-001` | parallel intercepted detail route and direct standalone detail route share one face; direct entry returns to the canonical Leave host | browser navigation, direct load and reload |
 | `ZEN-FULL-002` | overlay owns scroll, traps focus, conceals the shell and restores origin focus | keyboard/browser |
@@ -58,7 +65,7 @@ Settings face remain later T3/T6 work.
 | `ZEN-PROOF-001` | source, unit, integration, browser and visual evidence remain separately labelled | exact-head audit |
 | `ZEN-PROCESS-001` | the real Leave consumer precedes kernel generalization; restart proof reuses bounded existing fixtures | candidate audit |
 
-This trace describes the T2 walking slice and the bounded T3-1
-presentation-setting generalization. It does not claim generalized
-presentation persistence, the complete composition kernel, Studio, the
-complete Zen shell, complete HR, release or deployment.
+This trace describes the T2 walking slice and the bounded T3-1/T3-2
+registry generalizations. It does not claim generalized presentation
+persistence, the complete composition kernel, Studio, the complete Zen shell,
+complete HR, release or deployment.

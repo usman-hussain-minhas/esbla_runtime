@@ -1,14 +1,33 @@
+import { HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION, ZEN_V1_SURFACE_CONTRACTS } from "@esbla/contracts";
 import { describe, expect, it } from "vitest";
 import {
-  assertPresentationWidgetRegistryCurrent,
+  assertPresentationCompositionRegistriesCurrent,
   parsePresentationPreferenceInput,
   resolvePresentationPreferences,
   validatePersonalSurfacePlacements,
 } from "./presentation.js";
 
 describe("presentation preference core", () => {
-  it("validates the exact code-owned widget manifest hashes at startup", () => {
-    expect(assertPresentationWidgetRegistryCurrent()).toBeUndefined();
+  it("validates the exact code-owned surface and widget registries at startup", () => {
+    expect(assertPresentationCompositionRegistriesCurrent()).toBeUndefined();
+    expect(() =>
+      assertPresentationCompositionRegistriesCurrent({
+        widgetDefinitions: [
+          {
+            ...HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION,
+            canonicalHash: "0".repeat(64),
+          },
+        ],
+      }),
+    ).toThrow("Presentation composition registry is invalid");
+    expect(() =>
+      assertPresentationCompositionRegistriesCurrent({
+        surfaceContracts: [
+          { ...ZEN_V1_SURFACE_CONTRACTS[0], canonicalHash: "0".repeat(64) },
+          ZEN_V1_SURFACE_CONTRACTS[1],
+        ],
+      }),
+    ).toThrow("Presentation composition registry is invalid");
   });
 
   it("rejects coupled or unrecognized appearance values", () => {

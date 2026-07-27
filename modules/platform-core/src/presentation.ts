@@ -4,27 +4,35 @@ import type {
   PresentationPreferenceSource,
   PresentationPreferences,
   PresentationServiceGroupDiscovery,
+  PresentationSurfaceDefinition,
   PresentationSurfaceLayout,
+  PresentationWidgetDefinition,
   PresentationWidgetPlacement,
   UpdatePresentationPreferencesBody,
   UpdatePresentationPreferencesResponse,
   UpdatePresentationSurfaceOverlayBody,
   UpdatePresentationSurfaceOverlayResponse,
+  ZenV1SurfaceContract,
   ZenV1SurfaceId,
 } from "@esbla/contracts";
 import {
   canonicalizePresentationSettingDefinition,
+  canonicalizePresentationSurfaceContract,
+  canonicalizePresentationSurfaceDefinition,
   canonicalizePresentationWidgetDefinition,
   getPresentationWidgetDefinition,
   getZenV1SurfaceContract,
   PRESENTATION_BILLING_STATE,
   PRESENTATION_SERVICE_GROUP_DEFINITIONS,
   PRESENTATION_SETTING_DEFINITIONS,
+  PRESENTATION_SURFACE_DEFINITIONS,
   PRESENTATION_WIDGET_DEFINITIONS,
   parsePresentationWidgetDefinition,
   parseUpdatePresentationPreferencesBody,
   parseUpdatePresentationSurfaceOverlayBody,
   presentationSettingKeys,
+  validatePresentationCompositionRegistries,
+  ZEN_V1_SURFACE_CONTRACTS,
   zenV1SurfaceIds,
 } from "@esbla/contracts";
 import type { Pool } from "pg";
@@ -46,17 +54,57 @@ const PREFERENCE_SUBJECT_TYPE = "platform_presentation_preferences";
 const SURFACE_OVERLAY_EVENT_TYPE = "platform.presentation.surface_overlay.updated";
 const SURFACE_OVERLAY_SUBJECT_TYPE = "platform_presentation_surface_overlay";
 
-export function assertPresentationWidgetRegistryCurrent(): void {
-  for (const candidate of PRESENTATION_WIDGET_DEFINITIONS) {
-    const definition = parsePresentationWidgetDefinition(candidate);
-    const { canonicalHash, ...manifest } = definition;
-    if (
-      createHash("sha256")
-        .update(canonicalizePresentationWidgetDefinition(manifest))
-        .digest("hex") !== canonicalHash
-    ) {
-      throw new PlatformError("SETTING_INVALID", "Presentation widget registry is invalid");
+interface PresentationCompositionRegistryInput {
+  readonly surfaceContracts?: readonly ZenV1SurfaceContract[];
+  readonly surfaceDefinitions?: readonly PresentationSurfaceDefinition[];
+  readonly widgetDefinitions?: readonly PresentationWidgetDefinition[];
+}
+
+export function assertPresentationCompositionRegistriesCurrent(
+  input: PresentationCompositionRegistryInput = {},
+): void {
+  const surfaceContracts = input.surfaceContracts ?? ZEN_V1_SURFACE_CONTRACTS;
+  const surfaceDefinitions = input.surfaceDefinitions ?? PRESENTATION_SURFACE_DEFINITIONS;
+  const widgetDefinitions = input.widgetDefinitions ?? PRESENTATION_WIDGET_DEFINITIONS;
+  try {
+    validatePresentationCompositionRegistries(
+      surfaceDefinitions,
+      surfaceContracts,
+      widgetDefinitions,
+    );
+    for (const definition of surfaceDefinitions) {
+      const { definitionHash, ...manifest } = definition;
+      if (
+        createHash("sha256")
+          .update(canonicalizePresentationSurfaceDefinition(manifest))
+          .digest("hex") !== definitionHash
+      ) {
+        throw new Error("Presentation surface definition hash mismatch");
+      }
     }
+    for (const contract of surfaceContracts) {
+      const { canonicalHash, ...manifest } = contract;
+      if (
+        createHash("sha256")
+          .update(canonicalizePresentationSurfaceContract(manifest))
+          .digest("hex") !== canonicalHash
+      ) {
+        throw new Error("Presentation surface contract hash mismatch");
+      }
+    }
+    for (const candidate of widgetDefinitions) {
+      const definition = parsePresentationWidgetDefinition(candidate);
+      const { canonicalHash, ...manifest } = definition;
+      if (
+        createHash("sha256")
+          .update(canonicalizePresentationWidgetDefinition(manifest))
+          .digest("hex") !== canonicalHash
+      ) {
+        throw new Error("Presentation widget definition hash mismatch");
+      }
+    }
+  } catch {
+    throw new PlatformError("SETTING_INVALID", "Presentation composition registry is invalid");
   }
 }
 
@@ -82,7 +130,7 @@ export function assertPresentationSettingRegistryCurrent(): void {
   }
 }
 
-assertPresentationWidgetRegistryCurrent();
+assertPresentationCompositionRegistriesCurrent();
 assertPresentationSettingRegistryCurrent();
 
 export interface AppearanceValues {

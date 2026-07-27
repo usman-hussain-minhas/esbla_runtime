@@ -1,11 +1,18 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { parseUpdatePresentationPreferencesResponse } from "./platform-presentation-api.js";
 import {
+  canonicalizePresentationSurfaceContract,
+  canonicalizePresentationSurfaceDefinition,
+  PRESENTATION_SURFACE_DEFINITIONS,
+  parsePresentationSurfaceDefinition,
   parsePresentationSurfaceLayout,
   parseUpdatePresentationSurfaceOverlayBody,
   parseUpdatePresentationSurfaceOverlayResponse,
+  validatePresentationCompositionRegistries,
   ZEN_V1_SURFACE_CONTRACTS,
 } from "./platform-presentation-surface-api.js";
+import { PRESENTATION_WIDGET_DEFINITIONS } from "./platform-presentation-widget.js";
 
 describe("platform presentation surface API contract", () => {
   it("binds two distinct version-one Zen surface bases", () => {
@@ -17,6 +24,98 @@ describe("platform presentation surface API contract", () => {
       2,
     );
     expect(ZEN_V1_SURFACE_CONTRACTS.every(({ baseVersion }) => baseVersion === 1)).toBe(true);
+  });
+
+  it("owns both surface definitions in one canonical shared registry", () => {
+    expect(PRESENTATION_SURFACE_DEFINITIONS).toEqual([
+      expect.objectContaining({
+        baseVersion: 1,
+        columnCount: 12,
+        compactColumnCount: 4,
+        id: "surface.mission-control",
+        mediumColumnCount: 8,
+        route: "/",
+        serviceGroup: "universal",
+      }),
+      expect.objectContaining({
+        baseVersion: 1,
+        columnCount: 12,
+        compactColumnCount: 4,
+        id: "surface.hr.mission-control",
+        mediumColumnCount: 8,
+        route: "/workspace/hr",
+        serviceGroup: "hr",
+      }),
+    ]);
+    for (const definition of PRESENTATION_SURFACE_DEFINITIONS) {
+      const { definitionHash, ...manifest } = definition;
+      expect(
+        createHash("sha256")
+          .update(canonicalizePresentationSurfaceDefinition(manifest))
+          .digest("hex"),
+      ).toBe(definitionHash);
+      expect(parsePresentationSurfaceDefinition(definition)).toBe(definition);
+      expect(Object.isFrozen(definition)).toBe(true);
+    }
+  });
+
+  it("validates surface/widget bindings and preserves ordered placement metadata", () => {
+    expect(
+      validatePresentationCompositionRegistries(
+        PRESENTATION_SURFACE_DEFINITIONS,
+        ZEN_V1_SURFACE_CONTRACTS,
+        PRESENTATION_WIDGET_DEFINITIONS,
+      ),
+    ).toBeUndefined();
+    for (const contract of ZEN_V1_SURFACE_CONTRACTS) {
+      const { canonicalHash, ...manifest } = contract;
+      expect(
+        createHash("sha256")
+          .update(canonicalizePresentationSurfaceContract(manifest))
+          .digest("hex"),
+      ).toBe(canonicalHash);
+      expect(Object.isFrozen(contract.defaultInstances[0])).toBe(true);
+    }
+    expect(ZEN_V1_SURFACE_CONTRACTS.map(({ defaultInstances }) => defaultInstances[0])).toEqual([
+      expect.objectContaining({
+        instanceId: "mission-control.my-leave",
+        placementPolicy: "default_optional",
+        sectionId: "overview",
+        sourceOrder: 3,
+        widgetDefinitionVersion: 1,
+      }),
+      expect.objectContaining({
+        instanceId: "hr-mission-control.my-leave",
+        placementPolicy: "default_optional",
+        sectionId: "overview",
+        sourceOrder: 6,
+        widgetDefinitionVersion: 1,
+      }),
+    ]);
+    expect(() =>
+      validatePresentationCompositionRegistries(
+        PRESENTATION_SURFACE_DEFINITIONS,
+        [
+          {
+            ...ZEN_V1_SURFACE_CONTRACTS[0],
+            basePlacements: [
+              {
+                ...ZEN_V1_SURFACE_CONTRACTS[0].basePlacements[0],
+                widgetDefinitionId: "hr.unknown.widget",
+              },
+            ],
+            defaultInstances: [
+              {
+                ...ZEN_V1_SURFACE_CONTRACTS[0].defaultInstances[0],
+                widgetDefinitionId: "hr.unknown.widget",
+              },
+            ],
+          },
+          ZEN_V1_SURFACE_CONTRACTS[1],
+        ],
+        PRESENTATION_WIDGET_DEFINITIONS,
+      ),
+    ).toThrow("Unknown presentation widget definition");
   });
 
   it("strictly parses one bounded personal overlay", () => {
