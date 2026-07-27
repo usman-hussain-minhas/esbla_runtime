@@ -7,7 +7,7 @@ tenant or user values and layout patches.
 The source prototype does not contain licensed font files. Runtime therefore uses
 the accepted system-font fallback stack and does not fetch a network font.
 
-Current walking slice:
+Current T2 walking slice:
 
 - `surface.mission-control`
 - `surface.hr.mission-control`
@@ -30,6 +30,12 @@ mutation. No executable definition is stored in PostgreSQL.
 
 High contrast is an independent accessibility overlay, never a third palette.
 
+T3-1 generalizes the proven appearance seam into an immutable eleven-key
+presentation-setting registry and pure deterministic resolver. The existing
+server-rendered palette/high-contrast path is its first live consumer. This
+slice does not generalize persistence: server-authoritative storage, CAS and the
+Settings face remain later T3/T6 work.
+
 ## Requirement trace
 
 | ID | Runtime implementation | Proof in this walking slice |
@@ -43,6 +49,8 @@ High contrast is an independent accessibility overlay, never a third palette.
 | `ZEN-WIDGET-002` | real Leave provider renders loading, empty, populated and sanitized failure states | unit and browser |
 | `ZEN-FULL-001` | parallel intercepted detail route and direct standalone detail route share one face; direct entry returns to the canonical Leave host | browser navigation, direct load and reload |
 | `ZEN-FULL-002` | overlay owns scroll, traps focus, conceals the shell and restores origin focus | keyboard/browser |
+| `ZEN-SET-001` | HR business settings remain owned by the separate HR service resolver and are not presentation values | source-boundary audit |
+| `ZEN-SET-002` | code-owned immutable manifests define the exact eleven V1 presentation keys, scopes, types, constraints, permissions, non-billable treatment, migrations and canonical hashes; the pure resolver enforces exact priority, floors, locks, ordered patches, safe fallback, tombstones and deterministic diagnostics | contract and platform-core unit tests plus startup registry validation |
 | `ZEN-SET-003` | server-resolved palette and independent contrast reach the initial document and render correctly with client JavaScript disabled | raw SSR plus no-JavaScript first-paint screenshot and hydrated browser proof |
 | `ZEN-SEC-001` | current tenant membership, exact capabilities and service activation are checked on discovery and mutation | integration and browser denial |
 | `ZEN-SEC-002` | preference/layout mutations are tenant scoped, CAS-bound, evidenced and explicitly non-billable | integration/SQL |
@@ -50,6 +58,7 @@ High contrast is an independent accessibility overlay, never a third palette.
 | `ZEN-PROOF-001` | source, unit, integration, browser and visual evidence remain separately labelled | exact-head audit |
 | `ZEN-PROCESS-001` | the real Leave consumer precedes kernel generalization; restart proof reuses bounded existing fixtures | candidate audit |
 
-This trace describes only the T2 walking slice. It does not claim the generalized
-composition kernel, Studio, the complete Zen shell, complete HR, release or
-deployment.
+This trace describes the T2 walking slice and the bounded T3-1
+presentation-setting generalization. It does not claim generalized
+presentation persistence, the complete composition kernel, Studio, the
+complete Zen shell, complete HR, release or deployment.
