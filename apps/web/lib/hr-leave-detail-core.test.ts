@@ -67,18 +67,20 @@ describe("leave-request detail boundary", () => {
   });
 
   it("keeps the rendered detail read-only and free of internal identity fields", async () => {
-    const pageSource = await readFile(
-      new URL("../app/workspace/hr/leave/[leaveRequestId]/page.tsx", import.meta.url),
-      "utf8",
-    );
-    expect(pageSource).toContain("Evidence history");
-    expect(pageSource).not.toContain("tenantId");
-    expect(pageSource).not.toContain("employeePrincipalId");
-    expect(pageSource).not.toContain("correlationId");
-    expect(pageSource).not.toContain("idempotencyKey");
-    expect(pageSource).not.toContain("<form");
-    expect(pageSource).not.toContain("<button");
-    expect(pageSource).not.toContain("/approve");
-    expect(pageSource).not.toContain("/reject");
+    const detailRoot = new URL("../app/workspace/hr/leave/[leaveRequestId]/", import.meta.url);
+    const [pageSource, faceSource] = await Promise.all([
+      readFile(new URL("page.tsx", detailRoot), "utf8"),
+      readFile(new URL("leave-request-detail-face.tsx", detailRoot), "utf8"),
+    ]);
+    expect(pageSource).toContain("HrLeaveRequestDetailFace");
+    expect(faceSource).toContain("Evidence history");
+    expect(faceSource).not.toContain("tenantId");
+    expect(faceSource).not.toContain("employeePrincipalId");
+    expect(faceSource).not.toContain("correlationId");
+    expect(faceSource).not.toContain("idempotencyKey");
+    expect(faceSource).not.toContain("<form");
+    expect(faceSource).not.toContain("<button");
+    expect(faceSource).not.toContain("/approve");
+    expect(faceSource).not.toContain("/reject");
   });
 });

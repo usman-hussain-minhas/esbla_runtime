@@ -135,6 +135,199 @@ export const tenantSettings = pgTable(
   ],
 ).enableRLS();
 
+export const presentationSettingValues = pgTable(
+  "presentation_setting_values",
+  {
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    subjectType: text("subject_type").notNull(),
+    subjectId: uuid("subject_id").notNull(),
+    settingKey: text("setting_key").notNull(),
+    value: jsonb("value").notNull(),
+    version: integer("version").default(1).notNull(),
+    updatedByPrincipalId: uuid("updated_by_principal_id").notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.subjectType, table.subjectId, table.settingKey],
+      name: "presentation_setting_values_pk",
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.updatedByPrincipalId],
+      foreignColumns: [memberships.tenantId, memberships.principalId],
+      name: "presentation_setting_values_updater_membership_fk",
+    }).onDelete("restrict"),
+    index("presentation_setting_values_tenant_subject_idx").on(
+      table.tenantId,
+      table.subjectType,
+      table.subjectId,
+    ),
+    check(
+      "presentation_setting_values_subject_type_valid",
+      sql`${table.subjectType} IN ('tenant_default', 'user_override')`,
+    ),
+    check(
+      "presentation_setting_values_subject_shape_valid",
+      sql`${table.subjectType} <> 'tenant_default' OR ${table.subjectId} = ${table.tenantId}`,
+    ),
+    check(
+      "presentation_setting_values_key_valid",
+      sql`${table.settingKey} IN ('appearance.palette.v1', 'appearance.high_contrast.v1')`,
+    ),
+    check("presentation_setting_values_version_positive", sql`${table.version} > 0`),
+  ],
+).enableRLS();
+
+export const presentationSurfaceVersions = pgTable(
+  "presentation_surface_versions",
+  {
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    surfaceId: text("surface_id").notNull(),
+    baseVersion: integer("base_version").notNull(),
+    definitionHash: text("definition_hash").notNull(),
+    layout: jsonb("layout").notNull(),
+    publishedByPrincipalId: uuid("published_by_principal_id").notNull(),
+    publishedAt: timestamp("published_at", { mode: "date", withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.surfaceId, table.baseVersion],
+      name: "presentation_surface_versions_pk",
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.publishedByPrincipalId],
+      foreignColumns: [memberships.tenantId, memberships.principalId],
+      name: "presentation_surface_versions_publisher_membership_fk",
+    }).onDelete("restrict"),
+    index("presentation_surface_versions_tenant_surface_published_idx").on(
+      table.tenantId,
+      table.surfaceId,
+      table.publishedAt,
+    ),
+    check(
+      "presentation_surface_versions_surface_valid",
+      sql`${table.surfaceId} IN ('surface.mission-control', 'surface.hr.mission-control')`,
+    ),
+    check("presentation_surface_versions_base_version_positive", sql`${table.baseVersion} > 0`),
+    check(
+      "presentation_surface_versions_definition_hash_valid",
+      sql`${table.definitionHash} ~ '^[0-9a-f]{64}$'`,
+    ),
+    check(
+      "presentation_surface_versions_layout_array",
+      sql`jsonb_typeof(${table.layout}) = 'array'`,
+    ),
+  ],
+).enableRLS();
+
+export const presentationSurfaceHeads = pgTable(
+  "presentation_surface_heads",
+  {
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    surfaceId: text("surface_id").notNull(),
+    currentBaseVersion: integer("current_base_version").notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+    updatedByPrincipalId: uuid("updated_by_principal_id").notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.surfaceId],
+      name: "presentation_surface_heads_pk",
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.surfaceId, table.currentBaseVersion],
+      foreignColumns: [
+        presentationSurfaceVersions.tenantId,
+        presentationSurfaceVersions.surfaceId,
+        presentationSurfaceVersions.baseVersion,
+      ],
+      name: "presentation_surface_heads_current_version_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.updatedByPrincipalId],
+      foreignColumns: [memberships.tenantId, memberships.principalId],
+      name: "presentation_surface_heads_updater_membership_fk",
+    }).onDelete("restrict"),
+    check(
+      "presentation_surface_heads_surface_valid",
+      sql`${table.surfaceId} IN ('surface.mission-control', 'surface.hr.mission-control')`,
+    ),
+    check(
+      "presentation_surface_heads_current_version_positive",
+      sql`${table.currentBaseVersion} > 0`,
+    ),
+    check("presentation_surface_heads_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const presentationSurfaceOverlays = pgTable(
+  "presentation_surface_overlays",
+  {
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    principalId: uuid("principal_id").notNull(),
+    surfaceId: text("surface_id").notNull(),
+    baseVersion: integer("base_version").notNull(),
+    layout: jsonb("layout").notNull(),
+    version: integer("version").default(1).notNull(),
+    updatedByPrincipalId: uuid("updated_by_principal_id").notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.principalId, table.surfaceId],
+      name: "presentation_surface_overlays_pk",
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.principalId],
+      foreignColumns: [memberships.tenantId, memberships.principalId],
+      name: "presentation_surface_overlays_owner_membership_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.surfaceId, table.baseVersion],
+      foreignColumns: [
+        presentationSurfaceVersions.tenantId,
+        presentationSurfaceVersions.surfaceId,
+        presentationSurfaceVersions.baseVersion,
+      ],
+      name: "presentation_surface_overlays_base_version_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.updatedByPrincipalId],
+      foreignColumns: [memberships.tenantId, memberships.principalId],
+      name: "presentation_surface_overlays_updater_membership_fk",
+    }).onDelete("restrict"),
+    index("presentation_surface_overlays_tenant_principal_idx").on(
+      table.tenantId,
+      table.principalId,
+    ),
+    check(
+      "presentation_surface_overlays_surface_valid",
+      sql`${table.surfaceId} IN ('surface.mission-control', 'surface.hr.mission-control')`,
+    ),
+    check("presentation_surface_overlays_base_version_positive", sql`${table.baseVersion} > 0`),
+    check(
+      "presentation_surface_overlays_layout_array",
+      sql`jsonb_typeof(${table.layout}) = 'array'`,
+    ),
+    check("presentation_surface_overlays_version_positive", sql`${table.version} > 0`),
+    check(
+      "presentation_surface_overlays_own_update",
+      sql`${table.principalId} = ${table.updatedByPrincipalId}`,
+    ),
+  ],
+).enableRLS();
+
 export const workItems = pgTable(
   "work_items",
   {

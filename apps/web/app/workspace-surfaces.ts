@@ -1,4 +1,4 @@
-export type WorkspaceSurfaceKey = "HR" | "My Work" | "Tasks";
+export type WorkspaceSurfaceKey = "HR" | "Mission Control" | "My Work" | "Tasks";
 export type WorkspaceSurfaceIcon = "briefcase" | "inbox" | "tasks";
 
 export interface WorkspaceSurfaceRegistration {
@@ -34,5 +34,14 @@ export const WORKSPACE_SURFACES = [
 ] as const satisfies readonly WorkspaceSurfaceRegistration[];
 
 export function getWorkspaceSurface(key: WorkspaceSurfaceKey): WorkspaceSurfaceRegistration {
+  if (key === "Mission Control") {
+    return {
+      href: "/",
+      icon: "briefcase",
+      key,
+      label: key,
+      statusLabel: "Mission Control",
+    };
+  }
   return WORKSPACE_SURFACES.find((surface) => surface.key === key) ?? WORKSPACE_SURFACES[0];
 }

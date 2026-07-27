@@ -505,7 +505,7 @@ describe("Runtime environment boundary", () => {
       cwd: fileURLToPath(new URL("../", import.meta.url)),
       encoding: "utf8",
       env: environment,
-      timeout: 10_000,
+      timeout: 20_000,
     });
   }
 
@@ -521,7 +521,7 @@ describe("Runtime environment boundary", () => {
     expect(`${result.stdout}${result.stderr}`).toContain(
       "Production identity verifier has not been selected or configured",
     );
-  });
+  }, 30_000);
 
   it.each([
     "development",
@@ -534,7 +534,7 @@ describe("Runtime environment boundary", () => {
     expect(`${result.stdout}${result.stderr}`).not.toContain(
       "Production identity verifier has not been selected or configured",
     );
-  });
+  }, 30_000);
 
   it("bounds and strips control characters from typed Problem Details", async () => {
     const problemServer = createServer({

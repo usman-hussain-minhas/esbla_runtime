@@ -1,11 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { ESBLA_THEME_ID, ESBLA_THEME_MODES } from "./theme-contract";
+import { ESBLA_THEME_ALIASES, ESBLA_THEME_ID, ESBLA_THEME_PALETTES } from "./theme-contract";
 
 describe("Esbla Theme v1 host contract", () => {
-  it("names the normalized theme and all three required modes", () => {
-    expect(ESBLA_THEME_ID).toBe("esbla_v1");
-    expect(ESBLA_THEME_MODES).toEqual(["light", "dark", "high-contrast"]);
+  it("names Zen and keeps palette separate from high contrast", () => {
+    expect(ESBLA_THEME_ID).toBe("THEME-ESBLA-V1");
+    expect(ESBLA_THEME_ALIASES).toContain("zen_theme");
+    expect(ESBLA_THEME_PALETTES).toEqual(["light", "dark"]);
   });
 
   it("keeps one scroll surface, safe-area tokens, responsive geometry, and reduced motion", async () => {
@@ -14,14 +15,56 @@ describe("Esbla Theme v1 host contract", () => {
     expect(css).toContain("--corner-button: 46px");
     expect(css).toContain(".surface-scroll");
     expect(css).toContain("overflow: hidden");
-    expect(css).toContain("@media (max-width: 760px)");
+    expect(css).toContain("@media (max-width: 1099px)");
+    expect(css).toContain("@media (max-width: 767px)");
+    expect(css).toContain("env(safe-area-inset-top");
+    expect(css).toContain("env(safe-area-inset-bottom");
+    expect(css).not.toContain("@media (max-width: 760px)");
+    expect(css).not.toContain("@media (max-width: 980px)");
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
   });
 
-  it("routes to My Work and hosts HR plus Workspace task interactions", async () => {
+  it("has one canonical Theme identity and no competing light-only UI stub", async () => {
+    const [sharedUi, tokens] = await Promise.all([
+      readFile(new URL("../../../packages/ui/src/index.ts", import.meta.url), "utf8"),
+      readFile(new URL("../theme/zen-theme/v1/tokens.css", import.meta.url), "utf8"),
+    ]);
+    expect(sharedUi).not.toContain('"zen_v1"');
+    expect(sharedUi).not.toContain('modes: ["light"]');
+    expect(tokens).toContain('--zen-theme-id: "THEME-ESBLA-V1"');
+    expect(tokens).not.toContain('--zen-theme-id: "zen-theme"');
+  });
+
+  it("uses a parallel intercepted Leave detail face with a direct standalone route", async () => {
+    const [layout, widget, intercepted, standalone] = await Promise.all([
+      readFile(new URL("./layout.tsx", import.meta.url), "utf8"),
+      readFile(
+        new URL("../theme/zen-theme/v1/widgets/hr-leave-my-requests-widget.tsx", import.meta.url),
+        "utf8",
+      ),
+      readFile(
+        new URL("./@modal/(.)workspace/hr/leave/[leaveRequestId]/page.tsx", import.meta.url),
+        "utf8",
+      ),
+      readFile(new URL("./workspace/hr/leave/[leaveRequestId]/page.tsx", import.meta.url), "utf8"),
+    ]);
+    expect(layout).toContain("modal");
+    expect(widget).toContain("Link");
+    expect(widget).not.toContain("?focus=");
+    expect(intercepted).toContain("RouteBackedWidgetOverlay");
+    expect(intercepted).toContain("HrLeaveRequestDetailFace");
+    expect(standalone).toContain("HrLeaveRequestDetailFace");
+    expect(standalone).toContain("HR_LEAVE_CANONICAL_HOST_LINK");
+  });
+
+  it("routes home to Mission Control and keeps task workflows reachable as widgets", async () => {
     const entry = await readFile(new URL("./page.tsx", import.meta.url), "utf8");
     const surfaces = await readFile(new URL("./workspace-surfaces.ts", import.meta.url), "utf8");
     const shell = await readFile(new URL("./workspace-shell.tsx", import.meta.url), "utf8");
+    const systemControl = await readFile(
+      new URL("./theme-mode-control.tsx", import.meta.url),
+      "utf8",
+    );
     const myWork = await readFile(new URL("./workspace/my-work/page.tsx", import.meta.url), "utf8");
     const taskComplete = await readFile(
       new URL("./workspace/my-work/task-complete-action.tsx", import.meta.url),
@@ -36,7 +79,8 @@ describe("Esbla Theme v1 host contract", () => {
       new URL("./workspace/my-work/leave-rejection-action.tsx", import.meta.url),
       "utf8",
     );
-    expect(entry).toContain('redirect("/workspace/my-work")');
+    expect(entry).toContain("MissionControlPage");
+    expect(entry).toContain('surfaceId="surface.mission-control"');
     expect(myWork).toContain("Assigned work");
     expect(myWork).toContain("LeaveApprovalAction");
     expect(myWork).toContain("LeaveRejectionAction");
@@ -55,9 +99,14 @@ describe("Esbla Theme v1 host contract", () => {
     expect(surfaces).toContain('href: "/workspace/my-work"');
     expect(surfaces).toContain('href: "/workspace/tasks"');
     expect(surfaces).toContain('href: "/workspace/hr"');
-    expect(shell).toContain("WORKSPACE_SURFACES.map");
+    expect(shell).not.toContain("WORKSPACE_SURFACES.map");
+    expect(shell).toContain('getPresentationServiceGroupDefinition("hr")');
+    expect(shell).toContain("href={hrGroup.href}");
+    expect(shell).toContain("loadOwnPresentationServiceGroups");
+    expect(shell).toContain("semanticKey={hrGroup.semanticIcon}");
+    expect(shell).toContain("UserSystemControl");
+    expect(systemControl).toContain('semanticKey="user"');
     expect(shell).not.toContain("statusLabel: string");
-    expect(shell).not.toContain('currentSurface === "HR"');
   });
 
   it("keeps My Work decision controls accessible and policy-bound", async () => {
@@ -89,17 +138,21 @@ describe("Esbla Theme v1 host contract", () => {
 
   it("hosts read-only leave detail, evidence, loading, error, and not-found states", async () => {
     const detailRoot = new URL("./workspace/hr/leave/[leaveRequestId]/", import.meta.url);
-    const [page, loading, error, notFound] = await Promise.all(
-      ["page.tsx", "loading.tsx", "error.tsx", "not-found.tsx"].map(
-        async (file) => await readFile(new URL(file, detailRoot), "utf8"),
-      ),
+    const [page, face, loading, error, notFound] = await Promise.all(
+      [
+        "page.tsx",
+        "leave-request-detail-face.tsx",
+        "loading.tsx",
+        "error.tsx",
+        "not-found.tsx",
+      ].map(async (file) => await readFile(new URL(file, detailRoot), "utf8")),
     );
-    expect(page).toContain("Evidence history");
-    expect(page).toContain("Request details");
-    expect(page).not.toContain("<form");
-    expect(page).not.toContain("<button");
-    expect(page).not.toContain("/approve");
-    expect(page).not.toContain("/reject");
+    expect(page).toContain("HrLeaveRequestDetailFace");
+    expect(face).toContain("Evidence history");
+    expect(face).toContain("Request details");
+    expect(face).not.toContain("<form");
+    expect(face).not.toContain("/approve");
+    expect(face).not.toContain("/reject");
     expect(loading).toContain('aria-busy="true"');
     expect(error).toContain('role="alert"');
     expect(notFound).toContain("Leave request not found");

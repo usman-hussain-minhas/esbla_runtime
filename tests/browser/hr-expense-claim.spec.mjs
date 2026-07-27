@@ -36,21 +36,26 @@ async function closeActors(...actors) {
 async function post(actor, buttonName) {
   const button = actor.page.getByRole("button", { exact: true, name: buttonName });
   await expect(button).toBeVisible();
-  const [response] = await Promise.all([
-    actor.page.waitForResponse(
+  const [request] = await Promise.all([
+    actor.page.waitForRequest(
       (candidate) =>
-        candidate.request().method() === "POST" &&
+        candidate.method() === "POST" &&
         new URL(candidate.url()).pathname === "/workspace/hr/expenses/action",
       { timeout: 20_000 },
     ),
     button.click(),
   ]);
-  expect(response.status()).toBe(303);
+  expect((await request.response())?.status()).toBe(303);
 }
 
 async function createAndSubmit(actor, amount, category, description) {
   await actor.page.goto(`${actor.origin}/workspace/hr/expenses`);
-  await actor.page.getByLabel("ISO currency code").fill("USD");
+  await expect(
+    actor.page.getByRole("button", { exact: true, name: "Appearance settings" }),
+  ).toBeEnabled();
+  const currencyCode = actor.page.getByLabel("ISO currency code");
+  await currencyCode.fill("USD");
+  await expect(currencyCode).toHaveValue("USD");
   await post(actor, "Create Expense Claim draft");
   await actor.page.getByLabel("Expense date").fill("2029-03-01");
   await actor.page.getByLabel("Category code").fill(category);

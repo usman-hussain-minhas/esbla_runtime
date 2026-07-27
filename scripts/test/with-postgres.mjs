@@ -4,7 +4,10 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-const [command, ...args] = process.argv.slice(2);
+const commandArguments = process.argv.slice(2);
+const oneRestartOnExit75 = commandArguments[0] === "--one-restart-on-exit-75";
+if (oneRestartOnExit75) commandArguments.shift();
+const [command, ...args] = commandArguments;
 
 if (!command) {
   throw new Error("Usage: node scripts/test/with-postgres.mjs <command> [...args]");
@@ -246,10 +249,10 @@ async function waitForDatabase(database, executable, connectionArgs, expectedDat
   throw new Error("PostgreSQL readiness exceeded its bounded runtime");
 }
 
-async function runChild(childCommand, childArgs, env) {
+async function runChild(childCommand, childArgs, env, allowedExitCodes = [0]) {
   if (interrupted) throw new Error(`${basename(childCommand)} interrupted by ${interrupted}`);
   if (databaseProcess.closed) throw databaseExitError(databaseProcess.receipt);
-  await new Promise((resolve, reject) => {
+  return await new Promise((resolve, reject) => {
     let child;
     try {
       child = spawn(childCommand, childArgs, { env, stdio: "inherit" });
@@ -299,8 +302,8 @@ async function runChild(childCommand, childArgs, env) {
         );
       } else if (childError) {
         finish(() => reject(new Error(`${commandName} process control failed`)));
-      } else if (code === 0) {
-        finish(resolve);
+      } else if (signal === null && allowedExitCodes.includes(code)) {
+        finish(() => resolve({ code }));
       } else {
         finish(() => reject(new Error(`${commandName} exited with ${signal ?? `code ${code}`}`)));
       }
@@ -456,12 +459,49 @@ try {
     { quiet: true, requireDatabase: true },
   );
 
-  await runChild(command, args, {
+  const childEnvironment = {
     ...process.env,
     DATABASE_MIGRATION_URL: `postgresql://${migrationRole}@/${databaseName}?host=${encodeURIComponent(socketDirectory)}&port=${port}`,
     DATABASE_URL: `postgresql://${applicationRole}@/${databaseName}?host=${encodeURIComponent(socketDirectory)}&port=${port}`,
     ESBLA_TEST_APPLICATION_ROLE: applicationRole,
-  });
+  };
+  const firstResult = await runChild(
+    command,
+    args,
+    {
+      ...childEnvironment,
+      ...(oneRestartOnExit75 ? { ESBLA_TEST_POSTGRES_RESTART_COUNT: "0" } : {}),
+    },
+    oneRestartOnExit75 ? [0, 75] : [0],
+  );
+  if (oneRestartOnExit75 && firstResult.code === 75) {
+    const shutdown = await shutdownDatabase(databaseProcess, dataDirectory, socketDirectory, port);
+    if (shutdown.failure || shutdown.emergencyShutdown || !shutdown.removable) {
+      throw new Error("PostgreSQL proof restart shutdown failed");
+    }
+    const restartLog = await sanitizedStep("PostgreSQL restart log initialization failed", () =>
+      open(logPath, "a", 0o600),
+    );
+    try {
+      await sanitizedStep("postgres failed to restart", async () =>
+        spawnDatabase(
+          executable("postgres"),
+          ["-D", dataDirectory, "-h", "", "-p", String(port), "-k", socketDirectory],
+          restartLog.fd,
+          port,
+        ),
+      );
+    } finally {
+      await sanitizedStep("PostgreSQL restart log handoff failed", () => restartLog.close());
+    }
+    await waitForDatabase(databaseProcess, executable, connectionArgs, dataDirectory);
+    await runChild(command, args, {
+      ...childEnvironment,
+      ESBLA_TEST_POSTGRES_RESTART_COUNT: "1",
+    });
+  } else if (oneRestartOnExit75) {
+    throw new Error("PostgreSQL proof command did not request its one bounded restart");
+  }
   if (databaseProcess.closed) throw databaseExitError(databaseProcess.receipt);
 } catch (error) {
   bodyError = error;

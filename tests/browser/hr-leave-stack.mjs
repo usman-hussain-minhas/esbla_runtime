@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { createConnection } from "node:net";
 import { isAbsolute, relative, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -19,6 +20,7 @@ import {
 } from "./hr-leave-fixture.mjs";
 
 const fixtureEnvironment = createFixtureEnvironment();
+const testControlToken = randomBytes(32).toString("hex");
 const childRuntimeEnvironment = Object.fromEntries(
   ["HOME", "LANG", "PATH", "PLAYWRIGHT_BROWSERS_PATH", "TERM", "TZ", "XDG_CACHE_HOME"].flatMap(
     (name) => (process.env[name] ? [[name, process.env[name]]] : []),
@@ -81,6 +83,7 @@ const nextCli = fileURLToPath(
   new URL("../../apps/web/node_modules/next/dist/bin/next", import.meta.url),
 );
 const children = [];
+const webPersonas = new Map();
 let closing;
 let interrupted = false;
 let listening;
@@ -157,7 +160,7 @@ function startChild(name, command, args, options, unexpectedExit) {
     record.settled = true;
     record.receipt = receipt;
     settle(receipt);
-    if (unexpectedExit && !closing) {
+    if (unexpectedExit && !closing && !record.expectedStop) {
       record.unexpected = true;
       process.exitCode = 1;
       queueMicrotask(() => void close().catch(() => (process.exitCode = 1)));
@@ -190,6 +193,20 @@ function startWeb(origin, principalId, label, projectRoot, tenantId = fixture.te
   );
 }
 
+function startWebPersona(
+  persona,
+  origin,
+  principalId,
+  label,
+  projectRoot,
+  tenantId = fixture.tenantId,
+) {
+  const record = startWeb(origin, principalId, label, projectRoot, tenantId);
+  record.restartSpec = { label, origin, principalId, projectRoot, tenantId };
+  webPersonas.set(persona, record);
+  return record;
+}
+
 async function requireActorReady(origin, label, web, pathname = "/workspace/hr/leave/new") {
   for (let attempt = 0; attempt < 100 && !web.settled; attempt += 1) {
     try {
@@ -203,6 +220,149 @@ async function requireActorReady(origin, label, web, pathname = "/workspace/hr/l
   }
   throw new Error(`Web identity ${label} did not become ready`);
 }
+
+async function restartWebPersona(persona) {
+  const current = webPersonas.get(persona);
+  if (!current?.restartSpec || current.settled || closing) {
+    throw new Error("Web restart target is unavailable");
+  }
+  current.expectedStop = true;
+  current.requestedSignal = "SIGTERM";
+  if (!current.child.kill("SIGTERM")) {
+    current.terminationRequestFailed = true;
+    throw new Error("Web restart stop request failed");
+  }
+  const receipt = await Promise.race([
+    current.closed,
+    delay(10_000).then(() => {
+      throw new Error("Web restart stop exceeded its bounded runtime");
+    }),
+  ]);
+  if (
+    receipt.error ||
+    !(receipt.signal === "SIGTERM" || (receipt.signal === null && [0, 143].includes(receipt.code)))
+  ) {
+    throw new Error("Web restart stop receipt is invalid");
+  }
+  const { label, origin, principalId, projectRoot, tenantId } = current.restartSpec;
+  const replacement = startWebPersona(persona, origin, principalId, label, projectRoot, tenantId);
+  await requireActorReady(origin, label, replacement);
+}
+
+function hasExactKeys(value, keys) {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort())
+  );
+}
+
+function testControlAuthorized(request) {
+  return request.headers["x-esbla-test-control"] === testControlToken;
+}
+
+server.post("/__esbla-test-control/restart-web", async (request, reply) => {
+  if (!testControlAuthorized(request)) return await reply.code(404).send({ status: "not_found" });
+  if (!hasExactKeys(request.body, ["persona"]) || request.body.persona !== "employee") {
+    return await reply.code(400).send({ status: "invalid" });
+  }
+  await restartWebPersona(request.body.persona);
+  return { status: "restarted" };
+});
+
+server.post("/__esbla-test-control/leave-presentation-eligibility", async (request, reply) => {
+  if (!testControlAuthorized(request)) return await reply.code(404).send({ status: "not_found" });
+  if (
+    !hasExactKeys(request.body, ["active", "capabilities"]) ||
+    typeof request.body.active !== "boolean" ||
+    !Array.isArray(request.body.capabilities) ||
+    request.body.capabilities.some(
+      (capability) =>
+        capability !== "hr.leave.list_own" &&
+        capability !== "hr.leave.submit" &&
+        capability !== "hr.leave.view",
+    ) ||
+    new Set(request.body.capabilities).size !== request.body.capabilities.length
+  ) {
+    return await reply.code(400).send({ status: "invalid" });
+  }
+  const client = await migrationReadPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.tenant_id', $1, true)", [fixture.tenantId]);
+    await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [
+      fixture.employeePrincipalId,
+    ]);
+    await client.query(
+      `INSERT INTO service_activations (tenant_id, service_key, state, version)
+       VALUES ($1, 'hr.leave_request', $2, 1)
+       ON CONFLICT (tenant_id, service_key)
+       DO UPDATE SET state = EXCLUDED.state, version = service_activations.version + 1`,
+      [fixture.tenantId, request.body.active ? "active" : "inactive"],
+    );
+    await client.query(
+      `DELETE FROM membership_capabilities
+       WHERE tenant_id = $1 AND principal_id = $2
+         AND capability_id = ANY($3::text[])`,
+      [
+        fixture.tenantId,
+        fixture.employeePrincipalId,
+        ["hr.leave.list_own", "hr.leave.submit", "hr.leave.view"],
+      ],
+    );
+    if (request.body.capabilities.length > 0) {
+      await client.query(
+        `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+         SELECT $1, $2, capability_id
+         FROM unnest($3::text[]) AS capability(capability_id)`,
+        [fixture.tenantId, fixture.employeePrincipalId, request.body.capabilities],
+      );
+    }
+    await client.query("COMMIT");
+  } catch {
+    await client.query("ROLLBACK").catch(() => undefined);
+    return await reply.code(500).send({ status: "failed" });
+  } finally {
+    client.release();
+  }
+  return { status: "updated" };
+});
+
+server.post("/__esbla-test-control/workforce-presentation-eligibility", async (request, reply) => {
+  if (!testControlAuthorized(request)) return await reply.code(404).send({ status: "not_found" });
+  if (!hasExactKeys(request.body, ["eligible"]) || typeof request.body.eligible !== "boolean") {
+    return await reply.code(400).send({ status: "invalid" });
+  }
+  const client = await migrationReadPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.tenant_id', $1, true)", [fixture.tenantId]);
+    await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [
+      fixture.employeePrincipalId,
+    ]);
+    await client.query(
+      `DELETE FROM membership_capabilities
+       WHERE tenant_id = $1 AND principal_id = $2
+         AND capability_id = 'hr.workforce.view_own'`,
+      [fixture.tenantId, fixture.employeePrincipalId],
+    );
+    if (request.body.eligible) {
+      await client.query(
+        `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+         VALUES ($1, $2, 'hr.workforce.view_own')`,
+        [fixture.tenantId, fixture.employeePrincipalId],
+      );
+    }
+    await client.query("COMMIT");
+  } catch {
+    await client.query("ROLLBACK").catch(() => undefined);
+    return await reply.code(500).send({ status: "failed" });
+  } finally {
+    client.release();
+  }
+  return { status: "updated" };
+});
 
 const handleSignal = () => {
   interrupted = true;
@@ -224,56 +384,65 @@ try {
     nextRuntimeRootPromise = createPrivateNextRuntimeRoots(webRoot);
     const nextRuntimeRoot = await nextRuntimeRootPromise;
     if (closing) throw new Error("Browser stack closing before web startup");
-    const employee = startWeb(
+    const employee = startWebPersona(
+      "employee",
       new URL(fixture.employeeOrigin),
       fixture.employeePrincipalId,
       fixture.employeeLabel,
       nextRuntimeRoot.projects.employee,
     );
-    const employmentEmployee = startWeb(
+    const employmentEmployee = startWebPersona(
+      "employmentEmployee",
       new URL(fixture.employmentEmployeeOrigin),
       fixture.employmentEmployeePrincipalId,
       fixture.employmentEmployeeLabel,
       nextRuntimeRoot.projects.employmentEmployee,
     );
-    const employmentActionOperator = startWeb(
+    const employmentActionOperator = startWebPersona(
+      "employmentActionOperator",
       new URL(fixture.employmentActionOperatorOrigin),
       fixture.employmentActionOperatorPrincipalId,
       fixture.employmentActionOperatorLabel,
       nextRuntimeRoot.projects.employmentActionOperator,
     );
-    const employmentActionAdmin = startWeb(
+    const employmentActionAdmin = startWebPersona(
+      "employmentActionAdmin",
       new URL(fixture.employmentActionAdminOrigin),
       fixture.employmentActionAdminPrincipalId,
       fixture.employmentActionAdminLabel,
       nextRuntimeRoot.projects.employmentActionAdmin,
       fixture.employmentActionAdminTenantId,
     );
-    const employmentViewAdmin = startWeb(
+    const employmentViewAdmin = startWebPersona(
+      "employmentViewAdmin",
       new URL(fixture.employmentViewAdminOrigin),
       fixture.employmentViewAdminPrincipalId,
       fixture.employmentViewAdminLabel,
       nextRuntimeRoot.projects.employmentViewAdmin,
     );
-    const employmentListOperator = startWeb(
+    const employmentListOperator = startWebPersona(
+      "employmentListOperator",
       new URL(fixture.employmentListOperatorOrigin),
       fixture.employmentListOperatorPrincipalId,
       fixture.employmentListOperatorLabel,
       nextRuntimeRoot.projects.employmentListOperator,
     );
-    const manager = startWeb(
+    const manager = startWebPersona(
+      "manager",
       new URL(fixture.managerOrigin),
       fixture.managerPrincipalId,
       fixture.managerLabel,
       nextRuntimeRoot.projects.manager,
     );
-    const operator = startWeb(
+    const operator = startWebPersona(
+      "operator",
       new URL(fixture.operatorOrigin),
       fixture.operatorPrincipalId,
       fixture.operatorLabel,
       nextRuntimeRoot.projects.operator,
     );
-    const admin = startWeb(
+    const admin = startWebPersona(
+      "admin",
       new URL(fixture.adminOrigin),
       fixture.adminPrincipalId,
       fixture.adminLabel,
@@ -328,6 +497,8 @@ try {
             ESBLA_TEST_EMPLOYMENT_ACTION_WORKER_PROFILE_ID:
               seededFixture.employmentActionWorkerProfileId,
             ESBLA_TEST_SHIFT_EMPLOYEE_WORKER_PROFILE_ID: seededFixture.shiftEmployeeWorkerProfileId,
+            ESBLA_TEST_CONTROL_ORIGIN: `http://127.0.0.1:${ports.api}`,
+            ESBLA_TEST_CONTROL_TOKEN: testControlToken,
             TMPDIR: playwrightRoot.path,
           },
         },

@@ -41,8 +41,17 @@ const migrationJournal = JSON.parse(
     readonly idx: unknown;
     readonly tag: unknown;
     readonly version: unknown;
+    readonly when: unknown;
   }[];
   readonly version: unknown;
+};
+const migrationBarrierJournal = JSON.parse(
+  readFileSync(
+    new URL("../test-fixtures/migration-coordination/meta/_journal.json", import.meta.url),
+    "utf8",
+  ),
+) as {
+  readonly entries: readonly { readonly when: unknown }[];
 };
 const migrationBarrierKey = [1163084364, 1296648018] as const;
 const migrationTestGateKey = [1163084364, 1413829460] as const;
@@ -1305,6 +1314,10 @@ describe("core PostgreSQL foundation", () => {
   });
 
   it("holds one migration barrier across Drizzle preamble, DDL, and ledger commit", async () => {
+    const latestMainMigration = Math.max(
+      ...migrationJournal.entries.map((entry) => Number(entry.when)),
+    );
+    expect(Number(migrationBarrierJournal.entries[0]?.when)).toBeGreaterThan(latestMainMigration);
     const migrationConnectionString = process.env.DATABASE_MIGRATION_URL;
     if (!migrationConnectionString) throw new Error("Migration connection is required");
     const singleConnectionPool = createDatabasePool(migrationConnectionString, { max: 1 });

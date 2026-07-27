@@ -1,0 +1,17 @@
+/*
+ * Zen Theme v1 token entrypoint. The existing public token names are retained
+ * during the walking slice so the established HR surfaces do not fork visually.
+ */
+:root {
+  --zen-theme-id: "THEME-ESBLA-V1";
+  --zen-theme-version: 1;
+  --zen-widget-row: 104px;
+  --zen-widget-gap: 12px;
+  --zen-panel-width: 304px;
+}
+
+@media (max-width: 767px) {
+  :root {
+    --zen-widget-row: 94px;
+  }
+}
