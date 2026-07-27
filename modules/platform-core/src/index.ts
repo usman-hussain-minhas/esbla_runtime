@@ -5,6 +5,7 @@ export * from "./context.js";
 export * from "./errors.js";
 export * from "./policy.js";
 export * from "./presentation.js";
+export * from "./presentation-setting.js";
 export * from "./proof.js";
 export * from "./settings.js";
 export * from "./worklist.js";

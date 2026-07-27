@@ -13,15 +13,18 @@ import type {
   ZenV1SurfaceId,
 } from "@esbla/contracts";
 import {
+  canonicalizePresentationSettingDefinition,
   canonicalizePresentationWidgetDefinition,
   getPresentationWidgetDefinition,
   getZenV1SurfaceContract,
   PRESENTATION_BILLING_STATE,
   PRESENTATION_SERVICE_GROUP_DEFINITIONS,
+  PRESENTATION_SETTING_DEFINITIONS,
   PRESENTATION_WIDGET_DEFINITIONS,
   parsePresentationWidgetDefinition,
   parseUpdatePresentationPreferencesBody,
   parseUpdatePresentationSurfaceOverlayBody,
+  presentationSettingKeys,
   zenV1SurfaceIds,
 } from "@esbla/contracts";
 import type { Pool } from "pg";
@@ -29,6 +32,10 @@ import type { OperationContext, TenantTransaction } from "./context.js";
 import { withTenantTransaction } from "./context.js";
 import { PlatformError } from "./errors.js";
 import { assertPolicyAllowed, evaluatePolicy } from "./policy.js";
+import {
+  type PresentationSettingCandidate,
+  resolvePresentationSetting,
+} from "./presentation-setting.js";
 import { appendEvidence, deriveStableUuid } from "./proof.js";
 
 const APPEARANCE_PALETTE_KEY = "appearance.palette.v1";
@@ -53,7 +60,30 @@ export function assertPresentationWidgetRegistryCurrent(): void {
   }
 }
 
+export function assertPresentationSettingRegistryCurrent(): void {
+  if (
+    PRESENTATION_SETTING_DEFINITIONS.length !== presentationSettingKeys.length ||
+    new Set(presentationSettingKeys).size !== presentationSettingKeys.length ||
+    PRESENTATION_SETTING_DEFINITIONS.some(
+      ({ key }, index) => key !== presentationSettingKeys[index],
+    )
+  ) {
+    throw new PlatformError("SETTING_INVALID", "Presentation setting registry is invalid");
+  }
+  for (const definition of PRESENTATION_SETTING_DEFINITIONS) {
+    const { canonicalHash, ...manifest } = definition;
+    if (
+      createHash("sha256")
+        .update(canonicalizePresentationSettingDefinition(manifest))
+        .digest("hex") !== canonicalHash
+    ) {
+      throw new PlatformError("SETTING_INVALID", "Presentation setting registry is invalid");
+    }
+  }
+}
+
 assertPresentationWidgetRegistryCurrent();
+assertPresentationSettingRegistryCurrent();
 
 export interface AppearanceValues {
   readonly highContrast: boolean;
@@ -119,9 +149,60 @@ export function parsePresentationPreferenceInput(
 export function resolvePresentationPreferences(
   input: PresentationPreferenceResolutionInput,
 ): AppearanceValues & { readonly source: PresentationPreferenceSource } {
-  if (input.userOverride) return { ...input.userOverride, source: "user_override" };
-  if (input.tenantDefault) return { ...input.tenantDefault, source: "tenant_default" };
-  return { ...input.codeDefault, source: "code_default" };
+  if (input.codeDefault.palette !== "light" || input.codeDefault.highContrast !== false) {
+    throw invalidStoredPreference();
+  }
+  const candidates = (key: keyof AppearanceValues): readonly PresentationSettingCandidate[] => [
+    ...(input.tenantDefault
+      ? [
+          {
+            definitionVersion: 1,
+            rowVersion: 1,
+            scope: "tenant_global" as const,
+            value: input.tenantDefault[key],
+          },
+        ]
+      : []),
+    ...(input.userOverride
+      ? [
+          {
+            definitionVersion: 1,
+            rowVersion: 1,
+            scope: "user_global" as const,
+            value: input.userOverride[key],
+          },
+        ]
+      : []),
+  ];
+  const palette = resolvePresentationSetting("appearance.palette.v1", candidates("palette"));
+  const highContrast = resolvePresentationSetting(
+    "appearance.high_contrast.v1",
+    candidates("highContrast"),
+  );
+  if (
+    (palette.value !== "light" && palette.value !== "dark") ||
+    typeof highContrast.value !== "boolean" ||
+    palette.sourceScope !== highContrast.sourceScope
+  ) {
+    throw invalidStoredPreference();
+  }
+  const sourceByScope = {
+    product_default: "code_default",
+    tenant_global: "tenant_default",
+    user_global: "user_override",
+  } as const;
+  const source =
+    palette.sourceScope === "product_default" ||
+    palette.sourceScope === "tenant_global" ||
+    palette.sourceScope === "user_global"
+      ? sourceByScope[palette.sourceScope]
+      : undefined;
+  if (!source) throw invalidStoredPreference();
+  return {
+    highContrast: highContrast.value,
+    palette: palette.value,
+    source,
+  };
 }
 
 function preferenceSubjectId(context: OperationContext): string {
