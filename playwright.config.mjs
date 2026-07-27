@@ -10,6 +10,7 @@ export default defineConfig({
   fullyParallel: false,
   globalTimeout: 480_000,
   outputDir: `${outputRoot}/esbla-playwright-results`,
+  preserveOutput: "always",
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],
   reporter: "line",
   retries: 0,

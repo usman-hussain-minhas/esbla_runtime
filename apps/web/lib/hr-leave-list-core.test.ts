@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildOwnLeaveRequestListPath,
   decodeOwnLeaveRequestListResponse,
+  type HrLeaveListError,
 } from "./hr-leave-list-core";
 
 const cursor = {
@@ -32,9 +33,7 @@ describe("own leave-request list boundary", () => {
 
   it("accepts a valid page and fails opaquely for HTTP, transport, or payload errors", async () => {
     await expect(
-      decodeOwnLeaveRequestListResponse(
-        Promise.resolve(new Response(JSON.stringify(page), { status: 200 })),
-      ),
+      decodeOwnLeaveRequestListResponse(Promise.resolve(Response.json(page, { status: 200 }))),
     ).resolves.toEqual(page);
     await expect(
       decodeOwnLeaveRequestListResponse(Promise.resolve(new Response("private", { status: 503 }))),
@@ -45,6 +44,35 @@ describe("own leave-request list boundary", () => {
     await expect(
       decodeOwnLeaveRequestListResponse(Promise.reject(new Error("secret"))),
     ).rejects.toThrow("unavailable");
+  });
+
+  it.each([
+    [403, "POLICY_DENIED", "denied"],
+    [404, "LEAVE_NOT_FOUND", "not_found"],
+    [503, "LEAVE_SERVICE_INACTIVE", "inactive"],
+    [500, "UNEXPECTED_ERROR", "error"],
+  ] as const)("classifies exact Problem Details %s without exposing detail", async (status, code, kind) => {
+    const failure = decodeOwnLeaveRequestListResponse(
+      Promise.resolve(
+        Response.json(
+          {
+            code,
+            detail: "private upstream detail",
+            instance: "/v1/hr/leave-requests",
+            requestId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+            status,
+            title: "Failure",
+            type: `urn:esbla:problem:${code.toLowerCase()}`,
+          },
+          {
+            headers: { "content-type": "application/problem+json" },
+            status,
+          },
+        ),
+      ),
+    );
+    await expect(failure).rejects.toMatchObject({ kind } satisfies Partial<HrLeaveListError>);
+    await expect(failure).rejects.not.toThrow("private upstream detail");
   });
 
   it("keeps the route read-only and excludes successor actions", async () => {

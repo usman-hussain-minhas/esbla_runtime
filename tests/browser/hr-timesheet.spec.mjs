@@ -32,19 +32,31 @@ async function closeActors(...actors) {
 }
 
 async function post(actor, buttonName) {
-  const response = actor.page.waitForResponse(
-    (candidate) =>
-      candidate.request().method() === "POST" &&
-      new URL(candidate.url()).pathname === "/workspace/hr/timesheets/action",
-  );
-  await actor.page.getByRole("button", { exact: true, name: buttonName }).click();
-  expect((await response).status()).toBe(303);
+  const button = actor.page.getByRole("button", { exact: true, name: buttonName });
+  await expect(button).toBeVisible();
+  const [request] = await Promise.all([
+    actor.page.waitForRequest(
+      (candidate) =>
+        candidate.method() === "POST" &&
+        new URL(candidate.url()).pathname === "/workspace/hr/timesheets/action",
+      { timeout: 20_000 },
+    ),
+    button.click(),
+  ]);
+  expect((await request.response())?.status()).toBe(303);
 }
 
 async function createAndSubmit(actor, periodStart, periodEnd, workDate, description) {
   await actor.page.goto(`${actor.origin}/workspace/hr/timesheets`);
-  await actor.page.getByLabel("Period starts").fill(periodStart);
-  await actor.page.getByLabel("Period ends").fill(periodEnd);
+  await expect(
+    actor.page.getByRole("button", { exact: true, name: "Appearance settings" }),
+  ).toBeEnabled();
+  const periodStarts = actor.page.getByLabel("Period starts");
+  const periodEnds = actor.page.getByLabel("Period ends");
+  await periodStarts.fill(periodStart);
+  await periodEnds.fill(periodEnd);
+  await expect(periodStarts).toHaveValue(periodStart);
+  await expect(periodEnds).toHaveValue(periodEnd);
   await post(actor, "Create Timesheet draft");
   await actor.page.getByLabel("Work date").first().fill(workDate);
   await actor.page.getByLabel("Minutes").first().fill("480");

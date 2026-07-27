@@ -11,6 +11,52 @@ const shiftEmployeeWorkerProfileId = process.env.ESBLA_TEST_SHIFT_EMPLOYEE_WORKE
 if (!fixtureId.test(shiftEmployeeWorkerProfileId ?? "")) {
   throw new Error("Shift Worker Profile fixtures are missing");
 }
+const testControlOrigin = process.env.ESBLA_TEST_CONTROL_ORIGIN;
+const testControlToken = process.env.ESBLA_TEST_CONTROL_TOKEN;
+if (
+  testControlOrigin !== "http://127.0.0.1:41900" ||
+  !/^[0-9a-f]{64}$/.test(testControlToken ?? "")
+) {
+  throw new Error("Browser test control is missing");
+}
+
+async function testControl(pathname, body) {
+  const response = await fetch(new URL(pathname, testControlOrigin), {
+    body: JSON.stringify(body),
+    headers: {
+      "content-type": "application/json",
+      "x-esbla-test-control": testControlToken,
+    },
+    method: "POST",
+    signal: AbortSignal.timeout(15_000),
+  });
+  const responseBody = await response.text();
+  expect(response.status, responseBody).toBe(200);
+  return JSON.parse(responseBody);
+}
+
+async function setEmployeeLeavePresentationEligibility(active, capabilities) {
+  expect(
+    await testControl("/__esbla-test-control/leave-presentation-eligibility", {
+      active,
+      capabilities,
+    }),
+  ).toEqual({ status: "updated" });
+}
+
+async function setEmployeeWorkforcePresentationEligibility(eligible) {
+  expect(
+    await testControl("/__esbla-test-control/workforce-presentation-eligibility", {
+      eligible,
+    }),
+  ).toEqual({ status: "updated" });
+}
+
+async function restartEmployeeApplication() {
+  expect(await testControl("/__esbla-test-control/restart-web", { persona: "employee" })).toEqual({
+    status: "restarted",
+  });
+}
 async function openActor(browser, origin, label) {
   const context = await browser.newContext({ serviceWorkers: "block" });
   const page = await context.newPage();
@@ -54,6 +100,64 @@ async function closeActors(...actors) {
     )
     .toBe(true);
 }
+
+async function openAppearance(actor) {
+  const directLauncher = actor.page.getByRole("button", {
+    exact: true,
+    name: "Appearance settings",
+  });
+  const panel = actor.page.getByRole("region", { name: "Appearance settings" });
+  if (await directLauncher.isVisible()) {
+    await expect(directLauncher).toBeEnabled();
+    if ((await directLauncher.getAttribute("aria-expanded")) !== "true") {
+      await directLauncher.click();
+    }
+    await expect(directLauncher).toHaveAttribute("aria-expanded", "true");
+  } else {
+    const systemLauncher = actor.page.getByRole("button", {
+      exact: true,
+      name: "User and system",
+    });
+    await expect(systemLauncher).toBeVisible();
+    await expect(systemLauncher).toBeEnabled();
+    if ((await systemLauncher.getAttribute("aria-expanded")) !== "true") {
+      await systemLauncher.click();
+    }
+    const systemPanel = actor.page.getByRole("region", { name: "User and system" });
+    await expect(systemPanel).toBeVisible();
+    await systemPanel.getByRole("button", { exact: true, name: "Appearance" }).click();
+    await expect(systemLauncher).toHaveAttribute("aria-expanded", "true");
+  }
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
+async function enableHighContrast(actor) {
+  if ((await actor.page.locator("html").getAttribute("data-high-contrast")) === "true") return;
+  const panel = await openAppearance(actor);
+  await panel.getByRole("button", { name: "High contrast" }).click();
+  await expect(actor.page.locator("html")).toHaveAttribute("data-high-contrast", "true");
+}
+
+async function enableDarkHighContrast(actor) {
+  const panel = await openAppearance(actor);
+  if ((await actor.page.locator("html").getAttribute("data-palette")) !== "dark") {
+    const responsePromise = actor.page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/presentation/preferences",
+    );
+    await panel.getByRole("button", { name: "Dark" }).click();
+    const response = await responsePromise;
+    if (response.status() !== 200) {
+      throw new Error(`Appearance update ${response.status()}: ${await response.text()}`);
+    }
+    await expect(actor.page.locator("html")).toHaveAttribute("data-palette", "dark");
+  }
+  if ((await actor.page.locator("html").getAttribute("data-high-contrast")) !== "true") {
+    await panel.getByRole("button", { name: "High contrast" }).click();
+    await expect(actor.page.locator("html")).toHaveAttribute("data-high-contrast", "true");
+  }
+}
+
 async function submitLeave(actor, values) {
   await actor.page.goto(`${actor.origin}/workspace/hr/leave/new`);
   await expect(actor.page).toHaveTitle("Esbla");
@@ -132,22 +236,337 @@ function employmentFact(page, label) {
   return page.locator(".leave-detail-facts > div").filter({ hasText: label }).locator("dd");
 }
 
+async function waitForShellHydration(actor) {
+  const appearance = actor.page.getByRole("button", {
+    exact: true,
+    name: "Appearance settings",
+  });
+  if ((await appearance.count()) > 0) await expect(appearance).toBeEnabled();
+}
+
 async function submitEmploymentForm(actor, button) {
-  const response = actor.page.waitForResponse(
-    (candidate) => new URL(candidate.url()).pathname === "/workspace/hr/employment/action",
-  );
-  await button.focus();
-  await actor.page.keyboard.press("Enter");
-  expect((await response).status()).toBe(303);
+  await waitForShellHydration(actor);
+  const form = button.locator("xpath=ancestor::form");
+  expect(await form.evaluate((element) => element.checkValidity())).toBe(true);
+  const [request] = await Promise.all([
+    actor.page.waitForRequest(
+      (candidate) =>
+        candidate.method() === "POST" &&
+        new URL(candidate.url()).pathname === "/workspace/hr/employment/action",
+      { timeout: 20_000 },
+    ),
+    button.press("Enter"),
+  ]);
+  expect((await request.response())?.status()).toBe(303);
   await expect(actor.page).toHaveURL(
     /\/workspace\/hr\/employment\/(admin|settings)\?result=success/,
   );
   await expect(actor.page.locator(".success-banner")).toBeFocused();
+  await waitForShellHydration(actor);
 }
+
+test("Mission Control reuses the real Leave widget and persists independent appearance", async ({
+  browser,
+}, testInfo) => {
+  const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
+  let eligibilityChanged = false;
+  let workforceEligibilityChanged = false;
+  try {
+    await employee.page.goto(employee.origin);
+    await expect(
+      employee.page.getByRole("heading", { name: "Your work, one surface" }),
+    ).toBeVisible();
+    const universalWidget = employee.page.locator(
+      '[data-surface-instance="mission-control.my-leave"]:not([data-widget-state="loading"])',
+    );
+    await expect(universalWidget).toHaveAttribute("data-widget-definition", "hr.leave.my-requests");
+    await expect(
+      universalWidget.getByRole("link", { name: "View all My leave requests" }),
+    ).toHaveAttribute("href", "/workspace/hr/leave");
+
+    const overlayResponse = await employee.page.evaluate(async () => {
+      const response = await fetch("/presentation/surfaces/surface.mission-control", {
+        body: JSON.stringify({
+          expectedVersion: 0,
+          idempotencyKey: crypto.randomUUID(),
+          placements: [
+            {
+              column: 2,
+              columnSpan: 4,
+              instanceId: "mission-control.my-leave",
+              row: 5,
+              rowSpan: 3,
+              widgetDefinitionId: "hr.leave.my-requests",
+            },
+          ],
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      return { body: await response.text(), status: response.status };
+    });
+    expect(overlayResponse.status, overlayResponse.body).toBe(200);
+    await employee.page.reload();
+    await expect(universalWidget).toHaveCSS("--widget-column", "2");
+    await expect(universalWidget).toHaveCSS("--widget-row", "5");
+
+    await employee.page.goto(`${employee.origin}/workspace/hr`);
+    await expect(
+      employee.page.locator(
+        '[data-surface-instance="hr-mission-control.my-leave"]:not([data-widget-state="loading"])',
+      ),
+    ).toHaveAttribute("data-widget-definition", "hr.leave.my-requests");
+
+    await enableDarkHighContrast(employee);
+    await employee.page.reload();
+    await expect(employee.page.locator("html")).toHaveAttribute("data-palette", "dark");
+    await expect(employee.page.locator("html")).toHaveAttribute("data-high-contrast", "true");
+    await expect(employee.page.locator("html")).toHaveAttribute(
+      "data-preference-status",
+      "authoritative",
+    );
+
+    const serverDocumentBeforeRestart = await (await fetch(employee.origin)).text();
+    expect(serverDocumentBeforeRestart).toContain('data-high-contrast="true"');
+    expect(serverDocumentBeforeRestart).toContain('data-palette="dark"');
+    expect(serverDocumentBeforeRestart).toContain('data-preference-status="authoritative"');
+    const ssrContext = await browser.newContext({
+      javaScriptEnabled: false,
+      serviceWorkers: "block",
+    });
+    const ssrPage = await ssrContext.newPage();
+    try {
+      await ssrPage.route("**/*", async (route) => {
+        if (new URL(route.request().url()).origin !== employee.origin) {
+          await route.abort("blockedbyclient");
+        } else await route.continue();
+      });
+      await ssrPage.goto(employee.origin);
+      await expect(ssrPage.locator("html")).toHaveAttribute("data-palette", "dark");
+      await expect(ssrPage.locator("html")).toHaveAttribute("data-high-contrast", "true");
+      await expect(ssrPage.locator("html")).toHaveAttribute(
+        "data-preference-status",
+        "authoritative",
+      );
+      expect(
+        await ssrPage.locator("html").evaluate((element) => getComputedStyle(element).colorScheme),
+      ).toBe("dark");
+      const ssrEvidencePath = testInfo.outputPath(
+        "mission-control-ssr-dark-high-contrast-no-js.png",
+      );
+      await ssrPage.screenshot({ fullPage: false, path: ssrEvidencePath });
+      await testInfo.attach("mission-control-ssr-dark-high-contrast-no-js", {
+        contentType: "image/png",
+        path: ssrEvidencePath,
+      });
+    } finally {
+      await ssrContext.close();
+    }
+    const storageFailureActor = await openActor(
+      browser,
+      fixture.employeeOrigin,
+      "Browser Employee storage-failure session",
+    );
+    try {
+      await storageFailureActor.context.addInitScript(() => {
+        Storage.prototype.getItem = () => {
+          throw new DOMException("Storage unavailable", "SecurityError");
+        };
+        Storage.prototype.setItem = () => {
+          throw new DOMException("Storage unavailable", "SecurityError");
+        };
+      });
+      await storageFailureActor.page.goto(storageFailureActor.origin);
+      await expect(storageFailureActor.page.locator("html")).toHaveAttribute(
+        "data-palette",
+        "dark",
+      );
+      await expect(storageFailureActor.page.locator("html")).toHaveAttribute(
+        "data-high-contrast",
+        "true",
+      );
+      expect(
+        await storageFailureActor.page
+          .locator("html")
+          .evaluate((element) => getComputedStyle(element).colorScheme),
+      ).toBe("dark");
+      const storageFailureAppearance = await openAppearance(storageFailureActor);
+      const lightResponsePromise = storageFailureActor.page.waitForResponse(
+        (response) => new URL(response.url()).pathname === "/presentation/preferences",
+      );
+      await storageFailureAppearance.getByRole("button", { name: "Light" }).click();
+      expect((await lightResponsePromise).status()).toBe(200);
+      await expect(storageFailureActor.page.locator("html")).toHaveAttribute(
+        "data-palette",
+        "light",
+      );
+      await expect(storageFailureAppearance.locator(".panel-error")).toHaveCount(0);
+      const darkResponsePromise = storageFailureActor.page.waitForResponse(
+        (response) => new URL(response.url()).pathname === "/presentation/preferences",
+      );
+      await storageFailureAppearance.getByRole("button", { name: "Dark" }).click();
+      expect((await darkResponsePromise).status()).toBe(200);
+      await expect(storageFailureActor.page.locator("html")).toHaveAttribute(
+        "data-palette",
+        "dark",
+      );
+      await expect(storageFailureAppearance.locator(".panel-error")).toHaveCount(0);
+    } finally {
+      await closeActors(storageFailureActor);
+    }
+
+    await restartEmployeeApplication();
+    await employee.page.goto(employee.origin);
+    await expect(employee.page.locator("html")).toHaveAttribute("data-palette", "dark");
+    await expect(employee.page.locator("html")).toHaveAttribute("data-high-contrast", "true");
+    await expect(employee.page.locator("html")).toHaveAttribute(
+      "data-preference-status",
+      "authoritative",
+    );
+    await expect(universalWidget).toHaveCSS("--widget-column", "2");
+    await expect(universalWidget).toHaveCSS("--widget-row", "5");
+
+    for (const [width, columns] of [
+      [1_100, 12],
+      [1_099, 8],
+      [768, 8],
+      [767, 4],
+    ]) {
+      await employee.page.setViewportSize({ height: 844, width });
+      await expect
+        .poll(
+          async () =>
+            await employee.page.locator(".widget-grid").evaluate((element) => {
+              const tracks = getComputedStyle(element).gridTemplateColumns.trim();
+              return tracks ? tracks.split(/\s+/).length : 0;
+            }),
+        )
+        .toBe(columns);
+    }
+
+    await employee.page.setViewportSize({ height: 844, width: 390 });
+    expect(
+      await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+    const pageMenu = employee.page.locator(".page-menu");
+    const pageMenuBox = await pageMenu.boundingBox();
+    expect(pageMenuBox?.width).toBe(pageMenuBox?.height);
+    await expect(pageMenu.locator(".page-menu-item span")).toBeHidden();
+    const systemLauncher = employee.page.getByRole("button", {
+      exact: true,
+      name: "User and system",
+    });
+    await expect(systemLauncher).toBeVisible();
+    await expect(
+      employee.page.getByRole("button", { exact: true, name: "Appearance settings" }),
+    ).toBeHidden();
+    await systemLauncher.click();
+    const systemPanel = employee.page.getByRole("region", { name: "User and system" });
+    await expect(systemPanel).toBeVisible();
+    const systemPanelEvidencePath = testInfo.outputPath("mission-control-phone-system-panel.png");
+    await employee.page.screenshot({ fullPage: false, path: systemPanelEvidencePath });
+    await testInfo.attach("mission-control-phone-system-panel", {
+      contentType: "image/png",
+      path: systemPanelEvidencePath,
+    });
+    await systemPanel.getByRole("button", { exact: true, name: "Appearance" }).click();
+    await expect(employee.page.getByRole("region", { name: "Appearance settings" })).toBeVisible();
+    await employee.page.getByRole("button", { name: "Close appearance settings" }).click();
+    await expect(systemLauncher).toBeFocused();
+    const phoneEvidencePath = testInfo.outputPath("mission-control-phone.png");
+    await employee.page.screenshot({ fullPage: false, path: phoneEvidencePath });
+    await testInfo.attach("mission-control-phone", {
+      contentType: "image/png",
+      path: phoneEvidencePath,
+    });
+
+    eligibilityChanged = true;
+    await setEmployeeLeavePresentationEligibility(true, ["hr.leave.list_own"]);
+    await employee.page.reload();
+    await expect(
+      employee.page.locator('[data-widget-definition="hr.leave.my-requests"]'),
+    ).toHaveCount(0);
+    await expect(employee.page.getByRole("link", { exact: true, name: "HR" })).toBeVisible();
+    await employee.page.goto(`${employee.origin}/workspace/hr`);
+    await expect(employee.page.getByRole("link", { name: "Open leave requests" })).toHaveCount(0);
+    await expect(employee.page.getByRole("link", { name: "My workforce profile" })).toBeVisible();
+    await employee.page.goto(employee.origin);
+    const deniedCapabilityMutation = await employee.page.evaluate(async () => {
+      const response = await fetch("/presentation/surfaces/surface.mission-control", {
+        body: JSON.stringify({
+          expectedVersion: 1,
+          idempotencyKey: crypto.randomUUID(),
+          placements: [
+            {
+              column: 2,
+              columnSpan: 4,
+              instanceId: "mission-control.my-leave",
+              row: 5,
+              rowSpan: 3,
+              widgetDefinitionId: "hr.leave.my-requests",
+            },
+          ],
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      return { body: await response.text(), status: response.status };
+    });
+    expect(deniedCapabilityMutation.status).toBe(403);
+    expect(deniedCapabilityMutation.body).not.toContain("hr.leave.my-requests");
+    expect(employee.diagnostics.console).toEqual([
+      "Failed to load resource: the server responded with a status of 403 (Forbidden)",
+    ]);
+    employee.diagnostics.console.length = 0;
+
+    await setEmployeeLeavePresentationEligibility(false, ["hr.leave.list_own", "hr.leave.view"]);
+    await employee.page.reload();
+    await expect(
+      employee.page.locator('[data-widget-definition="hr.leave.my-requests"]'),
+    ).toHaveCount(0);
+    await expect(employee.page.getByRole("link", { exact: true, name: "HR" })).toBeVisible();
+
+    await setEmployeeWorkforcePresentationEligibility(false);
+    workforceEligibilityChanged = true;
+    await employee.page.reload();
+    await expect(employee.page.getByRole("link", { exact: true, name: "HR" })).toHaveCount(0);
+
+    await setEmployeeLeavePresentationEligibility(true, ["hr.leave.submit"]);
+    await employee.page.reload();
+    await expect(employee.page.getByRole("link", { exact: true, name: "HR" })).toHaveCount(0);
+    await employee.page.goto(`${employee.origin}/workspace/hr`);
+    await expect(employee.page.getByRole("link", { name: "My workforce profile" })).toHaveCount(0);
+    await expect(employee.page.getByRole("link", { name: "Open leave requests" })).toHaveCount(0);
+
+    await setEmployeeLeavePresentationEligibility(false, ["hr.leave.list_own", "hr.leave.view"]);
+    await setEmployeeWorkforcePresentationEligibility(true);
+    workforceEligibilityChanged = false;
+    await employee.page.reload();
+    await expect(employee.page.getByRole("link", { exact: true, name: "HR" })).toBeVisible();
+
+    await setEmployeeLeavePresentationEligibility(true, ["hr.leave.list_own", "hr.leave.view"]);
+    eligibilityChanged = false;
+    await employee.page.reload();
+    await expect(
+      employee.page.locator('[data-widget-definition="hr.leave.my-requests"]'),
+    ).toHaveCount(1);
+  } finally {
+    if (workforceEligibilityChanged) {
+      await setEmployeeWorkforcePresentationEligibility(true).catch(() => undefined);
+    }
+    if (eligibilityChanged) {
+      await setEmployeeLeavePresentationEligibility(true, [
+        "hr.leave.list_own",
+        "hr.leave.view",
+      ]).catch(() => undefined);
+    }
+    await closeActors(employee);
+  }
+});
 
 test("employee submits, manager approves, and employee reloads durable rendered history", async ({
   browser,
-}) => {
+}, testInfo) => {
   const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
   const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
   try {
@@ -156,6 +575,62 @@ test("employee submits, manager approves, and employee reloads durable rendered 
       reason: "Rendered approval journey",
       startDate: "2027-03-10",
     });
+    await expect(employee.page.getByRole("dialog", { name: "Leave request detail" })).toBeVisible();
+    await expect(employee.page.locator('[data-leave-detail-face="overlay"]')).toBeVisible();
+
+    await employee.page.goto(employee.origin);
+    const originLink = employee.page
+      .locator('[data-surface-instance="mission-control.my-leave"][data-widget-state="populated"]')
+      .locator(`a[href*="/workspace/hr/leave/${leaveRequestId}?"]`);
+    await expect(originLink).toHaveAttribute(
+      "href",
+      `/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control&originFocusId=mission-control.my-leave.${leaveRequestId}`,
+    );
+    await expect(originLink).toBeVisible();
+    await originLink.press("Enter");
+    await expect(employee.page).toHaveURL(
+      `${employee.origin}/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control&originFocusId=mission-control.my-leave.${leaveRequestId}`,
+    );
+    const overlay = employee.page.getByRole("dialog", { name: "Leave request detail" });
+    await expect(overlay).toBeVisible();
+    await expect(overlay).toBeFocused();
+    await expect(overlay.locator('[data-leave-detail-face="overlay"]')).toBeVisible();
+    await expect(employee.page.locator(".esbla-shell")).toHaveAttribute("aria-hidden", "true");
+    await expect(employee.page.locator(".esbla-shell")).toHaveAttribute("inert", "");
+    expect(
+      await employee.page.evaluate(
+        () =>
+          document.documentElement.style.overflow === "hidden" &&
+          document.body.style.overflow === "hidden",
+      ),
+    ).toBe(true);
+    const overlayEvidencePath = testInfo.outputPath("leave-detail-intercepted-overlay.png");
+    await employee.page.screenshot({ fullPage: false, path: overlayEvidencePath });
+    await testInfo.attach("leave-detail-intercepted-overlay", {
+      contentType: "image/png",
+      path: overlayEvidencePath,
+    });
+    await employee.page.keyboard.press("Shift+Tab");
+    await expect(overlay.getByRole("button", { name: "Close leave request detail" })).toBeFocused();
+    await employee.page.keyboard.press("Tab");
+    await expect(overlay.getByRole("button", { name: "Close leave request detail" })).toBeFocused();
+    await employee.page.keyboard.press("Escape");
+    await expect(employee.page).toHaveURL(`${employee.origin}/`);
+    await expect(originLink).toBeFocused();
+
+    await employee.page.goto(`${employee.origin}/workspace/hr/leave/${leaveRequestId}`);
+    await expect(employee.page.locator('[data-leave-detail-face="standalone"]')).toBeVisible();
+    await expect(employee.page.getByRole("dialog")).toHaveCount(0);
+    const canonicalHost = employee.page.getByRole("link", {
+      name: "Back to My Leave Requests",
+    });
+    await expect(canonicalHost).toHaveAttribute("href", "/workspace/hr/leave");
+    await employee.page.reload();
+    await expect(employee.page.locator('[data-leave-detail-face="standalone"]')).toBeVisible();
+    await expect(canonicalHost).toBeVisible();
+    await canonicalHost.click();
+    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/leave`);
+
     const card = await openAssignedWork(manager, leaveRequestId);
     const approve = card.getByRole("button", { name: "Approve leave request" });
     await approve.focus();
@@ -169,6 +644,16 @@ test("employee submits, manager approves, and employee reloads durable rendered 
     await expectHistory(manager, "Approved", ["Submitted", "Approved"]);
 
     await employee.page.reload();
+    const employeeListRow = employee.page.locator("tbody tr").filter({
+      has: employee.page.locator(
+        `a[href="/workspace/hr/leave/${leaveRequestId}?returnContext=leave-list"]`,
+      ),
+    });
+    await expect(employeeListRow.locator(".leave-status")).toHaveText("approved");
+    await employeeListRow.getByRole("link", { name: "View details" }).click();
+    await expect(employee.page).toHaveURL(
+      `${employee.origin}/workspace/hr/leave/${leaveRequestId}?returnContext=leave-list`,
+    );
     await expectHistory(employee, "Approved", ["Submitted", "Approved"]);
   } finally {
     await closeActors(employee, manager);
@@ -284,8 +769,7 @@ test("HR operator onboards a worker and the employee reloads a minimized profile
     await expect(employee.page.getByText("Connected", { exact: true })).toBeVisible();
 
     await employee.page.setViewportSize({ height: 844, width: 390 });
-    await employee.page.getByRole("button", { name: "High contrast theme" }).click();
-    await expect(employee.page.locator("html")).toHaveAttribute("data-theme", "high-contrast");
+    await enableHighContrast(employee);
     expect(
       await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     ).toBe(true);
@@ -351,8 +835,7 @@ test("current manager browses direct reports and returns from persistent detail"
     ).toBeVisible();
 
     await manager.page.setViewportSize({ height: 844, width: 390 });
-    await manager.page.getByRole("button", { name: "High contrast theme" }).click();
-    await expect(manager.page.locator("html")).toHaveAttribute("data-theme", "high-contrast");
+    await enableHighContrast(manager);
     expect(
       await manager.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     ).toBe(true);
@@ -524,8 +1007,7 @@ test("tenant admin configures and controls Workforce Profile without record acce
     await expect(employee.page.getByRole("heading", { name: "Current profile" })).toBeVisible();
 
     await admin.page.setViewportSize({ height: 844, width: 390 });
-    await admin.page.getByRole("button", { name: "High contrast theme" }).click();
-    await expect(admin.page.locator("html")).toHaveAttribute("data-theme", "high-contrast");
+    await enableHighContrast(admin);
     expect(
       await admin.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     ).toBe(true);
@@ -667,8 +1149,7 @@ test("Employment facts progress through immutable versions and persist for the e
     await expect(employmentFact(employee.page, "Employment type code")).toHaveText("unspecified");
 
     await employee.page.setViewportSize({ height: 844, width: 390 });
-    await employee.page.getByRole("button", { name: "High contrast theme" }).click();
-    await expect(employee.page.locator("html")).toHaveAttribute("data-theme", "high-contrast");
+    await enableHighContrast(employee);
     expect(
       await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     ).toBe(true);
@@ -732,12 +1213,7 @@ test("tenant admin configures and controls Employment without record access", as
     ).toBeVisible();
     await expect(admin.page.locator(".leave-status")).toHaveText("Active");
     await expect(admin.page.getByText("BROWSER-EMPLOYMENT-001", { exact: true })).toHaveCount(0);
-    await expect(admin.page.getByRole("button", { name: "Dark theme" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    await admin.page.getByRole("button", { name: "High contrast theme" }).click();
-    await expect(admin.page.locator("html")).toHaveAttribute("data-theme", "high-contrast");
+    await enableDarkHighContrast(admin);
 
     const settingsVersion = Number(
       await serviceControlFact(admin.page, "Settings version").textContent(),
@@ -747,12 +1223,15 @@ test("tenant admin configures and controls Employment without record access", as
       admin,
       admin.page.getByRole("button", { name: "Save Employment settings" }),
     );
-    await expect(admin.page.locator("body")).toHaveCSS("background-color", "rgb(255, 255, 255)");
-    await expect(admin.page.locator(".success-banner")).toHaveCSS("color", "rgb(0, 95, 75)");
-    await expect(admin.page.locator(".success-banner > p")).toHaveCSS("color", "rgb(17, 28, 37)");
+    await expect(admin.page.locator("body")).toHaveCSS("background-color", "rgb(23, 26, 29)");
+    await expect(admin.page.locator(".success-banner")).toHaveCSS("color", "rgb(86, 208, 173)");
+    await expect(admin.page.locator(".success-banner > p")).toHaveCSS(
+      "color",
+      "rgb(238, 245, 247)",
+    );
     await expect(admin.page.locator(".success-banner")).toHaveCSS(
       "outline-color",
-      "rgb(0, 76, 132)",
+      "rgb(141, 220, 255)",
     );
     await expect(serviceControlFact(admin.page, "Settings version")).toHaveText(
       String(settingsVersion + 1),
@@ -971,6 +1450,7 @@ test("Employment and Shift widgets follow exact action capabilities", async ({ b
       actionOperator.page.getByRole("heading", { name: "Last Shift action receipt" }),
     ).toBeVisible();
     await actionOperator.page.goto(`${actionOperator.origin}/workspace/hr/employment/admin`);
+    await waitForShellHydration(actionOperator);
     await employmentForm(actionOperator.page, "create_record")
       .getByLabel("Worker Profile ID")
       .fill(employmentActionWorkerProfileId);

@@ -59,6 +59,7 @@ import {
   hrWorkforceOwnQuerySchema,
   hrWorkforceProfilePathSchema,
   hrWorkforceProfileSchema,
+  type PresentationSurfacePath,
   parseHrAttendanceCorrection,
   parseHrAttendanceCorrectionBody,
   parseHrAttendanceCorrectionPath,
@@ -80,7 +81,20 @@ import {
   parseHrWorkforceListQuery,
   parseHrWorkforceOwnQuery,
   parseHrWorkforceProfilePath,
+  parsePresentationSurfacePath,
+  parseUpdatePresentationPreferencesBody,
+  parseUpdatePresentationSurfaceOverlayBody,
+  presentationPreferencesSchema,
+  presentationServiceGroupDiscoverySchema,
+  presentationSurfaceLayoutSchema,
+  presentationSurfacePathSchema,
   problemDetailsSchema,
+  type UpdatePresentationPreferencesBody,
+  type UpdatePresentationSurfaceOverlayBody,
+  updatePresentationPreferencesBodySchema,
+  updatePresentationPreferencesResponseSchema,
+  updatePresentationSurfaceOverlayBodySchema,
+  updatePresentationSurfaceOverlayResponseSchema,
   type WorkspaceCompleteTaskBody,
   type WorkspaceCreateTaskBody,
   type WorkspaceTaskListQuery,
@@ -129,7 +143,14 @@ import {
   rejectLeaveRequest,
   submitLeaveRequest,
 } from "@esbla/hr";
-import type { OperationContext } from "@esbla/platform-core";
+import {
+  getOwnPresentationPreferences,
+  getOwnPresentationServiceGroups,
+  getOwnPresentationSurfaceLayout,
+  type OperationContext,
+  updateOwnPresentationPreferences,
+  updateOwnPresentationSurfaceOverlay,
+} from "@esbla/platform-core";
 import {
   completeWorkspaceTask,
   createWorkspaceTask,
@@ -312,6 +333,14 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     hrLeaveEvidenceEventSchema,
     hrLeaveRequestPageSchema,
     hrLeaveRequestDetailSchema,
+    presentationPreferencesSchema,
+    presentationServiceGroupDiscoverySchema,
+    presentationSurfaceLayoutSchema,
+    presentationSurfacePathSchema,
+    updatePresentationPreferencesBodySchema,
+    updatePresentationPreferencesResponseSchema,
+    updatePresentationSurfaceOverlayBodySchema,
+    updatePresentationSurfaceOverlayResponseSchema,
     workspaceCreateTaskBodySchema,
     workspaceCompleteTaskBodySchema,
     workspaceTaskPathSchema,
@@ -349,6 +378,125 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     } catch {
       return reply.code(503).send({ status: "not_ready" });
     }
+  });
+
+  server.get(
+    "/v1/platform/presentation/service-groups",
+    {
+      preHandler: authenticate,
+      schema: {
+        response: {
+          200: { $ref: "PresentationServiceGroupDiscoveryV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request) =>
+      await getOwnPresentationServiceGroups(options.pool, operationContext(request)),
+  );
+
+  server.get(
+    "/v1/platform/presentation/preferences",
+    {
+      preHandler: authenticate,
+      schema: {
+        response: {
+          200: { $ref: "PresentationPreferencesV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request) => await getOwnPresentationPreferences(options.pool, operationContext(request)),
+  );
+
+  server.post<{ Body: UpdatePresentationPreferencesBody }>(
+    "/v1/platform/presentation/preferences",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictMutationIdempotencyKey(request);
+          assertStrictRequest(parseUpdatePresentationPreferencesBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "UpdatePresentationPreferencesBodyV1#" },
+        response: {
+          200: { $ref: "UpdatePresentationPreferencesResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await updateOwnPresentationPreferences(
+        options.pool,
+        {
+          ...operationContext(request),
+          correlationId: idempotencyKey(request).toLowerCase(),
+        },
+        assertStrictRequest(parseUpdatePresentationPreferencesBody, request.body),
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return result;
+    },
+  );
+
+  server.get<{ Params: PresentationSurfacePath }>(
+    "/v1/platform/presentation/surfaces/:surfaceId",
+    {
+      preHandler: authenticate,
+      schema: {
+        params: { $ref: "PresentationSurfacePathV1#" },
+        response: {
+          200: { $ref: "PresentationSurfaceLayoutV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request) => {
+      const path = assertStrictRequest(parsePresentationSurfacePath, request.params);
+      return await getOwnPresentationSurfaceLayout(
+        options.pool,
+        operationContext(request),
+        path.surfaceId,
+      );
+    },
+  );
+
+  server.post<{
+    Body: UpdatePresentationSurfaceOverlayBody;
+    Params: PresentationSurfacePath;
+  }>("/v1/platform/presentation/surfaces/:surfaceId/overlay", {
+    preValidation: [
+      authenticate,
+      async (request) => {
+        assertStrictMutationIdempotencyKey(request);
+        assertStrictRequest(parsePresentationSurfacePath, request.params);
+        assertStrictRequest(parseUpdatePresentationSurfaceOverlayBody, request.body);
+      },
+    ],
+    schema: {
+      body: { $ref: "UpdatePresentationSurfaceOverlayBodyV1#" },
+      params: { $ref: "PresentationSurfacePathV1#" },
+      response: {
+        200: { $ref: "UpdatePresentationSurfaceOverlayResponseV1#" },
+        default: { $ref: "ProblemDetails#" },
+      },
+    },
+    handler: async (request, reply) => {
+      const path = assertStrictRequest(parsePresentationSurfacePath, request.params);
+      const result = await updateOwnPresentationSurfaceOverlay(
+        options.pool,
+        {
+          ...operationContext(request),
+          correlationId: idempotencyKey(request).toLowerCase(),
+        },
+        path.surfaceId,
+        assertStrictRequest(parseUpdatePresentationSurfaceOverlayBody, request.body),
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return result;
+    },
   });
 
   registerEmploymentRoutes({

@@ -95,6 +95,17 @@ describe("runtime probes", () => {
     expect(query).not.toHaveBeenCalled();
   });
 
+  it("protects presentation service-group discovery before PostgreSQL access", async () => {
+    const { query, server } = testServer();
+    const response = await server.inject({
+      method: "GET",
+      url: "/v1/platform/presentation/service-groups",
+    });
+    expect(response.statusCode).toBe(401);
+    expect(response.headers["content-type"]).toContain("application/problem+json");
+    expect(query).not.toHaveBeenCalled();
+  });
+
   it("protects every admitted Shift route before PostgreSQL access", async () => {
     const { query, server } = testServer();
     const rosterVersionId = randomUUID();
@@ -141,6 +152,64 @@ describe("runtime probes", () => {
     ] as const) {
       expect((await server.inject(request)).statusCode).toBe(401);
     }
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("protects presentation preference reads and writes before PostgreSQL access", async () => {
+    const { query, server } = testServer();
+    expect(
+      (
+        await server.inject({
+          method: "GET",
+          url: "/v1/platform/presentation/preferences",
+        })
+      ).statusCode,
+    ).toBe(401);
+    expect(
+      (
+        await server.inject({
+          body: { expectedVersion: 0, highContrast: false, palette: "light" },
+          headers: { "idempotency-key": randomUUID() },
+          method: "POST",
+          url: "/v1/platform/presentation/preferences",
+        })
+      ).statusCode,
+    ).toBe(401);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("protects presentation surface reads and own overlay writes before PostgreSQL access", async () => {
+    const { query, server } = testServer();
+    expect(
+      (
+        await server.inject({
+          method: "GET",
+          url: "/v1/platform/presentation/surfaces/surface.mission-control",
+        })
+      ).statusCode,
+    ).toBe(401);
+    expect(
+      (
+        await server.inject({
+          body: {
+            expectedVersion: 0,
+            placements: [
+              {
+                column: 1,
+                columnSpan: 4,
+                instanceId: "mission-control.my-leave",
+                row: 4,
+                rowSpan: 3,
+                widgetDefinitionId: "hr.leave.my-requests",
+              },
+            ],
+          },
+          headers: { "idempotency-key": randomUUID() },
+          method: "POST",
+          url: "/v1/platform/presentation/surfaces/surface.mission-control/overlay",
+        })
+      ).statusCode,
+    ).toBe(401);
     expect(query).not.toHaveBeenCalled();
   });
 

@@ -14,8 +14,9 @@
     "format": "biome format --write .",
     "lint": "biome check .",
     "test": "pnpm -r --workspace-concurrency=1 --sort --if-present test",
-    "test:browser": "pnpm build && pnpm test:browser:built",
+    "test:browser": "pnpm build && pnpm test:presentation-db-restart:built && pnpm test:browser:built",
     "test:browser:built": "node scripts/test/with-postgres.mjs node tests/browser/hr-leave-stack.mjs",
+    "test:presentation-db-restart:built": "node scripts/test/with-postgres.mjs --one-restart-on-exit-75 node tests/qualification/presentation-restart.mjs",
     "test:hr-full-x1": "pnpm build && ESBLA_FULL_X1_EPHEMERAL=1 node scripts/test/with-postgres.mjs node tests/qualification/hr-full-x1.mjs",
     "test:process-safety": "node --test scripts/test/with-postgres.signal.test.mjs",
     "typecheck": "pnpm -r --sort --if-present typecheck"

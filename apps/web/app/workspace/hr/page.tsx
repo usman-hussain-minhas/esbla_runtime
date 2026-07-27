@@ -9,6 +9,7 @@ import {
   UserRoundPlus,
   UsersRound,
 } from "lucide-react";
+import { Suspense } from "react";
 import {
   loadAttendanceServiceControl,
   loadOwnAttendance,
@@ -30,14 +31,21 @@ import {
   hasTimesheetAction,
   TIMESHEET_CORRECTIONS_SURFACE_PATH,
 } from "../../../lib/hr-timesheet-core";
+import { loadOwnWorkforceProfile } from "../../../lib/hr-workforce-profile";
 import { loadAuthorizedWorkforceList } from "../../../lib/hr-workforce-profile-list";
 import { loadWorkforceProfileServiceControl } from "../../../lib/hr-workforce-profile-service-control";
+import { loadOwnPresentationSurfaceLayout } from "../../../lib/presentation-surfaces";
+import {
+  HrLeaveMyRequestsWidget,
+  HrLeaveMyRequestsWidgetLoading,
+} from "../../../theme/zen-theme/v1/widgets/hr-leave-my-requests-widget";
 
 export default async function HrHubPage() {
   const [
     directReports,
     workforceAdministration,
     workforceServiceControl,
+    ownWorkforceProfile,
     employmentRecords,
     shifts,
     shiftReports,
@@ -48,10 +56,12 @@ export default async function HrHubPage() {
     ownTimesheets,
     timesheetServiceControl,
     ownExpenses,
+    surfaceLayout,
   ] = await Promise.all([
     loadAuthorizedWorkforceList({}, "direct_reports"),
     loadAuthorizedWorkforceList({}, "workforce"),
     loadWorkforceProfileServiceControl(),
+    loadOwnWorkforceProfile(),
     loadEmploymentList(),
     loadOwnShifts(),
     loadRosterShifts({
@@ -65,10 +75,21 @@ export default async function HrHubPage() {
     loadOwnTimesheets(),
     loadTimesheetServiceControl(),
     loadOwnExpenseClaims(),
+    loadOwnPresentationSurfaceLayout("surface.hr.mission-control").catch(() => undefined),
   ]);
+  const leavePlacement = surfaceLayout?.effectivePlacements.find(
+    ({ widgetDefinitionId }) => widgetDefinitionId === "hr.leave.my-requests",
+  );
   const canDiscoverWorkforceSettings =
     workforceServiceControl.status === "success" ||
     (workforceServiceControl.status === "error" && workforceServiceControl.kind === "not_found");
+  const canViewOwnWorkforce =
+    ownWorkforceProfile.status === "success" || ownWorkforceProfile.status === "empty";
+  const canDiscoverWorkforce =
+    canViewOwnWorkforce ||
+    workforceAdministration.status === "success" ||
+    directReports.status === "success" ||
+    canDiscoverWorkforceSettings;
   const employmentActions = employmentRecords.authorizedActions;
   const canListEmployment = hasEmploymentAction(employmentActions, "list_authorized");
   const canAdministerEmployment = (["create_record", "create_version", "end_record"] as const).some(
@@ -123,57 +144,87 @@ export default async function HrHubPage() {
     ["activate_service", "configure_service", "deactivate_service", "view_service_control"] as const
   ).some((action) => hasExpenseAction(expenseActions, action));
   return (
-    <section aria-labelledby="hr-hub-heading" className="work-surface">
-      <header className="surface-heading">
+    <section aria-labelledby="hr-hub-heading" className="mission-control-surface">
+      <header className="mission-control-heading">
         <div>
           <p className="surface-label">HR</p>
           <h1 id="hr-hub-heading">People and work</h1>
-          <p className="surface-summary">
-            Open your workforce profile or continue to a focused HR service.
-          </p>
+          <p className="surface-summary">Continue to an eligible HR service or widget.</p>
         </div>
       </header>
 
+      <div className="widget-grid">
+        {surfaceLayout && leavePlacement ? (
+          <Suspense
+            fallback={
+              <HrLeaveMyRequestsWidgetLoading
+                placement={leavePlacement}
+                surfaceId="surface.hr.mission-control"
+              />
+            }
+          >
+            <HrLeaveMyRequestsWidget
+              placement={leavePlacement}
+              surfaceId="surface.hr.mission-control"
+            />
+          </Suspense>
+        ) : surfaceLayout ? (
+          <div className="zen-surface-empty">
+            <strong>No eligible HR widgets</strong>
+            <p>Active HR services available to your account will appear here.</p>
+          </div>
+        ) : (
+          <div className="zen-surface-unavailable" role="alert">
+            <strong>HR layout is unavailable</strong>
+            <p>Your saved layout could not be loaded. No private error detail is shown.</p>
+          </div>
+        )}
+      </div>
+
       <ol aria-label="HR services" className="work-queue">
-        <li className="work-queue-item">
-          <div className="work-queue-primary">
-            <div>
-              <p className="work-queue-kicker">Workforce Profile</p>
-              <h2>Profile and onboarding</h2>
-              <p className="work-queue-dates">
-                Eligible employees can view their active profile. Workforce administration checks
-                current permission and service availability on every action.
-              </p>
+        {canDiscoverWorkforce ? (
+          <li className="work-queue-item">
+            <div className="work-queue-primary">
+              <div>
+                <p className="work-queue-kicker">Workforce Profile</p>
+                <h2>Profile and onboarding</h2>
+                <p className="work-queue-dates">
+                  Eligible employees can view their active profile. Workforce administration checks
+                  current permission and service availability on every action.
+                </p>
+              </div>
+              <span aria-hidden="true" className="empty-worklist-icon">
+                <UserRound size={25} strokeWidth={1.7} />
+              </span>
             </div>
-            <span aria-hidden="true" className="empty-worklist-icon">
-              <UserRound size={25} strokeWidth={1.7} />
-            </span>
-          </div>
-          <div className="work-queue-actions">
-            <a className="text-command" href="/workspace/hr/profile">
-              My workforce profile
-              <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
-            </a>
-            {workforceAdministration.status === "success" ? (
-              <a className="text-command" href="/workspace/hr/profile/admin">
-                <UserRoundPlus aria-hidden="true" size={15} strokeWidth={1.8} />
-                Workforce administration
-              </a>
-            ) : null}
-            {directReports.status === "success" ? (
-              <a className="text-command" href="/workspace/hr/profile/direct-reports">
-                <UsersRound aria-hidden="true" size={15} strokeWidth={1.8} />
-                Direct reports
-              </a>
-            ) : null}
-            {canDiscoverWorkforceSettings ? (
-              <a className="text-command" href="/workspace/hr/profile/settings">
-                <Settings2 aria-hidden="true" size={15} strokeWidth={1.8} />
-                Workforce settings
-              </a>
-            ) : null}
-          </div>
-        </li>
+            <div className="work-queue-actions">
+              {canViewOwnWorkforce ? (
+                <a className="text-command" href="/workspace/hr/profile">
+                  My workforce profile
+                  <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
+                </a>
+              ) : null}
+              {workforceAdministration.status === "success" ? (
+                <a className="text-command" href="/workspace/hr/profile/admin">
+                  <UserRoundPlus aria-hidden="true" size={15} strokeWidth={1.8} />
+                  Workforce administration
+                </a>
+              ) : null}
+              {directReports.status === "success" ? (
+                <a className="text-command" href="/workspace/hr/profile/direct-reports">
+                  <UsersRound aria-hidden="true" size={15} strokeWidth={1.8} />
+                  Direct reports
+                </a>
+              ) : null}
+              {canDiscoverWorkforceSettings ? (
+                <a className="text-command" href="/workspace/hr/profile/settings">
+                  <Settings2 aria-hidden="true" size={15} strokeWidth={1.8} />
+                  Workforce settings
+                </a>
+              ) : null}
+            </div>
+          </li>
+        ) : null}
         {canDiscoverEmployment ? (
           <li className="work-queue-item">
             <div className="work-queue-primary">
@@ -335,26 +386,28 @@ export default async function HrHubPage() {
             </div>
           </li>
         ) : null}
-        <li className="work-queue-item">
-          <div className="work-queue-primary">
-            <div>
-              <p className="work-queue-kicker">Leave Request</p>
-              <h2>Whole-day leave</h2>
-              <p className="work-queue-dates">
-                Submit a request and review its current status and evidence history.
-              </p>
+        {leavePlacement ? (
+          <li className="work-queue-item">
+            <div className="work-queue-primary">
+              <div>
+                <p className="work-queue-kicker">Leave Request</p>
+                <h2>Whole-day leave</h2>
+                <p className="work-queue-dates">
+                  Submit a request and review its current status and evidence history.
+                </p>
+              </div>
+              <span aria-hidden="true" className="empty-worklist-icon">
+                <CalendarDays size={25} strokeWidth={1.7} />
+              </span>
             </div>
-            <span aria-hidden="true" className="empty-worklist-icon">
-              <CalendarDays size={25} strokeWidth={1.7} />
-            </span>
-          </div>
-          <div className="work-queue-actions">
-            <a className="text-command" href="/workspace/hr/leave">
-              Open leave requests
-              <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
-            </a>
-          </div>
-        </li>
+            <div className="work-queue-actions">
+              <a className="text-command" href="/workspace/hr/leave">
+                Open leave requests
+                <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
+              </a>
+            </div>
+          </li>
+        ) : null}
       </ol>
     </section>
   );

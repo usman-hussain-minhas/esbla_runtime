@@ -1,5 +1,9 @@
-export const ESBLA_THEME_ID = "esbla_v1";
-export const ESBLA_THEME_STORAGE_KEY = "esbla.theme.mode";
-export const ESBLA_THEME_MODES = ["light", "dark", "high-contrast"] as const;
+import { ZEN_THEME_ALIASES, ZEN_THEME_DEFINITION } from "../theme/zen-theme/v1/identity";
 
-export type EsblaThemeMode = (typeof ESBLA_THEME_MODES)[number];
+export const ESBLA_THEME_ID = ZEN_THEME_DEFINITION.id;
+export const ESBLA_THEME_ALIASES = ZEN_THEME_ALIASES;
+export const ESBLA_THEME_VERSION = ZEN_THEME_DEFINITION.compatibilityVersion;
+export const ESBLA_THEME_CACHE_KEY = "esbla.presentation.cache.v1";
+export const ESBLA_THEME_PALETTES = ZEN_THEME_DEFINITION.palettes;
+
+export type EsblaThemePalette = (typeof ESBLA_THEME_PALETTES)[number];

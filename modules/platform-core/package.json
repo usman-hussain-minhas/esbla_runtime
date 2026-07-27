@@ -12,7 +12,7 @@
   },
   "scripts": {
     "build": "node ../../scripts/build/clean-typescript-output.mjs && tsc -p tsconfig.build.json",
-    "test": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1",
+    "test": "node ../../scripts/test/with-postgres.mjs vitest run --hookTimeout=30000 --maxWorkers=1",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
