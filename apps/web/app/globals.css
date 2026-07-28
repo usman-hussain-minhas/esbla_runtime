@@ -432,6 +432,7 @@ h1 {
   display: grid;
   gap: var(--zen-widget-gap);
   grid-auto-rows: minmax(var(--zen-widget-row), auto);
+  grid-auto-flow: row;
   grid-template-columns: repeat(12, minmax(0, 1fr));
 }
 
@@ -442,8 +443,8 @@ h1 {
   box-shadow: var(--shadow-soft);
   display: flex;
   flex-direction: column;
-  grid-column: var(--widget-column) / span var(--widget-column-span);
-  grid-row: var(--widget-row) / span var(--widget-row-span);
+  grid-column: var(--widget-desktop-column) / span var(--widget-desktop-column-span);
+  grid-row: var(--widget-desktop-row) / span var(--widget-desktop-row-span);
   min-height: 0;
   overflow: hidden;
 }
@@ -501,13 +502,13 @@ h1 {
 }
 
 .zen-widget-row p,
-.zen-widget-empty p {
+.zen-widget-state p {
   color: var(--text-soft);
   font-size: 12px;
   margin: 3px 0 0;
 }
 
-.zen-widget-empty {
+.zen-widget-state {
   align-items: center;
   display: flex;
   flex-direction: column;
@@ -515,6 +516,24 @@ h1 {
   justify-content: center;
   min-height: 132px;
   text-align: center;
+}
+
+.zen-widget-state-loading,
+.zen-widget-state-stale_retrying {
+  background: linear-gradient(
+    105deg,
+    transparent 20%,
+    color-mix(in srgb, var(--accent-soft) 58%, transparent) 50%,
+    transparent 80%
+  );
+  background-size: 220% 100%;
+  animation: zen-widget-state-loading 1.8s ease-in-out infinite;
+}
+
+@keyframes zen-widget-state-loading {
+  to {
+    background-position: -220% 0;
+  }
 }
 
 .zen-surface-unavailable {
@@ -1617,7 +1636,8 @@ textarea:focus-visible,
   }
 
   .zen-widget {
-    grid-column: 1 / -1;
+    grid-column: var(--widget-tablet-column) / span var(--widget-tablet-column-span);
+    grid-row: var(--widget-tablet-row) / span var(--widget-tablet-row-span);
   }
 }
 
@@ -1637,8 +1657,8 @@ textarea:focus-visible,
   }
 
   .zen-widget {
-    grid-column: 1 / -1;
-    grid-row: auto / span 3;
+    grid-column: var(--widget-phone-column) / span var(--widget-phone-column-span);
+    grid-row: var(--widget-phone-row) / span var(--widget-phone-row-span);
   }
 
   .theme-panel {

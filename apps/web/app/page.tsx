@@ -1,5 +1,6 @@
 import { Suspense } from "react";
-import { loadOwnPresentationSurfaceLayout } from "../lib/presentation-surfaces";
+import { getResponsivePresentationWidgetPlacement } from "../lib/presentation-layout-core";
+import { loadOwnResponsivePresentationSurfaceLayout } from "../lib/presentation-surfaces";
 import {
   HrLeaveMyRequestsWidget,
   HrLeaveMyRequestsWidgetLoading,
@@ -9,12 +10,12 @@ import { WorkspaceShell } from "./workspace-shell";
 export const dynamic = "force-dynamic";
 
 export default async function MissionControlPage() {
-  const layout = await loadOwnPresentationSurfaceLayout("surface.mission-control").catch(
+  const layout = await loadOwnResponsivePresentationSurfaceLayout("surface.mission-control").catch(
     () => undefined,
   );
-  const placement = layout?.effectivePlacements.find(
-    ({ widgetDefinitionId }) => widgetDefinitionId === "hr.leave.my-requests",
-  );
+  const placement = layout
+    ? getResponsivePresentationWidgetPlacement(layout, "mission-control.my-leave")
+    : undefined;
   return (
     <WorkspaceShell currentSurface="Mission Control">
       <section aria-labelledby="mission-control-heading" className="mission-control-surface">

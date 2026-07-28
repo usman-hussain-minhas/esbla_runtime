@@ -24,6 +24,20 @@ describe("platform presentation surface API contract", () => {
       2,
     );
     expect(ZEN_V1_SURFACE_CONTRACTS.every(({ baseVersion }) => baseVersion === 1)).toBe(true);
+    for (const contract of ZEN_V1_SURFACE_CONTRACTS) {
+      const responsiveBases = (
+        contract as unknown as {
+          readonly basePlacementsByBreakpoint?: Readonly<
+            Record<"desktop" | "phone" | "tablet", readonly unknown[]>
+          >;
+        }
+      ).basePlacementsByBreakpoint;
+      expect(responsiveBases).toBeDefined();
+      expect(responsiveBases?.desktop).toEqual(contract.basePlacements);
+      expect(responsiveBases?.tablet).toHaveLength(contract.basePlacements.length);
+      expect(responsiveBases?.phone).toHaveLength(contract.basePlacements.length);
+      expect(Object.isFrozen(responsiveBases)).toBe(true);
+    }
   });
 
   it("owns both surface definitions in one canonical shared registry", () => {

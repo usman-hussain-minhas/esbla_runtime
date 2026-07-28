@@ -2,6 +2,7 @@ import "server-only";
 
 import type { UpdatePresentationSurfaceOverlayBody, ZenV1SurfaceId } from "@esbla/contracts";
 import { fetchDevelopmentApi } from "./development-session";
+import { resolveResponsivePresentationSurfaceLayout } from "./presentation-layout-core";
 import {
   decodePresentationSurfaceLayoutResponse,
   decodePresentationSurfaceOverlayUpdateResponse,
@@ -13,6 +14,12 @@ export function loadOwnPresentationSurfaceLayout(surfaceId: ZenV1SurfaceId) {
       method: "GET",
       path: `/v1/platform/presentation/surfaces/${encodeURIComponent(surfaceId)}`,
     }),
+  );
+}
+
+export async function loadOwnResponsivePresentationSurfaceLayout(surfaceId: ZenV1SurfaceId) {
+  return resolveResponsivePresentationSurfaceLayout(
+    await loadOwnPresentationSurfaceLayout(surfaceId),
   );
 }
 

@@ -34,7 +34,8 @@ import {
 import { loadOwnWorkforceProfile } from "../../../lib/hr-workforce-profile";
 import { loadAuthorizedWorkforceList } from "../../../lib/hr-workforce-profile-list";
 import { loadWorkforceProfileServiceControl } from "../../../lib/hr-workforce-profile-service-control";
-import { loadOwnPresentationSurfaceLayout } from "../../../lib/presentation-surfaces";
+import { getResponsivePresentationWidgetPlacement } from "../../../lib/presentation-layout-core";
+import { loadOwnResponsivePresentationSurfaceLayout } from "../../../lib/presentation-surfaces";
 import {
   HrLeaveMyRequestsWidget,
   HrLeaveMyRequestsWidgetLoading,
@@ -75,11 +76,11 @@ export default async function HrHubPage() {
     loadOwnTimesheets(),
     loadTimesheetServiceControl(),
     loadOwnExpenseClaims(),
-    loadOwnPresentationSurfaceLayout("surface.hr.mission-control").catch(() => undefined),
+    loadOwnResponsivePresentationSurfaceLayout("surface.hr.mission-control").catch(() => undefined),
   ]);
-  const leavePlacement = surfaceLayout?.effectivePlacements.find(
-    ({ widgetDefinitionId }) => widgetDefinitionId === "hr.leave.my-requests",
-  );
+  const leavePlacement = surfaceLayout
+    ? getResponsivePresentationWidgetPlacement(surfaceLayout, "hr-mission-control.my-leave")
+    : undefined;
   const canDiscoverWorkforceSettings =
     workforceServiceControl.status === "success" ||
     (workforceServiceControl.status === "error" && workforceServiceControl.kind === "not_found");

@@ -88,10 +88,8 @@ describe("Zen Theme v1 composition contract", () => {
       }),
     ]);
     for (const instance of DEFAULT_SURFACE_INSTANCES) {
-      const registered = getRegisteredSurfaceInstance(
-        instance.surfaceId,
-        instance.widgetDefinitionId,
-      );
+      const registered = getRegisteredSurfaceInstance(instance.surfaceId, instance.id);
+      expect(registered.instanceId).toBe(instance.id);
       expect(registered.widgetDefinitionVersion).toBe(instance.widgetDefinitionVersion);
       expect(
         getWidgetDefinition(registered.widgetDefinitionId, registered.widgetDefinitionVersion),
@@ -107,6 +105,9 @@ describe("Zen Theme v1 composition contract", () => {
         widgetDefinitionId: instance.widgetDefinitionId,
       });
     }
+    expect(() =>
+      getRegisteredSurfaceInstance("surface.mission-control", "hr.leave.my-requests"),
+    ).toThrow("Widget is not registered for this Zen surface");
     expect(presentationSemanticIconKeys).toContain(WIDGET_DEFINITIONS[0]?.semanticIcon);
   });
 

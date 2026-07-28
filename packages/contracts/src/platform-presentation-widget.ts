@@ -8,6 +8,7 @@ export const presentationWidgetStates = [
   "permission_denied",
   "service_inactive",
   "not_found",
+  "stale_retrying",
 ] as const;
 
 export type PresentationWidgetState = (typeof presentationWidgetStates)[number];
@@ -340,7 +341,7 @@ const HR_LEAVE_MY_REQUESTS_MANIFEST = {
 
 export const HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION = deepFreeze({
   ...HR_LEAVE_MY_REQUESTS_MANIFEST,
-  canonicalHash: "4139aa06f4f774664414461ded672af60a4f28572ae8b82cd2db9bab4cf7be6d",
+  canonicalHash: "b114b88d602b8b7c79fb2597a6ece9d818c4c530d40759f89df55eea171c3705",
 }) satisfies PresentationWidgetDefinition;
 
 export const PRESENTATION_WIDGET_DEFINITIONS = deepFreeze([

@@ -40,8 +40,15 @@ export interface PresentationSurfaceDefaultInstance extends PresentationWidgetPl
   readonly widgetDefinitionVersion: number;
 }
 
+export interface PresentationSurfaceBreakpointPlacements {
+  readonly desktop: readonly PresentationWidgetPlacement[];
+  readonly phone: readonly PresentationWidgetPlacement[];
+  readonly tablet: readonly PresentationWidgetPlacement[];
+}
+
 export interface ZenV1SurfaceContract {
   readonly basePlacements: readonly PresentationWidgetPlacement[];
+  readonly basePlacementsByBreakpoint: PresentationSurfaceBreakpointPlacements;
   readonly baseVersion: 1;
   readonly canonicalHash: string;
   readonly defaultInstances: readonly PresentationSurfaceDefaultInstance[];
@@ -159,6 +166,29 @@ function placementFromDefaultInstance({
 
 const UNIVERSAL_MISSION_CONTROL_CONTRACT = {
   basePlacements: [placementFromDefaultInstance(UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES[0])],
+  basePlacementsByBreakpoint: {
+    desktop: [placementFromDefaultInstance(UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES[0])],
+    phone: [
+      {
+        column: 1,
+        columnSpan: 4,
+        instanceId: "mission-control.my-leave",
+        row: 1,
+        rowSpan: 3,
+        widgetDefinitionId: "hr.leave.my-requests",
+      },
+    ],
+    tablet: [
+      {
+        column: 1,
+        columnSpan: 4,
+        instanceId: "mission-control.my-leave",
+        row: 1,
+        rowSpan: 3,
+        widgetDefinitionId: "hr.leave.my-requests",
+      },
+    ],
+  },
   baseVersion: 1,
   defaultInstances: UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES,
   definitionHash: "c75bac3fed1b604fe9ebc9f39e1ccef45b2ad34570f5200ada0e8b77ab8b71fb",
@@ -167,6 +197,29 @@ const UNIVERSAL_MISSION_CONTROL_CONTRACT = {
 
 const HR_MISSION_CONTROL_CONTRACT = {
   basePlacements: [placementFromDefaultInstance(HR_MISSION_CONTROL_DEFAULT_INSTANCES[0])],
+  basePlacementsByBreakpoint: {
+    desktop: [placementFromDefaultInstance(HR_MISSION_CONTROL_DEFAULT_INSTANCES[0])],
+    phone: [
+      {
+        column: 1,
+        columnSpan: 4,
+        instanceId: "hr-mission-control.my-leave",
+        row: 1,
+        rowSpan: 3,
+        widgetDefinitionId: "hr.leave.my-requests",
+      },
+    ],
+    tablet: [
+      {
+        column: 1,
+        columnSpan: 4,
+        instanceId: "hr-mission-control.my-leave",
+        row: 1,
+        rowSpan: 3,
+        widgetDefinitionId: "hr.leave.my-requests",
+      },
+    ],
+  },
   baseVersion: 1,
   defaultInstances: HR_MISSION_CONTROL_DEFAULT_INSTANCES,
   definitionHash: "12e135cb9be3deeef974ec5af2362d7a8e68057bdba904976a29709afe601c36",
@@ -176,11 +229,11 @@ const HR_MISSION_CONTROL_CONTRACT = {
 export const ZEN_V1_SURFACE_CONTRACTS = deepFreeze([
   {
     ...UNIVERSAL_MISSION_CONTROL_CONTRACT,
-    canonicalHash: "7a4c5954613fee26b0bad983f564910044e48984edd84c9160bb73948d5aa0a4",
+    canonicalHash: "15714758a72acd9f53a29dedaab8891b3dbd35eb964623fa356041c913710aa4",
   },
   {
     ...HR_MISSION_CONTROL_CONTRACT,
-    canonicalHash: "7419ed984a5647920d4a699307bd36b8027b3e7b65a855845456d2c8530de497",
+    canonicalHash: "4fbcc83401f49f49113781bde1bd20b568058cac2e8d139e4c287c2374b876ad",
   },
 ] as const) satisfies readonly ZenV1SurfaceContract[];
 
@@ -549,6 +602,58 @@ export function validatePresentationCompositionRegistries(
       }
     }
     parsePlacements(contract.basePlacements);
+    const responsiveBases = contract.basePlacementsByBreakpoint;
+    if (
+      !responsiveBases ||
+      typeof responsiveBases !== "object" ||
+      !exactRecord(responsiveBases, ["desktop", "phone", "tablet"]) ||
+      !Object.isFrozen(responsiveBases) ||
+      !Array.isArray(responsiveBases.desktop) ||
+      !Array.isArray(responsiveBases.tablet) ||
+      !Array.isArray(responsiveBases.phone) ||
+      !Object.isFrozen(responsiveBases.desktop) ||
+      !Object.isFrozen(responsiveBases.tablet) ||
+      !Object.isFrozen(responsiveBases.phone) ||
+      canonicalPlacements(responsiveBases.desktop) !== canonicalPlacements(contract.basePlacements)
+    ) {
+      throw new Error("Invalid presentation surface breakpoint bases");
+    }
+    for (const [breakpoint, columns] of [
+      ["desktop", 12],
+      ["tablet", 8],
+      ["phone", 4],
+    ] as const) {
+      const placements = parsePlacements(responsiveBases[breakpoint]);
+      if (
+        placements.length !== instances.length ||
+        placements.some(
+          (placement, index) =>
+            placement.instanceId !== instances[index]?.instanceId ||
+            placement.widgetDefinitionId !== instances[index]?.widgetDefinitionId ||
+            placement.column + placement.columnSpan - 1 > columns,
+        )
+      ) {
+        throw new Error("Invalid presentation surface breakpoint bases");
+      }
+      for (const placement of placements) {
+        const instance = instances.find(({ instanceId }) => instanceId === placement.instanceId);
+        const widget = instance
+          ? widgets.get(`${instance.widgetDefinitionId}@${instance.widgetDefinitionVersion}`)
+          : undefined;
+        const bounds = widget?.layoutConstraints[breakpoint];
+        if (
+          !widget ||
+          !bounds ||
+          !widget.supportedBreakpointVariants.includes(breakpoint) ||
+          placement.columnSpan < bounds.minimumColumnSpan ||
+          placement.columnSpan > bounds.maximumColumnSpan ||
+          placement.rowSpan < bounds.minimumRowSpan ||
+          placement.rowSpan > bounds.maximumRowSpan
+        ) {
+          throw new Error("Invalid presentation surface breakpoint geometry");
+        }
+      }
+    }
   }
 }
 

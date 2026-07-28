@@ -91,10 +91,10 @@ export const canonicalizeWidgetDefinition = canonicalizePresentationWidgetDefini
 
 export function getRegisteredSurfaceInstance(
   surfaceId: SurfaceDefinition["id"],
-  widgetDefinitionId: string,
+  instanceId: string,
 ): PresentationSurfaceDefaultInstance {
   const instance = getZenV1SurfaceContract(surfaceId).defaultInstances.find(
-    (candidate) => candidate.widgetDefinitionId === widgetDefinitionId,
+    (candidate) => candidate.instanceId === instanceId,
   );
   if (!instance) throw new Error("Widget is not registered for this Zen surface");
   return instance;
@@ -102,7 +102,7 @@ export function getRegisteredSurfaceInstance(
 
 export function getDefaultSurfacePlacement(
   surfaceId: SurfaceDefinition["id"],
-  widgetDefinitionId: string,
+  instanceId: string,
 ): PresentationWidgetPlacement {
-  return getRegisteredSurfaceInstance(surfaceId, widgetDefinitionId);
+  return getRegisteredSurfaceInstance(surfaceId, instanceId);
 }

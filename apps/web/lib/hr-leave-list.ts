@@ -7,8 +7,11 @@ import {
   decodeOwnLeaveRequestListResponse,
 } from "./hr-leave-list-core";
 
-export function getOwnLeaveRequests(cursor?: HrLeaveRequestCursor) {
+export function getOwnLeaveRequests(cursor?: HrLeaveRequestCursor, signal?: AbortSignal) {
   return decodeOwnLeaveRequestListResponse(
-    fetchDevelopmentApi({ method: "GET", path: buildOwnLeaveRequestListPath(cursor) }),
+    fetchDevelopmentApi(
+      { method: "GET", path: buildOwnLeaveRequestListPath(cursor) },
+      signal ? { signal } : {},
+    ),
   );
 }
