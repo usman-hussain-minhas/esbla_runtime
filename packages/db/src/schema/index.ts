@@ -4,6 +4,7 @@ export {
   memberships,
   outboxEvents,
   presentationSettingValues,
+  presentationSurfaceDrafts,
   presentationSurfaceHeads,
   presentationSurfaceOverlays,
   presentationSurfaceVersions,

@@ -303,6 +303,10 @@ describe("core PostgreSQL foundation", () => {
           "membership_capabilities",
           "memberships",
           "outbox_events",
+          "presentation_surface_drafts",
+          "presentation_surface_heads",
+          "presentation_surface_overlays",
+          "presentation_surface_versions",
           "service_activations",
           "tenant_settings",
           "work_items",
@@ -311,7 +315,7 @@ describe("core PostgreSQL foundation", () => {
       ],
     );
 
-    expect(rowSecurity.rows).toHaveLength(13);
+    expect(rowSecurity.rows).toHaveLength(17);
     expect(rowSecurity.rows.every((row) => row.row_security && row.force_row_security)).toBe(true);
     const schemaPrivilege = await pool.query<{ can_create: boolean; current_schema: string }>(
       `SELECT has_schema_privilege(current_user, 'public', 'CREATE') AS can_create,
@@ -332,6 +336,126 @@ describe("core PostgreSQL foundation", () => {
     ).rejects.toMatchObject({
       code: "42501",
     });
+  });
+
+  it("bounds versioned presentation storage with exact indexes, policies, grants and capability locking", async () => {
+    const indexes = await migrationPool.query<{ definition: string; name: string }>(
+      `SELECT indexname AS name, indexdef AS definition
+       FROM pg_catalog.pg_indexes
+       WHERE schemaname = 'public'
+         AND indexname = ANY($1::text[])
+       ORDER BY indexname`,
+      [
+        [
+          "presentation_surface_drafts_tenant_updated_idx",
+          "presentation_surface_overlays_tenant_principal_idx",
+          "presentation_surface_versions_tenant_surface_published_idx",
+        ],
+      ],
+    );
+    expect(indexes.rows.map(({ name }) => name)).toEqual([
+      "presentation_surface_drafts_tenant_updated_idx",
+      "presentation_surface_overlays_tenant_principal_idx",
+      "presentation_surface_versions_tenant_surface_published_idx",
+    ]);
+    expect(indexes.rows.every(({ definition }) => definition.includes("USING btree"))).toBe(true);
+
+    const policies = await migrationPool.query<{
+      command: string;
+      name: string;
+      table_name: string;
+    }>(
+      `SELECT tablename AS table_name, policyname AS name, cmd AS command
+       FROM pg_catalog.pg_policies
+       WHERE schemaname = 'public'
+         AND tablename = ANY($1::text[])
+       ORDER BY tablename, policyname`,
+      [
+        [
+          "presentation_surface_drafts",
+          "presentation_surface_heads",
+          "presentation_surface_overlays",
+          "presentation_surface_versions",
+        ],
+      ],
+    );
+    expect(
+      policies.rows.map(({ command, name, table_name }) => `${table_name}|${name}|${command}`),
+    ).toEqual([
+      "presentation_surface_drafts|presentation_surface_drafts_publish|DELETE",
+      "presentation_surface_drafts|presentation_surface_drafts_read|SELECT",
+      "presentation_surface_drafts|presentation_surface_drafts_update|UPDATE",
+      "presentation_surface_drafts|presentation_surface_drafts_write|INSERT",
+      "presentation_surface_heads|presentation_surface_heads_advance|UPDATE",
+      "presentation_surface_heads|presentation_surface_heads_initialize|INSERT",
+      "presentation_surface_heads|presentation_surface_heads_read|SELECT",
+      "presentation_surface_overlays|presentation_surface_overlays_own|ALL",
+      "presentation_surface_versions|presentation_surface_versions_initialize|INSERT",
+      "presentation_surface_versions|presentation_surface_versions_publish|INSERT",
+      "presentation_surface_versions|presentation_surface_versions_read|SELECT",
+    ]);
+
+    const privileges = await migrationPool.query<{ actual: boolean[] }>(
+      `SELECT ARRAY[
+         has_table_privilege('esbla_app', 'presentation_surface_versions', 'SELECT'),
+         has_table_privilege('esbla_app', 'presentation_surface_versions', 'INSERT'),
+         NOT has_table_privilege('esbla_app', 'presentation_surface_versions', 'UPDATE'),
+         NOT has_table_privilege('esbla_app', 'presentation_surface_versions', 'DELETE'),
+         has_table_privilege('esbla_app', 'presentation_surface_heads', 'SELECT'),
+         has_table_privilege('esbla_app', 'presentation_surface_heads', 'INSERT'),
+         has_table_privilege('esbla_app', 'presentation_surface_heads', 'UPDATE'),
+         NOT has_table_privilege('esbla_app', 'presentation_surface_heads', 'DELETE'),
+         has_table_privilege('esbla_app', 'presentation_surface_overlays', 'DELETE'),
+         has_table_privilege('esbla_app', 'presentation_surface_drafts', 'SELECT'),
+         has_table_privilege('esbla_app', 'presentation_surface_drafts', 'INSERT'),
+         has_table_privilege('esbla_app', 'presentation_surface_drafts', 'UPDATE'),
+         has_table_privilege('esbla_app', 'presentation_surface_drafts', 'DELETE'),
+         NOT has_table_privilege('esbla_app', 'presentation_surface_drafts', 'TRUNCATE'),
+         has_function_privilege(
+           'esbla_app',
+           'public.esbla_lock_membership_capability(uuid, uuid, text)',
+           'EXECUTE'
+         ),
+         has_function_privilege(
+           'esbla_app',
+           'public.esbla_lock_service_activation(uuid, uuid, text)',
+           'EXECUTE'
+         )
+       ] AS actual`,
+    );
+    expect(privileges.rows).toEqual([{ actual: Array.from({ length: 16 }, () => true) }]);
+
+    const functionAcl = await migrationPool.query<{
+      config: string;
+      public_execute: boolean;
+      security_definer: boolean;
+    }>(
+      `SELECT procedure.prosecdef AS security_definer,
+              procedure.proconfig[1] AS config,
+              has_function_privilege(
+                'public',
+                procedure.oid,
+                'EXECUTE'
+              ) AS public_execute
+       FROM pg_catalog.pg_proc procedure
+       WHERE procedure.oid = ANY(ARRAY[
+         'public.esbla_lock_membership_capability(uuid, uuid, text)'::regprocedure,
+         'public.esbla_lock_service_activation(uuid, uuid, text)'::regprocedure
+       ])
+       ORDER BY procedure.proname`,
+    );
+    expect(functionAcl.rows).toEqual([
+      {
+        config: "search_path=pg_catalog, public",
+        public_execute: false,
+        security_definer: true,
+      },
+      {
+        config: "search_path=pg_catalog, public",
+        public_execute: false,
+        security_definer: true,
+      },
+    ]);
   });
 
   it("keeps exact membership capabilities tenant-scoped and read-only to Runtime", async () => {
