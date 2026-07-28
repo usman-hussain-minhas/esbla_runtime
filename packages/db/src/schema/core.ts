@@ -188,6 +188,7 @@ export const presentationSurfaceVersions = pgTable(
       .references(() => tenants.tenantId, { onDelete: "restrict" }),
     surfaceId: text("surface_id").notNull(),
     baseVersion: integer("base_version").notNull(),
+    basedOnVersion: integer("based_on_version"),
     definitionHash: text("definition_hash").notNull(),
     layout: jsonb("layout").notNull(),
     publishedByPrincipalId: uuid("published_by_principal_id").notNull(),
@@ -205,6 +206,11 @@ export const presentationSurfaceVersions = pgTable(
       foreignColumns: [memberships.tenantId, memberships.principalId],
       name: "presentation_surface_versions_publisher_membership_fk",
     }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.surfaceId, table.basedOnVersion],
+      foreignColumns: [table.tenantId, table.surfaceId, table.baseVersion],
+      name: "presentation_surface_versions_based_on_fk",
+    }).onDelete("restrict"),
     index("presentation_surface_versions_tenant_surface_published_idx").on(
       table.tenantId,
       table.surfaceId,
@@ -215,6 +221,12 @@ export const presentationSurfaceVersions = pgTable(
       sql`${table.surfaceId} IN ('surface.mission-control', 'surface.hr.mission-control')`,
     ),
     check("presentation_surface_versions_base_version_positive", sql`${table.baseVersion} > 0`),
+    check(
+      "presentation_surface_versions_lineage_valid",
+      sql`(${table.baseVersion} = 1 AND ${table.basedOnVersion} IS NULL)
+          OR (${table.baseVersion} > 1 AND ${table.basedOnVersion} > 0
+              AND ${table.basedOnVersion} < ${table.baseVersion})`,
+    ),
     check(
       "presentation_surface_versions_definition_hash_valid",
       sql`${table.definitionHash} ~ '^[0-9a-f]{64}$'`,
@@ -266,6 +278,57 @@ export const presentationSurfaceHeads = pgTable(
       sql`${table.currentBaseVersion} > 0`,
     ),
     check("presentation_surface_heads_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const presentationSurfaceDrafts = pgTable(
+  "presentation_surface_drafts",
+  {
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    surfaceId: text("surface_id").notNull(),
+    basedOnVersion: integer("based_on_version").notNull(),
+    definitionHash: text("definition_hash").notNull(),
+    layout: jsonb("layout").notNull(),
+    version: integer("version").default(1).notNull(),
+    updatedByPrincipalId: uuid("updated_by_principal_id").notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.surfaceId],
+      name: "presentation_surface_drafts_pk",
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.surfaceId, table.basedOnVersion],
+      foreignColumns: [
+        presentationSurfaceVersions.tenantId,
+        presentationSurfaceVersions.surfaceId,
+        presentationSurfaceVersions.baseVersion,
+      ],
+      name: "presentation_surface_drafts_based_on_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.updatedByPrincipalId],
+      foreignColumns: [memberships.tenantId, memberships.principalId],
+      name: "presentation_surface_drafts_updater_membership_fk",
+    }).onDelete("restrict"),
+    index("presentation_surface_drafts_tenant_updated_idx").on(table.tenantId, table.updatedAt),
+    check(
+      "presentation_surface_drafts_surface_valid",
+      sql`${table.surfaceId} IN ('surface.mission-control', 'surface.hr.mission-control')`,
+    ),
+    check(
+      "presentation_surface_drafts_based_on_version_positive",
+      sql`${table.basedOnVersion} > 0`,
+    ),
+    check(
+      "presentation_surface_drafts_definition_hash_valid",
+      sql`${table.definitionHash} ~ '^[0-9a-f]{64}$'`,
+    ),
+    check("presentation_surface_drafts_layout_array", sql`jsonb_typeof(${table.layout}) = 'array'`),
+    check("presentation_surface_drafts_version_positive", sql`${table.version} > 0`),
   ],
 ).enableRLS();
 

@@ -71,7 +71,7 @@ const REQUIRED_WORKFORCE_CAPABILITIES =
     ",",
   );
 const REQUIRED_CORE_CAPABILITIES =
-  "internal:platform.activation.set,internal:platform.evidence.append,internal:platform.policy.evaluate,internal:platform.presentation.layouts.read_own,internal:platform.presentation.layouts.write_own,internal:platform.presentation.preferences.read_own,internal:platform.presentation.preferences.write_own,internal:platform.settings.resolve,internal:platform.tenant_transaction.run,internal:platform.work_item.manage".split(
+  "internal:platform.activation.set,internal:platform.evidence.append,internal:platform.policy.evaluate,internal:platform.presentation.layouts.read_own,internal:platform.presentation.layouts.reset_own,internal:platform.presentation.layouts.write_own,internal:platform.presentation.preferences.read_own,internal:platform.presentation.preferences.write_own,internal:platform.settings.resolve,internal:platform.studio.surface_base.draft,internal:platform.studio.surface_base.publish,internal:platform.studio.surface_base.read,internal:platform.studio.surface_base.rollback,internal:platform.studio.surface_base.validate,internal:platform.tenant_transaction.run,internal:platform.work_item.manage".split(
     ",",
   );
 const REQUIRED_WORKSPACE_CAPABILITIES =

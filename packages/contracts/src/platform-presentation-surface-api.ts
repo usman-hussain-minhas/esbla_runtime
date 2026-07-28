@@ -184,7 +184,7 @@ export const ZEN_V1_SURFACE_CONTRACTS = deepFreeze([
   },
 ] as const) satisfies readonly ZenV1SurfaceContract[];
 
-export type PresentationSurfaceLayoutSource = "code_default" | "user_overlay";
+export type PresentationSurfaceLayoutSource = "code_default" | "tenant_base" | "user_overlay";
 
 export interface PresentationSurfaceLayout {
   readonly baseDefinitionHash: string;
@@ -243,7 +243,7 @@ export const presentationSurfaceLayoutSchema = {
       type: "array",
     },
     overlayVersion: { maximum: 2_147_483_647, minimum: 0, type: "integer" },
-    source: { enum: ["code_default", "user_overlay"] },
+    source: { enum: ["code_default", "tenant_base", "user_overlay"] },
     surfaceId: { enum: zenV1SurfaceIds },
   },
   required: [
@@ -447,6 +447,12 @@ function parsePlacements(value: unknown): readonly PresentationWidgetPlacement[]
   return placements;
 }
 
+export function parsePresentationWidgetPlacements(
+  value: unknown,
+): readonly PresentationWidgetPlacement[] {
+  return parsePlacements(value);
+}
+
 export function validatePresentationCompositionRegistries(
   surfaceDefinitions: readonly PresentationSurfaceDefinition[],
   surfaceContracts: readonly ZenV1SurfaceContract[],
@@ -619,16 +625,15 @@ export function parsePresentationSurfaceLayout(value: unknown): PresentationSurf
     !new RegExp(sha256Pattern).test(value.baseDefinitionHash) ||
     !safeInteger(value.baseVersion, 1, 2_147_483_647) ||
     !safeInteger(value.overlayVersion, 0, 2_147_483_647) ||
-    (value.source !== "code_default" && value.source !== "user_overlay")
+    (value.source !== "code_default" &&
+      value.source !== "tenant_base" &&
+      value.source !== "user_overlay")
   ) {
     throw new Error("Invalid presentation surface layout");
   }
   const surfaceId = parseZenV1SurfaceId(value.surfaceId);
   const contract = getZenV1SurfaceContract(surfaceId);
-  if (
-    value.baseDefinitionHash !== contract.definitionHash ||
-    value.baseVersion !== contract.baseVersion
-  ) {
+  if (value.baseDefinitionHash !== contract.definitionHash) {
     throw new Error("Presentation surface definition drift");
   }
   const basePlacements = parsePlacements(value.basePlacements);
@@ -637,7 +642,14 @@ export function parsePresentationSurfaceLayout(value: unknown): PresentationSurf
   const expectedEligibleBase = contract.basePlacements.filter(({ instanceId }) =>
     baseInstanceIds.has(instanceId),
   );
-  if (canonicalPlacements(basePlacements) !== canonicalPlacements(expectedEligibleBase)) {
+  if (
+    basePlacements.length !== expectedEligibleBase.length ||
+    basePlacements.some(
+      ({ instanceId, widgetDefinitionId }) =>
+        expectedEligibleBase.find((candidate) => candidate.instanceId === instanceId)
+          ?.widgetDefinitionId !== widgetDefinitionId,
+    )
+  ) {
     throw new Error("Presentation surface base drift");
   }
   const expectedInstances = new Map(
@@ -650,6 +662,11 @@ export function parsePresentationSurfaceLayout(value: unknown): PresentationSurf
         expectedInstances.get(instanceId) !== widgetDefinitionId,
     ) ||
     (value.source === "code_default" &&
+      (value.baseVersion !== contract.baseVersion ||
+        canonicalPlacements(basePlacements) !== canonicalPlacements(expectedEligibleBase) ||
+        value.overlayVersion !== 0 ||
+        canonicalPlacements(effectivePlacements) !== canonicalPlacements(basePlacements))) ||
+    (value.source === "tenant_base" &&
       (value.overlayVersion !== 0 ||
         canonicalPlacements(effectivePlacements) !== canonicalPlacements(basePlacements))) ||
     (value.source === "user_overlay" && value.overlayVersion < 1)

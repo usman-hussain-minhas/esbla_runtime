@@ -4,14 +4,26 @@ import type {
   PresentationPreferenceSource,
   PresentationPreferences,
   PresentationServiceGroupDiscovery,
+  PresentationSurfaceBaseMutationResponse,
+  PresentationSurfaceBaseVersion,
+  PresentationSurfaceBaseWorkspace,
   PresentationSurfaceDefinition,
+  PresentationSurfaceDraft,
   PresentationSurfaceLayout,
   PresentationWidgetDefinition,
   PresentationWidgetPlacement,
+  PublishPresentationSurfaceDraftBody,
+  ResetPresentationSurfaceOverlayBody,
+  ResetPresentationSurfaceOverlayResponse,
+  RollbackPresentationSurfaceBaseBody,
   UpdatePresentationPreferencesBody,
   UpdatePresentationPreferencesResponse,
   UpdatePresentationSurfaceOverlayBody,
   UpdatePresentationSurfaceOverlayResponse,
+  UpsertPresentationSurfaceDraftBody,
+  UpsertPresentationSurfaceDraftResponse,
+  ValidatePresentationSurfaceDraftBody,
+  ValidatePresentationSurfaceDraftResponse,
   ZenV1SurfaceContract,
   ZenV1SurfaceId,
 } from "@esbla/contracts";
@@ -27,9 +39,19 @@ import {
   PRESENTATION_SETTING_DEFINITIONS,
   PRESENTATION_SURFACE_DEFINITIONS,
   PRESENTATION_WIDGET_DEFINITIONS,
+  parseExactPresentationSurfacePlacementSet,
+  parsePresentationSurfaceBaseMutationResponse,
+  parsePresentationSurfaceBaseVersion,
+  parsePresentationSurfaceDraft,
   parsePresentationWidgetDefinition,
+  parseResetPresentationSurfaceOverlayBody,
+  parseResetPresentationSurfaceOverlayResponse,
+  parseRollbackPresentationSurfaceBaseBody,
   parseUpdatePresentationPreferencesBody,
   parseUpdatePresentationSurfaceOverlayBody,
+  parseUpsertPresentationSurfaceDraftBody,
+  parseUpsertPresentationSurfaceDraftResponse,
+  parseValidatePresentationSurfaceDraftBody,
   presentationSettingKeys,
   validatePresentationCompositionRegistries,
   ZEN_V1_SURFACE_CONTRACTS,
@@ -52,7 +74,12 @@ const APPEARANCE_SETTING_KEYS = [APPEARANCE_PALETTE_KEY, APPEARANCE_HIGH_CONTRAS
 const PREFERENCE_EVENT_TYPE = "platform.presentation.preferences.updated";
 const PREFERENCE_SUBJECT_TYPE = "platform_presentation_preferences";
 const SURFACE_OVERLAY_EVENT_TYPE = "platform.presentation.surface_overlay.updated";
+const SURFACE_OVERLAY_RESET_EVENT_TYPE = "platform.presentation.surface_overlay.reset";
 const SURFACE_OVERLAY_SUBJECT_TYPE = "platform_presentation_surface_overlay";
+const SURFACE_BASE_DRAFT_EVENT_TYPE = "platform.studio.surface_base.draft.updated";
+const SURFACE_BASE_PUBLISH_EVENT_TYPE = "platform.studio.surface_base.published";
+const SURFACE_BASE_ROLLBACK_EVENT_TYPE = "platform.studio.surface_base.rolled_back";
+const SURFACE_BASE_SUBJECT_TYPE = "platform_presentation_surface_base";
 
 interface PresentationCompositionRegistryInput {
   readonly surfaceContracts?: readonly ZenV1SurfaceContract[];
@@ -265,6 +292,7 @@ function assertOwnPresentationPolicy(
   transaction: TenantTransaction,
   actionKey:
     | "platform.presentation.layouts.read_own"
+    | "platform.presentation.layouts.reset_own"
     | "platform.presentation.layouts.write_own"
     | "platform.presentation.preferences.read_own"
     | "platform.presentation.preferences.write_own",
@@ -678,9 +706,11 @@ export function validatePersonalSurfacePlacements(
 }
 
 interface StoredSurfaceBase {
+  readonly basedOnVersion: number | null;
   readonly basePlacements: readonly PresentationWidgetPlacement[];
   readonly baseVersion: number;
   readonly definitionHash: string;
+  readonly headRowVersion: number;
 }
 
 interface StoredSurfaceOverlay {
@@ -692,46 +722,60 @@ interface StoredSurfaceOverlay {
 function codeDefaultSurfaceBase(surfaceId: ZenV1SurfaceId): StoredSurfaceBase {
   const contract = getZenV1SurfaceContract(surfaceId);
   return {
+    basedOnVersion: null,
     basePlacements: contract.basePlacements,
     baseVersion: contract.baseVersion,
     definitionHash: contract.definitionHash,
+    headRowVersion: 0,
   };
 }
 
 async function loadStoredSurfaceBase(
   transaction: TenantTransaction,
   surfaceId: ZenV1SurfaceId,
+  lock: "none" | "share" | "update" = "none",
 ): Promise<StoredSurfaceBase | undefined> {
-  const contract = getZenV1SurfaceContract(surfaceId);
-  const serializedBase = canonicalPlacements(contract.basePlacements);
   const result = await transaction.client.query<{
+    based_on_version: number | null;
     base_version: number;
     definition_hash: string;
+    head_row_version: number;
     layout: unknown;
   }>(
-    `SELECT v.base_version, v.definition_hash, v.layout
+    `SELECT v.base_version, v.based_on_version, v.definition_hash, v.layout,
+            h.row_version AS head_row_version
      FROM presentation_surface_heads AS h
      JOIN presentation_surface_versions AS v
        ON v.tenant_id = h.tenant_id
       AND v.surface_id = h.surface_id
       AND v.base_version = h.current_base_version
-     WHERE h.tenant_id = $1 AND h.surface_id = $2`,
+     WHERE h.tenant_id = $1 AND h.surface_id = $2
+     ${lock === "update" ? "FOR UPDATE OF h" : lock === "share" ? "FOR SHARE OF h" : ""}`,
     [transaction.context.tenantId, surfaceId],
   );
   const row = result.rows[0];
   if (!row) return undefined;
-  const basePlacements = validatePersonalSurfacePlacements(surfaceId, row.layout);
-  if (
-    row.base_version !== contract.baseVersion ||
-    row.definition_hash !== contract.definitionHash ||
-    canonicalPlacements(basePlacements) !== serializedBase
-  ) {
+  let parsed: PresentationSurfaceBaseVersion;
+  try {
+    parsed = parsePresentationSurfaceBaseVersion({
+      basedOnVersion: row.based_on_version,
+      baseVersion: row.base_version,
+      definitionHash: row.definition_hash,
+      placements: row.layout,
+      surfaceId,
+    });
+  } catch {
+    throw new PlatformError("SETTING_INVALID", "Presentation surface base has drifted");
+  }
+  if (!Number.isSafeInteger(row.head_row_version) || row.head_row_version < 1) {
     throw new PlatformError("SETTING_INVALID", "Presentation surface base has drifted");
   }
   return {
-    basePlacements,
-    baseVersion: row.base_version,
-    definitionHash: row.definition_hash,
+    basedOnVersion: parsed.basedOnVersion,
+    basePlacements: parsed.placements,
+    baseVersion: parsed.baseVersion,
+    definitionHash: parsed.definitionHash,
+    headRowVersion: row.head_row_version,
   };
 }
 
@@ -743,9 +787,9 @@ async function materializeSurfaceBase(
   const serializedBase = canonicalPlacements(contract.basePlacements);
   await transaction.client.query(
     `INSERT INTO presentation_surface_versions
-       (tenant_id, surface_id, base_version, definition_hash, layout,
+       (tenant_id, surface_id, base_version, based_on_version, definition_hash, layout,
         published_by_principal_id)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+     VALUES ($1, $2, $3, NULL, $4, $5::jsonb, $6)
      ON CONFLICT (tenant_id, surface_id, base_version) DO NOTHING`,
     [
       transaction.context.tenantId,
@@ -817,6 +861,106 @@ async function loadOwnSurfaceOverlay(
   };
 }
 
+async function loadStoredSurfaceVersion(
+  transaction: TenantTransaction,
+  surfaceId: ZenV1SurfaceId,
+  baseVersion: number,
+): Promise<PresentationSurfaceBaseVersion | undefined> {
+  const result = await transaction.client.query<{
+    based_on_version: number | null;
+    base_version: number;
+    definition_hash: string;
+    layout: unknown;
+  }>(
+    `SELECT base_version, based_on_version, definition_hash, layout
+     FROM presentation_surface_versions
+     WHERE tenant_id = $1 AND surface_id = $2 AND base_version = $3`,
+    [transaction.context.tenantId, surfaceId, baseVersion],
+  );
+  const row = result.rows[0];
+  if (!row) return undefined;
+  try {
+    return parsePresentationSurfaceBaseVersion({
+      basedOnVersion: row.based_on_version,
+      baseVersion: row.base_version,
+      definitionHash: row.definition_hash,
+      placements: row.layout,
+      surfaceId,
+    });
+  } catch {
+    throw new PlatformError("SETTING_INVALID", "Presentation surface history has drifted");
+  }
+}
+
+function rebasePlacement(
+  historicalBase: PresentationWidgetPlacement,
+  currentBase: PresentationWidgetPlacement,
+  personal: PresentationWidgetPlacement,
+): PresentationWidgetPlacement {
+  return {
+    column: personal.column === historicalBase.column ? currentBase.column : personal.column,
+    columnSpan:
+      personal.columnSpan === historicalBase.columnSpan
+        ? currentBase.columnSpan
+        : personal.columnSpan,
+    instanceId: currentBase.instanceId,
+    row: personal.row === historicalBase.row ? currentBase.row : personal.row,
+    rowSpan: personal.rowSpan === historicalBase.rowSpan ? currentBase.rowSpan : personal.rowSpan,
+    widgetDefinitionId: currentBase.widgetDefinitionId,
+  };
+}
+
+async function rebaseSurfaceOverlay(
+  transaction: TenantTransaction,
+  surfaceId: ZenV1SurfaceId,
+  base: StoredSurfaceBase,
+  overlay: StoredSurfaceOverlay | undefined,
+): Promise<StoredSurfaceOverlay | undefined> {
+  if (!overlay || overlay.baseVersion === base.baseVersion) return overlay;
+  const historical = await loadStoredSurfaceVersion(transaction, surfaceId, overlay.baseVersion);
+  if (!historical) {
+    throw new PlatformError("SETTING_INVALID", "Presentation surface overlay base is unavailable");
+  }
+  const historicalByInstance = new Map(
+    historical.placements.map((placement) => [placement.instanceId, placement]),
+  );
+  const personalByInstance = new Map(
+    overlay.placements.map((placement) => [placement.instanceId, placement]),
+  );
+  if (
+    historicalByInstance.size !== base.basePlacements.length ||
+    personalByInstance.size !== base.basePlacements.length
+  ) {
+    throw new PlatformError("SETTING_INVALID", "Presentation surface overlay rebase conflicted", {
+      conflict: "instance_set_changed",
+    });
+  }
+  const rebased = base.basePlacements.map((current) => {
+    const historicalPlacement = historicalByInstance.get(current.instanceId);
+    const personal = personalByInstance.get(current.instanceId);
+    if (
+      !historicalPlacement ||
+      !personal ||
+      historicalPlacement.widgetDefinitionId !== current.widgetDefinitionId ||
+      personal.widgetDefinitionId !== current.widgetDefinitionId
+    ) {
+      throw new PlatformError("SETTING_INVALID", "Presentation surface overlay rebase conflicted", {
+        conflict: "instance_binding_changed",
+      });
+    }
+    return rebasePlacement(historicalPlacement, current, personal);
+  });
+  let placements: readonly PresentationWidgetPlacement[];
+  try {
+    placements = parseExactPresentationSurfacePlacementSet(surfaceId, rebased);
+  } catch {
+    throw new PlatformError("SETTING_INVALID", "Presentation surface overlay rebase conflicted", {
+      conflict: "geometry_invalid",
+    });
+  }
+  return { baseVersion: base.baseVersion, placements, version: overlay.version };
+}
+
 function surfaceLayoutResponse(
   surfaceId: ZenV1SurfaceId,
   base: StoredSurfaceBase,
@@ -826,6 +970,10 @@ function surfaceLayoutResponse(
   if (overlay && overlay.baseVersion !== base.baseVersion) {
     throw new PlatformError("SETTING_INVALID", "Presentation surface overlay base is stale");
   }
+  const contract = getZenV1SurfaceContract(surfaceId);
+  const codeDefault =
+    base.baseVersion === contract.baseVersion &&
+    canonicalPlacements(base.basePlacements) === canonicalPlacements(contract.basePlacements);
   const filterEligible = (placements: readonly PresentationWidgetPlacement[]) =>
     eligibleWidgetDefinitionIds
       ? placements.filter(({ widgetDefinitionId }) =>
@@ -838,7 +986,7 @@ function surfaceLayoutResponse(
     baseVersion: base.baseVersion,
     effectivePlacements: filterEligible(overlay?.placements ?? base.basePlacements),
     overlayVersion: overlay?.version ?? 0,
-    source: overlay ? "user_overlay" : "code_default",
+    source: overlay ? "user_overlay" : codeDefault ? "code_default" : "tenant_base",
     surfaceId,
   };
 }
@@ -846,46 +994,80 @@ function surfaceLayoutResponse(
 async function loadEligibleWidgetDefinitionIds(
   transaction: TenantTransaction,
   surfaceId: ZenV1SurfaceId,
+  authorityLock: "none" | "share" = "none",
 ): Promise<ReadonlySet<string>> {
-  const definitionIds = [
+  const definitions = [
     ...new Set(
       getZenV1SurfaceContract(surfaceId).basePlacements.map(
         ({ widgetDefinitionId }) => widgetDefinitionId,
       ),
     ),
-  ];
+  ]
+    .map((definitionId) => getPresentationWidgetDefinition(definitionId))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  const serviceKeys = [
+    ...new Set(definitions.map(({ activationServiceKey }) => activationServiceKey)),
+  ].sort();
+  const capabilityIds = [
+    ...new Set(definitions.flatMap(({ requiredCapabilityIds }) => requiredCapabilityIds)),
+  ].sort();
+  const activeServiceKeys = new Set<string>();
+  const currentCapabilityIds = new Set<string>();
+
+  if (authorityLock === "share") {
+    for (const serviceKey of serviceKeys) {
+      const activation = await transaction.client.query<{ activation_state: string | null }>(
+        `SELECT public.esbla_lock_service_activation($1, $2, $3) AS activation_state`,
+        [transaction.context.tenantId, transaction.context.actorPrincipalId, serviceKey],
+      );
+      if (activation.rows[0]?.activation_state === "active") activeServiceKeys.add(serviceKey);
+    }
+    for (const capabilityId of capabilityIds) {
+      const capability = await transaction.client.query<{ capability_current: boolean }>(
+        `SELECT public.esbla_lock_membership_capability($1, $2, $3) AS capability_current`,
+        [transaction.context.tenantId, transaction.context.actorPrincipalId, capabilityId],
+      );
+      if (capability.rows[0]?.capability_current === true) {
+        currentCapabilityIds.add(capabilityId);
+      }
+    }
+  } else {
+    if (serviceKeys.length > 0) {
+      const activations = await transaction.client.query<{ service_key: string }>(
+        `SELECT service_key
+         FROM service_activations
+         WHERE tenant_id = $1 AND service_key = ANY($2::text[]) AND state = 'active'
+         ORDER BY service_key`,
+        [transaction.context.tenantId, serviceKeys],
+      );
+      for (const { service_key: serviceKey } of activations.rows) {
+        activeServiceKeys.add(serviceKey);
+      }
+    }
+    if (capabilityIds.length > 0) {
+      const capabilities = await transaction.client.query<{ capability_id: string }>(
+        `SELECT capability_id
+         FROM membership_capabilities
+         WHERE tenant_id = $1 AND principal_id = $2
+           AND capability_id = ANY($3::text[])
+         ORDER BY capability_id`,
+        [transaction.context.tenantId, transaction.context.actorPrincipalId, capabilityIds],
+      );
+      for (const { capability_id: capabilityId } of capabilities.rows) {
+        currentCapabilityIds.add(capabilityId);
+      }
+    }
+  }
+
   const eligible = new Set<string>();
-  for (const definitionId of definitionIds) {
-    const definition = getPresentationWidgetDefinition(definitionId);
-    const authority = await transaction.client.query<{
-      activation_active: boolean;
-      capability_count: number;
-    }>(
-      `SELECT
-         EXISTS (
-           SELECT 1
-           FROM service_activations
-           WHERE tenant_id = $1 AND service_key = $2 AND state = 'active'
-         ) AS activation_active,
-         (
-           SELECT count(*)::integer
-           FROM membership_capabilities
-           WHERE tenant_id = $1 AND principal_id = $3
-             AND capability_id = ANY($4::text[])
-         ) AS capability_count`,
-      [
-        transaction.context.tenantId,
-        definition.activationServiceKey,
-        transaction.context.actorPrincipalId,
-        definition.requiredCapabilityIds,
-      ],
-    );
-    const row = authority.rows[0];
+  for (const definition of definitions) {
     if (
-      row?.activation_active === true &&
-      row.capability_count === definition.requiredCapabilityIds.length
+      activeServiceKeys.has(definition.activationServiceKey) &&
+      definition.requiredCapabilityIds.every((capabilityId) =>
+        currentCapabilityIds.has(capabilityId),
+      )
     ) {
-      eligible.add(definitionId);
+      eligible.add(definition.id);
     }
   }
   return eligible;
@@ -907,7 +1089,12 @@ export async function getOwnPresentationSurfaceLayout(
       );
       const base =
         (await loadStoredSurfaceBase(transaction, surfaceId)) ?? codeDefaultSurfaceBase(surfaceId);
-      const overlay = await loadOwnSurfaceOverlay(transaction, surfaceId);
+      const overlay = await rebaseSurfaceOverlay(
+        transaction,
+        surfaceId,
+        base,
+        await loadOwnSurfaceOverlay(transaction, surfaceId),
+      );
       const eligibleWidgetDefinitionIds = await loadEligibleWidgetDefinitionIds(
         transaction,
         surfaceId,
@@ -997,6 +1184,60 @@ function parseSurfaceOverlayEvidenceState(
   }
 }
 
+async function loadSurfaceOverlayUpdateReplay(
+  transaction: TenantTransaction,
+  input: {
+    readonly base: StoredSurfaceBase;
+    readonly context: OperationContext;
+    readonly expectedVersion: number;
+    readonly placements: readonly PresentationWidgetPlacement[];
+    readonly subjectId: string;
+    readonly surfaceId: ZenV1SurfaceId;
+  },
+): Promise<UpdatePresentationSurfaceOverlayResponse | undefined> {
+  const priorEvidence = await transaction.client.query<{
+    actor_principal_id: string;
+    evidence_event_id: string;
+    new_state: string;
+  }>(
+    `SELECT actor_principal_id, evidence_event_id, new_state
+     FROM evidence_events
+     WHERE tenant_id = $1 AND subject_type = $2 AND subject_id = $3
+       AND event_type = $4 AND correlation_id = $5`,
+    [
+      input.context.tenantId,
+      SURFACE_OVERLAY_SUBJECT_TYPE,
+      input.subjectId,
+      SURFACE_OVERLAY_EVENT_TYPE,
+      input.context.correlationId,
+    ],
+  );
+  const replay = priorEvidence.rows[0];
+  if (!replay) return undefined;
+  const state = parseSurfaceOverlayEvidenceState(replay.new_state, input.surfaceId);
+  if (
+    replay.actor_principal_id !== input.context.actorPrincipalId ||
+    state.expectedVersion !== input.expectedVersion ||
+    canonicalPlacements(state.placements) !== canonicalPlacements(input.placements)
+  ) {
+    throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface overlay retry changed its semantics");
+  }
+  const replayOverlay = await rebaseSurfaceOverlay(transaction, input.surfaceId, input.base, {
+    baseVersion: state.baseVersion,
+    placements: state.placements,
+    version: state.version,
+  });
+  if (!replayOverlay) {
+    throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface overlay retry evidence is invalid");
+  }
+  return {
+    ...surfaceLayoutResponse(input.surfaceId, input.base, replayOverlay),
+    billingState: PRESENTATION_BILLING_STATE,
+    evidenceEventId: replay.evidence_event_id,
+    replayed: true,
+  };
+}
+
 export async function updateOwnPresentationSurfaceOverlay(
   pool: Pool,
   context: OperationContext,
@@ -1022,6 +1263,7 @@ export async function updateOwnPresentationSurfaceOverlay(
       const eligibleWidgetDefinitionIds = await loadEligibleWidgetDefinitionIds(
         transaction,
         surfaceId,
+        "share",
       );
       if (
         eligibleWidgetDefinitionIds.size === 0 ||
@@ -1037,46 +1279,16 @@ export async function updateOwnPresentationSurfaceOverlay(
         throw new PlatformError("SETTING_INVALID", "Presentation surface base is unavailable");
       }
       const subjectId = surfaceOverlaySubjectId(context, surfaceId);
-      const priorEvidence = await transaction.client.query<{
-        actor_principal_id: string;
-        evidence_event_id: string;
-        new_state: string;
-      }>(
-        `SELECT actor_principal_id, evidence_event_id, new_state
-         FROM evidence_events
-         WHERE tenant_id = $1 AND subject_type = $2 AND subject_id = $3
-           AND event_type = $4 AND correlation_id = $5`,
-        [
-          context.tenantId,
-          SURFACE_OVERLAY_SUBJECT_TYPE,
-          subjectId,
-          SURFACE_OVERLAY_EVENT_TYPE,
-          context.correlationId,
-        ],
-      );
-      const replay = priorEvidence.rows[0];
+      const replay = await loadSurfaceOverlayUpdateReplay(transaction, {
+        base,
+        context,
+        expectedVersion: parsedInput.expectedVersion,
+        placements,
+        subjectId,
+        surfaceId,
+      });
       if (replay) {
-        const state = parseSurfaceOverlayEvidenceState(replay.new_state, surfaceId);
-        if (
-          replay.actor_principal_id !== context.actorPrincipalId ||
-          state.expectedVersion !== parsedInput.expectedVersion ||
-          canonicalPlacements(state.placements) !== canonicalPlacements(placements)
-        ) {
-          throw new PlatformError(
-            "IDEMPOTENCY_CONFLICT",
-            "Surface overlay retry changed its semantics",
-          );
-        }
-        return {
-          ...surfaceLayoutResponse(surfaceId, base, {
-            baseVersion: state.baseVersion,
-            placements: state.placements,
-            version: state.version,
-          }),
-          billingState: PRESENTATION_BILLING_STATE,
-          evidenceEventId: replay.evidence_event_id,
-          replayed: true,
-        };
+        return replay;
       }
 
       const current = await loadOwnSurfaceOverlay(transaction, surfaceId);
@@ -1109,11 +1321,12 @@ export async function updateOwnPresentationSurfaceOverlay(
           throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface overlay version has changed");
         }
       } else {
-        await transaction.client.query(
+        const inserted = await transaction.client.query(
           `INSERT INTO presentation_surface_overlays
              (tenant_id, principal_id, surface_id, base_version, layout, version,
               updated_by_principal_id)
-           VALUES ($1, $2, $3, $4, $5::jsonb, 1, $2)`,
+           VALUES ($1, $2, $3, $4, $5::jsonb, 1, $2)
+           ON CONFLICT (tenant_id, principal_id, surface_id) DO NOTHING`,
           [
             context.tenantId,
             context.actorPrincipalId,
@@ -1122,6 +1335,18 @@ export async function updateOwnPresentationSurfaceOverlay(
             serializedLayout,
           ],
         );
+        if (inserted.rowCount !== 1) {
+          const concurrentReplay = await loadSurfaceOverlayUpdateReplay(transaction, {
+            base,
+            context,
+            expectedVersion: parsedInput.expectedVersion,
+            placements,
+            subjectId,
+            surfaceId,
+          });
+          if (concurrentReplay) return concurrentReplay;
+          throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface overlay version has changed");
+        }
       }
       const evidenceState: SurfaceOverlayEvidenceState = {
         baseVersion: base.baseVersion,
@@ -1157,6 +1382,777 @@ export async function updateOwnPresentationSurfaceOverlay(
           placements,
           version: nextVersion,
         }),
+        billingState: PRESENTATION_BILLING_STATE,
+        evidenceEventId: evidence.evidenceEventId,
+        replayed: evidence.replayed,
+      };
+    },
+    { migrationBarrier: "shared" },
+  );
+}
+
+type StudioSurfaceBaseAction =
+  | "platform.studio.surface_base.draft"
+  | "platform.studio.surface_base.publish"
+  | "platform.studio.surface_base.read"
+  | "platform.studio.surface_base.rollback"
+  | "platform.studio.surface_base.validate";
+
+async function assertCurrentStudioSurfaceBaseCapability(
+  transaction: TenantTransaction,
+  actionKey: StudioSurfaceBaseAction,
+  surfaceId: ZenV1SurfaceId,
+): Promise<void> {
+  const capability = await transaction.client.query<{ capability_current: boolean }>(
+    `SELECT public.esbla_lock_membership_capability($1, $2, $3) AS capability_current`,
+    [transaction.context.tenantId, transaction.context.actorPrincipalId, actionKey],
+  );
+  const decision = evaluatePolicy(
+    {
+      actionKey,
+      input: { capabilityCurrent: capability.rows[0]?.capability_current === true },
+      resourceKey: `tenant:${transaction.context.tenantId}:surface:${surfaceId}:base`,
+      transaction,
+    },
+    [
+      {
+        effect: "allow",
+        id: "presentation.current-explicit-capability-may-manage-surface-base",
+        matches: (input) => input.capabilityCurrent,
+      },
+    ],
+  );
+  assertPolicyAllowed(
+    decision,
+    transaction,
+    actionKey,
+    `tenant:${transaction.context.tenantId}:surface:${surfaceId}:base`,
+  );
+}
+
+function surfaceBaseSubjectId(context: OperationContext, surfaceId: ZenV1SurfaceId): string {
+  return deriveStableUuid("platform.studio.surface-base", context.tenantId, surfaceId);
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function semanticRequestHash(value: unknown): string {
+  return createHash("sha256").update(canonicalJson(value)).digest("hex");
+}
+
+interface PresentationMutationReplay {
+  readonly evidenceEventId: string;
+  readonly response: unknown;
+}
+
+async function loadPresentationMutationReplay(
+  transaction: TenantTransaction,
+  input: {
+    readonly eventType: string;
+    readonly requestHash: string;
+    readonly subjectId: string;
+    readonly subjectType: string;
+  },
+): Promise<PresentationMutationReplay | undefined> {
+  const result = await transaction.client.query<{
+    actor_principal_id: string;
+    evidence_event_id: string;
+    new_state: string;
+  }>(
+    `SELECT actor_principal_id, evidence_event_id, new_state
+     FROM evidence_events
+     WHERE tenant_id = $1 AND subject_type = $2 AND subject_id = $3
+       AND event_type = $4 AND correlation_id = $5`,
+    [
+      transaction.context.tenantId,
+      input.subjectType,
+      input.subjectId,
+      input.eventType,
+      transaction.context.correlationId,
+    ],
+  );
+  const row = result.rows[0];
+  if (!row) return undefined;
+  try {
+    const state = JSON.parse(row.new_state) as unknown;
+    if (
+      row.actor_principal_id !== transaction.context.actorPrincipalId ||
+      typeof state !== "object" ||
+      state === null ||
+      Array.isArray(state) ||
+      JSON.stringify(Object.keys(state).sort()) !== JSON.stringify(["requestHash", "response"]) ||
+      (state as Record<string, unknown>).requestHash !== input.requestHash
+    ) {
+      throw new Error("invalid");
+    }
+    return {
+      evidenceEventId: row.evidence_event_id,
+      response: (state as Record<string, unknown>).response,
+    };
+  } catch {
+    throw new PlatformError(
+      "IDEMPOTENCY_CONFLICT",
+      "Presentation mutation retry changed its semantics",
+    );
+  }
+}
+
+function replayState(requestHash: string, response: unknown): string {
+  return canonicalJson({ requestHash, response });
+}
+
+async function loadSurfaceDraft(
+  transaction: TenantTransaction,
+  surfaceId: ZenV1SurfaceId,
+  lock: "none" | "share" | "update" = "none",
+): Promise<PresentationSurfaceDraft | undefined> {
+  const result = await transaction.client.query<{
+    based_on_version: number;
+    definition_hash: string;
+    layout: unknown;
+    version: number;
+  }>(
+    `SELECT based_on_version, definition_hash, layout, version
+     FROM presentation_surface_drafts
+     WHERE tenant_id = $1 AND surface_id = $2
+     ${lock === "update" ? "FOR UPDATE" : lock === "share" ? "FOR SHARE" : ""}`,
+    [transaction.context.tenantId, surfaceId],
+  );
+  const row = result.rows[0];
+  if (!row) return undefined;
+  try {
+    return parsePresentationSurfaceDraft({
+      basedOnVersion: row.based_on_version,
+      candidateBaseVersion: row.based_on_version + 1,
+      definitionHash: row.definition_hash,
+      draftVersion: row.version,
+      placements: row.layout,
+      surfaceId,
+    });
+  } catch {
+    throw new PlatformError("SETTING_INVALID", "Presentation surface draft has drifted");
+  }
+}
+
+async function loadSurfaceHistory(
+  transaction: TenantTransaction,
+  surfaceId: ZenV1SurfaceId,
+): Promise<readonly PresentationSurfaceBaseVersion[]> {
+  const result = await transaction.client.query<{
+    based_on_version: number | null;
+    base_version: number;
+    definition_hash: string;
+    layout: unknown;
+  }>(
+    `SELECT base_version, based_on_version, definition_hash, layout
+     FROM presentation_surface_versions
+     WHERE tenant_id = $1 AND surface_id = $2
+     ORDER BY base_version DESC
+     LIMIT 1000`,
+    [transaction.context.tenantId, surfaceId],
+  );
+  try {
+    return result.rows.map((row) =>
+      parsePresentationSurfaceBaseVersion({
+        basedOnVersion: row.based_on_version,
+        baseVersion: row.base_version,
+        definitionHash: row.definition_hash,
+        placements: row.layout,
+        surfaceId,
+      }),
+    );
+  } catch {
+    throw new PlatformError("SETTING_INVALID", "Presentation surface history has drifted");
+  }
+}
+
+function surfaceBaseVersion(
+  surfaceId: ZenV1SurfaceId,
+  base: StoredSurfaceBase,
+): PresentationSurfaceBaseVersion {
+  return {
+    basedOnVersion: base.basedOnVersion,
+    baseVersion: base.baseVersion,
+    definitionHash: base.definitionHash,
+    placements: base.basePlacements,
+    surfaceId,
+  };
+}
+
+async function loadMutableSurfaceBase(
+  transaction: TenantTransaction,
+  surfaceId: ZenV1SurfaceId,
+  expectedHeadRowVersion: number,
+): Promise<StoredSurfaceBase> {
+  let base = await loadStoredSurfaceBase(transaction, surfaceId, "update");
+  if (base) {
+    if (base.headRowVersion !== expectedHeadRowVersion) {
+      throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface base head has changed", {
+        currentHeadRowVersion: base.headRowVersion,
+      });
+    }
+    return base;
+  }
+  if (expectedHeadRowVersion !== 0) {
+    throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface base head has changed", {
+      currentHeadRowVersion: 0,
+    });
+  }
+  await materializeSurfaceBase(transaction, surfaceId);
+  base = await loadStoredSurfaceBase(transaction, surfaceId, "update");
+  if (!base) {
+    throw new PlatformError("SETTING_INVALID", "Presentation surface base is unavailable");
+  }
+  return base;
+}
+
+function parseTenantBasePlacements(
+  surfaceId: ZenV1SurfaceId,
+  value: unknown,
+): readonly PresentationWidgetPlacement[] {
+  try {
+    return parseExactPresentationSurfacePlacementSet(surfaceId, value);
+  } catch {
+    throw new PlatformError("SETTING_INVALID", "Presentation surface base layout is invalid");
+  }
+}
+
+export async function getTenantPresentationSurfaceBaseWorkspace(
+  pool: Pool,
+  context: OperationContext,
+  surfaceId: ZenV1SurfaceId,
+): Promise<PresentationSurfaceBaseWorkspace> {
+  return await withTenantTransaction(
+    pool,
+    context,
+    async (transaction) => {
+      await assertCurrentStudioSurfaceBaseCapability(
+        transaction,
+        "platform.studio.surface_base.read",
+        surfaceId,
+      );
+      const stored = await loadStoredSurfaceBase(transaction, surfaceId);
+      const current = stored ?? codeDefaultSurfaceBase(surfaceId);
+      const history = stored
+        ? await loadSurfaceHistory(transaction, surfaceId)
+        : [surfaceBaseVersion(surfaceId, current)];
+      return {
+        currentBase: surfaceBaseVersion(surfaceId, current),
+        draft: (await loadSurfaceDraft(transaction, surfaceId)) ?? null,
+        headRowVersion: current.headRowVersion,
+        history,
+      };
+    },
+    { migrationBarrier: "shared" },
+  );
+}
+
+export async function upsertTenantPresentationSurfaceDraft(
+  pool: Pool,
+  context: OperationContext,
+  surfaceId: ZenV1SurfaceId,
+  untrustedInput: unknown,
+): Promise<UpsertPresentationSurfaceDraftResponse> {
+  let input: UpsertPresentationSurfaceDraftBody;
+  try {
+    input = parseUpsertPresentationSurfaceDraftBody(untrustedInput);
+  } catch {
+    throw new PlatformError("SETTING_INVALID", "Presentation surface draft input is invalid");
+  }
+  const placements = parseTenantBasePlacements(surfaceId, input.placements);
+  const requestHash = semanticRequestHash({ ...input, placements, surfaceId });
+  return await withTenantTransaction(
+    pool,
+    context,
+    async (transaction) => {
+      await assertCurrentStudioSurfaceBaseCapability(
+        transaction,
+        "platform.studio.surface_base.draft",
+        surfaceId,
+      );
+      const subjectId = surfaceBaseSubjectId(context, surfaceId);
+      const replay = await loadPresentationMutationReplay(transaction, {
+        eventType: SURFACE_BASE_DRAFT_EVENT_TYPE,
+        requestHash,
+        subjectId,
+        subjectType: SURFACE_BASE_SUBJECT_TYPE,
+      });
+      if (replay) {
+        return parseUpsertPresentationSurfaceDraftResponse({
+          billingState: PRESENTATION_BILLING_STATE,
+          draft: replay.response,
+          evidenceEventId: replay.evidenceEventId,
+          replayed: true,
+        });
+      }
+
+      const base = await loadMutableSurfaceBase(
+        transaction,
+        surfaceId,
+        input.expectedHeadRowVersion,
+      );
+      const current = await loadSurfaceDraft(transaction, surfaceId, "update");
+      const currentVersion = current?.draftVersion ?? 0;
+      if (
+        currentVersion !== input.expectedDraftVersion ||
+        (current !== undefined && current.basedOnVersion !== base.baseVersion)
+      ) {
+        throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface base draft has changed", {
+          currentDraftVersion: currentVersion,
+          currentHeadRowVersion: base.headRowVersion,
+        });
+      }
+      const contract = getZenV1SurfaceContract(surfaceId);
+      const nextVersion = currentVersion + 1;
+      if (current) {
+        const updated = await transaction.client.query(
+          `UPDATE presentation_surface_drafts
+           SET based_on_version = $3, definition_hash = $4, layout = $5::jsonb,
+               version = $6, updated_by_principal_id = $7, updated_at = now()
+           WHERE tenant_id = $1 AND surface_id = $2 AND version = $8`,
+          [
+            context.tenantId,
+            surfaceId,
+            base.baseVersion,
+            contract.definitionHash,
+            canonicalPlacements(placements),
+            nextVersion,
+            context.actorPrincipalId,
+            currentVersion,
+          ],
+        );
+        if (updated.rowCount !== 1) {
+          throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface base draft has changed");
+        }
+      } else {
+        await transaction.client.query(
+          `INSERT INTO presentation_surface_drafts
+             (tenant_id, surface_id, based_on_version, definition_hash, layout,
+              version, updated_by_principal_id)
+           VALUES ($1, $2, $3, $4, $5::jsonb, 1, $6)`,
+          [
+            context.tenantId,
+            surfaceId,
+            base.baseVersion,
+            contract.definitionHash,
+            canonicalPlacements(placements),
+            context.actorPrincipalId,
+          ],
+        );
+      }
+      const draft = parsePresentationSurfaceDraft({
+        basedOnVersion: base.baseVersion,
+        candidateBaseVersion: base.baseVersion + 1,
+        definitionHash: contract.definitionHash,
+        draftVersion: nextVersion,
+        placements,
+        surfaceId,
+      });
+      const evidence = await appendEvidence(transaction, {
+        eventType: SURFACE_BASE_DRAFT_EVENT_TYPE,
+        newState: replayState(requestHash, draft),
+        priorState: current ? canonicalJson(current) : null,
+        subjectId,
+        subjectType: SURFACE_BASE_SUBJECT_TYPE,
+      });
+      return {
+        billingState: PRESENTATION_BILLING_STATE,
+        draft,
+        evidenceEventId: evidence.evidenceEventId,
+        replayed: evidence.replayed,
+      };
+    },
+    { migrationBarrier: "shared" },
+  );
+}
+
+async function loadExactDraftAndHead(
+  transaction: TenantTransaction,
+  surfaceId: ZenV1SurfaceId,
+  input: ValidatePresentationSurfaceDraftBody,
+  lock: "share" | "update",
+): Promise<{ readonly base: StoredSurfaceBase; readonly draft: PresentationSurfaceDraft }> {
+  const base = await loadStoredSurfaceBase(transaction, surfaceId, lock);
+  const draft = await loadSurfaceDraft(transaction, surfaceId, lock);
+  if (
+    !base ||
+    !draft ||
+    base.headRowVersion !== input.expectedHeadRowVersion ||
+    draft.draftVersion !== input.expectedDraftVersion ||
+    draft.basedOnVersion !== base.baseVersion
+  ) {
+    throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface base draft has changed", {
+      currentDraftVersion: draft?.draftVersion ?? 0,
+      currentHeadRowVersion: base?.headRowVersion ?? 0,
+    });
+  }
+  parseTenantBasePlacements(surfaceId, draft.placements);
+  return { base, draft };
+}
+
+export async function validateTenantPresentationSurfaceDraft(
+  pool: Pool,
+  context: OperationContext,
+  surfaceId: ZenV1SurfaceId,
+  untrustedInput: unknown,
+): Promise<ValidatePresentationSurfaceDraftResponse> {
+  let input: ValidatePresentationSurfaceDraftBody;
+  try {
+    input = parseValidatePresentationSurfaceDraftBody(untrustedInput);
+  } catch {
+    throw new PlatformError("SETTING_INVALID", "Presentation surface draft input is invalid");
+  }
+  return await withTenantTransaction(
+    pool,
+    context,
+    async (transaction) => {
+      await assertCurrentStudioSurfaceBaseCapability(
+        transaction,
+        "platform.studio.surface_base.validate",
+        surfaceId,
+      );
+      const { base, draft } = await loadExactDraftAndHead(transaction, surfaceId, input, "share");
+      return {
+        billingState: PRESENTATION_BILLING_STATE,
+        diagnostics: [],
+        draftVersion: draft.draftVersion,
+        headRowVersion: base.headRowVersion,
+        preview: draft.placements,
+        valid: true,
+      };
+    },
+    { migrationBarrier: "shared" },
+  );
+}
+
+function surfaceBaseMutationResponseValue(
+  surfaceId: ZenV1SurfaceId,
+  base: PresentationSurfaceBaseVersion,
+  headRowVersion: number,
+): Omit<PresentationSurfaceBaseMutationResponse, "billingState" | "evidenceEventId" | "replayed"> {
+  return { ...base, headRowVersion, surfaceId };
+}
+
+function parseReplayBaseMutation(
+  replay: PresentationMutationReplay,
+): PresentationSurfaceBaseMutationResponse {
+  return parsePresentationSurfaceBaseMutationResponse({
+    ...(replay.response as Record<string, unknown>),
+    billingState: PRESENTATION_BILLING_STATE,
+    evidenceEventId: replay.evidenceEventId,
+    replayed: true,
+  });
+}
+
+export async function publishTenantPresentationSurfaceDraft(
+  pool: Pool,
+  context: OperationContext,
+  surfaceId: ZenV1SurfaceId,
+  untrustedInput: unknown,
+): Promise<PresentationSurfaceBaseMutationResponse> {
+  let input: PublishPresentationSurfaceDraftBody;
+  try {
+    input = parseValidatePresentationSurfaceDraftBody(untrustedInput);
+  } catch {
+    throw new PlatformError("SETTING_INVALID", "Presentation surface publish input is invalid");
+  }
+  const requestHash = semanticRequestHash({ ...input, surfaceId });
+  return await withTenantTransaction(
+    pool,
+    context,
+    async (transaction) => {
+      await assertCurrentStudioSurfaceBaseCapability(
+        transaction,
+        "platform.studio.surface_base.publish",
+        surfaceId,
+      );
+      const subjectId = surfaceBaseSubjectId(context, surfaceId);
+      const replay = await loadPresentationMutationReplay(transaction, {
+        eventType: SURFACE_BASE_PUBLISH_EVENT_TYPE,
+        requestHash,
+        subjectId,
+        subjectType: SURFACE_BASE_SUBJECT_TYPE,
+      });
+      if (replay) return parseReplayBaseMutation(replay);
+
+      const { base, draft } = await loadExactDraftAndHead(transaction, surfaceId, input, "update");
+      const nextBaseVersion = base.baseVersion + 1;
+      const nextHeadRowVersion = base.headRowVersion + 1;
+      await transaction.client.query(
+        `INSERT INTO presentation_surface_versions
+           (tenant_id, surface_id, base_version, based_on_version, definition_hash,
+            layout, published_by_principal_id)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)`,
+        [
+          context.tenantId,
+          surfaceId,
+          nextBaseVersion,
+          base.baseVersion,
+          draft.definitionHash,
+          canonicalPlacements(draft.placements),
+          context.actorPrincipalId,
+        ],
+      );
+      const advanced = await transaction.client.query(
+        `UPDATE presentation_surface_heads
+         SET current_base_version = $3, row_version = $4,
+             updated_by_principal_id = $5, updated_at = now()
+         WHERE tenant_id = $1 AND surface_id = $2
+           AND current_base_version = $6 AND row_version = $7`,
+        [
+          context.tenantId,
+          surfaceId,
+          nextBaseVersion,
+          nextHeadRowVersion,
+          context.actorPrincipalId,
+          base.baseVersion,
+          base.headRowVersion,
+        ],
+      );
+      if (advanced.rowCount !== 1) {
+        throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface base head has changed");
+      }
+      const removed = await transaction.client.query(
+        `DELETE FROM presentation_surface_drafts
+         WHERE tenant_id = $1 AND surface_id = $2 AND version = $3`,
+        [context.tenantId, surfaceId, draft.draftVersion],
+      );
+      if (removed.rowCount !== 1) {
+        throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface base draft has changed");
+      }
+      const version = parsePresentationSurfaceBaseVersion({
+        basedOnVersion: base.baseVersion,
+        baseVersion: nextBaseVersion,
+        definitionHash: draft.definitionHash,
+        placements: draft.placements,
+        surfaceId,
+      });
+      const response = surfaceBaseMutationResponseValue(surfaceId, version, nextHeadRowVersion);
+      const evidence = await appendEvidence(transaction, {
+        eventType: SURFACE_BASE_PUBLISH_EVENT_TYPE,
+        newState: replayState(requestHash, response),
+        priorState: canonicalJson({ base: surfaceBaseVersion(surfaceId, base), draft }),
+        subjectId,
+        subjectType: SURFACE_BASE_SUBJECT_TYPE,
+      });
+      return {
+        ...response,
+        billingState: PRESENTATION_BILLING_STATE,
+        evidenceEventId: evidence.evidenceEventId,
+        replayed: evidence.replayed,
+      };
+    },
+    { migrationBarrier: "shared" },
+  );
+}
+
+export async function rollbackTenantPresentationSurfaceBase(
+  pool: Pool,
+  context: OperationContext,
+  surfaceId: ZenV1SurfaceId,
+  untrustedInput: unknown,
+): Promise<PresentationSurfaceBaseMutationResponse> {
+  let input: RollbackPresentationSurfaceBaseBody;
+  try {
+    input = parseRollbackPresentationSurfaceBaseBody(untrustedInput);
+  } catch {
+    throw new PlatformError("SETTING_INVALID", "Presentation surface rollback input is invalid");
+  }
+  const requestHash = semanticRequestHash({ ...input, surfaceId });
+  return await withTenantTransaction(
+    pool,
+    context,
+    async (transaction) => {
+      await assertCurrentStudioSurfaceBaseCapability(
+        transaction,
+        "platform.studio.surface_base.rollback",
+        surfaceId,
+      );
+      const subjectId = surfaceBaseSubjectId(context, surfaceId);
+      const replay = await loadPresentationMutationReplay(transaction, {
+        eventType: SURFACE_BASE_ROLLBACK_EVENT_TYPE,
+        requestHash,
+        subjectId,
+        subjectType: SURFACE_BASE_SUBJECT_TYPE,
+      });
+      if (replay) return parseReplayBaseMutation(replay);
+
+      const base = await loadStoredSurfaceBase(transaction, surfaceId, "update");
+      if (!base || base.headRowVersion !== input.expectedHeadRowVersion) {
+        throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface base head has changed", {
+          currentHeadRowVersion: base?.headRowVersion ?? 0,
+        });
+      }
+      if (input.sourceBaseVersion >= base.baseVersion) {
+        throw new PlatformError(
+          "IDEMPOTENCY_CONFLICT",
+          "Surface rollback source is not historical",
+        );
+      }
+      const draft = await loadSurfaceDraft(transaction, surfaceId, "share");
+      if (draft) {
+        throw new PlatformError(
+          "IDEMPOTENCY_CONFLICT",
+          "Surface rollback requires the active draft to be resolved",
+        );
+      }
+      const source = await loadStoredSurfaceVersion(
+        transaction,
+        surfaceId,
+        input.sourceBaseVersion,
+      );
+      if (!source) {
+        throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface rollback source is unavailable");
+      }
+      parseTenantBasePlacements(surfaceId, source.placements);
+      const nextBaseVersion = base.baseVersion + 1;
+      const nextHeadRowVersion = base.headRowVersion + 1;
+      await transaction.client.query(
+        `INSERT INTO presentation_surface_versions
+           (tenant_id, surface_id, base_version, based_on_version, definition_hash,
+            layout, published_by_principal_id)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)`,
+        [
+          context.tenantId,
+          surfaceId,
+          nextBaseVersion,
+          source.baseVersion,
+          source.definitionHash,
+          canonicalPlacements(source.placements),
+          context.actorPrincipalId,
+        ],
+      );
+      const advanced = await transaction.client.query(
+        `UPDATE presentation_surface_heads
+         SET current_base_version = $3, row_version = $4,
+             updated_by_principal_id = $5, updated_at = now()
+         WHERE tenant_id = $1 AND surface_id = $2
+           AND current_base_version = $6 AND row_version = $7`,
+        [
+          context.tenantId,
+          surfaceId,
+          nextBaseVersion,
+          nextHeadRowVersion,
+          context.actorPrincipalId,
+          base.baseVersion,
+          base.headRowVersion,
+        ],
+      );
+      if (advanced.rowCount !== 1) {
+        throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface base head has changed");
+      }
+      const version = parsePresentationSurfaceBaseVersion({
+        basedOnVersion: source.baseVersion,
+        baseVersion: nextBaseVersion,
+        definitionHash: source.definitionHash,
+        placements: source.placements,
+        surfaceId,
+      });
+      const response = surfaceBaseMutationResponseValue(surfaceId, version, nextHeadRowVersion);
+      const evidence = await appendEvidence(transaction, {
+        eventType: SURFACE_BASE_ROLLBACK_EVENT_TYPE,
+        newState: replayState(requestHash, response),
+        priorState: canonicalJson({ base: surfaceBaseVersion(surfaceId, base) }),
+        subjectId,
+        subjectType: SURFACE_BASE_SUBJECT_TYPE,
+      });
+      return {
+        ...response,
+        billingState: PRESENTATION_BILLING_STATE,
+        evidenceEventId: evidence.evidenceEventId,
+        replayed: evidence.replayed,
+      };
+    },
+    { migrationBarrier: "shared" },
+  );
+}
+
+export async function resetOwnPresentationSurfaceOverlay(
+  pool: Pool,
+  context: OperationContext,
+  surfaceId: ZenV1SurfaceId,
+  untrustedInput: unknown,
+): Promise<ResetPresentationSurfaceOverlayResponse> {
+  let input: ResetPresentationSurfaceOverlayBody;
+  try {
+    input = parseResetPresentationSurfaceOverlayBody(untrustedInput);
+  } catch {
+    throw new PlatformError("SETTING_INVALID", "Presentation surface reset input is invalid");
+  }
+  const requestHash = semanticRequestHash({ ...input, surfaceId });
+  return await withTenantTransaction(
+    pool,
+    context,
+    async (transaction) => {
+      assertOwnPresentationPolicy(
+        transaction,
+        "platform.presentation.layouts.reset_own",
+        `principal:${transaction.context.actorPrincipalId}:surface:${surfaceId}`,
+      );
+      const eligibleWidgetDefinitionIds = await loadEligibleWidgetDefinitionIds(
+        transaction,
+        surfaceId,
+        "share",
+      );
+      if (eligibleWidgetDefinitionIds.size === 0) {
+        throw new PlatformError("POLICY_DENIED", "Presentation surface is not currently eligible");
+      }
+      const base =
+        (await loadStoredSurfaceBase(transaction, surfaceId)) ?? codeDefaultSurfaceBase(surfaceId);
+      const subjectId = surfaceOverlaySubjectId(context, surfaceId);
+      const replay = await loadPresentationMutationReplay(transaction, {
+        eventType: SURFACE_OVERLAY_RESET_EVENT_TYPE,
+        requestHash,
+        subjectId,
+        subjectType: SURFACE_OVERLAY_SUBJECT_TYPE,
+      });
+      if (replay) {
+        return parseResetPresentationSurfaceOverlayResponse({
+          ...(replay.response as Record<string, unknown>),
+          billingState: PRESENTATION_BILLING_STATE,
+          evidenceEventId: replay.evidenceEventId,
+          replayed: true,
+        });
+      }
+      const current = await loadOwnSurfaceOverlay(transaction, surfaceId);
+      if (!current || current.version !== input.expectedVersion) {
+        throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface overlay version has changed", {
+          currentVersion: current?.version ?? 0,
+        });
+      }
+      const removed = await transaction.client.query(
+        `DELETE FROM presentation_surface_overlays
+         WHERE tenant_id = $1 AND principal_id = $2 AND surface_id = $3 AND version = $4`,
+        [context.tenantId, context.actorPrincipalId, surfaceId, input.expectedVersion],
+      );
+      if (removed.rowCount !== 1) {
+        throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface overlay version has changed");
+      }
+      const response = surfaceLayoutResponse(
+        surfaceId,
+        base,
+        undefined,
+        eligibleWidgetDefinitionIds,
+      );
+      const evidence = await appendEvidence(transaction, {
+        eventType: SURFACE_OVERLAY_RESET_EVENT_TYPE,
+        newState: replayState(requestHash, response),
+        priorState: canonicalJson(current),
+        subjectId,
+        subjectType: SURFACE_OVERLAY_SUBJECT_TYPE,
+      });
+      return {
+        ...response,
         billingState: PRESENTATION_BILLING_STATE,
         evidenceEventId: evidence.evidenceEventId,
         replayed: evidence.replayed,
