@@ -72,6 +72,25 @@ inactive, not found and stale/retrying. The real Leave widget remains the live
 consumer and keeps its no-store policy, so it does not claim stale-cache
 behavior.
 
+T4-1 adds read-only, tenant-scoped navigation discovery. Service Groups and
+contextual destinations are derived only from current service activation,
+current membership roles and exact current capabilities. Ineligible services
+are not loaded merely to decide navigation visibility, and a context with no
+meaningful alternative omits its launcher and gap.
+
+T4-2 gives all current Zen floating chrome one state owner. Direct navigation,
+User/System and Appearance therefore arbitrate instead of stacking. Desktop
+keeps its corner grammar; tablet and phone use the exact 1100/768 Product
+boundaries. A pure resolver measures the available inline size, rendered square
+control size, gaps and safe-area insets. It contains lower-priority controls in
+System deterministically, with phone Appearance always contained and
+Service Groups collapsing before Current Page. When resizing removes a direct
+launcher, its open navigation or Appearance surface moves into the equivalent
+System view with a valid focus and restore target. Collapsed navigation remains
+a readable, keyboard-reachable System entry. Search, Notifications, Team, tenant
+switching, status, Universal Settings and Edit Surface remain absent until
+backed.
+
 ## Requirement trace
 
 | ID | Runtime implementation | Proof in this walking slice |
@@ -79,7 +98,12 @@ behavior.
 | `ZEN-ID-001` | `identity.ts`, Runtime Theme registry, alias resolver and canonical CSS identity | registry/source tests and startup |
 | `ZEN-NAV-001` | `/` renders `surface.mission-control` | browser navigation |
 | `ZEN-NAV-002` | service-group navigation requires fresh activation plus a current code-owned domain read capability from any included HR service; widget placement separately requires the exact widget capabilities | integration and browser denial, including action-only absence |
+| `ZEN-NAV-003` | a contextual launcher exists only when at least one meaningful alternate destination remains | unit/browser |
+| `ZEN-NAV-004` | persistent navigation and service controls use the closed semantic icon registry | manifest/static |
+| `ZEN-PANEL-001` | one shared state owner arbitrates direct navigation, System, collapsed navigation and Appearance; Escape unwinds nested System content before the containing panel | keyboard/browser |
+| `ZEN-PANEL-002` | the Theme launcher opens the shared Appearance panel and never changes preference implicitly | browser |
 | `ZEN-RESP-001` | 12-column desktop, 8-column tablet and 4-column phone grammar at the exact 1100/768 boundaries, with safe-area chrome and persistent User/System | source and browser boundary checks |
+| `ZEN-RESP-002` | a pure resolver uses measured control geometry and deterministic tablet/phone collapse priority; collapsed navigation remains available in System | unit/browser |
 | `ZEN-SURF-001` | shared code-owned version-one surface manifests and ordered default-instance metadata, startup hash/binding validation, plus tenant-scoped personal overlays with CAS | contract, platform-core, database integration, reload and restart proof |
 | `ZEN-SURF-002` | a pure bounded resolver derives stable 12/8/4 geometry, clamps declared constraints, rejects invalid/duplicate identity, resolves collisions without overlap and returns explicit diagnostics | unit and browser boundary/geometry checks |
 | `ZEN-WIDGET-001` | generic immutable widget-manifest registry with exact `hr.leave.my-requests` V1 semantics, layout metadata, startup hash/binding validation and a closed semantic-icon resolver; PostgreSQL stores no executable definition | contract/unit/schema checks |
@@ -95,6 +119,8 @@ behavior.
 | `ZEN-PROOF-001` | source, unit, integration, browser and visual evidence remain separately labelled | exact-head audit |
 | `ZEN-PROCESS-001` | the real Leave consumer precedes kernel generalization; restart proof reuses bounded existing fixtures | candidate audit |
 
-This trace describes the T2 walking slice and all four bounded T3
-generalizations. It proves the current composition kernel; it does not claim
-Studio, the complete Zen shell, complete HR, release or deployment.
+This trace describes the T2 walking slice, all four bounded T3 generalizations
+and the first two T4 shell slices. It proves the current composition kernel,
+capability-safe navigation and responsive panel arbitration; it does not claim
+registered shortcuts, the section rail, Studio, the complete Zen shell,
+complete HR, release or deployment.

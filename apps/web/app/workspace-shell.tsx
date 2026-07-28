@@ -4,8 +4,7 @@ import type { ReactNode } from "react";
 import { getServerDevelopmentSessionSummary } from "../lib/development-session";
 import { loadOwnPresentationNavigation } from "../lib/presentation-navigation";
 import { loadOwnPresentationPreferences } from "../lib/presentation-preferences";
-import { ZenNavigationChrome } from "../theme/zen-theme/v1/chrome/zen-navigation-chrome";
-import { UserSystemControl } from "./theme-mode-control";
+import { ZenShellChrome } from "../theme/zen-theme/v1/chrome/zen-shell-chrome";
 import type { WorkspaceSurfaceKey } from "./workspace-surfaces";
 
 interface WorkspaceShellProps {
@@ -27,13 +26,7 @@ export async function WorkspaceShell({ children, currentSurface }: WorkspaceShel
 
   return (
     <div className="esbla-shell" data-current-surface={currentSurface}>
-      <ZenNavigationChrome discovery={navigation} />
-
-      {systemEligible ? (
-        <div className="system-controls">
-          <UserSystemControl />
-        </div>
-      ) : null}
+      <ZenShellChrome appearanceAvailable={systemEligible} discovery={navigation} />
 
       <main className="surface-frame">
         <div className="surface-scroll">{children}</div>
