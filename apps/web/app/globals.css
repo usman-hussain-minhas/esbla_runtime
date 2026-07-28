@@ -559,6 +559,107 @@ h1 {
   margin: 0;
 }
 
+[data-zen-section-heading] {
+  scroll-margin-block-start: 30px;
+}
+
+.zen-section-navigation {
+  left: calc(var(--edge) + var(--safe-left) + 8px);
+  pointer-events: auto;
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 18;
+}
+
+.zen-section-rail ol {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.zen-section-rail button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  display: flex;
+  height: 24px;
+  justify-content: flex-start;
+  padding: 0;
+  position: relative;
+  width: 36px;
+}
+
+.zen-section-rail button::before {
+  background: color-mix(in oklab, var(--text-soft), transparent 76%);
+  border-radius: 999px;
+  content: "";
+  height: 4px;
+  transition:
+    background var(--motion-fast) var(--ease-standard),
+    width var(--motion-fast) var(--ease-standard);
+  width: 24px;
+}
+
+.zen-section-rail button > span {
+  background: var(--surface-panel);
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  box-shadow: var(--shadow-soft);
+  color: var(--text-main);
+  font-size: 11px;
+  font-weight: 700;
+  left: 44px;
+  line-height: 1.2;
+  opacity: 0;
+  padding: 5px 9px;
+  pointer-events: none;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  transition: opacity var(--motion-fast) var(--ease-standard);
+  visibility: hidden;
+  white-space: nowrap;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+.form-error-summary:focus-visible,
+.success-banner:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+.zen-section-rail button:hover,
+.zen-section-rail button:focus-visible,
+.zen-section-rail button[aria-current="location"] {
+  width: 36px;
+}
+
+.zen-section-rail button:hover::before,
+.zen-section-rail button:focus-visible::before,
+.zen-section-rail button[aria-current="location"]::before {
+  background: var(--text-main);
+  width: 36px;
+}
+
+.zen-section-rail button:hover > span,
+.zen-section-rail button:focus-visible > span {
+  opacity: 1;
+  visibility: visible;
+}
+
+.zen-section-compact {
+  display: none;
+}
+
 .widget-grid {
   display: grid;
   gap: var(--zen-widget-gap);
@@ -1543,17 +1644,6 @@ h1 {
   width: calc(var(--corner-button) + 28px);
 }
 
-button:focus-visible,
-a:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
-.form-error-summary:focus-visible,
-.success-banner:focus-visible {
-  outline: 3px solid var(--focus-ring);
-  outline-offset: 3px;
-}
-
 @media (max-width: 767px) {
   :root {
     --corner-button: 46px;
@@ -1738,6 +1828,50 @@ textarea:focus-visible,
 }
 
 @media (max-width: 1099px) {
+  [data-zen-section-heading] {
+    scroll-margin-block-start: 64px;
+  }
+
+  .zen-section-navigation {
+    display: flex;
+    justify-content: flex-end;
+    left: auto;
+    margin-bottom: 18px;
+    position: sticky;
+    right: auto;
+    top: 18px;
+    transform: none;
+    z-index: 6;
+  }
+
+  .zen-section-rail {
+    display: none;
+  }
+
+  .zen-section-compact {
+    align-items: center;
+    backdrop-filter: blur(18px) saturate(125%);
+    background: var(--surface-panel);
+    border: 1px solid var(--line-mid);
+    border-radius: var(--radius-button);
+    box-shadow: var(--shadow-soft);
+    color: var(--text-soft);
+    display: flex;
+    font-size: 12px;
+    font-weight: 700;
+    gap: 10px;
+    padding: 5px 6px 5px 12px;
+  }
+
+  .zen-section-compact select {
+    background: var(--surface-chrome-hover);
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    color: var(--text-main);
+    min-height: 40px;
+    padding: 0 30px 0 10px;
+  }
+
   .chrome-contextual,
   .chrome-service-groups {
     left: calc(var(--edge) + var(--safe-left) + var(--corner-button) + var(--corner-gap));
@@ -1786,6 +1920,16 @@ textarea:focus-visible,
 }
 
 @media (max-width: 767px) {
+  .zen-section-compact {
+    width: 100%;
+  }
+
+  .zen-section-compact select {
+    flex: 1;
+    min-height: 46px;
+    min-width: 0;
+  }
+
   .widget-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }

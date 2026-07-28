@@ -36,6 +36,9 @@ import { loadAuthorizedWorkforceList } from "../../../lib/hr-workforce-profile-l
 import { loadWorkforceProfileServiceControl } from "../../../lib/hr-workforce-profile-service-control";
 import { getResponsivePresentationWidgetPlacement } from "../../../lib/presentation-layout-core";
 import { loadOwnResponsivePresentationSurfaceLayout } from "../../../lib/presentation-surfaces";
+import { getEligibleZenSurfaceSections } from "../../../lib/zen-section-rail-core";
+import { getSurfaceDefinition } from "../../../theme/zen-theme/v1";
+import { ZenSectionRail } from "../../../theme/zen-theme/v1/surfaces/zen-section-rail";
 import {
   HrLeaveMyRequestsWidget,
   HrLeaveMyRequestsWidgetLoading,
@@ -144,12 +147,38 @@ export default async function HrHubPage() {
   const canControlExpenses = (
     ["activate_service", "configure_service", "deactivate_service", "view_service_control"] as const
   ).some((action) => hasExpenseAction(expenseActions, action));
+  const hasAuthorizedHrServiceContent =
+    canDiscoverWorkforce ||
+    canDiscoverEmployment ||
+    shiftActions.length > 0 ||
+    shiftServiceControl.authorizedActions.length > 0 ||
+    attendanceActions.length > 0 ||
+    canViewOwnTimesheets ||
+    canCreateTimesheetCorrection ||
+    canControlTimesheets ||
+    canViewOwnExpenses ||
+    canControlExpenses ||
+    Boolean(leavePlacement);
+  const eligibleSections = getEligibleZenSurfaceSections(
+    getSurfaceDefinition("surface.hr.mission-control"),
+    {
+      authorizedContentAnchorIds: hasAuthorizedHrServiceContent ? ["hr-services"] : [],
+      eligibleWidgetInstanceIds: leavePlacement ? ["hr-mission-control.my-leave"] : [],
+    },
+  );
   return (
-    <section aria-labelledby="hr-hub-heading" className="mission-control-surface">
+    <section
+      aria-labelledby="hr-hub-heading"
+      className="mission-control-surface"
+      data-zen-section-id="overview"
+    >
+      <ZenSectionRail sections={eligibleSections} />
       <header className="mission-control-heading">
         <div>
           <p className="surface-label">HR</p>
-          <h1 id="hr-hub-heading">People and work</h1>
+          <h1 data-zen-section-heading="overview" id="hr-hub-heading">
+            People and work
+          </h1>
           <p className="surface-summary">Continue to an eligible HR service or widget.</p>
         </div>
       </header>
@@ -182,7 +211,7 @@ export default async function HrHubPage() {
         )}
       </div>
 
-      <ol aria-label="HR services" className="work-queue">
+      <ol aria-label="HR services" className="work-queue" data-zen-content-anchor="hr-services">
         {canDiscoverWorkforce ? (
           <li className="work-queue-item">
             <div className="work-queue-primary">
