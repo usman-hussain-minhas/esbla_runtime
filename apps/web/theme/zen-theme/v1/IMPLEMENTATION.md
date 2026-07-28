@@ -43,6 +43,35 @@ the Zen web consumer derives its definitions from those registries instead of
 duplicating them. This slice deliberately registers no unimplemented HR face
 and stores no executable manifest in PostgreSQL.
 
+T3-3 versions each tenant surface base independently, keeps personal overlays
+bound to an exact base, applies CAS to base and overlay writes, records evidence
+and preserves the code-owned definition boundary. The database stores only
+validated declarative identity, geometry and version facts.
+
+T3-4 resolves every authorized persisted placement into deterministic desktop,
+tablet and phone layouts. Desktop preserves valid personal geometry. Each
+code-owned surface definition version now persists its exact eight-column
+tablet base and four-column phone base, so those initial bases are not
+recalculated per request. Invalid geometry and duplicate identity fail closed,
+while clamps, collisions, unsupported breakpoints and unpositioned content
+produce explicit diagnostics. Breakpoint-specific tenant/user editing remains
+outside this kernel slice.
+
+The same slice provides a bounded provider host that skips ineligible providers,
+caps concurrency, applies per-provider timeouts and aborts only the affected
+read. A provider loader must cooperatively settle after abort; its slot is not
+released and host settlement is not claimed before that join. Provider failures
+settle independently; only an explicitly classified shared-substrate failure
+or timeout can fail the host, selected in registration order after every
+provider settles. Product rendering receives sanitized state models, never raw
+provider errors.
+
+One shared widget frame now renders the complete state grammar: idle, loading,
+populated, empty, unavailable, operational error, permission denied, service
+inactive, not found and stale/retrying. The real Leave widget remains the live
+consumer and keeps its no-store policy, so it does not claim stale-cache
+behavior.
+
 ## Requirement trace
 
 | ID | Runtime implementation | Proof in this walking slice |
@@ -52,8 +81,9 @@ and stores no executable manifest in PostgreSQL.
 | `ZEN-NAV-002` | service-group navigation requires fresh activation plus a current code-owned domain read capability from any included HR service; widget placement separately requires the exact widget capabilities | integration and browser denial, including action-only absence |
 | `ZEN-RESP-001` | 12-column desktop, 8-column tablet and 4-column phone grammar at the exact 1100/768 boundaries, with safe-area chrome and persistent User/System | source and browser boundary checks |
 | `ZEN-SURF-001` | shared code-owned version-one surface manifests and ordered default-instance metadata, startup hash/binding validation, plus tenant-scoped personal overlays with CAS | contract, platform-core, database integration, reload and restart proof |
+| `ZEN-SURF-002` | a pure bounded resolver derives stable 12/8/4 geometry, clamps declared constraints, rejects invalid/duplicate identity, resolves collisions without overlap and returns explicit diagnostics | unit and browser boundary/geometry checks |
 | `ZEN-WIDGET-001` | generic immutable widget-manifest registry with exact `hr.leave.my-requests` V1 semantics, layout metadata, startup hash/binding validation and a closed semantic-icon resolver; PostgreSQL stores no executable definition | contract/unit/schema checks |
-| `ZEN-WIDGET-002` | real Leave provider renders loading, empty, populated and sanitized failure states | unit and browser |
+| `ZEN-WIDGET-002` | shared components deliberately render all ten registered states; the real Leave provider uses loading, empty, populated and sanitized denied/inactive/not-found/error/unavailable states while stale remains inapplicable under `no_store` | component proof for all states; real-provider browser proof for populated/responsive rendering only; browser proof for every failure state is not claimed |
 | `ZEN-FULL-001` | parallel intercepted detail route and direct standalone detail route share one face; direct entry returns to the canonical Leave host | browser navigation, direct load and reload |
 | `ZEN-FULL-002` | overlay owns scroll, traps focus, conceals the shell and restores origin focus | keyboard/browser |
 | `ZEN-SET-001` | HR business settings remain owned by the separate HR service resolver and are not presentation values | source-boundary audit |
@@ -65,7 +95,6 @@ and stores no executable manifest in PostgreSQL.
 | `ZEN-PROOF-001` | source, unit, integration, browser and visual evidence remain separately labelled | exact-head audit |
 | `ZEN-PROCESS-001` | the real Leave consumer precedes kernel generalization; restart proof reuses bounded existing fixtures | candidate audit |
 
-This trace describes the T2 walking slice and the bounded T3-1/T3-2
-registry generalizations. It does not claim generalized presentation
-persistence, the complete composition kernel, Studio, the complete Zen shell,
-complete HR, release or deployment.
+This trace describes the T2 walking slice and all four bounded T3
+generalizations. It proves the current composition kernel; it does not claim
+Studio, the complete Zen shell, complete HR, release or deployment.

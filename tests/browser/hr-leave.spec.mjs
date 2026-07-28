@@ -442,9 +442,33 @@ test("Mission Control reuses the real Leave widget and persists independent appe
             }),
         )
         .toBe(columns);
+      const expectedPlacement =
+        width >= 1_100
+          ? { column: "2", columnSpan: "span 4", row: "5", rowSpan: "span 3" }
+          : { column: "1", columnSpan: "span 4", row: "1", rowSpan: "span 3" };
+      await expect
+        .poll(async () =>
+          universalWidget.evaluate((element) => {
+            const style = getComputedStyle(element);
+            return {
+              column: style.gridColumnStart,
+              columnSpan: style.gridColumnEnd,
+              row: style.gridRowStart,
+              rowSpan: style.gridRowEnd,
+            };
+          }),
+        )
+        .toEqual(expectedPlacement);
     }
 
     await employee.page.setViewportSize({ height: 844, width: 390 });
+    const [phoneWidgetBox, phoneGridBox] = await Promise.all([
+      universalWidget.boundingBox(),
+      employee.page.locator(".widget-grid").boundingBox(),
+    ]);
+    expect(Math.abs((phoneWidgetBox?.width ?? 0) - (phoneGridBox?.width ?? 1))).toBeLessThanOrEqual(
+      1,
+    );
     expect(
       await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     ).toBe(true);

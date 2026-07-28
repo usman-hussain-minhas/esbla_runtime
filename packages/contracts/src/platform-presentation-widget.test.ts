@@ -42,6 +42,7 @@ describe("presentation widget manifest", () => {
       preferredRowSpan: 3,
     });
     expect(HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION.fullWidthEligible).toBe(true);
+    expect(HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION.supportedStates).toContain("stale_retrying");
     expect(Object.isFrozen(HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION)).toBe(true);
     expect(Object.isFrozen(HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION.layoutConstraints.desktop)).toBe(
       true,

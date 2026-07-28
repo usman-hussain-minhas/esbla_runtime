@@ -11,7 +11,10 @@ export function getServerDevelopmentSessionSummary() {
   return summarizeDevelopmentSession(process.env);
 }
 
-export async function fetchDevelopmentApi(input: DevelopmentRequestInput): Promise<Response> {
+export async function fetchDevelopmentApi(
+  input: DevelopmentRequestInput,
+  options: { readonly signal?: AbortSignal } = {},
+): Promise<Response> {
   const request = prepareDevelopmentRequest(readDevelopmentSessionConfig(process.env), input);
   return fetch(request.url, {
     ...(request.body === undefined ? {} : { body: request.body }),
@@ -19,5 +22,6 @@ export async function fetchDevelopmentApi(input: DevelopmentRequestInput): Promi
     headers: request.headers,
     method: request.method,
     redirect: "error",
+    ...(options.signal ? { signal: options.signal } : {}),
   });
 }
