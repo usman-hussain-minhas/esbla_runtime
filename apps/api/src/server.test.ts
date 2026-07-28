@@ -106,6 +106,17 @@ describe("runtime probes", () => {
     expect(query).not.toHaveBeenCalled();
   });
 
+  it("protects presentation navigation discovery before PostgreSQL access", async () => {
+    const { query, server } = testServer();
+    const response = await server.inject({
+      method: "GET",
+      url: "/v1/platform/presentation/navigation",
+    });
+    expect(response.statusCode).toBe(401);
+    expect(response.headers["content-type"]).toContain("application/problem+json");
+    expect(query).not.toHaveBeenCalled();
+  });
+
   it("protects every admitted Shift route before PostgreSQL access", async () => {
     const { query, server } = testServer();
     const rosterVersionId = randomUUID();

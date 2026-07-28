@@ -65,6 +65,10 @@ describe("Esbla Theme v1 host contract", () => {
       new URL("./theme-mode-control.tsx", import.meta.url),
       "utf8",
     );
+    const navigation = await readFile(
+      new URL("../theme/zen-theme/v1/chrome/zen-navigation-chrome.tsx", import.meta.url),
+      "utf8",
+    );
     const myWork = await readFile(new URL("./workspace/my-work/page.tsx", import.meta.url), "utf8");
     const taskComplete = await readFile(
       new URL("./workspace/my-work/task-complete-action.tsx", import.meta.url),
@@ -100,10 +104,12 @@ describe("Esbla Theme v1 host contract", () => {
     expect(surfaces).toContain('href: "/workspace/tasks"');
     expect(surfaces).toContain('href: "/workspace/hr"');
     expect(shell).not.toContain("WORKSPACE_SURFACES.map");
-    expect(shell).toContain('getPresentationServiceGroupDefinition("hr")');
-    expect(shell).toContain("href={hrGroup.href}");
-    expect(shell).toContain("loadOwnPresentationServiceGroups");
-    expect(shell).toContain("semanticKey={hrGroup.semanticIcon}");
+    expect(shell).toContain("loadOwnPresentationNavigation");
+    expect(shell).toContain("ZenNavigationChrome");
+    expect(navigation).toContain('semanticKey="modules"');
+    expect(navigation).toContain('semanticKey="menu"');
+    expect(navigation).toContain("model.contextualMenu.destinations.map");
+    expect(navigation).toContain("model.serviceGroups.map");
     expect(shell).toContain("UserSystemControl");
     expect(systemControl).toContain('semanticKey="user"');
     expect(shell).not.toContain("statusLabel: string");

@@ -4,6 +4,7 @@ import type { Pool, PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { PlatformError } from "./errors.js";
 import {
+  getOwnPresentationNavigation,
   getOwnPresentationPreferences,
   getOwnPresentationServiceGroups,
   getOwnPresentationSurfaceLayout,
@@ -79,7 +80,11 @@ async function setLeavePresentationEligibility(
       `DELETE FROM membership_capabilities
        WHERE tenant_id = $1 AND principal_id = $2
          AND capability_id = ANY($3::text[])`,
-      [tenantId, principalId, ["hr.leave.list_own", "hr.leave.view"]],
+      [
+        tenantId,
+        principalId,
+        ["hr.leave.list_assigned", "hr.leave.list_own", "hr.leave.submit", "hr.leave.view"],
+      ],
     );
     if (input.capabilities.length > 0) {
       await client.query(
@@ -123,6 +128,63 @@ async function setWorkforcePresentationEligibility(
         `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
          VALUES ($1, $2, 'hr.workforce.view_own')`,
         [tenantId, principalId],
+      );
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function setPresentationActorRole(
+  tenantId: string,
+  principalId: string,
+  roleKey: string,
+): Promise<void> {
+  const client = await migrationPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
+    await client.query(
+      `UPDATE memberships
+       SET role_key = $3
+       WHERE tenant_id = $1 AND principal_id = $2`,
+      [tenantId, principalId, roleKey],
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function setPresentationCapability(
+  tenantId: string,
+  principalId: string,
+  capabilityId: string,
+  enabled: boolean,
+): Promise<void> {
+  const client = await migrationPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
+    if (enabled) {
+      await client.query(
+        `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT DO NOTHING`,
+        [tenantId, principalId, capabilityId],
+      );
+    } else {
+      await client.query(
+        `DELETE FROM membership_capabilities
+         WHERE tenant_id = $1 AND principal_id = $2 AND capability_id = $3`,
+        [tenantId, principalId, capabilityId],
       );
     }
     await client.query("COMMIT");
@@ -701,6 +763,100 @@ describe("presentation preference persistence", () => {
     expect(await getOwnPresentationServiceGroups(pool, context(ids.tenantA, ids.actorA))).toEqual({
       serviceGroupIds: [],
     });
+    await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
+      active: true,
+      capabilities: ["hr.leave.list_own", "hr.leave.view"],
+    });
+  });
+
+  it("discovers only active actor-eligible navigation destinations in canonical order", async () => {
+    expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
+      serviceGroups: [{ destinationIds: ["hr.leave.own"], serviceGroupId: "hr" }],
+    });
+    await setWorkforcePresentationEligibility(ids.tenantA, ids.actorA, true);
+    expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
+      serviceGroups: [
+        {
+          destinationIds: ["hr.workforce.own", "hr.leave.own"],
+          serviceGroupId: "hr",
+        },
+      ],
+    });
+    await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
+      active: true,
+      capabilities: ["hr.leave.submit"],
+    });
+    expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
+      serviceGroups: [{ destinationIds: ["hr.workforce.own"], serviceGroupId: "hr" }],
+    });
+    await setWorkforcePresentationEligibility(ids.tenantA, ids.actorA, false);
+    expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
+      serviceGroups: [],
+    });
+    await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
+      active: true,
+      capabilities: ["hr.leave.list_own", "hr.leave.view"],
+    });
+
+    await setPresentationActorRole(ids.tenantA, ids.actorA, "manager");
+    await setPresentationCapability(ids.tenantA, ids.actorA, "hr.workforce.list_authorized", true);
+    expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
+      serviceGroups: [
+        {
+          destinationIds: ["hr.workforce.direct_reports"],
+          serviceGroupId: "hr",
+        },
+      ],
+    });
+
+    await setPresentationActorRole(ids.tenantA, ids.actorA, "hr_operator");
+    expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
+      serviceGroups: [{ destinationIds: ["hr.workforce.admin"], serviceGroupId: "hr" }],
+    });
+
+    await setPresentationActorRole(ids.tenantA, ids.actorA, "tenant_admin");
+    await setPresentationCapability(ids.tenantA, ids.actorA, "hr.workforce.list_authorized", false);
+    await setPresentationCapability(
+      ids.tenantA,
+      ids.actorA,
+      "hr.workforce.view_service_control",
+      true,
+    );
+    expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
+      serviceGroups: [{ destinationIds: ["hr.workforce.settings"], serviceGroupId: "hr" }],
+    });
+
+    await setPresentationCapability(
+      ids.tenantA,
+      ids.actorA,
+      "hr.workforce.view_service_control",
+      false,
+    );
+    await setPresentationActorRole(ids.tenantA, ids.actorA, "employee");
+  });
+
+  it("fails service-group discovery closed after role demotion with stale capabilities", async () => {
+    await setWorkforcePresentationEligibility(ids.tenantA, ids.actorA, false);
+    await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
+      active: true,
+      capabilities: ["hr.leave.list_assigned", "hr.leave.view"],
+    });
+    await setPresentationActorRole(ids.tenantA, ids.actorA, "manager");
+    expect(await getOwnPresentationServiceGroups(pool, context(ids.tenantA, ids.actorA))).toEqual({
+      serviceGroupIds: ["hr"],
+    });
+    expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
+      serviceGroups: [{ destinationIds: [], serviceGroupId: "hr" }],
+    });
+
+    await setPresentationActorRole(ids.tenantA, ids.actorA, "employee");
+    expect(await getOwnPresentationServiceGroups(pool, context(ids.tenantA, ids.actorA))).toEqual({
+      serviceGroupIds: [],
+    });
+    expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
+      serviceGroups: [],
+    });
+
     await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
       active: true,
       capabilities: ["hr.leave.list_own", "hr.leave.view"],
