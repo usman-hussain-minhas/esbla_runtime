@@ -91,6 +91,22 @@ a readable, keyboard-reachable System entry. Search, Notifications, Team, tenant
 switching, status, Universal Settings and Edit Surface remain absent until
 backed.
 
+T4-3 registers ordered semantic sections separately from user layout geometry
+and binds them to the exact code-owned surface base version, definition hash and
+canonical contract. A section becomes eligible only after an exact registered
+widget instance or authorized content anchor survives activation and
+authorization filtering.
+Both initial Mission Control surfaces deliberately retain one `overview`
+section, so they reserve no rail geometry and render no rail control. The shared
+rail renders only when at least two sections survive, uses the one surface
+scroll owner and actual heading intersections, moves focus to an unobscured
+selected heading without rewriting history, preserves named keyboard controls
+and the v3.2 desktop bar/tooltip grammar, and uses a readable contained chooser
+on tablet and phone. A later
+versioned multi-section surface supplies the first visible Product consumer;
+this slice does not fabricate a second default section merely to demonstrate
+the rail.
+
 ## Requirement trace
 
 | ID | Runtime implementation | Proof in this walking slice |
@@ -106,6 +122,7 @@ backed.
 | `ZEN-RESP-002` | a pure resolver uses measured control geometry and deterministic tablet/phone collapse priority; collapsed navigation remains available in System | unit/browser |
 | `ZEN-SURF-001` | shared code-owned version-one surface manifests and ordered default-instance metadata, startup hash/binding validation, plus tenant-scoped personal overlays with CAS | contract, platform-core, database integration, reload and restart proof |
 | `ZEN-SURF-002` | a pure bounded resolver derives stable 12/8/4 geometry, clamps declared constraints, rejects invalid/duplicate identity, resolves collisions without overlap and returns explicit diagnostics | unit and browser boundary/geometry checks |
+| `ZEN-SURF-003` | code-owned ordered semantic sections require an eligible widget or authorized content anchor; one-section defaults omit all rail markup; the shared rail uses actual section intersections, the one scroll owner, keyboard controls, focus movement, desktop bar/tooltip grammar and a compact tablet/phone chooser without history mutation | resolver/component proof and actual-browser default-absence proof; visible multi-section browser proof remains for the first versioned multi-section surface |
 | `ZEN-WIDGET-001` | generic immutable widget-manifest registry with exact `hr.leave.my-requests` V1 semantics, layout metadata, startup hash/binding validation and a closed semantic-icon resolver; PostgreSQL stores no executable definition | contract/unit/schema checks |
 | `ZEN-WIDGET-002` | shared components deliberately render all ten registered states; the real Leave provider uses loading, empty, populated and sanitized denied/inactive/not-found/error/unavailable states while stale remains inapplicable under `no_store` | component proof for all states; real-provider browser proof for populated/responsive rendering only; browser proof for every failure state is not claimed |
 | `ZEN-FULL-001` | parallel intercepted detail route and direct standalone detail route share one face; direct entry returns to the canonical Leave host | browser navigation, direct load and reload |
@@ -120,7 +137,8 @@ backed.
 | `ZEN-PROCESS-001` | the real Leave consumer precedes kernel generalization; restart proof reuses bounded existing fixtures | candidate audit |
 
 This trace describes the T2 walking slice, all four bounded T3 generalizations
-and the first two T4 shell slices. It proves the current composition kernel,
-capability-safe navigation and responsive panel arbitration; it does not claim
-registered shortcuts, the section rail, Studio, the complete Zen shell,
-complete HR, release or deployment.
+and the first three T4 shell slices. It proves the current composition kernel,
+capability-safe navigation, responsive panel arbitration and the truthful
+section-rail contract; it does not claim registered shortcuts, a visible
+multi-section Product surface, Studio, the complete Zen shell, complete HR,
+release or deployment.

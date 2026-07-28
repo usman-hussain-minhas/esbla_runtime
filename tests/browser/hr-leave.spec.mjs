@@ -276,6 +276,8 @@ test("Mission Control reuses the real Leave widget and persists independent appe
     await expect(
       employee.page.getByRole("heading", { name: "Your work, one surface" }),
     ).toBeVisible();
+    await expect(employee.page.getByRole("navigation", { name: "On this surface" })).toHaveCount(0);
+    await expect(employee.page.getByRole("combobox", { name: "On this surface" })).toHaveCount(0);
     const universalWidget = employee.page.locator(
       '[data-surface-instance="mission-control.my-leave"]:not([data-widget-state="loading"])',
     );
@@ -311,6 +313,8 @@ test("Mission Control reuses the real Leave widget and persists independent appe
     await expect(universalWidget).toHaveCSS("--widget-row", "5");
 
     await employee.page.goto(`${employee.origin}/workspace/hr`);
+    await expect(employee.page.getByRole("navigation", { name: "On this surface" })).toHaveCount(0);
+    await expect(employee.page.getByRole("combobox", { name: "On this surface" })).toHaveCount(0);
     await expect(
       employee.page.locator(
         '[data-surface-instance="hr-mission-control.my-leave"]:not([data-widget-state="loading"])',
