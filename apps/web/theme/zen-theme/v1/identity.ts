@@ -1,4 +1,5 @@
 export const ZEN_THEME_ALIASES = ["zen", "zen_theme", "esbla_v1", "zen_v1", "zen-theme"] as const;
+export const ZEN_THEME_CACHE_KEY = "esbla.presentation.cache.v1";
 
 export const ZEN_THEME_DEFINITION = Object.freeze({
   aliases: ZEN_THEME_ALIASES,

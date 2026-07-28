@@ -26,6 +26,7 @@
   --warning: #c9852d;
   --corner-button: 46px;
   --corner-gap: 8px;
+  --chrome-cluster-gap: 18px;
   --edge: 18px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
@@ -178,6 +179,96 @@ h1 {
   background: var(--surface-chrome-hover);
   border-color: var(--line-mid);
   color: var(--accent-strong);
+}
+
+.chrome-button[data-tooltip]::after,
+.icon-command[data-tooltip]::after {
+  background: var(--surface-panel);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius-chip);
+  box-shadow: var(--shadow-soft);
+  color: var(--text-main);
+  content: attr(data-tooltip);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.2;
+  opacity: 0;
+  padding: 6px 8px;
+  pointer-events: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  transform: translateY(-3px);
+  transition:
+    opacity var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-standard),
+    visibility var(--motion-fast) var(--ease-standard);
+  visibility: hidden;
+  white-space: nowrap;
+  z-index: 50;
+}
+
+.chrome-button[data-tooltip]:hover::after,
+.chrome-button[data-tooltip]:focus-visible::after,
+.icon-command[data-tooltip]:hover::after,
+.icon-command[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.chrome-home::after,
+.chrome-contextual::after,
+.chrome-service-groups::after {
+  left: 0;
+}
+
+.system-launcher,
+.theme-direct-launcher,
+.icon-command {
+  position: relative;
+}
+
+.system-launcher::after,
+.theme-direct-launcher::after,
+.icon-command::after {
+  right: 0;
+}
+
+.zen-chrome-measure {
+  contain: strict;
+  height: 1px;
+  left: 0;
+  pointer-events: none;
+  position: fixed;
+  top: 0;
+  visibility: hidden;
+  width: 1px;
+}
+
+.zen-chrome-measure > span {
+  display: block;
+  height: 1px;
+  position: absolute;
+}
+
+.zen-chrome-button-probe {
+  width: var(--corner-button);
+}
+
+.zen-chrome-cluster-gap-probe {
+  width: var(--chrome-cluster-gap);
+}
+
+.zen-chrome-control-gap-probe {
+  width: var(--corner-gap);
+}
+
+.zen-chrome-start-inset-probe {
+  width: calc(var(--edge) + var(--safe-left));
+}
+
+.zen-chrome-end-inset-probe {
+  width: calc(var(--edge) + var(--safe-right));
 }
 
 .chrome-home {
@@ -339,6 +430,28 @@ h1 {
   width: 100%;
 }
 
+.system-panel-choices,
+.system-panel-navigation {
+  display: grid;
+  gap: 8px;
+}
+
+.panel-back-command {
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-chip);
+  color: var(--accent-strong);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  min-height: 32px;
+  padding: 0 9px;
+}
+
+.panel-back-command:hover {
+  background: var(--accent-soft);
+}
+
 .theme-choice:disabled {
   cursor: wait;
   opacity: 0.62;
@@ -402,11 +515,24 @@ h1 {
   z-index: 4;
 }
 
+.surface-frame::after {
+  background: linear-gradient(to bottom, var(--surface-panel), transparent);
+  content: "";
+  height: 22px;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: 0;
+  z-index: 5;
+}
+
 .surface-scroll {
   height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scroll-padding-block: 26px max(48px, var(--safe-bottom));
   scrollbar-color: var(--line-mid) transparent;
 }
 
@@ -1430,27 +1556,13 @@ textarea:focus-visible,
 
 @media (max-width: 767px) {
   :root {
-    --corner-button: 42px;
+    --corner-button: 46px;
     --corner-gap: 7px;
     --edge: 10px;
     --surface-frame-bottom: 72px;
     --surface-frame-left: 10px;
     --surface-frame-right: 10px;
     --surface-frame-top: 62px;
-  }
-
-  .chrome-service-groups {
-    left: calc(var(--edge) + var(--safe-left) + var(--corner-button) + var(--corner-gap));
-    top: calc(var(--edge) + var(--safe-top));
-  }
-
-  .zen-contextual-navigation + .zen-service-groups-navigation .chrome-service-groups {
-    left: calc(
-      var(--edge) +
-      var(--safe-left) +
-      (var(--corner-button) * 2) +
-      (var(--corner-gap) * 2)
-    );
   }
 
   .theme-direct-launcher {
@@ -1626,6 +1738,43 @@ textarea:focus-visible,
 }
 
 @media (max-width: 1099px) {
+  .chrome-contextual,
+  .chrome-service-groups {
+    left: calc(var(--edge) + var(--safe-left) + var(--corner-button) + var(--corner-gap));
+    top: calc(var(--edge) + var(--safe-top));
+  }
+
+  .zen-contextual-navigation + .zen-service-groups-navigation .chrome-service-groups {
+    left: calc(
+      var(--edge) +
+      var(--safe-left) +
+      (var(--corner-button) * 2) +
+      (var(--corner-gap) * 2)
+    );
+  }
+
+  .chrome-contextual-popover,
+  .chrome-service-groups-popover {
+    left: calc(var(--edge) + var(--safe-left));
+    top: calc(var(--edge) + var(--safe-top) + var(--corner-button) + var(--corner-gap));
+    width: min(380px, calc(100vw - (var(--edge) * 2) - var(--safe-left) - var(--safe-right)));
+  }
+
+  .theme-panel {
+    max-height: calc(
+      100dvh -
+      var(--safe-top) -
+      var(--safe-bottom) -
+      var(--edge) -
+      var(--corner-button) -
+      (var(--corner-gap) * 2)
+    );
+    overflow-y: auto;
+    position: fixed;
+    right: calc(var(--edge) + var(--safe-right));
+    top: calc(var(--edge) + var(--safe-top) + var(--corner-button) + var(--corner-gap));
+  }
+
   .widget-grid {
     grid-template-columns: repeat(8, minmax(0, 1fr));
   }
@@ -1654,11 +1803,5 @@ textarea:focus-visible,
   .zen-widget {
     grid-column: var(--widget-phone-column) / span var(--widget-phone-column-span);
     grid-row: var(--widget-phone-row) / span var(--widget-phone-row-span);
-  }
-
-  .theme-panel {
-    position: fixed;
-    right: calc(var(--edge) + var(--safe-right));
-    top: calc(var(--edge) + var(--safe-top) + var(--corner-button) + var(--corner-gap));
   }
 }

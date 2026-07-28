@@ -1,15 +1,15 @@
 "use client";
 
-import type { PresentationNavigationDiscovery } from "@esbla/contracts";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { type MouseEvent, useEffect, useId, useRef, useState } from "react";
-import { buildZenNavigationModel } from "../../../../lib/presentation-navigation-core";
+import { type MouseEvent, useEffect, useId, useRef } from "react";
+import type { ZenNavigationModel } from "../../../../lib/presentation-navigation-core";
 import { SemanticIcon } from "../semantic-icons";
 
-type OpenMenu = "contextual" | "service-groups" | undefined;
+export type ZenDirectOpenMenu = "contextual" | "service-groups" | undefined;
 const ROUTE_HEADING_FOCUS_KEY = "esbla.zen-navigation.focus-heading";
 
-function prepareRouteHeadingFocus(event: MouseEvent<HTMLAnchorElement>) {
+export function prepareRouteHeadingFocus(event: MouseEvent<HTMLAnchorElement>) {
   if (
     event.defaultPrevented ||
     event.button !== 0 ||
@@ -28,9 +28,29 @@ function prepareRouteHeadingFocus(event: MouseEvent<HTMLAnchorElement>) {
   } catch {}
 }
 
+export function consumeRouteHeadingFocus(pathname: string): boolean {
+  try {
+    const targetPathname = window.sessionStorage.getItem(ROUTE_HEADING_FOCUS_KEY);
+    if (targetPathname) window.sessionStorage.removeItem(ROUTE_HEADING_FOCUS_KEY);
+    return targetPathname === pathname;
+  } catch {
+    return false;
+  }
+}
+
 export function ZenNavigationChrome({
-  discovery,
-}: Readonly<{ discovery: PresentationNavigationDiscovery }>) {
+  model,
+  onOpenMenuChange,
+  openMenu,
+  showContextualMenu,
+  showServiceGroups,
+}: Readonly<{
+  model: ZenNavigationModel;
+  onOpenMenuChange: (menu: ZenDirectOpenMenu) => void;
+  openMenu: ZenDirectOpenMenu;
+  showContextualMenu: boolean;
+  showServiceGroups: boolean;
+}>) {
   const pathname = usePathname();
   const contextualMenuId = useId();
   const serviceGroupsMenuId = useId();
@@ -40,31 +60,13 @@ export function ZenNavigationChrome({
   const serviceGroupsLauncher = useRef<HTMLButtonElement>(null);
   const serviceGroupsPanel = useRef<HTMLElement>(null);
   const previousPathname = useRef(pathname);
-  const [openMenu, setOpenMenu] = useState<OpenMenu>();
-  const model = buildZenNavigationModel(discovery, pathname);
 
   useEffect(() => {
     if (previousPathname.current !== pathname) {
       previousPathname.current = pathname;
-      setOpenMenu(undefined);
+      onOpenMenuChange(undefined);
     }
-  }, [pathname]);
-
-  useEffect(() => {
-    let targetPathname: string | null = null;
-    try {
-      targetPathname = window.sessionStorage.getItem(ROUTE_HEADING_FOCUS_KEY);
-      if (targetPathname) window.sessionStorage.removeItem(ROUTE_HEADING_FOCUS_KEY);
-    } catch {}
-    if (targetPathname !== pathname) return;
-    const frame = requestAnimationFrame(() => {
-      const heading = document.querySelector<HTMLElement>("main h1");
-      if (!heading) return;
-      heading.tabIndex = -1;
-      heading.focus();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [pathname]);
+  }, [onOpenMenuChange, pathname]);
 
   useEffect(() => {
     if (!openMenu) return;
@@ -75,7 +77,7 @@ export function ZenNavigationChrome({
     const restoreFocus = () => {
       const launcher =
         openMenu === "contextual" ? contextualLauncher.current : serviceGroupsLauncher.current;
-      setOpenMenu(undefined);
+      onOpenMenuChange(undefined);
       requestAnimationFrame(() => launcher?.focus());
     };
     function dismissOutside(event: PointerEvent) {
@@ -91,32 +93,30 @@ export function ZenNavigationChrome({
       document.removeEventListener("pointerdown", dismissOutside);
       document.removeEventListener("keydown", dismissOnEscape);
     };
-  }, [openMenu]);
+  }, [onOpenMenuChange, openMenu]);
 
   return (
     <nav aria-label="Primary navigation" className="zen-primary-navigation" ref={root}>
-      <a
+      <Link
         aria-label="Mission Control"
         className="chrome-button chrome-home"
+        data-tooltip="Mission Control"
         href="/"
         onClick={prepareRouteHeadingFocus}
-        title="Home"
       >
         <SemanticIcon aria-hidden="true" semanticKey="home" size={19} strokeWidth={1.75} />
-      </a>
+      </Link>
 
-      {model.contextualMenu ? (
+      {showContextualMenu && model.contextualMenu ? (
         <div className="zen-contextual-navigation">
           <button
             aria-controls={contextualMenuId}
             aria-expanded={openMenu === "contextual"}
             aria-label={model.contextualMenu.label}
             className="chrome-button chrome-contextual"
-            onClick={() =>
-              setOpenMenu((current) => (current === "contextual" ? undefined : "contextual"))
-            }
+            data-tooltip={model.contextualMenu.label}
+            onClick={() => onOpenMenuChange(openMenu === "contextual" ? undefined : "contextual")}
             ref={contextualLauncher}
-            title={model.contextualMenu.label}
             type="button"
           >
             <SemanticIcon aria-hidden="true" semanticKey="menu" size={19} strokeWidth={1.75} />
@@ -129,7 +129,7 @@ export function ZenNavigationChrome({
               ref={contextualPanel}
             >
               {model.contextualMenu.destinations.map((destination) => (
-                <a
+                <Link
                   aria-current={
                     destination.id === model.contextualMenu?.activeDestinationId
                       ? "page"
@@ -140,7 +140,7 @@ export function ZenNavigationChrome({
                   key={destination.id}
                   onClick={(event) => {
                     prepareRouteHeadingFocus(event);
-                    setOpenMenu(undefined);
+                    onOpenMenuChange(undefined);
                   }}
                 >
                   <SemanticIcon
@@ -150,27 +150,25 @@ export function ZenNavigationChrome({
                     strokeWidth={1.75}
                   />
                   <span>{destination.label}</span>
-                </a>
+                </Link>
               ))}
             </nav>
           ) : null}
         </div>
       ) : null}
 
-      {model.serviceGroups.length > 0 ? (
+      {showServiceGroups && model.serviceGroups.length > 0 ? (
         <div className="zen-service-groups-navigation">
           <button
             aria-controls={serviceGroupsMenuId}
             aria-expanded={openMenu === "service-groups"}
             aria-label="Service Groups"
             className="chrome-button chrome-service-groups"
+            data-tooltip="Service Groups"
             onClick={() =>
-              setOpenMenu((current) =>
-                current === "service-groups" ? undefined : "service-groups",
-              )
+              onOpenMenuChange(openMenu === "service-groups" ? undefined : "service-groups")
             }
             ref={serviceGroupsLauncher}
-            title="Service Groups"
             type="button"
           >
             <SemanticIcon aria-hidden="true" semanticKey="modules" size={19} strokeWidth={1.75} />
@@ -183,7 +181,7 @@ export function ZenNavigationChrome({
               ref={serviceGroupsPanel}
             >
               {model.serviceGroups.map((group) => (
-                <a
+                <Link
                   aria-current={
                     pathname === group.href || pathname.startsWith(`${group.href}/`)
                       ? "page"
@@ -194,7 +192,7 @@ export function ZenNavigationChrome({
                   key={group.serviceGroupId}
                   onClick={(event) => {
                     prepareRouteHeadingFocus(event);
-                    setOpenMenu(undefined);
+                    onOpenMenuChange(undefined);
                   }}
                 >
                   <SemanticIcon
@@ -204,7 +202,7 @@ export function ZenNavigationChrome({
                     strokeWidth={1.75}
                   />
                   <span>{group.label}</span>
-                </a>
+                </Link>
               ))}
             </nav>
           ) : null}

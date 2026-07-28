@@ -482,6 +482,33 @@ test("Mission Control reuses the real Leave widget and persists independent appe
         .toEqual(expectedPlacement);
     }
 
+    const shellChrome = employee.page.locator(".zen-shell-chrome");
+    await employee.page.setViewportSize({ height: 844, width: 1_100 });
+    const directAppearanceLauncher = employee.page.getByRole("button", {
+      exact: true,
+      name: "Appearance settings",
+    });
+    await expect(directAppearanceLauncher).toBeVisible();
+    await directAppearanceLauncher.click();
+    const appearancePanel = employee.page.getByRole("region", { name: "Appearance settings" });
+    await expect(appearancePanel).toBeVisible();
+    await employee.page.setViewportSize({ height: 844, width: 1_099 });
+    await employee.page.evaluate(() => {
+      document.documentElement.style.setProperty("--corner-button", "260px");
+      document.documentElement.style.setProperty("--corner-gap", "20px");
+    });
+    await expect(shellChrome).toHaveAttribute("data-collapsed-controls", "appearance");
+    await expect(directAppearanceLauncher).toBeHidden();
+    await expect(appearancePanel).toBeVisible();
+    await appearancePanel.getByRole("button", { name: "Close appearance settings" }).click();
+    await expect(
+      employee.page.getByRole("button", { exact: true, name: "User and system" }),
+    ).toBeFocused();
+    await employee.page.evaluate(() => {
+      document.documentElement.style.removeProperty("--corner-button");
+      document.documentElement.style.removeProperty("--corner-gap");
+    });
+
     await employee.page.setViewportSize({ height: 844, width: 390 });
     await expect(universalWidget).toBeVisible();
     await expect
@@ -497,12 +524,42 @@ test("Mission Control reuses the real Leave widget and persists independent appe
     expect(
       await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     ).toBe(true);
+    const systemLauncher = employee.page.getByRole("button", {
+      exact: true,
+      name: "User and system",
+    });
     const serviceGroupsLauncher = employee.page.getByRole("button", {
       exact: true,
       name: "Service Groups",
     });
+    const eligibleServiceGroups = employee.page.getByRole("navigation", {
+      name: "Eligible service groups",
+    });
+    await expect(systemLauncher).toBeVisible();
+    await serviceGroupsLauncher.click();
+    await expect(eligibleServiceGroups).toBeVisible();
+    await systemLauncher.click();
+    const systemPanel = employee.page.getByRole("region", { name: "User and system" });
+    await expect(eligibleServiceGroups).toBeHidden();
+    await expect(systemPanel).toBeVisible();
+    await expect(systemPanel.getByRole("heading", { name: "User and system" })).toBeFocused();
+    await employee.page.keyboard.press("Escape");
+    await expect(systemLauncher).toBeFocused();
+
     const serviceGroupsLauncherBox = await serviceGroupsLauncher.boundingBox();
     expect(serviceGroupsLauncherBox?.width).toBe(serviceGroupsLauncherBox?.height);
+    await serviceGroupsLauncher.focus();
+    await expect
+      .poll(async () =>
+        serviceGroupsLauncher.evaluate((element) => {
+          const tooltip = getComputedStyle(element, "::after");
+          return {
+            content: tooltip.content.replace(/^["']|["']$/g, ""),
+            visibility: tooltip.visibility,
+          };
+        }),
+      )
+      .toEqual({ content: "Service Groups", visibility: "visible" });
     await serviceGroupsLauncher.click();
     const hrServiceGroupLink = employee.page
       .getByRole("navigation", { name: "Eligible service groups" })
@@ -511,16 +568,10 @@ test("Mission Control reuses the real Leave widget and persists independent appe
     await expect(hrServiceGroupLink).toBeFocused();
     await employee.page.keyboard.press("Escape");
     await expect(serviceGroupsLauncher).toBeFocused();
-    const systemLauncher = employee.page.getByRole("button", {
-      exact: true,
-      name: "User and system",
-    });
-    await expect(systemLauncher).toBeVisible();
     await expect(
       employee.page.getByRole("button", { exact: true, name: "Appearance settings" }),
     ).toBeHidden();
     await systemLauncher.click();
-    const systemPanel = employee.page.getByRole("region", { name: "User and system" });
     await expect(systemPanel).toBeVisible();
     const systemPanelEvidencePath = testInfo.outputPath("mission-control-phone-system-panel.png");
     await employee.page.screenshot({ fullPage: false, path: systemPanelEvidencePath });
@@ -532,6 +583,110 @@ test("Mission Control reuses the real Leave widget and persists independent appe
     await expect(employee.page.getByRole("region", { name: "Appearance settings" })).toBeVisible();
     await employee.page.getByRole("button", { name: "Close appearance settings" }).click();
     await expect(systemLauncher).toBeFocused();
+
+    await serviceGroupsLauncher.click();
+    await expect(eligibleServiceGroups).toBeVisible();
+    await expect(hrServiceGroupLink).toBeFocused();
+    await employee.page.evaluate(() => {
+      document.documentElement.style.setProperty("--corner-button", "120px");
+      document.documentElement.style.setProperty("--corner-gap", "14px");
+      document.documentElement.style.setProperty("--chrome-cluster-gap", "28px");
+      document.documentElement.style.setProperty("--edge", "20px");
+    });
+    await expect(shellChrome).toHaveAttribute(
+      "data-collapsed-controls",
+      "appearance service-groups",
+    );
+    await expect(serviceGroupsLauncher).toHaveCount(0);
+    const collapsedServiceGroups = employee.page.getByRole("region", {
+      exact: true,
+      name: "Service Groups",
+    });
+    await expect(
+      collapsedServiceGroups
+        .getByRole("navigation", { name: "Eligible service groups" })
+        .getByRole("link", { exact: true, name: "HR" }),
+    ).toBeFocused();
+    await employee.page.keyboard.press("Escape");
+    await expect(systemPanel).toBeVisible();
+    await employee.page.keyboard.press("Escape");
+    await expect(systemLauncher).toBeFocused();
+    await employee.page.evaluate(() => {
+      document.documentElement.style.removeProperty("--corner-button");
+      document.documentElement.style.removeProperty("--corner-gap");
+      document.documentElement.style.removeProperty("--chrome-cluster-gap");
+      document.documentElement.style.removeProperty("--edge");
+    });
+    await expect(shellChrome).toHaveAttribute("data-collapsed-controls", "appearance");
+    await expect(serviceGroupsLauncher).toBeVisible();
+
+    await employee.page.goto(`${employee.origin}/workspace/hr`);
+    await expect(employee.page.getByRole("heading", { name: "People and work" })).toBeVisible();
+    const [phoneContextualBox, phoneServiceGroupsBox] = await Promise.all([
+      contextualLauncher.boundingBox(),
+      serviceGroupsLauncher.boundingBox(),
+    ]);
+    expect(phoneContextualBox).not.toBeNull();
+    expect(phoneServiceGroupsBox).not.toBeNull();
+    expect(phoneContextualBox.x).toBeLessThan(phoneServiceGroupsBox.x);
+    await contextualLauncher.click();
+    await expect(contextualNavigation).toBeVisible();
+    await systemLauncher.click();
+    await expect(contextualNavigation).toBeHidden();
+    await expect(systemPanel).toBeVisible();
+    await employee.page.keyboard.press("Escape");
+    await expect(systemLauncher).toBeFocused();
+    await contextualLauncher.click();
+    await contextualNavigation.getByRole("link", { exact: true, name: "Leave Requests" }).click();
+    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/leave`);
+    await expect(employee.page.getByRole("heading", { name: "My Leave Requests" })).toBeFocused();
+    await systemLauncher.click();
+    await expect(systemPanel).toBeVisible();
+    await employee.page.goBack();
+    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr`);
+    await expect(systemPanel).toBeHidden();
+    await expect(employee.page.getByRole("heading", { name: "People and work" })).toBeFocused();
+    await systemLauncher.click();
+    await systemPanel.getByRole("button", { exact: true, name: "Appearance" }).click();
+    await expect(employee.page.getByRole("region", { name: "Appearance settings" })).toBeVisible();
+    await employee.page.goForward();
+    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/leave`);
+    await expect(employee.page.getByRole("region", { name: "Appearance settings" })).toBeHidden();
+    await expect(employee.page.getByRole("heading", { name: "My Leave Requests" })).toBeFocused();
+    await employee.page.goBack();
+    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr`);
+    await systemLauncher.click();
+    await expect(systemPanel).toBeVisible();
+    await employee.page.evaluate(() => {
+      const heading = document.querySelector("main h1");
+      if (!heading) throw new Error("Route heading is unavailable");
+      window.history.pushState(null, "", "/workspace/hr/focus-settlement-probe");
+    });
+    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/focus-settlement-probe`);
+    await expect(employee.page.getByRole("region", { name: "User and system" })).toBeHidden();
+    await employee.page.evaluate(() => {
+      const heading = document.querySelector("main h1");
+      if (!heading) throw new Error("Route heading is unavailable");
+      const loading = document.createElement("h1");
+      loading.textContent = "Loading People and work";
+      heading.replaceWith(loading);
+    });
+    await expect(
+      employee.page.getByRole("heading", { name: "Loading People and work" }),
+    ).toBeFocused();
+    await employee.page.evaluate(() => {
+      const loading = document.querySelector("main h1");
+      if (!loading) throw new Error("Loading route heading is unavailable");
+      const settled = document.createElement("h1");
+      settled.textContent = "People and work";
+      loading.replaceWith(settled);
+    });
+    await expect(employee.page.getByRole("heading", { name: "People and work" })).toBeFocused();
+    await employee.page.goto(employee.origin);
+    await expect(
+      employee.page.getByRole("heading", { name: "Your work, one surface" }),
+    ).toBeVisible();
+
     const phoneEvidencePath = testInfo.outputPath("mission-control-phone.png");
     await employee.page.screenshot({ fullPage: false, path: phoneEvidencePath });
     await testInfo.attach("mission-control-phone", {

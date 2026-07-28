@@ -19,6 +19,9 @@ describe("Esbla Theme v1 host contract", () => {
     expect(css).toContain("@media (max-width: 767px)");
     expect(css).toContain("env(safe-area-inset-top");
     expect(css).toContain("env(safe-area-inset-bottom");
+    expect(css).not.toContain("--corner-button: 42px");
+    expect(css).toContain(".surface-frame::after");
+    expect(css).not.toContain(".surface-frame::before");
     expect(css).not.toContain("@media (max-width: 760px)");
     expect(css).not.toContain("@media (max-width: 980px)");
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
@@ -62,11 +65,15 @@ describe("Esbla Theme v1 host contract", () => {
     const surfaces = await readFile(new URL("./workspace-surfaces.ts", import.meta.url), "utf8");
     const shell = await readFile(new URL("./workspace-shell.tsx", import.meta.url), "utf8");
     const systemControl = await readFile(
-      new URL("./theme-mode-control.tsx", import.meta.url),
+      new URL("../theme/zen-theme/v1/panels/zen-system-panel.tsx", import.meta.url),
       "utf8",
     );
     const navigation = await readFile(
       new URL("../theme/zen-theme/v1/chrome/zen-navigation-chrome.tsx", import.meta.url),
+      "utf8",
+    );
+    const shellChrome = await readFile(
+      new URL("../theme/zen-theme/v1/chrome/zen-shell-chrome.tsx", import.meta.url),
       "utf8",
     );
     const myWork = await readFile(new URL("./workspace/my-work/page.tsx", import.meta.url), "utf8");
@@ -105,13 +112,21 @@ describe("Esbla Theme v1 host contract", () => {
     expect(surfaces).toContain('href: "/workspace/hr"');
     expect(shell).not.toContain("WORKSPACE_SURFACES.map");
     expect(shell).toContain("loadOwnPresentationNavigation");
-    expect(shell).toContain("ZenNavigationChrome");
+    expect(shell).toContain("ZenShellChrome");
+    expect(shellChrome).toContain("type ZenChromeLayer");
+    expect(shellChrome).toContain("ZenNavigationChrome");
+    expect(shellChrome).toContain("UserSystemControl");
+    expect(shellChrome).toContain("resolveZenResponsiveChrome");
     expect(navigation).toContain('semanticKey="modules"');
     expect(navigation).toContain('semanticKey="menu"');
     expect(navigation).toContain("model.contextualMenu.destinations.map");
     expect(navigation).toContain("model.serviceGroups.map");
-    expect(shell).toContain("UserSystemControl");
+    expect(navigation).toContain('data-tooltip="Mission Control"');
+    expect(navigation).toContain('data-tooltip="Service Groups"');
     expect(systemControl).toContain('semanticKey="user"');
+    expect(systemControl).toContain('data-tooltip="User and system"');
+    expect(systemControl).toContain("data-tooltip={`Close ");
+    expect(systemControl).toContain("label.toLowerCase()");
     expect(shell).not.toContain("statusLabel: string");
   });
 
