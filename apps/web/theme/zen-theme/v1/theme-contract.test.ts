@@ -1,10 +1,17 @@
 import { createHash } from "node:crypto";
-import { getZenV1SurfaceContract, presentationSemanticIconKeys } from "@esbla/contracts";
+import {
+  getZenV1SurfaceContract,
+  PRESENTATION_SURFACE_DEFINITIONS,
+  PRESENTATION_WIDGET_DEFINITIONS,
+  presentationSemanticIconKeys,
+} from "@esbla/contracts";
 import { describe, expect, it } from "vitest";
 import {
   APPEARANCE_SETTING_DEFINITIONS,
   canonicalizeWidgetDefinition,
   DEFAULT_SURFACE_INSTANCES,
+  getRegisteredSurfaceInstance,
+  getWidgetDefinition,
   SURFACE_DEFINITIONS,
   WIDGET_DEFINITIONS,
   ZEN_THEME_ALIASES,
@@ -13,6 +20,7 @@ import {
 
 describe("Zen Theme v1 composition contract", () => {
   it("defines exactly the two code-owned Mission Control surfaces", () => {
+    expect(SURFACE_DEFINITIONS).toBe(PRESENTATION_SURFACE_DEFINITIONS);
     expect(SURFACE_DEFINITIONS).toEqual([
       expect.objectContaining({
         columnCount: 12,
@@ -45,13 +53,14 @@ describe("Zen Theme v1 composition contract", () => {
   });
 
   it("reuses one real Leave widget definition on both surfaces", () => {
+    expect(WIDGET_DEFINITIONS).toBe(PRESENTATION_WIDGET_DEFINITIONS);
     expect(WIDGET_DEFINITIONS).toContainEqual(
       expect.objectContaining({
         activationServiceKey: "hr.leave_request",
         billingTreatment: "non_billable",
         definitionVersion: 1,
-        eligibilityPolicyId: "hr.leave.my-requests.eligible.v1",
-        fullScreenRoute: "/workspace/hr/leave/[leaveRequestId]",
+        eligibilityPolicyId: "current_tenant_activation_and_capability_v1",
+        fullScreenRoute: "/workspace/hr/leave",
         id: "hr.leave.my-requests",
         requiredCapabilityIds: ["hr.leave.list_own", "hr.leave.view"],
         semanticIcon: "calendar-check",
@@ -79,6 +88,14 @@ describe("Zen Theme v1 composition contract", () => {
       }),
     ]);
     for (const instance of DEFAULT_SURFACE_INSTANCES) {
+      const registered = getRegisteredSurfaceInstance(
+        instance.surfaceId,
+        instance.widgetDefinitionId,
+      );
+      expect(registered.widgetDefinitionVersion).toBe(instance.widgetDefinitionVersion);
+      expect(
+        getWidgetDefinition(registered.widgetDefinitionId, registered.widgetDefinitionVersion),
+      ).toBe(widget);
       const canonical = getZenV1SurfaceContract(instance.surfaceId).basePlacements.find(
         ({ instanceId }) => instanceId === instance.id,
       );
