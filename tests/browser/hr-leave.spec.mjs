@@ -316,6 +316,27 @@ test("Mission Control reuses the real Leave widget and persists independent appe
         '[data-surface-instance="hr-mission-control.my-leave"]:not([data-widget-state="loading"])',
       ),
     ).toHaveAttribute("data-widget-definition", "hr.leave.my-requests");
+    const contextualLauncher = employee.page.getByRole("button", {
+      exact: true,
+      name: "HR pages",
+    });
+    await expect(contextualLauncher).toBeVisible();
+    await contextualLauncher.click();
+    const contextualNavigation = employee.page.getByRole("navigation", {
+      exact: true,
+      name: "HR pages",
+    });
+    await expect(
+      contextualNavigation.getByRole("link", { exact: true, name: "HR Mission Control" }),
+    ).toHaveAttribute("aria-current", "page");
+    await expect(
+      contextualNavigation.getByRole("link", { exact: true, name: "HR Mission Control" }),
+    ).toBeFocused();
+    await expect(
+      contextualNavigation.getByRole("link", { exact: true, name: "Leave Requests" }),
+    ).toHaveAttribute("href", "/workspace/hr/leave");
+    await employee.page.keyboard.press("Escape");
+    await expect(contextualLauncher).toBeFocused();
 
     await enableDarkHighContrast(employee);
     await employee.page.reload();
@@ -462,20 +483,34 @@ test("Mission Control reuses the real Leave widget and persists independent appe
     }
 
     await employee.page.setViewportSize({ height: 844, width: 390 });
-    const [phoneWidgetBox, phoneGridBox] = await Promise.all([
-      universalWidget.boundingBox(),
-      employee.page.locator(".widget-grid").boundingBox(),
-    ]);
-    expect(Math.abs((phoneWidgetBox?.width ?? 0) - (phoneGridBox?.width ?? 1))).toBeLessThanOrEqual(
-      1,
-    );
+    await expect(universalWidget).toBeVisible();
+    await expect
+      .poll(async () => {
+        const [phoneWidgetBox, phoneGridBox] = await Promise.all([
+          universalWidget.boundingBox(),
+          employee.page.locator(".widget-grid").boundingBox(),
+        ]);
+        if (!phoneWidgetBox || !phoneGridBox) return Number.POSITIVE_INFINITY;
+        return Math.abs(phoneWidgetBox.width - phoneGridBox.width);
+      })
+      .toBeLessThanOrEqual(1);
     expect(
       await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     ).toBe(true);
-    const pageMenu = employee.page.locator(".page-menu");
-    const pageMenuBox = await pageMenu.boundingBox();
-    expect(pageMenuBox?.width).toBe(pageMenuBox?.height);
-    await expect(pageMenu.locator(".page-menu-item span")).toBeHidden();
+    const serviceGroupsLauncher = employee.page.getByRole("button", {
+      exact: true,
+      name: "Service Groups",
+    });
+    const serviceGroupsLauncherBox = await serviceGroupsLauncher.boundingBox();
+    expect(serviceGroupsLauncherBox?.width).toBe(serviceGroupsLauncherBox?.height);
+    await serviceGroupsLauncher.click();
+    const hrServiceGroupLink = employee.page
+      .getByRole("navigation", { name: "Eligible service groups" })
+      .getByRole("link", { exact: true, name: "HR" });
+    await expect(hrServiceGroupLink).toBeVisible();
+    await expect(hrServiceGroupLink).toBeFocused();
+    await employee.page.keyboard.press("Escape");
+    await expect(serviceGroupsLauncher).toBeFocused();
     const systemLauncher = employee.page.getByRole("button", {
       exact: true,
       name: "User and system",
@@ -510,8 +545,14 @@ test("Mission Control reuses the real Leave widget and persists independent appe
     await expect(
       employee.page.locator('[data-widget-definition="hr.leave.my-requests"]'),
     ).toHaveCount(0);
-    await expect(employee.page.getByRole("link", { exact: true, name: "HR" })).toBeVisible();
-    await employee.page.goto(`${employee.origin}/workspace/hr`);
+    await expect(serviceGroupsLauncher).toBeVisible();
+    await serviceGroupsLauncher.click();
+    await employee.page
+      .getByRole("navigation", { name: "Eligible service groups" })
+      .getByRole("link", { exact: true, name: "HR" })
+      .click();
+    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr`);
+    await expect(employee.page.getByRole("heading", { name: "People and work" })).toBeFocused();
     await expect(employee.page.getByRole("link", { name: "Open leave requests" })).toHaveCount(0);
     await expect(employee.page.getByRole("link", { name: "My workforce profile" })).toBeVisible();
     await employee.page.goto(employee.origin);
@@ -548,16 +589,16 @@ test("Mission Control reuses the real Leave widget and persists independent appe
     await expect(
       employee.page.locator('[data-widget-definition="hr.leave.my-requests"]'),
     ).toHaveCount(0);
-    await expect(employee.page.getByRole("link", { exact: true, name: "HR" })).toBeVisible();
+    await expect(serviceGroupsLauncher).toBeVisible();
 
     await setEmployeeWorkforcePresentationEligibility(false);
     workforceEligibilityChanged = true;
     await employee.page.reload();
-    await expect(employee.page.getByRole("link", { exact: true, name: "HR" })).toHaveCount(0);
+    await expect(serviceGroupsLauncher).toHaveCount(0);
 
     await setEmployeeLeavePresentationEligibility(true, ["hr.leave.submit"]);
     await employee.page.reload();
-    await expect(employee.page.getByRole("link", { exact: true, name: "HR" })).toHaveCount(0);
+    await expect(serviceGroupsLauncher).toHaveCount(0);
     await employee.page.goto(`${employee.origin}/workspace/hr`);
     await expect(employee.page.getByRole("link", { name: "My workforce profile" })).toHaveCount(0);
     await expect(employee.page.getByRole("link", { name: "Open leave requests" })).toHaveCount(0);
@@ -566,7 +607,7 @@ test("Mission Control reuses the real Leave widget and persists independent appe
     await setEmployeeWorkforcePresentationEligibility(true);
     workforceEligibilityChanged = false;
     await employee.page.reload();
-    await expect(employee.page.getByRole("link", { exact: true, name: "HR" })).toBeVisible();
+    await expect(serviceGroupsLauncher).toBeVisible();
 
     await setEmployeeLeavePresentationEligibility(true, ["hr.leave.list_own", "hr.leave.view"]);
     eligibilityChanged = false;

@@ -33,17 +33,21 @@ async function closeActors(...actors) {
 
 async function post(actor, buttonName) {
   const button = actor.page.getByRole("button", { exact: true, name: buttonName });
-  await expect(button).toBeVisible();
-  const [request] = await Promise.all([
-    actor.page.waitForRequest(
+  await expect(button).toBeEnabled();
+  await button.focus();
+  await expect(button).toBeFocused();
+  const [response] = await Promise.all([
+    actor.page.waitForResponse(
       (candidate) =>
-        candidate.method() === "POST" &&
+        candidate.request().method() === "POST" &&
         new URL(candidate.url()).pathname === "/workspace/hr/timesheets/action",
       { timeout: 20_000 },
     ),
+    actor.page.waitForNavigation({ timeout: 20_000, waitUntil: "domcontentloaded" }),
     button.click(),
   ]);
-  expect((await request.response())?.status()).toBe(303);
+  expect(response.status()).toBe(303);
+  await expect(actor.page.locator("#timesheet-result")).toBeFocused();
 }
 
 async function createAndSubmit(actor, periodStart, periodEnd, workDate, description) {

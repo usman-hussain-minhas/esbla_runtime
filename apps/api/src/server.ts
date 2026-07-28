@@ -84,6 +84,7 @@ import {
   parsePresentationSurfacePath,
   parseUpdatePresentationPreferencesBody,
   parseUpdatePresentationSurfaceOverlayBody,
+  presentationNavigationDiscoverySchema,
   presentationPreferencesSchema,
   presentationServiceGroupDiscoverySchema,
   presentationSurfaceLayoutSchema,
@@ -144,6 +145,7 @@ import {
   submitLeaveRequest,
 } from "@esbla/hr";
 import {
+  getOwnPresentationNavigation,
   getOwnPresentationPreferences,
   getOwnPresentationServiceGroups,
   getOwnPresentationSurfaceLayout,
@@ -333,6 +335,7 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     hrLeaveEvidenceEventSchema,
     hrLeaveRequestPageSchema,
     hrLeaveRequestDetailSchema,
+    presentationNavigationDiscoverySchema,
     presentationPreferencesSchema,
     presentationServiceGroupDiscoverySchema,
     presentationSurfaceLayoutSchema,
@@ -393,6 +396,20 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     },
     async (request) =>
       await getOwnPresentationServiceGroups(options.pool, operationContext(request)),
+  );
+
+  server.get(
+    "/v1/platform/presentation/navigation",
+    {
+      preHandler: authenticate,
+      schema: {
+        response: {
+          200: { $ref: "PresentationNavigationDiscoveryV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request) => await getOwnPresentationNavigation(options.pool, operationContext(request)),
   );
 
   server.get(

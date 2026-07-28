@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type {
+  PresentationNavigationDiscovery,
   PresentationPalette,
   PresentationPreferenceSource,
   PresentationPreferences,
@@ -386,44 +387,132 @@ export async function getOwnPresentationServiceGroups(
         "platform.presentation.layouts.read_own",
         `principal:${transaction.context.actorPrincipalId}:service-groups`,
       );
-      const activationServiceKeys = [
-        ...new Set(
-          PRESENTATION_SERVICE_GROUP_DEFINITIONS.flatMap(({ services }) =>
-            services.map(({ activationServiceKey }) => activationServiceKey),
-          ),
-        ),
-      ];
-      const capabilityIds = [
-        ...new Set(
-          PRESENTATION_SERVICE_GROUP_DEFINITIONS.flatMap(({ services }) =>
-            services.flatMap(({ anyReadCapabilityIds }) => anyReadCapabilityIds),
-          ),
-        ),
-      ];
-      const activations = await transaction.client.query<{ service_key: string }>(
-        `SELECT service_key
-         FROM service_activations
-         WHERE tenant_id = $1 AND state = 'active' AND service_key = ANY($2::text[])
-         ORDER BY service_key`,
-        [transaction.context.tenantId, activationServiceKeys],
-      );
-      const capabilities = await transaction.client.query<{ capability_id: string }>(
-        `SELECT capability_id
-         FROM membership_capabilities
-         WHERE tenant_id = $1 AND principal_id = $2 AND capability_id = ANY($3::text[])
-         ORDER BY capability_id`,
-        [transaction.context.tenantId, transaction.context.actorPrincipalId, capabilityIds],
-      );
-      const active = new Set(activations.rows.map(({ service_key }) => service_key));
-      const authorized = new Set(capabilities.rows.map(({ capability_id }) => capability_id));
+      const { active, authorized } = await loadPresentationNavigationEligibility(transaction);
       return {
         serviceGroupIds: PRESENTATION_SERVICE_GROUP_DEFINITIONS.filter(({ services }) =>
-          services.some(
-            ({ activationServiceKey, anyReadCapabilityIds }) =>
-              active.has(activationServiceKey) &&
-              anyReadCapabilityIds.some((capabilityId) => authorized.has(capabilityId)),
+          services.some((service) =>
+            presentationServiceIsEligible(service, transaction.actor.roleKey, active, authorized),
           ),
         ).map(({ serviceGroupId }) => serviceGroupId),
+      };
+    },
+    { migrationBarrier: "shared" },
+  );
+}
+
+async function loadPresentationNavigationEligibility(transaction: TenantTransaction): Promise<{
+  readonly active: ReadonlySet<string>;
+  readonly authorized: ReadonlySet<string>;
+}> {
+  const activationServiceKeys = [
+    ...new Set(
+      PRESENTATION_SERVICE_GROUP_DEFINITIONS.flatMap(({ services }) =>
+        services.map(({ activationServiceKey }) => activationServiceKey),
+      ),
+    ),
+  ];
+  const capabilityIds = [
+    ...new Set(
+      PRESENTATION_SERVICE_GROUP_DEFINITIONS.flatMap(({ services }) =>
+        services.flatMap((service) => {
+          const additionalVisibilityRules =
+            "additionalVisibilityRules" in service ? service.additionalVisibilityRules : [];
+          return [
+            ...additionalVisibilityRules.flatMap(({ anyCapabilityIds }) => anyCapabilityIds),
+            ...service.destinations.flatMap(({ anyCapabilityIds }) => anyCapabilityIds),
+          ];
+        }),
+      ),
+    ),
+  ];
+  const [activations, capabilities] = await Promise.all([
+    transaction.client.query<{ service_key: string }>(
+      `SELECT service_key
+       FROM service_activations
+       WHERE tenant_id = $1 AND state = 'active' AND service_key = ANY($2::text[])
+       ORDER BY service_key`,
+      [transaction.context.tenantId, activationServiceKeys],
+    ),
+    transaction.client.query<{ capability_id: string }>(
+      `SELECT capability_id
+       FROM membership_capabilities
+       WHERE tenant_id = $1 AND principal_id = $2 AND capability_id = ANY($3::text[])
+       ORDER BY capability_id`,
+      [transaction.context.tenantId, transaction.context.actorPrincipalId, capabilityIds],
+    ),
+  ]);
+  return {
+    active: new Set(activations.rows.map(({ service_key }) => service_key)),
+    authorized: new Set(capabilities.rows.map(({ capability_id }) => capability_id)),
+  };
+}
+
+function presentationServiceIsEligible(
+  service: (typeof PRESENTATION_SERVICE_GROUP_DEFINITIONS)[number]["services"][number],
+  roleKey: string,
+  active: ReadonlySet<string>,
+  authorized: ReadonlySet<string>,
+): boolean {
+  return (
+    active.has(service.activationServiceKey) &&
+    [
+      ...service.destinations,
+      ...("additionalVisibilityRules" in service ? service.additionalVisibilityRules : []),
+    ].some((rule) => presentationEligibilityRuleMatches(rule, roleKey, authorized))
+  );
+}
+
+function presentationEligibilityRuleMatches(
+  rule: {
+    readonly allowedRoleKeys: readonly string[];
+    readonly anyCapabilityIds: readonly string[];
+  },
+  roleKey: string,
+  authorized: ReadonlySet<string>,
+): boolean {
+  return (
+    rule.allowedRoleKeys.includes(roleKey) &&
+    rule.anyCapabilityIds.some((capabilityId) => authorized.has(capabilityId))
+  );
+}
+
+export async function getOwnPresentationNavigation(
+  pool: Pool,
+  context: OperationContext,
+): Promise<PresentationNavigationDiscovery> {
+  return await withTenantTransaction(
+    pool,
+    context,
+    async (transaction) => {
+      assertOwnPresentationPolicy(
+        transaction,
+        "platform.presentation.layouts.read_own",
+        `principal:${transaction.context.actorPrincipalId}:navigation`,
+      );
+      const { active, authorized } = await loadPresentationNavigationEligibility(transaction);
+      return {
+        serviceGroups: PRESENTATION_SERVICE_GROUP_DEFINITIONS.flatMap((group) => {
+          const eligibleServices = group.services.filter((service) =>
+            presentationServiceIsEligible(service, transaction.actor.roleKey, active, authorized),
+          );
+          if (eligibleServices.length === 0) return [];
+          return [
+            {
+              destinationIds: eligibleServices.flatMap(({ destinations }) =>
+                destinations
+                  .filter((destination) =>
+                    presentationEligibilityRuleMatches(
+                      destination,
+                      transaction.actor.roleKey,
+                      authorized,
+                    ),
+                  )
+                  .map(({ destinationId }) => destinationId),
+              ),
+              serviceGroupId: group.serviceGroupId,
+            },
+          ];
+        }),
       };
     },
     { migrationBarrier: "shared" },

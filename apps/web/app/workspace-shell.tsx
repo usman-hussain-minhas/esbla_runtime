@@ -1,14 +1,12 @@
-import { getPresentationServiceGroupDefinition } from "@esbla/contracts";
+import type { PresentationNavigationDiscovery } from "@esbla/contracts";
 import { ShieldAlert, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import { getServerDevelopmentSessionSummary } from "../lib/development-session";
+import { loadOwnPresentationNavigation } from "../lib/presentation-navigation";
 import { loadOwnPresentationPreferences } from "../lib/presentation-preferences";
-import { loadOwnPresentationServiceGroups } from "../lib/presentation-service-groups";
-import { SemanticIcon } from "../theme/zen-theme/v1/semantic-icons";
+import { ZenNavigationChrome } from "../theme/zen-theme/v1/chrome/zen-navigation-chrome";
 import { UserSystemControl } from "./theme-mode-control";
-import { getWorkspaceSurface, type WorkspaceSurfaceKey } from "./workspace-surfaces";
-
-const hrGroup = getPresentationServiceGroupDefinition("hr");
+import type { WorkspaceSurfaceKey } from "./workspace-surfaces";
 
 interface WorkspaceShellProps {
   readonly children: ReactNode;
@@ -17,41 +15,19 @@ interface WorkspaceShellProps {
 
 export async function WorkspaceShell({ children, currentSurface }: WorkspaceShellProps) {
   const session = getServerDevelopmentSessionSummary();
-  const surface = getWorkspaceSurface(currentSurface);
   const SessionIcon = session.state === "configured" ? ShieldCheck : ShieldAlert;
-  const [hrEligible, systemEligible] = await Promise.all([
-    loadOwnPresentationServiceGroups()
-      .then(({ serviceGroupIds }) => serviceGroupIds.includes(hrGroup.serviceGroupId))
-      .catch(() => false),
+  const [navigation, systemEligible] = await Promise.all([
+    loadOwnPresentationNavigation().catch(
+      (): PresentationNavigationDiscovery => ({ serviceGroups: [] }),
+    ),
     loadOwnPresentationPreferences()
       .then(() => true)
       .catch(() => false),
   ]);
 
   return (
-    <div className="esbla-shell">
-      <a aria-label="Esbla home" className="chrome-button chrome-home" href="/" title="Home">
-        <SemanticIcon aria-hidden="true" semanticKey="home" size={19} strokeWidth={1.75} />
-      </a>
-
-      <nav aria-label="Workspace surfaces" className="page-menu">
-        <a className="wordmark" href="/">
-          {surface.label}
-        </a>
-        <span aria-hidden="true" className="page-menu-divider" />
-        {hrEligible ? (
-          <a
-            aria-current={currentSurface === "HR" ? "page" : undefined}
-            aria-label="HR"
-            className="page-menu-item"
-            href={hrGroup.href}
-            title="HR"
-          >
-            <SemanticIcon aria-hidden="true" semanticKey={hrGroup.semanticIcon} size={15} />
-            <span>HR</span>
-          </a>
-        ) : null}
-      </nav>
+    <div className="esbla-shell" data-current-surface={currentSurface}>
+      <ZenNavigationChrome discovery={navigation} />
 
       {systemEligible ? (
         <div className="system-controls">
