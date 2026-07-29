@@ -76,6 +76,10 @@ describe("Esbla Theme v1 host contract", () => {
       new URL("../theme/zen-theme/v1/chrome/zen-shell-chrome.tsx", import.meta.url),
       "utf8",
     );
+    const shortcutChrome = await readFile(
+      new URL("../theme/zen-theme/v1/chrome/zen-shortcut-chrome.tsx", import.meta.url),
+      "utf8",
+    );
     const myWork = await readFile(new URL("./workspace/my-work/page.tsx", import.meta.url), "utf8");
     const taskComplete = await readFile(
       new URL("./workspace/my-work/task-complete-action.tsx", import.meta.url),
@@ -117,6 +121,12 @@ describe("Esbla Theme v1 host contract", () => {
     expect(shellChrome).toContain("ZenNavigationChrome");
     expect(shellChrome).toContain("UserSystemControl");
     expect(shellChrome).toContain("resolveZenResponsiveChrome");
+    expect(shellChrome).toContain("ZenShortcutChrome");
+    expect(shortcutChrome).toContain("Universal shortcuts");
+    expect(shortcutChrome).toContain("zen-shortcut-contextual");
+    expect(shortcutChrome).toContain("resolveZenShortcutVisibleItemCount");
+    expect(shortcutChrome).not.toContain("/workspace/my-work");
+    expect(shortcutChrome).not.toContain("/workspace/tasks");
     expect(navigation).toContain('semanticKey="modules"');
     expect(navigation).toContain('semanticKey="menu"');
     expect(navigation).toContain("model.contextualMenu.destinations.map");

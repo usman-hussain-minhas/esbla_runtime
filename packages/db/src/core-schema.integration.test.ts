@@ -303,6 +303,7 @@ describe("core PostgreSQL foundation", () => {
           "membership_capabilities",
           "memberships",
           "outbox_events",
+          "presentation_shortcut_user_patches",
           "presentation_surface_drafts",
           "presentation_surface_heads",
           "presentation_surface_overlays",
@@ -315,7 +316,7 @@ describe("core PostgreSQL foundation", () => {
       ],
     );
 
-    expect(rowSecurity.rows).toHaveLength(17);
+    expect(rowSecurity.rows).toHaveLength(18);
     expect(rowSecurity.rows.every((row) => row.row_security && row.force_row_security)).toBe(true);
     const schemaPrivilege = await pool.query<{ can_create: boolean; current_schema: string }>(
       `SELECT has_schema_privilege(current_user, 'public', 'CREATE') AS can_create,
@@ -372,6 +373,7 @@ describe("core PostgreSQL foundation", () => {
        ORDER BY tablename, policyname`,
       [
         [
+          "presentation_shortcut_user_patches",
           "presentation_surface_drafts",
           "presentation_surface_heads",
           "presentation_surface_overlays",
@@ -382,6 +384,8 @@ describe("core PostgreSQL foundation", () => {
     expect(
       policies.rows.map(({ command, name, table_name }) => `${table_name}|${name}|${command}`),
     ).toEqual([
+      "presentation_shortcut_user_patches|presentation_shortcut_user_patches_read_own|SELECT",
+      "presentation_shortcut_user_patches|presentation_shortcut_user_patches_write_own|ALL",
       "presentation_surface_drafts|presentation_surface_drafts_publish|DELETE",
       "presentation_surface_drafts|presentation_surface_drafts_read|SELECT",
       "presentation_surface_drafts|presentation_surface_drafts_update|UPDATE",
@@ -397,6 +401,11 @@ describe("core PostgreSQL foundation", () => {
 
     const privileges = await migrationPool.query<{ actual: boolean[] }>(
       `SELECT ARRAY[
+         has_table_privilege('esbla_app', 'presentation_shortcut_user_patches', 'SELECT'),
+         has_table_privilege('esbla_app', 'presentation_shortcut_user_patches', 'INSERT'),
+         has_table_privilege('esbla_app', 'presentation_shortcut_user_patches', 'UPDATE'),
+         NOT has_table_privilege('esbla_app', 'presentation_shortcut_user_patches', 'DELETE'),
+         NOT has_table_privilege('esbla_app', 'presentation_shortcut_user_patches', 'TRUNCATE'),
          has_table_privilege('esbla_app', 'presentation_surface_versions', 'SELECT'),
          has_table_privilege('esbla_app', 'presentation_surface_versions', 'INSERT'),
          NOT has_table_privilege('esbla_app', 'presentation_surface_versions', 'UPDATE'),
@@ -423,7 +432,7 @@ describe("core PostgreSQL foundation", () => {
          )
        ] AS actual`,
     );
-    expect(privileges.rows).toEqual([{ actual: Array.from({ length: 16 }, () => true) }]);
+    expect(privileges.rows).toEqual([{ actual: Array.from({ length: 21 }, () => true) }]);
 
     const functionAcl = await migrationPool.query<{
       config: string;
@@ -456,6 +465,69 @@ describe("core PostgreSQL foundation", () => {
         security_definer: true,
       },
     ]);
+  });
+
+  it("isolates shortcut patches and uses the exact primary-key plan at representative cardinality", async () => {
+    await migrationTenantTransaction(ids.tenantA, async (client) => {
+      await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [ids.employeeA]);
+      return await client.query(
+        `INSERT INTO presentation_shortcut_user_patches
+           (tenant_id,principal_id,setting_key,context_kind,context_id,patch,version,
+            updated_by_principal_id)
+         SELECT $1,$2,'navigation.contextual_shortcuts.v1','surface',
+                'surface.cardinality.' || sequence,
+                '{"operations":[]}'::jsonb,1,$2
+         FROM generate_series(1,5000) sequence`,
+        [ids.tenantA, ids.employeeA],
+      );
+    });
+    await migrationPool.query("ANALYZE presentation_shortcut_user_patches");
+    const plan = await tenantTransaction(ids.tenantA, async (client) => {
+      await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [ids.employeeA]);
+      return await client.query<{ "QUERY PLAN": unknown }>(
+        `EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON)
+         SELECT patch,version
+         FROM presentation_shortcut_user_patches
+         WHERE tenant_id=$1 AND principal_id=$2 AND setting_key=$3
+           AND context_kind=$4 AND context_id=$5`,
+        [
+          ids.tenantA,
+          ids.employeeA,
+          "navigation.contextual_shortcuts.v1",
+          "surface",
+          "surface.cardinality.2500",
+        ],
+      );
+    });
+    const renderedPlan = JSON.stringify(plan.rows[0]?.["QUERY PLAN"]);
+    expect(renderedPlan).toContain("presentation_shortcut_user_patches_pk");
+    expect(renderedPlan).not.toContain('"Node Type":"Seq Scan"');
+
+    const crossTenant = await tenantTransaction(ids.tenantB, async (client) => {
+      await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [ids.employeeB]);
+      return await client.query<{ count: number }>(
+        `SELECT count(*)::integer AS count
+         FROM presentation_shortcut_user_patches
+         WHERE tenant_id=$1 AND principal_id=$2`,
+        [ids.tenantA, ids.employeeA],
+      );
+    });
+    expect(crossTenant.rows).toEqual([{ count: 0 }]);
+    await expect(
+      tenantTransaction(ids.tenantB, async (client) => {
+        await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [
+          ids.employeeB,
+        ]);
+        await client.query(
+          `INSERT INTO presentation_shortcut_user_patches
+             (tenant_id,principal_id,setting_key,context_kind,context_id,patch,version,
+              updated_by_principal_id)
+           VALUES ($1,$2,'navigation.universal_shortcuts.v1','global','global',
+                   '{"operations":[]}'::jsonb,1,$2)`,
+          [ids.tenantA, ids.employeeA],
+        );
+      }),
+    ).rejects.toMatchObject({ code: "42501" });
   });
 
   it("keeps exact membership capabilities tenant-scoped and read-only to Runtime", async () => {

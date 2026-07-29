@@ -197,6 +197,13 @@
       "when": 1785222659317,
       "tag": "0027_strange_dragon_lord",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1785286950969,
+      "tag": "0028_mysterious_penance",
+      "breakpoints": true
     }
   ]
 }

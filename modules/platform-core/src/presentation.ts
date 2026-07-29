@@ -5,6 +5,12 @@ import type {
   PresentationPreferenceSource,
   PresentationPreferences,
   PresentationServiceGroupDiscovery,
+  PresentationShortcutDiscovery,
+  PresentationShortcutDiscoveryQuery,
+  PresentationShortcutSet,
+  PresentationShortcutSettingKey,
+  PresentationShortcutTarget,
+  PresentationShortcutTargetId,
   PresentationSurfaceBaseMutationResponse,
   PresentationSurfaceBaseVersion,
   PresentationSurfaceBaseWorkspace,
@@ -19,6 +25,8 @@ import type {
   RollbackPresentationSurfaceBaseBody,
   UpdatePresentationPreferencesBody,
   UpdatePresentationPreferencesResponse,
+  UpdatePresentationShortcutBody,
+  UpdatePresentationShortcutResponse,
   UpdatePresentationSurfaceOverlayBody,
   UpdatePresentationSurfaceOverlayResponse,
   UpsertPresentationSurfaceDraftBody,
@@ -33,14 +41,19 @@ import {
   canonicalizePresentationSurfaceContract,
   canonicalizePresentationSurfaceDefinition,
   canonicalizePresentationWidgetDefinition,
+  getPresentationShortcutTargetDefinition,
+  getPresentationShortcutTargetServiceGroupId,
   getPresentationWidgetDefinition,
   getZenV1SurfaceContract,
   PRESENTATION_BILLING_STATE,
   PRESENTATION_SERVICE_GROUP_DEFINITIONS,
   PRESENTATION_SETTING_DEFINITIONS,
+  PRESENTATION_SHORTCUT_MAXIMUM_ITEMS,
+  PRESENTATION_SHORTCUT_TARGET_DEFINITIONS,
   PRESENTATION_SURFACE_DEFINITIONS,
   PRESENTATION_WIDGET_DEFINITIONS,
   parseExactPresentationSurfacePlacementSet,
+  parsePresentationShortcutDiscoveryQuery,
   parsePresentationSurfaceBaseMutationResponse,
   parsePresentationSurfaceBaseVersion,
   parsePresentationSurfaceDraft,
@@ -49,6 +62,7 @@ import {
   parseResetPresentationSurfaceOverlayResponse,
   parseRollbackPresentationSurfaceBaseBody,
   parseUpdatePresentationPreferencesBody,
+  parseUpdatePresentationShortcutBody,
   parseUpdatePresentationSurfaceOverlayBody,
   parseUpsertPresentationSurfaceDraftBody,
   parseUpsertPresentationSurfaceDraftResponse,
@@ -64,7 +78,9 @@ import { withTenantTransaction } from "./context.js";
 import { PlatformError } from "./errors.js";
 import { assertPolicyAllowed, evaluatePolicy } from "./policy.js";
 import {
+  type PresentationOrderedSetOperation,
   type PresentationSettingCandidate,
+  parsePresentationOrderedSetPatch,
   resolvePresentationSetting,
 } from "./presentation-setting.js";
 import { appendEvidence, deriveStableUuid } from "./proof.js";
@@ -74,6 +90,8 @@ const APPEARANCE_HIGH_CONTRAST_KEY = "appearance.high_contrast.v1";
 const APPEARANCE_SETTING_KEYS = [APPEARANCE_PALETTE_KEY, APPEARANCE_HIGH_CONTRAST_KEY] as const;
 const PREFERENCE_EVENT_TYPE = "platform.presentation.preferences.updated";
 const PREFERENCE_SUBJECT_TYPE = "platform_presentation_preferences";
+const SHORTCUT_EVENT_TYPE = "platform.presentation.shortcut.updated";
+const SHORTCUT_SUBJECT_TYPE = "platform_presentation_shortcuts";
 const SURFACE_OVERLAY_EVENT_TYPE = "platform.presentation.surface_overlay.updated";
 const SURFACE_OVERLAY_RESET_EVENT_TYPE = "platform.presentation.surface_overlay.reset";
 const SURFACE_OVERLAY_SUBJECT_TYPE = "platform_presentation_surface_overlay";
@@ -296,7 +314,9 @@ function assertOwnPresentationPolicy(
     | "platform.presentation.layouts.reset_own"
     | "platform.presentation.layouts.write_own"
     | "platform.presentation.preferences.read_own"
-    | "platform.presentation.preferences.write_own",
+    | "platform.presentation.preferences.write_own"
+    | "platform.presentation.shortcuts.read_own"
+    | "platform.presentation.shortcuts.write_own",
   resourceKey: string,
 ): void {
   const decision = evaluatePolicy(
@@ -425,25 +445,53 @@ async function loadPresentationNavigationEligibility(transaction: TenantTransact
       ),
     ),
   ];
-  const [activations, capabilities] = await Promise.all([
-    transaction.client.query<{ service_key: string }>(
-      `SELECT service_key
-       FROM service_activations
-       WHERE tenant_id = $1 AND state = 'active' AND service_key = ANY($2::text[])
-       ORDER BY service_key`,
-      [transaction.context.tenantId, activationServiceKeys],
-    ),
-    transaction.client.query<{ capability_id: string }>(
-      `SELECT capability_id
-       FROM membership_capabilities
-       WHERE tenant_id = $1 AND principal_id = $2 AND capability_id = ANY($3::text[])
-       ORDER BY capability_id`,
-      [transaction.context.tenantId, transaction.context.actorPrincipalId, capabilityIds],
-    ),
-  ]);
+  const activations = await transaction.client.query<{ service_key: string }>(
+    `SELECT service_key
+     FROM service_activations
+     WHERE tenant_id = $1 AND state = 'active' AND service_key = ANY($2::text[])
+     ORDER BY service_key`,
+    [transaction.context.tenantId, activationServiceKeys],
+  );
+  const capabilities = await transaction.client.query<{ capability_id: string }>(
+    `SELECT capability_id
+     FROM membership_capabilities
+     WHERE tenant_id = $1 AND principal_id = $2 AND capability_id = ANY($3::text[])
+     ORDER BY capability_id`,
+    [transaction.context.tenantId, transaction.context.actorPrincipalId, capabilityIds],
+  );
   return {
     active: new Set(activations.rows.map(({ service_key }) => service_key)),
     authorized: new Set(capabilities.rows.map(({ capability_id }) => capability_id)),
+  };
+}
+
+async function loadPresentationNavigationDiscovery(
+  transaction: TenantTransaction,
+): Promise<PresentationNavigationDiscovery> {
+  const { active, authorized } = await loadPresentationNavigationEligibility(transaction);
+  return {
+    serviceGroups: PRESENTATION_SERVICE_GROUP_DEFINITIONS.flatMap((group) => {
+      const eligibleServices = group.services.filter((service) =>
+        presentationServiceIsEligible(service, transaction.actor.roleKey, active, authorized),
+      );
+      if (eligibleServices.length === 0) return [];
+      return [
+        {
+          destinationIds: eligibleServices.flatMap(({ destinations }) =>
+            destinations
+              .filter((destination) =>
+                presentationEligibilityRuleMatches(
+                  destination,
+                  transaction.actor.roleKey,
+                  authorized,
+                ),
+              )
+              .map(({ destinationId }) => destinationId),
+          ),
+          serviceGroupId: group.serviceGroupId,
+        },
+      ];
+    }),
   };
 }
 
@@ -489,33 +537,621 @@ export async function getOwnPresentationNavigation(
         "platform.presentation.layouts.read_own",
         `principal:${transaction.context.actorPrincipalId}:navigation`,
       );
-      const { active, authorized } = await loadPresentationNavigationEligibility(transaction);
-      return {
-        serviceGroups: PRESENTATION_SERVICE_GROUP_DEFINITIONS.flatMap((group) => {
-          const eligibleServices = group.services.filter((service) =>
-            presentationServiceIsEligible(service, transaction.actor.roleKey, active, authorized),
-          );
-          if (eligibleServices.length === 0) return [];
-          return [
-            {
-              destinationIds: eligibleServices.flatMap(({ destinations }) =>
-                destinations
-                  .filter((destination) =>
-                    presentationEligibilityRuleMatches(
-                      destination,
-                      transaction.actor.roleKey,
-                      authorized,
-                    ),
-                  )
-                  .map(({ destinationId }) => destinationId),
-              ),
-              serviceGroupId: group.serviceGroupId,
-            },
-          ];
-        }),
-      };
+      return await loadPresentationNavigationDiscovery(transaction);
     },
     { migrationBarrier: "shared" },
+  );
+}
+
+interface StoredShortcutPatch {
+  readonly operations: readonly PresentationOrderedSetOperation[];
+  readonly version: number;
+}
+
+function invalidShortcutStorage(): PlatformError {
+  return new PlatformError("SETTING_INVALID", "Presentation shortcut storage is invalid");
+}
+
+function parsePresentationShortcutQueryInput(value: unknown): PresentationShortcutDiscoveryQuery {
+  try {
+    return parsePresentationShortcutDiscoveryQuery(value);
+  } catch {
+    throw new PlatformError("SETTING_INVALID", "Presentation shortcut query is invalid");
+  }
+}
+
+function parsePresentationShortcutUpdateInput(value: unknown): UpdatePresentationShortcutBody {
+  try {
+    return parseUpdatePresentationShortcutBody(value);
+  } catch {
+    throw new PlatformError("SETTING_INVALID", "Presentation shortcut update is invalid");
+  }
+}
+
+function shortcutCandidateScope(
+  settingKey: PresentationShortcutSettingKey,
+): "user_global" | "user_service" {
+  return settingKey === "navigation.universal_shortcuts.v1" ? "user_global" : "user_service";
+}
+
+function registeredShortcutTargets(
+  contextKind: "global" | "service",
+  contextId: "global" | (typeof PRESENTATION_SERVICE_GROUP_DEFINITIONS)[number]["serviceGroupId"],
+): readonly PresentationShortcutTarget[] {
+  if (contextKind === "global" && contextId === "global") {
+    return PRESENTATION_SHORTCUT_TARGET_DEFINITIONS;
+  }
+  if (contextKind !== "service" || contextId === "global") throw invalidShortcutStorage();
+  return PRESENTATION_SHORTCUT_TARGET_DEFINITIONS.filter(
+    ({ id }) => getPresentationShortcutTargetServiceGroupId(id) === contextId,
+  );
+}
+
+function eligibleShortcutTargetIds(
+  discovery: PresentationNavigationDiscovery,
+): ReadonlySet<PresentationShortcutTargetId> {
+  const ids = new Set<PresentationShortcutTargetId>(["platform.mission_control"]);
+  for (const group of discovery.serviceGroups) {
+    ids.add(`service_group.${group.serviceGroupId}.mission_control`);
+    for (const destinationId of group.destinationIds) ids.add(destinationId);
+  }
+  return ids;
+}
+
+function eligibleShortcutTargets(
+  discovery: PresentationNavigationDiscovery,
+  contextKind: "global" | "service",
+  contextId: "global" | (typeof PRESENTATION_SERVICE_GROUP_DEFINITIONS)[number]["serviceGroupId"],
+): readonly PresentationShortcutTarget[] {
+  const eligibleIds = eligibleShortcutTargetIds(discovery);
+  return registeredShortcutTargets(contextKind, contextId).filter(({ id }) => eligibleIds.has(id));
+}
+
+function shortcutTargetActivationServiceKeys(
+  targetId: PresentationShortcutTargetId,
+): readonly string[] {
+  const serviceGroupId = getPresentationShortcutTargetServiceGroupId(targetId);
+  if (serviceGroupId === null) return [];
+  const group = PRESENTATION_SERVICE_GROUP_DEFINITIONS.find(
+    (candidate) => candidate.serviceGroupId === serviceGroupId,
+  );
+  if (!group) return [];
+  if (targetId === `service_group.${serviceGroupId}.mission_control`) {
+    return [
+      ...new Set(group.services.map(({ activationServiceKey }) => activationServiceKey)),
+    ].sort();
+  }
+  const service = group.services.find(({ destinations }) =>
+    destinations.some(({ destinationId }) => destinationId === targetId),
+  );
+  return service ? [service.activationServiceKey] : [];
+}
+
+async function lockShortcutAppendTargetEligibility(
+  transaction: TenantTransaction,
+  targetId: PresentationShortcutTargetId,
+): Promise<void> {
+  const serviceGroupId = getPresentationShortcutTargetServiceGroupId(targetId);
+  if (serviceGroupId === null) return;
+  const group = PRESENTATION_SERVICE_GROUP_DEFINITIONS.find(
+    (candidate) => candidate.serviceGroupId === serviceGroupId,
+  );
+  if (!group) throw new PlatformError("POLICY_DENIED", "Shortcut target is not currently eligible");
+  const destinationMatch = group.services
+    .flatMap((service) => service.destinations.map((destination) => ({ destination, service })))
+    .find(({ destination }) => destination.destinationId === targetId);
+  const services =
+    targetId === `service_group.${serviceGroupId}.mission_control`
+      ? group.services
+      : destinationMatch
+        ? [destinationMatch.service]
+        : [];
+  if (services.length === 0) {
+    throw new PlatformError("POLICY_DENIED", "Shortcut target is not currently eligible");
+  }
+  const capabilityIds = [
+    ...new Set(
+      services.flatMap((service) => {
+        if (destinationMatch && service === destinationMatch.service) {
+          return destinationMatch.destination.anyCapabilityIds;
+        }
+        return [
+          ...service.destinations.flatMap(({ anyCapabilityIds }) => anyCapabilityIds),
+          ...("additionalVisibilityRules" in service
+            ? service.additionalVisibilityRules.flatMap(({ anyCapabilityIds }) => anyCapabilityIds)
+            : []),
+        ];
+      }),
+    ),
+  ].sort();
+  const active = new Set(
+    (transaction.lockedServiceActivations ?? [])
+      .filter(({ state }) => state === "active")
+      .map(({ serviceKey }) => serviceKey),
+  );
+  const authorized = new Set<string>();
+  for (const capabilityId of capabilityIds) {
+    const result = await transaction.client.query<{ capability_current: boolean }>(
+      `SELECT public.esbla_lock_membership_capability($1, $2, $3) AS capability_current`,
+      [transaction.context.tenantId, transaction.context.actorPrincipalId, capabilityId],
+    );
+    if (result.rows[0]?.capability_current === true) authorized.add(capabilityId);
+  }
+  const eligible = destinationMatch
+    ? active.has(destinationMatch.service.activationServiceKey) &&
+      presentationEligibilityRuleMatches(
+        destinationMatch.destination,
+        transaction.actor.roleKey,
+        authorized,
+      )
+    : services.some((service) =>
+        presentationServiceIsEligible(service, transaction.actor.roleKey, active, authorized),
+      );
+  if (!eligible) {
+    throw new PlatformError("POLICY_DENIED", "Shortcut target is not currently eligible");
+  }
+}
+
+async function loadStoredShortcutPatch(
+  transaction: TenantTransaction,
+  settingKey: PresentationShortcutSettingKey,
+  contextKind: "global" | "service",
+  contextId: "global" | (typeof PRESENTATION_SERVICE_GROUP_DEFINITIONS)[number]["serviceGroupId"],
+  lock: "none" | "update" = "none",
+): Promise<StoredShortcutPatch | undefined> {
+  const result = await transaction.client.query<{ patch: unknown; version: number }>(
+    `SELECT patch, version
+     FROM presentation_shortcut_user_patches
+     WHERE tenant_id = $1 AND principal_id = $2 AND setting_key = $3
+       AND context_kind = $4 AND context_id = $5
+     ${lock === "update" ? "FOR UPDATE" : ""}`,
+    [
+      transaction.context.tenantId,
+      transaction.context.actorPrincipalId,
+      settingKey,
+      contextKind,
+      contextId,
+    ],
+  );
+  const row = result.rows[0];
+  if (!row) return undefined;
+  if (!Number.isSafeInteger(row.version) || row.version < 1) throw invalidShortcutStorage();
+  let operations: readonly PresentationOrderedSetOperation[];
+  try {
+    operations = parsePresentationOrderedSetPatch(row.patch, { allowAppend: true });
+  } catch {
+    throw invalidShortcutStorage();
+  }
+  if (operations.length > PRESENTATION_SHORTCUT_MAXIMUM_ITEMS) {
+    throw invalidShortcutStorage();
+  }
+  return { operations, version: row.version };
+}
+
+function resolveShortcutSet(
+  settingKey: PresentationShortcutSettingKey,
+  contextKind: "global" | "service",
+  contextId: "global" | (typeof PRESENTATION_SERVICE_GROUP_DEFINITIONS)[number]["serviceGroupId"],
+  stored: StoredShortcutPatch | undefined,
+  eligibleTargets: readonly PresentationShortcutTarget[],
+): PresentationShortcutSet {
+  const registeredTargets = registeredShortcutTargets(contextKind, contextId);
+  let resolved: ReturnType<typeof resolvePresentationSetting>;
+  try {
+    resolved = resolvePresentationSetting(
+      settingKey,
+      stored
+        ? [
+            {
+              definitionVersion: 1,
+              rowVersion: stored.version,
+              scope: shortcutCandidateScope(settingKey),
+              value: { operations: stored.operations },
+            },
+          ]
+        : [],
+      {
+        authorizedIds: eligibleTargets.map(({ id }) => id),
+        registeredIds: registeredTargets.map(({ id }) => id),
+      },
+    );
+  } catch {
+    throw invalidShortcutStorage();
+  }
+  if (
+    !Array.isArray(resolved.value) ||
+    resolved.value.some((targetId) => typeof targetId !== "string") ||
+    resolved.tombstones.length > 20
+  ) {
+    throw invalidShortcutStorage();
+  }
+  const items = resolved.value.map((targetId) => {
+    try {
+      return getPresentationShortcutTargetDefinition(targetId);
+    } catch {
+      throw invalidShortcutStorage();
+    }
+  });
+  return {
+    contextId,
+    contextKind,
+    editable: true,
+    eligibleTargets,
+    items,
+    settingKey,
+    tombstoneCount: resolved.tombstones.length,
+    version: stored?.version ?? 0,
+  };
+}
+
+async function loadShortcutSet(
+  transaction: TenantTransaction,
+  discovery: PresentationNavigationDiscovery,
+  settingKey: PresentationShortcutSettingKey,
+  contextKind: "global" | "service",
+  contextId: "global" | (typeof PRESENTATION_SERVICE_GROUP_DEFINITIONS)[number]["serviceGroupId"],
+  lock: "none" | "update" = "none",
+): Promise<PresentationShortcutSet> {
+  const stored = await loadStoredShortcutPatch(
+    transaction,
+    settingKey,
+    contextKind,
+    contextId,
+    lock,
+  );
+  return resolveShortcutSet(
+    settingKey,
+    contextKind,
+    contextId,
+    stored,
+    eligibleShortcutTargets(discovery, contextKind, contextId),
+  );
+}
+
+export async function getOwnPresentationShortcuts(
+  pool: Pool,
+  context: OperationContext,
+  untrustedQuery: unknown,
+): Promise<PresentationShortcutDiscovery> {
+  const query = parsePresentationShortcutQueryInput(untrustedQuery);
+  return await withTenantTransaction(
+    pool,
+    context,
+    async (transaction) => {
+      assertOwnPresentationPolicy(
+        transaction,
+        "platform.presentation.shortcuts.read_own",
+        `principal:${transaction.context.actorPrincipalId}:shortcuts`,
+      );
+      const discovery = await loadPresentationNavigationDiscovery(transaction);
+      const universal = await loadShortcutSet(
+        transaction,
+        discovery,
+        "navigation.universal_shortcuts.v1",
+        "global",
+        "global",
+      );
+      const contextualGroup = query.contextServiceGroupId
+        ? discovery.serviceGroups.find(
+            ({ serviceGroupId }) => serviceGroupId === query.contextServiceGroupId,
+          )
+        : undefined;
+      const contextual =
+        query.contextServiceGroupId && contextualGroup
+          ? await loadShortcutSet(
+              transaction,
+              discovery,
+              "navigation.contextual_shortcuts.v1",
+              "service",
+              query.contextServiceGroupId,
+            )
+          : null;
+      return { contextual, universal };
+    },
+    { migrationBarrier: "shared" },
+  );
+}
+
+function shortcutSubjectId(
+  context: OperationContext,
+  input: Pick<UpdatePresentationShortcutBody, "contextId" | "contextKind" | "settingKey">,
+): string {
+  return deriveStableUuid(
+    "platform.presentation.shortcuts",
+    context.tenantId,
+    context.actorPrincipalId,
+    input.settingKey,
+    input.contextKind,
+    input.contextId,
+  );
+}
+
+interface ShortcutEvidenceState {
+  readonly billingState: typeof PRESENTATION_BILLING_STATE;
+  readonly contextId: string;
+  readonly contextKind: string;
+  readonly expectedVersion: number;
+  readonly operation: string;
+  readonly settingKey: string;
+  readonly targetId: string;
+  readonly version: number;
+}
+
+function parseShortcutEvidenceState(value: string): ShortcutEvidenceState {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      JSON.stringify(Object.keys(parsed).sort()) !==
+        JSON.stringify(
+          [
+            "billingState",
+            "contextId",
+            "contextKind",
+            "expectedVersion",
+            "operation",
+            "settingKey",
+            "targetId",
+            "version",
+          ].sort(),
+        )
+    ) {
+      throw new Error("invalid");
+    }
+    const state = parsed as Record<string, unknown>;
+    if (
+      state.billingState !== PRESENTATION_BILLING_STATE ||
+      typeof state.contextId !== "string" ||
+      typeof state.contextKind !== "string" ||
+      !Number.isSafeInteger(state.expectedVersion) ||
+      Number(state.expectedVersion) < 0 ||
+      typeof state.operation !== "string" ||
+      typeof state.settingKey !== "string" ||
+      typeof state.targetId !== "string" ||
+      !Number.isSafeInteger(state.version) ||
+      Number(state.version) < 1
+    ) {
+      throw new Error("invalid");
+    }
+    return {
+      billingState: PRESENTATION_BILLING_STATE,
+      contextId: state.contextId,
+      contextKind: state.contextKind,
+      expectedVersion: Number(state.expectedVersion),
+      operation: state.operation,
+      settingKey: state.settingKey,
+      targetId: state.targetId,
+      version: Number(state.version),
+    };
+  } catch {
+    throw new PlatformError("IDEMPOTENCY_CONFLICT", "Shortcut retry evidence is invalid");
+  }
+}
+
+function shortcutEvidenceMatches(
+  state: ShortcutEvidenceState,
+  input: UpdatePresentationShortcutBody,
+): boolean {
+  return (
+    state.contextId === input.contextId &&
+    state.contextKind === input.contextKind &&
+    state.expectedVersion === input.expectedVersion &&
+    state.operation === input.operation &&
+    state.settingKey === input.settingKey &&
+    state.targetId === input.targetId
+  );
+}
+
+async function readShortcutReplay(
+  transaction: TenantTransaction,
+  input: UpdatePresentationShortcutBody,
+  subjectId: string,
+  currentSet: PresentationShortcutSet,
+): Promise<UpdatePresentationShortcutResponse | null> {
+  const priorEvidence = await transaction.client.query<{
+    actor_principal_id: string;
+    evidence_event_id: string;
+    new_state: string;
+  }>(
+    `SELECT evidence_event_id, actor_principal_id, new_state
+     FROM evidence_events
+     WHERE tenant_id = $1 AND subject_type = $2 AND subject_id = $3
+       AND event_type = $4 AND correlation_id = $5`,
+    [
+      transaction.context.tenantId,
+      SHORTCUT_SUBJECT_TYPE,
+      subjectId,
+      SHORTCUT_EVENT_TYPE,
+      transaction.context.correlationId,
+    ],
+  );
+  const replay = priorEvidence.rows[0];
+  if (!replay) return null;
+  const state = parseShortcutEvidenceState(replay.new_state);
+  if (
+    replay.actor_principal_id !== transaction.context.actorPrincipalId ||
+    !shortcutEvidenceMatches(state, input)
+  ) {
+    throw new PlatformError("IDEMPOTENCY_CONFLICT", "Shortcut retry changed its semantics");
+  }
+  return {
+    billingState: PRESENTATION_BILLING_STATE,
+    evidenceEventId: replay.evidence_event_id,
+    replayed: true,
+    set: currentSet,
+  };
+}
+
+export async function updateOwnPresentationShortcut(
+  pool: Pool,
+  context: OperationContext,
+  untrustedInput: unknown,
+): Promise<UpdatePresentationShortcutResponse> {
+  const input = parsePresentationShortcutUpdateInput(untrustedInput);
+  const activationServiceKeys =
+    input.operation === "append" ? shortcutTargetActivationServiceKeys(input.targetId) : [];
+  return await withTenantTransaction(
+    pool,
+    context,
+    async (transaction) => {
+      assertOwnPresentationPolicy(
+        transaction,
+        "platform.presentation.shortcuts.write_own",
+        `principal:${transaction.context.actorPrincipalId}:shortcuts:${input.contextKind}:${input.contextId}`,
+      );
+      if (input.operation === "append") {
+        await lockShortcutAppendTargetEligibility(transaction, input.targetId);
+      }
+      const discovery = await loadPresentationNavigationDiscovery(transaction);
+      const eligibleTargets = eligibleShortcutTargets(
+        discovery,
+        input.contextKind,
+        input.contextId,
+      );
+      const eligibleIds = new Set(eligibleTargets.map(({ id }) => id));
+      if (input.operation === "append" && !eligibleIds.has(input.targetId)) {
+        throw new PlatformError("POLICY_DENIED", "Shortcut target is not currently eligible");
+      }
+      const stored = await loadStoredShortcutPatch(
+        transaction,
+        input.settingKey,
+        input.contextKind,
+        input.contextId,
+        "update",
+      );
+      const currentSet = resolveShortcutSet(
+        input.settingKey,
+        input.contextKind,
+        input.contextId,
+        stored,
+        eligibleTargets,
+      );
+      const subjectId = shortcutSubjectId(context, input);
+      const priorReplay = await readShortcutReplay(transaction, input, subjectId, currentSet);
+      if (priorReplay) return priorReplay;
+      const currentVersion = stored?.version ?? 0;
+      if (currentVersion !== input.expectedVersion) {
+        throw new PlatformError("IDEMPOTENCY_CONFLICT", "Shortcut version has changed", {
+          currentVersion,
+        });
+      }
+      const currentIds = new Set(currentSet.items.map(({ id }) => id));
+      const storedMentionsTarget = stored?.operations.some(({ id }) => id === input.targetId);
+      if (
+        (input.operation === "append" && currentIds.has(input.targetId)) ||
+        (input.operation === "remove" && !currentIds.has(input.targetId) && !storedMentionsTarget)
+      ) {
+        throw new PlatformError("SETTING_INVALID", "Shortcut operation is not applicable");
+      }
+      const operations: readonly PresentationOrderedSetOperation[] = [
+        ...(stored?.operations.filter(({ id }) => id !== input.targetId) ?? []),
+        { id: input.targetId, operation: input.operation },
+      ];
+      const nextVersion = currentVersion + 1;
+      const nextStored = { operations, version: nextVersion };
+      const nextSet = resolveShortcutSet(
+        input.settingKey,
+        input.contextKind,
+        input.contextId,
+        nextStored,
+        eligibleTargets,
+      );
+      const nextIds = new Set(nextSet.items.map(({ id }) => id));
+      if (
+        (input.operation === "append" && !nextIds.has(input.targetId)) ||
+        (input.operation === "remove" && nextIds.has(input.targetId))
+      ) {
+        throw new PlatformError("SETTING_INVALID", "Shortcut operation did not resolve");
+      }
+      const serializedPatch = JSON.stringify({ operations });
+      if (stored) {
+        const updated = await transaction.client.query(
+          `UPDATE presentation_shortcut_user_patches
+           SET patch = $6::jsonb, version = $7, updated_at = now(),
+               updated_by_principal_id = $2
+           WHERE tenant_id = $1 AND principal_id = $2 AND setting_key = $3
+             AND context_kind = $4 AND context_id = $5 AND version = $8`,
+          [
+            context.tenantId,
+            context.actorPrincipalId,
+            input.settingKey,
+            input.contextKind,
+            input.contextId,
+            serializedPatch,
+            nextVersion,
+            currentVersion,
+          ],
+        );
+        if (updated.rowCount !== 1) {
+          throw new PlatformError("IDEMPOTENCY_CONFLICT", "Shortcut version has changed");
+        }
+      } else {
+        const inserted = await transaction.client.query(
+          `INSERT INTO presentation_shortcut_user_patches
+             (tenant_id, principal_id, setting_key, context_kind, context_id,
+              patch, version, updated_by_principal_id)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, 1, $2)
+           ON CONFLICT DO NOTHING`,
+          [
+            context.tenantId,
+            context.actorPrincipalId,
+            input.settingKey,
+            input.contextKind,
+            input.contextId,
+            serializedPatch,
+          ],
+        );
+        if (inserted.rowCount !== 1) {
+          const concurrentSet = await loadShortcutSet(
+            transaction,
+            discovery,
+            input.settingKey,
+            input.contextKind,
+            input.contextId,
+            "update",
+          );
+          const concurrentReplay = await readShortcutReplay(
+            transaction,
+            input,
+            subjectId,
+            concurrentSet,
+          );
+          if (concurrentReplay) return concurrentReplay;
+          throw new PlatformError("IDEMPOTENCY_CONFLICT", "Shortcut version has changed");
+        }
+      }
+      const newState = JSON.stringify({
+        billingState: PRESENTATION_BILLING_STATE,
+        contextId: input.contextId,
+        contextKind: input.contextKind,
+        expectedVersion: input.expectedVersion,
+        operation: input.operation,
+        settingKey: input.settingKey,
+        targetId: input.targetId,
+        version: nextVersion,
+      });
+      const priorState = stored
+        ? JSON.stringify({ operations: stored.operations, version: stored.version })
+        : null;
+      const evidence = await appendEvidence(transaction, {
+        eventType: SHORTCUT_EVENT_TYPE,
+        newState,
+        priorState,
+        subjectId,
+        subjectType: SHORTCUT_SUBJECT_TYPE,
+      });
+      return {
+        billingState: PRESENTATION_BILLING_STATE,
+        evidenceEventId: evidence.evidenceEventId,
+        replayed: evidence.replayed,
+        set: nextSet,
+      };
+    },
+    activationServiceKeys.length > 0
+      ? { migrationBarrier: "shared", serviceActivationKeys: activationServiceKeys }
+      : { migrationBarrier: "shared" },
   );
 }
 

@@ -189,6 +189,36 @@ describe("runtime probes", () => {
     expect(query).not.toHaveBeenCalled();
   });
 
+  it("protects presentation shortcut reads and writes before PostgreSQL access", async () => {
+    const { query, server } = testServer();
+    expect(
+      (
+        await server.inject({
+          method: "GET",
+          url: "/v1/platform/presentation/shortcuts?contextServiceGroupId=hr",
+        })
+      ).statusCode,
+    ).toBe(401);
+    expect(
+      (
+        await server.inject({
+          body: {
+            contextId: "global",
+            contextKind: "global",
+            expectedVersion: 0,
+            operation: "append",
+            settingKey: "navigation.universal_shortcuts.v1",
+            targetId: "hr.leave.own",
+          },
+          headers: { "idempotency-key": randomUUID() },
+          method: "POST",
+          url: "/v1/platform/presentation/shortcuts",
+        })
+      ).statusCode,
+    ).toBe(401);
+    expect(query).not.toHaveBeenCalled();
+  });
+
   it("protects presentation surface reads and own overlay writes before PostgreSQL access", async () => {
     const { query, server } = testServer();
     expect(

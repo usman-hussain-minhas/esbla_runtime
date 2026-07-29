@@ -25,6 +25,7 @@ export interface TenantTransaction {
   readonly client: PoolClient;
   readonly context: OperationContext;
   readonly lockedServiceActivation?: LockedServiceActivation | null;
+  readonly lockedServiceActivations?: readonly LockedServiceActivation[];
 }
 
 export interface LockedServiceActivation {
@@ -36,6 +37,7 @@ export interface LockedServiceActivation {
 export interface TenantTransactionOptions {
   readonly migrationBarrier?: "shared";
   readonly serviceActivationKey?: string;
+  readonly serviceActivationKeys?: readonly string[];
   readonly serviceActivationLock?: "share" | "update";
 }
 
@@ -121,12 +123,27 @@ export async function withTenantTransaction<T>(
     ]);
 
     let lockedServiceActivation: LockedServiceActivation | null | undefined;
+    let lockedServiceActivations: readonly LockedServiceActivation[] | undefined;
     if (
       options.serviceActivationLock !== undefined &&
       options.serviceActivationLock !== "share" &&
       options.serviceActivationLock !== "update"
     ) {
       throw new PlatformError("INVALID_SERVICE_KEY", "Service activation lock mode is invalid");
+    }
+    if (options.serviceActivationKey !== undefined && options.serviceActivationKeys !== undefined) {
+      throw new PlatformError("INVALID_SERVICE_KEY", "Service activation lock scope is ambiguous");
+    }
+    if (
+      options.serviceActivationKeys !== undefined &&
+      (options.serviceActivationKeys.length === 0 ||
+        options.serviceActivationLock === "update" ||
+        options.serviceActivationKeys.some(
+          (serviceKey) => !/^[a-z][a-z0-9_.-]{0,127}$/.test(serviceKey),
+        ) ||
+        new Set(options.serviceActivationKeys).size !== options.serviceActivationKeys.length)
+    ) {
+      throw new PlatformError("INVALID_SERVICE_KEY", "Service activation lock keys are invalid");
     }
     if (options.serviceActivationKey !== undefined) {
       if (!/^[a-z][a-z0-9_.-]{0,127}$/.test(options.serviceActivationKey)) {
@@ -147,6 +164,25 @@ export async function withTenantTransaction<T>(
       lockedServiceActivation = row
         ? { serviceKey: row.service_key, state: row.state, version: row.version }
         : null;
+    } else if (options.serviceActivationKeys !== undefined) {
+      const activationKeys = [...options.serviceActivationKeys].sort();
+      const activations = await client.query<{
+        service_key: string;
+        state: "active" | "inactive";
+        version: number;
+      }>(
+        `SELECT service_key, state, version
+         FROM service_activations
+         WHERE tenant_id = $1 AND service_key = ANY($2::text[])
+         ORDER BY service_key
+         FOR SHARE`,
+        [context.tenantId, activationKeys],
+      );
+      lockedServiceActivations = activations.rows.map((row) => ({
+        serviceKey: row.service_key,
+        state: row.state,
+        version: row.version,
+      }));
     } else if (options.serviceActivationLock !== undefined) {
       throw new PlatformError(
         "INVALID_SERVICE_KEY",
@@ -169,9 +205,11 @@ export async function withTenantTransaction<T>(
       context,
     };
     const transaction: TenantTransaction =
-      options.serviceActivationKey === undefined
-        ? transactionBase
-        : { ...transactionBase, lockedServiceActivation: lockedServiceActivation ?? null };
+      options.serviceActivationKey !== undefined
+        ? { ...transactionBase, lockedServiceActivation: lockedServiceActivation ?? null }
+        : options.serviceActivationKeys !== undefined
+          ? { ...transactionBase, lockedServiceActivations: lockedServiceActivations ?? [] }
+          : transactionBase;
     const result = await operation(transaction);
     await client.query("COMMIT");
     return result;
