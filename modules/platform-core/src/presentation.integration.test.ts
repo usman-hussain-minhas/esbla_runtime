@@ -206,14 +206,16 @@ async function setWorkforcePresentationEligibility(
     );
     await client.query(
       `DELETE FROM membership_capabilities
-       WHERE tenant_id = $1 AND principal_id = $2 AND capability_id = 'hr.workforce.view_own'`,
-      [tenantId, principalId],
+       WHERE tenant_id = $1 AND principal_id = $2
+         AND capability_id = ANY($3::text[])`,
+      [tenantId, principalId, ["hr.workforce.view_own", "hr.workforce.view_authorized_detail"]],
     );
     if (eligible) {
       await client.query(
         `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
-         VALUES ($1, $2, 'hr.workforce.view_own')`,
-        [tenantId, principalId],
+         SELECT $1, $2, capability_id
+         FROM unnest($3::text[]) AS capability(capability_id)`,
+        [tenantId, principalId, ["hr.workforce.view_own", "hr.workforce.view_authorized_detail"]],
       );
     }
     await client.query("COMMIT");
@@ -757,6 +759,39 @@ describe("presentation preference persistence", () => {
       overlayVersion: 1,
       source: "user_overlay",
     });
+
+    await setWorkforcePresentationEligibility(ids.tenantA, ids.actorA, true);
+    const expandedEligibility = await getOwnPresentationSurfaceLayout(
+      pool,
+      context(ids.tenantA, ids.actorA),
+      "surface.mission-control",
+    );
+    expect(expandedEligibility.effectivePlacements.map(({ instanceId }) => instanceId)).toEqual([
+      "mission-control.my-leave",
+      "mission-control.my-profile",
+    ]);
+    expect(
+      expandedEligibility.effectivePlacements.find(
+        ({ instanceId }) => instanceId === "mission-control.my-leave",
+      ),
+    ).toMatchObject({ column: 1, row: 4 });
+    expect(expandedEligibility.diagnostics).toEqual([
+      {
+        code: "overlay_placement_conflict",
+        instanceId: "mission-control.my-leave",
+      },
+    ]);
+
+    await setWorkforcePresentationEligibility(ids.tenantA, ids.actorA, false);
+    expect(
+      (
+        await getOwnPresentationSurfaceLayout(
+          pool,
+          context(ids.tenantA, ids.actorA),
+          "surface.mission-control",
+        )
+      ).effectivePlacements,
+    ).toEqual(updated.effectivePlacements);
   });
 
   it("filters discovery and blocks layout mutation after capability loss or deactivation", async () => {
@@ -818,6 +853,24 @@ describe("presentation preference persistence", () => {
       ),
     ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
 
+    await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
+      active: true,
+      capabilities: ["hr.leave.list_own", "hr.leave.view"],
+    });
+
+    await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
+      active: true,
+      capabilities: ["hr.leave.list_assigned", "hr.leave.view"],
+    });
+    expect(
+      (
+        await getOwnPresentationSurfaceLayout(
+          pool,
+          context(ids.tenantA, ids.actorA),
+          "surface.mission-control",
+        )
+      ).effectivePlacements.map(({ widgetDefinitionId }) => widgetDefinitionId),
+    ).toEqual(["platform.my-work.queue"]);
     await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
       active: true,
       capabilities: ["hr.leave.list_own", "hr.leave.view"],
@@ -1320,7 +1373,7 @@ describe("presentation preference persistence", () => {
     const draftContext = context(ids.tenantA, ids.actorAdminA);
     const proposedBase = initialWorkspace.currentBase.placements.map((placement) => ({
       ...placement,
-      row: 6,
+      row: placement.row + 3,
     }));
     await setStudioSurfaceBaseCapabilities(
       ids.tenantA,
@@ -1472,15 +1525,16 @@ describe("presentation preference persistence", () => {
     );
     expect(rebased).toMatchObject({
       baseVersion: 2,
-      effectivePlacements: [
-        expect.objectContaining({
-          column: 2,
-          row: 6,
-        }),
-      ],
       overlayVersion: 1,
       source: "user_overlay",
     });
+    expect(rebased.effectivePlacements).toEqual(
+      initialLayout.effectivePlacements.map((placement) => ({
+        ...placement,
+        column: 2,
+        row: placement.row + 3,
+      })),
+    );
     const savedRebase = await updateOwnPresentationSurfaceOverlay(
       pool,
       context(ids.tenantA, ids.actorAdminA),

@@ -208,10 +208,11 @@ function startWebPersona(
 }
 
 async function requireActorReady(origin, label, web, pathname = "/workspace/hr/leave/new") {
-  for (let attempt = 0; attempt < 100 && !web.settled; attempt += 1) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline && !web.settled) {
     try {
       const response = await fetch(new URL(pathname, origin), {
-        signal: AbortSignal.timeout(500),
+        signal: AbortSignal.timeout(Math.min(15_000, Math.max(1, deadline - Date.now()))),
       });
       if (
         response.status === 200 &&
@@ -221,7 +222,8 @@ async function requireActorReady(origin, label, web, pathname = "/workspace/hr/l
         return;
       }
     } catch {}
-    await delay(100);
+    const remaining = deadline - Date.now();
+    if (remaining > 0) await delay(Math.min(1_000, remaining));
   }
   throw new Error(`Web persona ${label} did not become ready`);
 }
@@ -349,14 +351,23 @@ server.post("/__esbla-test-control/workforce-presentation-eligibility", async (r
     await client.query(
       `DELETE FROM membership_capabilities
        WHERE tenant_id = $1 AND principal_id = $2
-         AND capability_id = 'hr.workforce.view_own'`,
-      [fixture.tenantId, fixture.employeePrincipalId],
+         AND capability_id = ANY($3::text[])`,
+      [
+        fixture.tenantId,
+        fixture.employeePrincipalId,
+        ["hr.workforce.view_own", "hr.workforce.view_authorized_detail"],
+      ],
     );
     if (request.body.eligible) {
       await client.query(
         `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
-         VALUES ($1, $2, 'hr.workforce.view_own')`,
-        [fixture.tenantId, fixture.employeePrincipalId],
+         SELECT $1, $2, capability_id
+         FROM unnest($3::text[]) AS capability(capability_id)`,
+        [
+          fixture.tenantId,
+          fixture.employeePrincipalId,
+          ["hr.workforce.view_own", "hr.workforce.view_authorized_detail"],
+        ],
       );
     }
     await client.query("COMMIT");
@@ -389,102 +400,86 @@ try {
     nextRuntimeRootPromise = createPrivateNextRuntimeRoots(webRoot);
     const nextRuntimeRoot = await nextRuntimeRootPromise;
     if (closing) throw new Error("Browser stack closing before web startup");
-    const employee = startWebPersona(
-      "employee",
-      new URL(fixture.employeeOrigin),
-      fixture.employeePrincipalId,
-      fixture.employeeLabel,
-      nextRuntimeRoot.projects.employee,
-    );
-    const employmentEmployee = startWebPersona(
-      "employmentEmployee",
-      new URL(fixture.employmentEmployeeOrigin),
-      fixture.employmentEmployeePrincipalId,
-      fixture.employmentEmployeeLabel,
-      nextRuntimeRoot.projects.employmentEmployee,
-    );
-    const employmentActionOperator = startWebPersona(
-      "employmentActionOperator",
-      new URL(fixture.employmentActionOperatorOrigin),
-      fixture.employmentActionOperatorPrincipalId,
-      fixture.employmentActionOperatorLabel,
-      nextRuntimeRoot.projects.employmentActionOperator,
-    );
-    const employmentActionAdmin = startWebPersona(
-      "employmentActionAdmin",
-      new URL(fixture.employmentActionAdminOrigin),
-      fixture.employmentActionAdminPrincipalId,
-      fixture.employmentActionAdminLabel,
-      nextRuntimeRoot.projects.employmentActionAdmin,
-      fixture.employmentActionAdminTenantId,
-    );
-    const employmentViewAdmin = startWebPersona(
-      "employmentViewAdmin",
-      new URL(fixture.employmentViewAdminOrigin),
-      fixture.employmentViewAdminPrincipalId,
-      fixture.employmentViewAdminLabel,
-      nextRuntimeRoot.projects.employmentViewAdmin,
-    );
-    const employmentListOperator = startWebPersona(
-      "employmentListOperator",
-      new URL(fixture.employmentListOperatorOrigin),
-      fixture.employmentListOperatorPrincipalId,
-      fixture.employmentListOperatorLabel,
-      nextRuntimeRoot.projects.employmentListOperator,
-    );
-    const manager = startWebPersona(
-      "manager",
-      new URL(fixture.managerOrigin),
-      fixture.managerPrincipalId,
-      fixture.managerLabel,
-      nextRuntimeRoot.projects.manager,
-    );
-    const operator = startWebPersona(
-      "operator",
-      new URL(fixture.operatorOrigin),
-      fixture.operatorPrincipalId,
-      fixture.operatorLabel,
-      nextRuntimeRoot.projects.operator,
-    );
-    const admin = startWebPersona(
-      "admin",
-      new URL(fixture.adminOrigin),
-      fixture.adminPrincipalId,
-      fixture.adminLabel,
-      nextRuntimeRoot.projects.admin,
-    );
-    await Promise.all([
-      requireActorReady(new URL(fixture.employeeOrigin), fixture.employeeLabel, employee),
-      requireActorReady(
-        new URL(fixture.employmentEmployeeOrigin),
-        fixture.employmentEmployeeLabel,
-        employmentEmployee,
-      ),
-      requireActorReady(
-        new URL(fixture.employmentActionOperatorOrigin),
-        fixture.employmentActionOperatorLabel,
-        employmentActionOperator,
-      ),
-      requireActorReady(
-        new URL(fixture.employmentActionAdminOrigin),
-        fixture.employmentActionAdminLabel,
-        employmentActionAdmin,
-        "/workspace/hr/employment/settings",
-      ),
-      requireActorReady(
-        new URL(fixture.employmentViewAdminOrigin),
-        fixture.employmentViewAdminLabel,
-        employmentViewAdmin,
-      ),
-      requireActorReady(
-        new URL(fixture.employmentListOperatorOrigin),
-        fixture.employmentListOperatorLabel,
-        employmentListOperator,
-      ),
-      requireActorReady(new URL(fixture.managerOrigin), fixture.managerLabel, manager),
-      requireActorReady(new URL(fixture.operatorOrigin), fixture.operatorLabel, operator),
-      requireActorReady(new URL(fixture.adminOrigin), fixture.adminLabel, admin),
-    ]);
+    const personas = [
+      {
+        label: fixture.employeeLabel,
+        origin: fixture.employeeOrigin,
+        persona: "employee",
+        principalId: fixture.employeePrincipalId,
+        projectRoot: nextRuntimeRoot.projects.employee,
+      },
+      {
+        label: fixture.employmentEmployeeLabel,
+        origin: fixture.employmentEmployeeOrigin,
+        persona: "employmentEmployee",
+        principalId: fixture.employmentEmployeePrincipalId,
+        projectRoot: nextRuntimeRoot.projects.employmentEmployee,
+      },
+      {
+        label: fixture.employmentActionOperatorLabel,
+        origin: fixture.employmentActionOperatorOrigin,
+        persona: "employmentActionOperator",
+        principalId: fixture.employmentActionOperatorPrincipalId,
+        projectRoot: nextRuntimeRoot.projects.employmentActionOperator,
+      },
+      {
+        label: fixture.employmentActionAdminLabel,
+        origin: fixture.employmentActionAdminOrigin,
+        pathname: "/workspace/hr/employment/settings",
+        persona: "employmentActionAdmin",
+        principalId: fixture.employmentActionAdminPrincipalId,
+        projectRoot: nextRuntimeRoot.projects.employmentActionAdmin,
+        tenantId: fixture.employmentActionAdminTenantId,
+      },
+      {
+        label: fixture.employmentViewAdminLabel,
+        origin: fixture.employmentViewAdminOrigin,
+        persona: "employmentViewAdmin",
+        principalId: fixture.employmentViewAdminPrincipalId,
+        projectRoot: nextRuntimeRoot.projects.employmentViewAdmin,
+      },
+      {
+        label: fixture.employmentListOperatorLabel,
+        origin: fixture.employmentListOperatorOrigin,
+        persona: "employmentListOperator",
+        principalId: fixture.employmentListOperatorPrincipalId,
+        projectRoot: nextRuntimeRoot.projects.employmentListOperator,
+      },
+      {
+        label: fixture.managerLabel,
+        origin: fixture.managerOrigin,
+        persona: "manager",
+        principalId: fixture.managerPrincipalId,
+        projectRoot: nextRuntimeRoot.projects.manager,
+      },
+      {
+        label: fixture.operatorLabel,
+        origin: fixture.operatorOrigin,
+        persona: "operator",
+        principalId: fixture.operatorPrincipalId,
+        projectRoot: nextRuntimeRoot.projects.operator,
+      },
+      {
+        label: fixture.adminLabel,
+        origin: fixture.adminOrigin,
+        persona: "admin",
+        principalId: fixture.adminPrincipalId,
+        projectRoot: nextRuntimeRoot.projects.admin,
+      },
+    ];
+    for (const persona of personas) {
+      if (closing) throw new Error("Browser stack closing during Web startup");
+      const origin = new URL(persona.origin);
+      const web = startWebPersona(
+        persona.persona,
+        origin,
+        persona.principalId,
+        persona.label,
+        persona.projectRoot,
+        persona.tenantId ?? fixture.tenantId,
+      );
+      await requireActorReady(origin, persona.label, web, persona.pathname);
+    }
   }
   if (!closing) {
     playwrightRootPromise = createPrivatePlaywrightRoot();
@@ -514,7 +509,10 @@ try {
     }
   }
   await close();
-} catch {
+} catch (error) {
+  console.error(
+    `BROWSER_STACK_FAILURE:${error instanceof Error ? error.message : "unknown harness error"}`,
+  );
   process.exitCode = 1;
   await close();
   throw new Error("Browser stack failed");

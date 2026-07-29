@@ -23,6 +23,7 @@ describe("presentation surface web boundary", () => {
               },
             ],
             baseVersion: 1,
+            diagnostics: [],
             effectivePlacements: [
               {
                 column: 1,

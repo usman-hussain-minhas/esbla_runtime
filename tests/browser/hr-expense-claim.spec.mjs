@@ -36,8 +36,12 @@ async function closeActors(...actors) {
 async function post(actor, buttonName) {
   const button = actor.page.getByRole("button", { exact: true, name: buttonName });
   await expect(button).toBeEnabled();
-  await button.focus();
-  await expect(button).toBeFocused();
+  await expect(async () => {
+    await button.focus();
+    await expect(button).toBeFocused({ timeout: 250 });
+    await actor.page.waitForTimeout(75);
+    await expect(button).toBeFocused({ timeout: 250 });
+  }).toPass({ intervals: [50, 100, 250, 500], timeout: 10_000 });
   const [response] = await Promise.all([
     actor.page.waitForResponse(
       (candidate) =>
@@ -76,7 +80,7 @@ test("employee creates, edits, submits, and reloads a rendered bounded Expense C
 }) => {
   const actor = await openActor(browser, fixture.employmentEmployeeOrigin);
   try {
-    await actor.page.getByRole("link", { name: "My Expense Claims" }).click();
+    await actor.page.goto(`${actor.origin}/workspace/hr/expenses`);
     await expect(actor.page.getByRole("heading", { name: "No Expense Claims yet" })).toBeVisible();
 
     await actor.page.getByLabel("ISO currency code").fill("USD");
@@ -148,8 +152,7 @@ test("manager decisions, employee correction, settings, and deactivation remain 
     await employee.page.reload();
     await expect(employee.page.locator(".leave-status")).toHaveText("Draft");
 
-    await admin.page.goto(`${admin.origin}/workspace/hr`);
-    await admin.page.getByRole("link", { name: "Expense Claim settings" }).click();
+    await admin.page.goto(`${admin.origin}/workspace/hr/expenses/settings`);
     await expect(admin.page.getByRole("heading", { name: "Expense Claim settings" })).toBeVisible();
     await admin.page.getByLabel("Category codes").fill("travel,other");
     await admin.page.getByLabel("Rejection note").selectOption("false");

@@ -1020,6 +1020,30 @@ textarea:focus-visible,
   margin: 3px 0 0;
 }
 
+.zen-widget-summary {
+  align-content: center;
+  display: grid;
+  gap: 10px;
+  min-height: 132px;
+}
+
+.zen-widget-summary > strong {
+  color: var(--heading-main);
+  font-size: 18px;
+}
+
+.zen-widget-summary > p,
+.zen-widget-provider-notice {
+  color: var(--text-soft);
+  font-size: 12px;
+  margin: 0;
+}
+
+.zen-widget-work-row {
+  display: grid;
+  gap: 7px;
+}
+
 .zen-widget-state {
   align-items: center;
   display: flex;
@@ -1104,6 +1128,24 @@ textarea:focus-visible,
   align-items: center;
   display: flex;
   gap: 8px;
+}
+
+.zen-widget-full-screen-face {
+  background: var(--surface-panel);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-soft);
+  margin: auto;
+  min-height: min-content;
+  position: relative;
+  width: min(1240px, 100%);
+}
+
+.zen-widget-full-screen-close {
+  position: absolute;
+  right: max(14px, var(--safe-right));
+  top: max(14px, var(--safe-top));
+  z-index: 2;
 }
 
 .leave-detail-overlay-face {
@@ -1636,6 +1678,27 @@ textarea:focus-visible,
 
 .work-queue-actions .command-button {
   margin-top: 0;
+}
+
+.zen-widget-inline-command .command-button {
+  font-size: 12px;
+  margin: 0;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.zen-widget-inline-command .approval-confirmation {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-chip);
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.zen-widget-inline-command .approval-confirmation > p {
+  color: var(--text-soft);
+  font-size: 12px;
+  margin: 0;
 }
 
 .leave-list-skeleton {

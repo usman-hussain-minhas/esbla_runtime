@@ -7,8 +7,11 @@ import {
   decodeAssignedLeaveRequestListResponse,
 } from "./hr-leave-assigned-list-core";
 
-export function getAssignedLeaveRequests(cursor?: HrLeaveRequestCursor) {
+export function getAssignedLeaveRequests(cursor?: HrLeaveRequestCursor, signal?: AbortSignal) {
   return decodeAssignedLeaveRequestListResponse(
-    fetchDevelopmentApi({ method: "GET", path: buildAssignedLeaveRequestListPath(cursor) }),
+    fetchDevelopmentApi(
+      { method: "GET", path: buildAssignedLeaveRequestListPath(cursor) },
+      signal ? { signal } : {},
+    ),
   );
 }

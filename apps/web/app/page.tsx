@@ -1,13 +1,8 @@
-import { Suspense } from "react";
-import { getResponsivePresentationWidgetPlacement } from "../lib/presentation-layout-core";
 import { loadOwnResponsivePresentationSurfaceLayout } from "../lib/presentation-surfaces";
 import { getEligibleZenSurfaceSections } from "../lib/zen-section-rail-core";
 import { getSurfaceDefinition } from "../theme/zen-theme/v1";
 import { ZenSectionRail } from "../theme/zen-theme/v1/surfaces/zen-section-rail";
-import {
-  HrLeaveMyRequestsWidget,
-  HrLeaveMyRequestsWidgetLoading,
-} from "../theme/zen-theme/v1/widgets/hr-leave-my-requests-widget";
+import { ZenSurfaceWidgets } from "../theme/zen-theme/v1/surfaces/zen-surface-widgets";
 import { WorkspaceShell } from "./workspace-shell";
 
 export const dynamic = "force-dynamic";
@@ -16,14 +11,13 @@ export default async function MissionControlPage() {
   const layout = await loadOwnResponsivePresentationSurfaceLayout("surface.mission-control").catch(
     () => undefined,
   );
-  const placement = layout
-    ? getResponsivePresentationWidgetPlacement(layout, "mission-control.my-leave")
-    : undefined;
+  const eligibleWidgetInstanceIds =
+    layout?.layouts[0].placements.map(({ instanceId }) => instanceId) ?? [];
   const eligibleSections = getEligibleZenSurfaceSections(
     getSurfaceDefinition("surface.mission-control"),
     {
       authorizedContentAnchorIds: [],
-      eligibleWidgetInstanceIds: placement ? ["mission-control.my-leave"] : [],
+      eligibleWidgetInstanceIds,
     },
   );
   return (
@@ -44,17 +38,8 @@ export default async function MissionControlPage() {
           <p className="surface-summary">Live service widgets share one source of Product truth.</p>
         </header>
         <div className="widget-grid">
-          {layout && placement ? (
-            <Suspense
-              fallback={
-                <HrLeaveMyRequestsWidgetLoading
-                  placement={placement}
-                  surfaceId="surface.mission-control"
-                />
-              }
-            >
-              <HrLeaveMyRequestsWidget placement={placement} surfaceId="surface.mission-control" />
-            </Suspense>
+          {layout && eligibleWidgetInstanceIds.length > 0 ? (
+            <ZenSurfaceWidgets layout={layout} surfaceId="surface.mission-control" />
           ) : layout ? (
             <div className="zen-surface-empty">
               <strong>No eligible widgets</strong>

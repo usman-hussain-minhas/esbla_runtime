@@ -39,12 +39,18 @@ export type ExpenseServiceControlState = Authority &
 
 const NO_ACTIONS: readonly ExpenseAuthorizedAction[] = Object.freeze([]);
 
-export async function getAssignedExpenseClaims(cursor?: HrExpenseClaimAssignedCursor) {
+export async function getAssignedExpenseClaims(
+  cursor?: HrExpenseClaimAssignedCursor,
+  signal?: AbortSignal,
+) {
   try {
-    const response = await fetchDevelopmentApi({
-      method: "GET",
-      path: buildAssignedExpensePath(cursor),
-    });
+    const response = await fetchDevelopmentApi(
+      {
+        method: "GET",
+        path: buildAssignedExpensePath(cursor),
+      },
+      signal ? { signal } : {},
+    );
     const authorizedActions = parseExpenseActions(response);
     if (response.status === 200 && !hasExpenseAction(authorizedActions, "list_assigned")) {
       throw new ExpenseUiError("operational_error");

@@ -242,8 +242,9 @@ async function openAssignedWork(actor, leaveRequestId) {
 }
 
 async function expectHistory(actor, status, states) {
-  await expect(actor.page.locator(".leave-status")).toHaveText(status);
-  await expect(actor.page.locator(".leave-history-item strong")).toHaveText(states);
+  const detail = actor.page.locator("[data-leave-detail-face]");
+  await expect(detail.locator(".leave-status")).toHaveText(status);
+  await expect(detail.locator(".leave-history-item strong")).toHaveText(states);
 }
 
 function workforceRecordVersion(page) {
@@ -299,6 +300,173 @@ async function submitEmploymentForm(actor, button) {
   await waitForShellHydration(actor);
 }
 
+async function proveRepresentativeRouteBackedWidget(
+  actor,
+  { dialogName, expectedHref, launcherName, screenshotStem, standaloneHeading },
+  testInfo,
+) {
+  await actor.page.setViewportSize({ height: 800, width: 1280 });
+  await actor.page.goto(`${actor.origin}/workspace/hr`);
+  await waitForShellHydration(actor);
+  const launcher = actor.page.getByRole("link", {
+    exact: true,
+    name: launcherName,
+  });
+  await expect(launcher).toHaveAttribute("href", expectedHref);
+  await launcher.press("Enter");
+  await expect(actor.page).toHaveURL(`${actor.origin}${expectedHref}`);
+
+  const overlay = actor.page.getByRole("dialog", {
+    exact: true,
+    name: dialogName,
+  });
+  await expect(overlay).toBeVisible();
+  await expect(overlay).toBeFocused();
+  await expect(
+    overlay.getByRole("heading", { exact: true, level: 1, name: standaloneHeading }),
+  ).toBeVisible();
+  await expect(actor.page.locator(".esbla-shell")).toHaveAttribute("aria-hidden", "true");
+  await expect(actor.page.locator(".esbla-shell")).toHaveAttribute("inert", "");
+
+  await actor.page.keyboard.press("Shift+Tab");
+  expect(
+    await overlay.evaluate((element) => element.contains(document.activeElement)),
+    `${dialogName} keeps reverse-tab focus inside`,
+  ).toBe(true);
+  await actor.page.keyboard.press("Tab");
+  expect(
+    await overlay.evaluate((element) => element.contains(document.activeElement)),
+    `${dialogName} keeps forward-tab focus inside`,
+  ).toBe(true);
+
+  const desktopPath = testInfo.outputPath(`${screenshotStem}-desktop.png`);
+  await actor.page.screenshot({ fullPage: false, path: desktopPath });
+  await testInfo.attach(`${screenshotStem}-desktop`, {
+    contentType: "image/png",
+    path: desktopPath,
+  });
+
+  await actor.page.setViewportSize({ height: 844, width: 390 });
+  expect(
+    await actor.page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    ),
+    `${dialogName} has no horizontal overflow at 390px`,
+  ).toBe(true);
+  const mobilePath = testInfo.outputPath(`${screenshotStem}-mobile.png`);
+  await actor.page.screenshot({ fullPage: false, path: mobilePath });
+  await testInfo.attach(`${screenshotStem}-mobile`, {
+    contentType: "image/png",
+    path: mobilePath,
+  });
+
+  await actor.page.reload();
+  await expect(actor.page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    actor.page.getByRole("heading", {
+      exact: true,
+      level: 1,
+      name: standaloneHeading,
+    }),
+  ).toBeVisible();
+  await expect(actor.page.locator(".esbla-shell")).not.toHaveAttribute("aria-hidden", "true");
+  await expect(actor.page.locator(".esbla-shell")).not.toHaveAttribute("inert", "");
+}
+
+test("employee Profile and Leave-list widgets render as responsive route-backed products", async ({
+  browser,
+}, testInfo) => {
+  const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
+  try {
+    await proveRepresentativeRouteBackedWidget(
+      employee,
+      {
+        dialogName: "Workforce profile",
+        expectedHref:
+          "/workspace/hr/profile?originFocusId=hr-mission-control.my-profile.full-screen&returnSurface=hr-mission-control",
+        launcherName: "Open My Profile",
+        screenshotStem: "representative-workforce-profile",
+        standaloneHeading: "Workforce profile",
+      },
+      testInfo,
+    );
+    await proveRepresentativeRouteBackedWidget(
+      employee,
+      {
+        dialogName: "My leave requests",
+        expectedHref:
+          "/workspace/hr/leave?originFocusId=hr-mission-control.my-leave.full-screen&returnSurface=hr-mission-control",
+        launcherName: "View all My Leave Requests",
+        screenshotStem: "representative-leave-list",
+        standaloneHeading: "My Leave Requests",
+      },
+      testInfo,
+    );
+  } finally {
+    await closeActors(employee);
+  }
+});
+
+test("employee Employment and Shift widgets render as responsive route-backed products", async ({
+  browser,
+}, testInfo) => {
+  const employee = await openActor(
+    browser,
+    fixture.employmentEmployeeOrigin,
+    fixture.employmentEmployeeLabel,
+  );
+  try {
+    await proveRepresentativeRouteBackedWidget(
+      employee,
+      {
+        dialogName: "Employment facts",
+        expectedHref:
+          "/workspace/hr/employment?originFocusId=hr-mission-control.current-employment.full-screen&returnSurface=hr-mission-control",
+        launcherName: "Open Current Employment Facts",
+        screenshotStem: "representative-employment-facts",
+        standaloneHeading: "Employment facts",
+      },
+      testInfo,
+    );
+    await proveRepresentativeRouteBackedWidget(
+      employee,
+      {
+        dialogName: "My shifts",
+        expectedHref:
+          "/workspace/hr/shifts?originFocusId=hr-mission-control.my-published-shifts.full-screen&returnSurface=hr-mission-control",
+        launcherName: "Open My Published Shifts",
+        screenshotStem: "representative-published-shifts",
+        standaloneHeading: "My shifts",
+      },
+      testInfo,
+    );
+  } finally {
+    await closeActors(employee);
+  }
+});
+
+test("manager My Work widget renders as a responsive route-backed product", async ({
+  browser,
+}, testInfo) => {
+  const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
+  try {
+    await proveRepresentativeRouteBackedWidget(
+      manager,
+      {
+        dialogName: "My Work",
+        expectedHref:
+          "/workspace/my-work?originFocusId=hr-mission-control.my-work.full-screen&returnSurface=hr-mission-control",
+        launcherName: "Open My Work",
+        screenshotStem: "representative-my-work",
+        standaloneHeading: "Assigned work",
+      },
+      testInfo,
+    );
+  } finally {
+    await closeActors(manager);
+  }
+});
+
 test("Mission Control reuses the real Leave widget and persists independent appearance", async ({
   browser,
 }, testInfo) => {
@@ -318,23 +486,34 @@ test("Mission Control reuses the real Leave widget and persists independent appe
     await expect(universalWidget).toHaveAttribute("data-widget-definition", "hr.leave.my-requests");
     await expect(
       universalWidget.getByRole("link", { name: "View all My leave requests" }),
-    ).toHaveAttribute("href", "/workspace/hr/leave");
+    ).toHaveAttribute(
+      "href",
+      "/workspace/hr/leave?originFocusId=mission-control.my-leave.full-screen&returnSurface=mission-control",
+    );
+    await expect(employee.page.locator('.zen-widget[data-widget-state="loading"]')).toHaveCount(0);
 
     const overlayResponse = await employee.page.evaluate(async () => {
+      const placements = [...document.querySelectorAll("main .zen-widget")].map((element) => {
+        if (!(element instanceof HTMLElement)) throw new Error("Invalid widget element");
+        const value = (name) => Number(element.style.getPropertyValue(name));
+        return {
+          column: value("--widget-desktop-column"),
+          columnSpan: value("--widget-desktop-column-span"),
+          instanceId: element.dataset.surfaceInstance,
+          row: value("--widget-desktop-row"),
+          rowSpan: value("--widget-desktop-row-span"),
+          widgetDefinitionId: element.dataset.widgetDefinition,
+        };
+      });
       const response = await fetch("/presentation/surfaces/surface.mission-control", {
         body: JSON.stringify({
           expectedVersion: 0,
           idempotencyKey: crypto.randomUUID(),
-          placements: [
-            {
-              column: 2,
-              columnSpan: 4,
-              instanceId: "mission-control.my-leave",
-              row: 5,
-              rowSpan: 3,
-              widgetDefinitionId: "hr.leave.my-requests",
-            },
-          ],
+          placements: placements.map((placement) =>
+            placement.instanceId === "mission-control.my-leave"
+              ? { ...placement, column: 2, row: 11 }
+              : placement,
+          ),
         }),
         headers: { "content-type": "application/json" },
         method: "POST",
@@ -344,7 +523,7 @@ test("Mission Control reuses the real Leave widget and persists independent appe
     expect(overlayResponse.status, overlayResponse.body).toBe(200);
     await employee.page.reload();
     await expect(universalWidget).toHaveCSS("--widget-column", "2");
-    await expect(universalWidget).toHaveCSS("--widget-row", "5");
+    await expect(universalWidget).toHaveCSS("--widget-row", "11");
 
     await employee.page.goto(`${employee.origin}/workspace/hr`);
     await expect(employee.page.getByRole("navigation", { name: "On this surface" })).toHaveCount(0);
@@ -483,7 +662,7 @@ test("Mission Control reuses the real Leave widget and persists independent appe
       "authoritative",
     );
     await expect(universalWidget).toHaveCSS("--widget-column", "2");
-    await expect(universalWidget).toHaveCSS("--widget-row", "5");
+    await expect(universalWidget).toHaveCSS("--widget-row", "11");
 
     for (const [width, columns] of [
       [1_100, 12],
@@ -503,8 +682,13 @@ test("Mission Control reuses the real Leave widget and persists independent appe
         .toBe(columns);
       const expectedPlacement =
         width >= 1_100
-          ? { column: "2", columnSpan: "span 4", row: "5", rowSpan: "span 3" }
-          : { column: "1", columnSpan: "span 4", row: "1", rowSpan: "span 3" };
+          ? { column: "2", columnSpan: "span 4", row: "11", rowSpan: "span 3" }
+          : {
+              column: "1",
+              columnSpan: "span 4",
+              row: width >= 768 ? "4" : "7",
+              rowSpan: "span 3",
+            };
       await expect
         .poll(async () =>
           universalWidget.evaluate((element) => {
@@ -746,8 +930,10 @@ test("Mission Control reuses the real Leave widget and persists independent appe
       .click();
     await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr`);
     await expect(employee.page.getByRole("heading", { name: "People and work" })).toBeFocused();
-    await expect(employee.page.getByRole("link", { name: "Open leave requests" })).toHaveCount(0);
-    await expect(employee.page.getByRole("link", { name: "My workforce profile" })).toBeVisible();
+    await expect(
+      employee.page.getByRole("link", { name: "View all My leave requests" }),
+    ).toHaveCount(0);
+    await expect(employee.page.getByRole("link", { name: "Open My Profile" })).toBeVisible();
     await employee.page.goto(employee.origin);
     const deniedCapabilityMutation = await employee.page.evaluate(async () => {
       const response = await fetch("/presentation/surfaces/surface.mission-control", {
@@ -793,8 +979,10 @@ test("Mission Control reuses the real Leave widget and persists independent appe
     await employee.page.reload();
     await expect(serviceGroupsLauncher).toHaveCount(0);
     await employee.page.goto(`${employee.origin}/workspace/hr`);
-    await expect(employee.page.getByRole("link", { name: "My workforce profile" })).toHaveCount(0);
-    await expect(employee.page.getByRole("link", { name: "Open leave requests" })).toHaveCount(0);
+    await expect(employee.page.getByRole("link", { name: "Open My Profile" })).toHaveCount(0);
+    await expect(
+      employee.page.getByRole("link", { name: "View all My leave requests" }),
+    ).toHaveCount(0);
 
     await setEmployeeLeavePresentationEligibility(false, ["hr.leave.list_own", "hr.leave.view"]);
     await setEmployeeWorkforcePresentationEligibility(true);
@@ -1243,9 +1431,41 @@ test("employee submits, manager approves, and employee reloads durable rendered 
     await expect(overlay.getByRole("button", { name: "Close leave request detail" })).toBeFocused();
     await employee.page.keyboard.press("Tab");
     await expect(overlay.getByRole("button", { name: "Close leave request detail" })).toBeFocused();
+    const revalidatedOrigin = employee.page.waitForResponse(
+      (response) =>
+        response.request().isNavigationRequest() && response.url() === `${employee.origin}/`,
+    );
     await employee.page.keyboard.press("Escape");
+    expect((await revalidatedOrigin).status()).toBe(200);
+    await employee.page.waitForLoadState("load");
     await expect(employee.page).toHaveURL(`${employee.origin}/`);
-    await expect(originLink).toBeFocused();
+    await expect
+      .poll(
+        async () =>
+          await employee.page.evaluate((launcherId) => {
+            const active = document.activeElement;
+            const launcher = document.getElementById(launcherId);
+            const navigation = performance.getEntriesByType("navigation")[0];
+            return {
+              activeId: active instanceof HTMLElement ? active.id : "",
+              activeTagName: active instanceof HTMLElement ? active.tagName : "",
+              documentReadyState: document.readyState,
+              launcherTabIndex: launcher?.getAttribute("tabindex") ?? null,
+              navigationType:
+                navigation instanceof PerformanceNavigationTiming ? navigation.type : "unknown",
+              receiptPresent:
+                window.sessionStorage.getItem("esbla.route-backed-widget.return-focus.v1") !== null,
+            };
+          }, `mission-control.my-leave.${leaveRequestId}`),
+      )
+      .toEqual({
+        activeId: `mission-control.my-leave.${leaveRequestId}`,
+        activeTagName: "A",
+        documentReadyState: "complete",
+        launcherTabIndex: "0",
+        navigationType: "navigate",
+        receiptPresent: false,
+      });
 
     await employee.page.goto(`${employee.origin}/workspace/hr/leave/${leaveRequestId}`);
     await expect(employee.page.locator('[data-leave-detail-face="standalone"]')).toBeVisible();
@@ -1260,11 +1480,23 @@ test("employee submits, manager approves, and employee reloads durable rendered 
     await canonicalHost.click();
     await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/leave`);
 
-    const card = await openAssignedWork(manager, leaveRequestId);
-    const approve = card.getByRole("button", { name: "Approve leave request" });
+    await manager.page.goto(manager.origin);
+    const myWorkWidget = manager.page.locator(
+      '[data-widget-definition="platform.my-work.queue"]:not([data-widget-state="loading"])',
+    );
+    await expect(myWorkWidget).toHaveAttribute("data-widget-state", "populated");
+    const assignedWidgetRow = myWorkWidget.locator(".zen-widget-work-row").filter({
+      has: manager.page.locator(
+        `a[href*="/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control"]`,
+      ),
+    });
+    await expect(assignedWidgetRow).toContainText(fixture.employeeDisplayName);
+    const approve = assignedWidgetRow.getByRole("button", {
+      name: "Approve leave request",
+    });
     await approve.focus();
     await manager.page.keyboard.press("Enter");
-    const confirm = card.getByRole("button", { name: "Confirm approval" });
+    const confirm = assignedWidgetRow.getByRole("button", { name: "Confirm approval" });
     await expect(confirm).toBeFocused();
     await manager.page.keyboard.press("Enter");
     await expect(manager.page).toHaveURL(
@@ -1356,8 +1588,7 @@ test("HR operator onboards a worker and the employee reloads a minimized profile
     await expect(employee.page.getByRole("heading", { name: "Workforce profile" })).toBeVisible();
     await expect(employee.page.getByRole("heading", { name: "No active profile" })).toBeVisible();
 
-    await operator.page.goto(`${operator.origin}/workspace/hr`);
-    await operator.page.getByRole("link", { name: "Workforce administration" }).click();
+    await operator.page.goto(`${operator.origin}/workspace/hr/profile/admin`);
     await expect(operator.page.getByRole("heading", { name: "Onboard a worker" })).toBeVisible();
     const employeeNumber = operator.page.getByLabel("Employee number");
     await employeeNumber.focus();
@@ -1424,13 +1655,7 @@ test("current manager browses direct reports and returns from persistent detail"
 }) => {
   const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
   try {
-    await manager.page.goto(`${manager.origin}/workspace/hr`);
-    await expect(manager.page.getByRole("link", { name: "Workforce administration" })).toHaveCount(
-      0,
-    );
-    const directReports = manager.page.getByRole("link", { name: "Direct reports" });
-    await directReports.focus();
-    await manager.page.keyboard.press("Enter");
+    await manager.page.goto(`${manager.origin}/workspace/hr/profile/direct-reports`);
     await expect(
       manager.page.getByRole("heading", { name: "Direct reports", exact: true }),
     ).toBeVisible();
@@ -1479,9 +1704,7 @@ test("HR operator filters workforce while employee list access fails closed", as
   const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
   const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
   try {
-    await operator.page.goto(`${operator.origin}/workspace/hr`);
-    await expect(operator.page.getByRole("link", { name: "Direct reports" })).toHaveCount(0);
-    await operator.page.getByRole("link", { name: "Workforce administration" }).click();
+    await operator.page.goto(`${operator.origin}/workspace/hr/profile/admin`);
     await expect(operator.page.getByRole("heading", { name: "Workforce directory" })).toBeVisible();
     await expect(operator.page.getByText("BROWSER-MANAGER-001", { exact: true })).toBeVisible();
     const activeRow = operator.page.locator("tbody tr").filter({ hasText: "BROWSER-DIRECT-001" });
@@ -1540,11 +1763,6 @@ test("HR operator filters workforce while employee list access fails closed", as
     await expect(operator.page.getByText("BROWSER-DRAFT-001", { exact: true })).toBeVisible();
     await expect(draft).toHaveAttribute("aria-current", "page");
 
-    await employee.page.goto(`${employee.origin}/workspace/hr`);
-    await expect(employee.page.getByRole("link", { name: "Workforce administration" })).toHaveCount(
-      0,
-    );
-    await expect(employee.page.getByRole("link", { name: "Direct reports" })).toHaveCount(0);
     await employee.page.goto(`${employee.origin}/workspace/hr/profile/direct-reports`);
     await expect(
       employee.page.getByRole("heading", { name: "Workforce list unavailable" }),
@@ -1563,13 +1781,8 @@ test("tenant admin configures and controls Workforce Profile without record acce
   const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
   const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
   try {
-    await admin.page.goto(`${admin.origin}/workspace/hr`);
+    await admin.page.goto(`${admin.origin}/workspace/hr/profile/settings`);
     await expect(admin.page.locator(".esbla-shell")).toHaveAttribute("data-current-surface", "HR");
-    await expect(admin.page.getByRole("link", { name: "Workforce administration" })).toHaveCount(0);
-    await expect(admin.page.getByRole("link", { name: "Direct reports" })).toHaveCount(0);
-    const settingsLink = admin.page.getByRole("link", { name: "Workforce settings" });
-    await settingsLink.focus();
-    await admin.page.keyboard.press("Enter");
     await expect(
       admin.page.getByRole("heading", { name: "Workforce Profile settings" }),
     ).toBeVisible();
@@ -1596,8 +1809,6 @@ test("tenant admin configures and controls Workforce Profile without record acce
     await expect(admin.page.getByLabel("Manager visibility")).toHaveValue("none");
     await expect(admin.page.getByLabel("Allow an HR operator")).not.toBeChecked();
 
-    await manager.page.goto(`${manager.origin}/workspace/hr`);
-    await expect(manager.page.getByRole("link", { name: "Direct reports" })).toHaveCount(0);
     await manager.page.goto(`${manager.origin}/workspace/hr/profile/direct-reports`);
     await expect(
       manager.page.getByRole("heading", { name: "Workforce list unavailable" }),
@@ -1659,18 +1870,7 @@ test("Employment facts progress through immutable versions and persist for the e
   const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
   const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
   try {
-    await manager.page.goto(`${manager.origin}/workspace/hr`);
-    await expect(manager.page.getByRole("link", { name: "Employment administration" })).toHaveCount(
-      0,
-    );
-    await expect(manager.page.getByRole("link", { name: "Employment settings" })).toHaveCount(0);
-
-    await operator.page.goto(`${operator.origin}/workspace/hr`);
-    const administration = operator.page.getByRole("link", {
-      name: "Employment administration",
-    });
-    await administration.focus();
-    await operator.page.keyboard.press("Enter");
+    await operator.page.goto(`${operator.origin}/workspace/hr/employment/admin`);
     await expect(
       operator.page.getByRole("heading", { name: "Employment record administration" }),
     ).toBeVisible();
@@ -1828,13 +2028,7 @@ test("tenant admin configures and controls Employment without record access", as
   const longOrganizationReference = `org-${"opaque".repeat(80)}`;
   try {
     await admin.page.emulateMedia({ colorScheme: "dark" });
-    await admin.page.goto(`${admin.origin}/workspace/hr`);
-    await expect(admin.page.getByRole("link", { name: "Employment administration" })).toHaveCount(
-      0,
-    );
-    const settings = admin.page.getByRole("link", { name: "Employment settings" });
-    await settings.focus();
-    await admin.page.keyboard.press("Enter");
+    await admin.page.goto(`${admin.origin}/workspace/hr/employment/settings`);
     await expect(
       admin.page.getByRole("heading", { name: "Employment Record settings" }),
     ).toBeVisible();
@@ -2035,14 +2229,6 @@ test("Employment and Shift widgets follow exact action capabilities", async ({ b
     await expect(serviceControlFact(shiftAdmin.page, "Receipt activation state")).toHaveText(state);
   };
   try {
-    await actionOperator.page.goto(`${actionOperator.origin}/workspace/hr`);
-    await expect(
-      actionOperator.page.getByRole("link", { name: "Employment administration" }),
-    ).toBeVisible();
-    await expect(actionOperator.page.getByRole("link", { name: "Report shifts" })).toBeVisible();
-    await expect(
-      actionOperator.page.getByRole("link", { name: "Open employment facts" }),
-    ).toHaveCount(0);
     await actionOperator.page.goto(`${actionOperator.origin}/workspace/hr/employment/admin`);
     for (const operation of ["create_record", "create_version", "end_record"]) {
       await expect(employmentForm(actionOperator.page, operation)).toHaveCount(1);
@@ -2162,8 +2348,6 @@ test("Employment and Shift widgets follow exact action capabilities", async ({ b
     await expect(readEmployee.page).toHaveURL(`${readEmployee.origin}/workspace/hr`);
     await expect(readEmployee.page.getByRole("heading", { name: "People and work" })).toBeVisible();
 
-    await actionAdmin.page.goto(`${actionAdmin.origin}/workspace/hr`);
-    await expect(actionAdmin.page.getByRole("link", { name: "Employment settings" })).toBeVisible();
     await actionAdmin.page.goto(`${actionAdmin.origin}/workspace/hr/employment/settings`);
     for (const label of ["Activation version", "Settings version", "Control version"]) {
       await expect(serviceControlFact(actionAdmin.page, label)).toHaveCount(0);
@@ -2289,8 +2473,6 @@ test("Employment and Shift widgets follow exact action capabilities", async ({ b
       await expect(employmentForm(viewAdmin.page, operation)).toHaveCount(0);
     }
 
-    await readEmployee.page.goto(`${readEmployee.origin}/workspace/hr`);
-    await expect(readEmployee.page.getByRole("link", { name: "Shift settings" })).toHaveCount(0);
     await readEmployee.page.goto(
       `${readEmployee.origin}/workspace/hr/shifts/settings?result=success`,
     );
@@ -2301,9 +2483,7 @@ test("Employment and Shift widgets follow exact action capabilities", async ({ b
       readEmployee.page.locator('form[action="/workspace/hr/shifts/action"]'),
     ).toHaveCount(0);
 
-    await shiftAdmin.page.goto(`${shiftAdmin.origin}/workspace/hr`);
-    await expect(shiftAdmin.page.getByRole("link", { name: "Shift settings" })).toBeVisible();
-    await shiftAdmin.page.getByRole("link", { name: "Shift settings" }).click();
+    await shiftAdmin.page.goto(`${shiftAdmin.origin}/workspace/hr/shifts/settings`);
     await expect(
       shiftAdmin.page.getByRole("heading", { name: "Shift Assignment settings" }),
     ).toBeVisible();
@@ -2394,8 +2574,6 @@ test("Shift roster renders across operator, employee and manager authority", asy
     await expect(actor.page).toHaveURL(/result=success/);
   };
   try {
-    await employee.page.goto(`${employee.origin}/workspace/hr`);
-    await expect(employee.page.getByRole("link", { name: "Report shifts" })).toHaveCount(0);
     await operator.page.goto(`${operator.origin}/workspace/hr/shifts/reports?result=success`);
     await expect(
       operator.page.getByRole("heading", { name: "Last Shift action receipt" }),
@@ -2493,8 +2671,7 @@ test("tenant admin controls Attendance settings while record access remains sepa
     await submit(actionAdmin, "Save Attendance settings");
     await submit(actionAdmin, "Deactivate service");
     await expect(actionAdmin.page.getByLabel("Expected activation version")).toHaveValue("2");
-    await admin.page.goto(`${admin.origin}/workspace/hr`);
-    await admin.page.getByRole("link", { name: "Attendance settings" }).click();
+    await admin.page.goto(`${admin.origin}/workspace/hr/attendance/settings`);
     await expect(admin.page.getByRole("heading", { name: "Attendance settings" })).toBeVisible();
     await submit(admin, "Activate service");
     await expect(admin.page.locator(".leave-status")).toHaveText("Active");
@@ -2543,13 +2720,6 @@ test("Attendance renders manual facts and persistent correction history by curre
   const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
   const period = "from=2028-08-01&to=2028-08-07";
   try {
-    await employee.page.goto(`${employee.origin}/workspace/hr`);
-    await expect(employee.page.getByRole("link", { name: "My attendance" })).toBeVisible();
-    await expect(employee.page.getByRole("link", { name: "Report attendance" })).toHaveCount(0);
-    await manager.page.goto(`${manager.origin}/workspace/hr`);
-    await expect(manager.page.getByRole("link", { name: "Report attendance" })).toBeVisible();
-    await expect(manager.page.getByRole("link", { name: "My attendance" })).toHaveCount(0);
-
     await operator.page.goto(`${operator.origin}/workspace/hr/attendance/reports?${period}`);
     await operator.page.getByLabel("Worker profile ID").fill(shiftEmployeeWorkerProfileId);
     await operator.page.getByLabel("Observed instant").fill("2028-08-04T04:30:00.000Z");

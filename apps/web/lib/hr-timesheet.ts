@@ -48,9 +48,12 @@ function actions(response: Response): readonly TimesheetAuthorizedAction[] {
   return parseTimesheetActions(response);
 }
 
-export function getAssignedTimesheets(cursor?: HrTimesheetAssignedCursor) {
+export function getAssignedTimesheets(cursor?: HrTimesheetAssignedCursor, signal?: AbortSignal) {
   return decodeAssignedTimesheetListResponse(
-    fetchDevelopmentApi({ method: "GET", path: buildAssignedTimesheetListPath(cursor) }),
+    fetchDevelopmentApi(
+      { method: "GET", path: buildAssignedTimesheetListPath(cursor) },
+      signal ? { signal } : {},
+    ),
   );
 }
 

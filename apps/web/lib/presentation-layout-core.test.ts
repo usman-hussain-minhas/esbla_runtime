@@ -182,12 +182,15 @@ describe("presentation layout resolver", () => {
 
   it("binds all three rendered layouts to the persisted surface identity and versions", () => {
     const contract = getZenV1SurfaceContract("surface.mission-control");
-    const basePlacement = contract.basePlacements[0];
+    const basePlacement = contract.basePlacements.find(
+      ({ instanceId }) => instanceId === "mission-control.my-leave",
+    );
     if (!basePlacement) throw new Error("Mission Control base placement is missing");
     const persisted = {
       baseDefinitionHash: "c75bac3fed1b604fe9ebc9f39e1ccef45b2ad34570f5200ada0e8b77ab8b71fb",
       basePlacements: [basePlacement],
       baseVersion: 1,
+      diagnostics: [],
       effectivePlacements: [basePlacement],
       overlayVersion: 0,
       source: "code_default",
@@ -200,6 +203,7 @@ describe("presentation layout resolver", () => {
       baseVersion: 1,
       overlayVersion: 0,
       source: "code_default",
+      surfaceDiagnostics: [],
       surfaceId: "surface.mission-control",
     });
     expect(
@@ -213,10 +217,18 @@ describe("presentation layout resolver", () => {
       getResponsivePresentationWidgetPlacement(resolved, "mission-control.my-leave"),
     ).toMatchObject({
       desktop: { instanceId: "mission-control.my-leave" },
-      phone: { column: 1, instanceId: "mission-control.my-leave", row: 1 },
-      tablet: { column: 1, instanceId: "mission-control.my-leave", row: 1 },
+      phone: { column: 1, instanceId: "mission-control.my-leave", row: 7 },
+      tablet: { column: 1, instanceId: "mission-control.my-leave", row: 4 },
     });
-    expect(resolved.layouts[1].placements).toEqual(contract.basePlacementsByBreakpoint.tablet);
-    expect(resolved.layouts[2].placements).toEqual(contract.basePlacementsByBreakpoint.phone);
+    expect(resolved.layouts[1].placements).toEqual(
+      contract.basePlacementsByBreakpoint.tablet.filter(
+        ({ instanceId }) => instanceId === "mission-control.my-leave",
+      ),
+    );
+    expect(resolved.layouts[2].placements).toEqual(
+      contract.basePlacementsByBreakpoint.phone.filter(
+        ({ instanceId }) => instanceId === "mission-control.my-leave",
+      ),
+    );
   });
 });

@@ -92,20 +92,46 @@ describe("platform presentation surface API contract", () => {
     }
     expect(ZEN_V1_SURFACE_CONTRACTS.map(({ defaultInstances }) => defaultInstances[0])).toEqual([
       expect.objectContaining({
-        instanceId: "mission-control.my-leave",
+        instanceId: "mission-control.my-work",
         placementPolicy: "default_optional",
         sectionId: "overview",
-        sourceOrder: 3,
+        sourceOrder: 1,
         widgetDefinitionVersion: 1,
       }),
       expect.objectContaining({
-        instanceId: "hr-mission-control.my-leave",
+        instanceId: "hr-mission-control.my-profile",
         placementPolicy: "default_optional",
         sectionId: "overview",
-        sourceOrder: 6,
+        sourceOrder: 1,
         widgetDefinitionVersion: 1,
       }),
     ]);
+    expect(
+      ZEN_V1_SURFACE_CONTRACTS.map(({ defaultInstances }) =>
+        defaultInstances.map(({ instanceId }) => instanceId),
+      ),
+    ).toEqual([
+      [
+        "mission-control.my-work",
+        "mission-control.my-published-shifts",
+        "mission-control.my-leave",
+        "mission-control.my-timesheets",
+        "mission-control.my-profile",
+      ],
+      [
+        "hr-mission-control.my-profile",
+        "hr-mission-control.current-employment",
+        "hr-mission-control.my-work",
+        "hr-mission-control.my-published-shifts",
+        "hr-mission-control.my-leave",
+        "hr-mission-control.my-timesheets",
+      ],
+    ]);
+    const universalFirstPlacement = ZEN_V1_SURFACE_CONTRACTS[0].basePlacements[0];
+    const universalFirstInstance = ZEN_V1_SURFACE_CONTRACTS[0].defaultInstances[0];
+    if (!universalFirstPlacement || !universalFirstInstance) {
+      throw new Error("Universal Mission Control base is missing");
+    }
     expect(() =>
       validatePresentationCompositionRegistries(
         PRESENTATION_SURFACE_DEFINITIONS,
@@ -114,13 +140,13 @@ describe("platform presentation surface API contract", () => {
             ...ZEN_V1_SURFACE_CONTRACTS[0],
             basePlacements: [
               {
-                ...ZEN_V1_SURFACE_CONTRACTS[0].basePlacements[0],
+                ...universalFirstPlacement,
                 widgetDefinitionId: "hr.unknown.widget",
               },
             ],
             defaultInstances: [
               {
-                ...ZEN_V1_SURFACE_CONTRACTS[0].defaultInstances[0],
+                ...universalFirstInstance,
                 widgetDefinitionId: "hr.unknown.widget",
               },
             ],
@@ -163,6 +189,7 @@ describe("platform presentation surface API contract", () => {
         baseDefinitionHash: "0".repeat(64),
         basePlacements: [],
         baseVersion: 1,
+        diagnostics: [],
         effectivePlacements: [],
         overlayVersion: 0,
         source: "code_default",
@@ -183,6 +210,7 @@ describe("platform presentation surface API contract", () => {
           },
         ],
         baseVersion: 1,
+        diagnostics: [],
         effectivePlacements: [],
         overlayVersion: 0,
         source: "code_default",
@@ -198,6 +226,7 @@ describe("platform presentation surface API contract", () => {
         baseDefinitionHash: base.definitionHash,
         basePlacements: [],
         baseVersion: base.baseVersion,
+        diagnostics: [],
         effectivePlacements: [],
         overlayVersion: 0,
         source: "code_default",
@@ -207,11 +236,38 @@ describe("platform presentation surface API contract", () => {
       baseDefinitionHash: base.definitionHash,
       basePlacements: [],
       baseVersion: 1,
+      diagnostics: [],
       effectivePlacements: [],
       overlayVersion: 0,
       source: "code_default",
       surfaceId: "surface.mission-control",
     });
+  });
+
+  it("preserves explicit non-sensitive overlay conflict diagnostics", () => {
+    const base = ZEN_V1_SURFACE_CONTRACTS[0];
+    expect(
+      parsePresentationSurfaceLayout({
+        baseDefinitionHash: base.definitionHash,
+        basePlacements: base.basePlacements,
+        baseVersion: base.baseVersion,
+        diagnostics: [
+          {
+            code: "overlay_placement_conflict",
+            instanceId: "mission-control.my-leave",
+          },
+        ],
+        effectivePlacements: base.basePlacements,
+        overlayVersion: 1,
+        source: "user_overlay",
+        surfaceId: base.surfaceId,
+      }).diagnostics,
+    ).toEqual([
+      {
+        code: "overlay_placement_conflict",
+        instanceId: "mission-control.my-leave",
+      },
+    ]);
   });
 
   it("requires explicit non-billing treatment on an overlay mutation response", () => {
@@ -222,6 +278,7 @@ describe("platform presentation surface API contract", () => {
         basePlacements: base.basePlacements,
         baseVersion: base.baseVersion,
         billingState: "non_billable",
+        diagnostics: [],
         effectivePlacements: base.basePlacements,
         evidenceEventId: "93000000-0000-4000-8000-000000000001",
         overlayVersion: 1,
@@ -235,6 +292,7 @@ describe("platform presentation surface API contract", () => {
         baseDefinitionHash: base.definitionHash,
         basePlacements: base.basePlacements,
         baseVersion: base.baseVersion,
+        diagnostics: [],
         effectivePlacements: base.basePlacements,
         evidenceEventId: "93000000-0000-4000-8000-000000000001",
         overlayVersion: 1,

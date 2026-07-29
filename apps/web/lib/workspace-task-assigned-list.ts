@@ -7,8 +7,11 @@ import {
   decodeAssignedWorkspaceTaskListResponse,
 } from "./workspace-task-assigned-list-core";
 
-export function getAssignedWorkspaceTasks(cursor?: WorkspaceTaskCursor) {
+export function getAssignedWorkspaceTasks(cursor?: WorkspaceTaskCursor, signal?: AbortSignal) {
   return decodeAssignedWorkspaceTaskListResponse(
-    fetchDevelopmentApi({ method: "GET", path: buildAssignedWorkspaceTaskListPath(cursor) }),
+    fetchDevelopmentApi(
+      { method: "GET", path: buildAssignedWorkspaceTaskListPath(cursor) },
+      signal ? { signal } : {},
+    ),
   );
 }

@@ -7,8 +7,8 @@ import {
   approveFormStateForError,
   INITIAL_HR_LEAVE_APPROVE_STATE,
   parseHrLeaveApproveTransport,
-} from "../../../lib/hr-leave-approve-core";
-import { buildHrLeaveDetailHref } from "../../../lib/hr-leave-navigation-core";
+} from "../lib/hr-leave-approve-core";
+import { buildHrLeaveDetailHref } from "../lib/hr-leave-navigation-core";
 
 interface LeaveApprovalActionProps {
   readonly expectedVersion: number;

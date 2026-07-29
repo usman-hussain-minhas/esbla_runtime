@@ -126,6 +126,30 @@ export const PRESENTATION_SURFACE_DEFINITIONS = deepFreeze([
 const UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES = deepFreeze([
   {
     column: 1,
+    columnSpan: 7,
+    instanceId: "mission-control.my-work",
+    placementPolicy: "default_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 1,
+    widgetDefinitionId: "platform.my-work.queue",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 8,
+    columnSpan: 5,
+    instanceId: "mission-control.my-published-shifts",
+    placementPolicy: "default_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 2,
+    widgetDefinitionId: "hr.shift.my-published",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 1,
     columnSpan: 4,
     instanceId: "mission-control.my-leave",
     placementPolicy: "default_optional",
@@ -136,9 +160,81 @@ const UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES = deepFreeze([
     widgetDefinitionId: "hr.leave.my-requests",
     widgetDefinitionVersion: 1,
   },
+  {
+    column: 9,
+    columnSpan: 4,
+    instanceId: "mission-control.my-timesheets",
+    placementPolicy: "default_optional",
+    row: 4,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 5,
+    widgetDefinitionId: "hr.timesheet.mine",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 5,
+    columnSpan: 4,
+    instanceId: "mission-control.my-profile",
+    placementPolicy: "default_optional",
+    row: 7,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 7,
+    widgetDefinitionId: "hr.workforce.my-profile",
+    widgetDefinitionVersion: 1,
+  },
 ] as const) satisfies readonly PresentationSurfaceDefaultInstance[];
 
 const HR_MISSION_CONTROL_DEFAULT_INSTANCES = deepFreeze([
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "hr-mission-control.my-profile",
+    placementPolicy: "default_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 1,
+    widgetDefinitionId: "hr.workforce.my-profile",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 5,
+    columnSpan: 4,
+    instanceId: "hr-mission-control.current-employment",
+    placementPolicy: "default_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 2,
+    widgetDefinitionId: "hr.employment.current-facts",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 9,
+    columnSpan: 4,
+    instanceId: "hr-mission-control.my-work",
+    placementPolicy: "default_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 3,
+    widgetDefinitionId: "platform.my-work.queue",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "hr-mission-control.my-published-shifts",
+    placementPolicy: "default_optional",
+    row: 4,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 4,
+    widgetDefinitionId: "hr.shift.my-published",
+    widgetDefinitionVersion: 1,
+  },
   {
     column: 9,
     columnSpan: 4,
@@ -149,6 +245,18 @@ const HR_MISSION_CONTROL_DEFAULT_INSTANCES = deepFreeze([
     sectionId: "overview",
     sourceOrder: 6,
     widgetDefinitionId: "hr.leave.my-requests",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 1,
+    columnSpan: 6,
+    instanceId: "hr-mission-control.my-timesheets",
+    placementPolicy: "default_optional",
+    row: 7,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 7,
+    widgetDefinitionId: "hr.timesheet.mine",
     widgetDefinitionVersion: 1,
   },
 ] as const) satisfies readonly PresentationSurfaceDefaultInstance[];
@@ -164,30 +272,27 @@ function placementFromDefaultInstance({
   return { column, columnSpan, instanceId, row, rowSpan, widgetDefinitionId };
 }
 
+function compactPlacements(
+  instances: readonly PresentationSurfaceDefaultInstance[],
+  columnCount: 4 | 8,
+): readonly PresentationWidgetPlacement[] {
+  const perRow = columnCount / 4;
+  return instances.map(({ instanceId, widgetDefinitionId }, index) => ({
+    column: (index % perRow) * 4 + 1,
+    columnSpan: 4,
+    instanceId,
+    row: Math.floor(index / perRow) * 3 + 1,
+    rowSpan: 3,
+    widgetDefinitionId,
+  }));
+}
+
 const UNIVERSAL_MISSION_CONTROL_CONTRACT = {
-  basePlacements: [placementFromDefaultInstance(UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES[0])],
+  basePlacements: UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES.map(placementFromDefaultInstance),
   basePlacementsByBreakpoint: {
-    desktop: [placementFromDefaultInstance(UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES[0])],
-    phone: [
-      {
-        column: 1,
-        columnSpan: 4,
-        instanceId: "mission-control.my-leave",
-        row: 1,
-        rowSpan: 3,
-        widgetDefinitionId: "hr.leave.my-requests",
-      },
-    ],
-    tablet: [
-      {
-        column: 1,
-        columnSpan: 4,
-        instanceId: "mission-control.my-leave",
-        row: 1,
-        rowSpan: 3,
-        widgetDefinitionId: "hr.leave.my-requests",
-      },
-    ],
+    desktop: UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES.map(placementFromDefaultInstance),
+    phone: compactPlacements(UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES, 4),
+    tablet: compactPlacements(UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES, 8),
   },
   baseVersion: 1,
   defaultInstances: UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES,
@@ -196,29 +301,11 @@ const UNIVERSAL_MISSION_CONTROL_CONTRACT = {
 } as const satisfies ZenV1SurfaceContractWithoutHash;
 
 const HR_MISSION_CONTROL_CONTRACT = {
-  basePlacements: [placementFromDefaultInstance(HR_MISSION_CONTROL_DEFAULT_INSTANCES[0])],
+  basePlacements: HR_MISSION_CONTROL_DEFAULT_INSTANCES.map(placementFromDefaultInstance),
   basePlacementsByBreakpoint: {
-    desktop: [placementFromDefaultInstance(HR_MISSION_CONTROL_DEFAULT_INSTANCES[0])],
-    phone: [
-      {
-        column: 1,
-        columnSpan: 4,
-        instanceId: "hr-mission-control.my-leave",
-        row: 1,
-        rowSpan: 3,
-        widgetDefinitionId: "hr.leave.my-requests",
-      },
-    ],
-    tablet: [
-      {
-        column: 1,
-        columnSpan: 4,
-        instanceId: "hr-mission-control.my-leave",
-        row: 1,
-        rowSpan: 3,
-        widgetDefinitionId: "hr.leave.my-requests",
-      },
-    ],
+    desktop: HR_MISSION_CONTROL_DEFAULT_INSTANCES.map(placementFromDefaultInstance),
+    phone: compactPlacements(HR_MISSION_CONTROL_DEFAULT_INSTANCES, 4),
+    tablet: compactPlacements(HR_MISSION_CONTROL_DEFAULT_INSTANCES, 8),
   },
   baseVersion: 1,
   defaultInstances: HR_MISSION_CONTROL_DEFAULT_INSTANCES,
@@ -229,20 +316,25 @@ const HR_MISSION_CONTROL_CONTRACT = {
 export const ZEN_V1_SURFACE_CONTRACTS = deepFreeze([
   {
     ...UNIVERSAL_MISSION_CONTROL_CONTRACT,
-    canonicalHash: "15714758a72acd9f53a29dedaab8891b3dbd35eb964623fa356041c913710aa4",
+    canonicalHash: "3a8392e8d622d3f6856bc2258ea6c81c1f773686efcb4103058d91fc87966f90",
   },
   {
     ...HR_MISSION_CONTROL_CONTRACT,
-    canonicalHash: "4fbcc83401f49f49113781bde1bd20b568058cac2e8d139e4c287c2374b876ad",
+    canonicalHash: "e709c3a05f073fc04f961d8aac2a25884209e716e939a511d9c61d5a69d873de",
   },
 ] as const) satisfies readonly ZenV1SurfaceContract[];
 
 export type PresentationSurfaceLayoutSource = "code_default" | "tenant_base" | "user_overlay";
+export type PresentationSurfaceLayoutDiagnostic = Readonly<{
+  code: "overlay_placement_conflict";
+  instanceId: string;
+}>;
 
 export interface PresentationSurfaceLayout {
   readonly baseDefinitionHash: string;
   readonly basePlacements: readonly PresentationWidgetPlacement[];
   readonly baseVersion: number;
+  readonly diagnostics: readonly PresentationSurfaceLayoutDiagnostic[];
   readonly effectivePlacements: readonly PresentationWidgetPlacement[];
   readonly overlayVersion: number;
   readonly source: PresentationSurfaceLayoutSource;
@@ -290,6 +382,19 @@ export const presentationSurfaceLayoutSchema = {
     baseDefinitionHash: { pattern: sha256Pattern, type: "string" },
     basePlacements: { items: presentationWidgetPlacementSchema, maxItems: 100, type: "array" },
     baseVersion: { maximum: 2_147_483_647, minimum: 1, type: "integer" },
+    diagnostics: {
+      items: {
+        additionalProperties: false,
+        properties: {
+          code: { const: "overlay_placement_conflict" },
+          instanceId: { maxLength: 160, pattern: identifierPattern, type: "string" },
+        },
+        required: ["code", "instanceId"],
+        type: "object",
+      },
+      maxItems: 100,
+      type: "array",
+    },
     effectivePlacements: {
       items: presentationWidgetPlacementSchema,
       maxItems: 100,
@@ -303,6 +408,7 @@ export const presentationSurfaceLayoutSchema = {
     "baseDefinitionHash",
     "basePlacements",
     "baseVersion",
+    "diagnostics",
     "effectivePlacements",
     "overlayVersion",
     "source",
@@ -721,6 +827,7 @@ export function parsePresentationSurfaceLayout(value: unknown): PresentationSurf
       "baseDefinitionHash",
       "basePlacements",
       "baseVersion",
+      "diagnostics",
       "effectivePlacements",
       "overlayVersion",
       "source",
@@ -760,6 +867,26 @@ export function parsePresentationSurfaceLayout(value: unknown): PresentationSurf
   const expectedInstances = new Map(
     basePlacements.map(({ instanceId, widgetDefinitionId }) => [instanceId, widgetDefinitionId]),
   );
+  if (!Array.isArray(value.diagnostics) || value.diagnostics.length > 100) {
+    throw new Error("Invalid presentation surface diagnostics");
+  }
+  const diagnosticIds = new Set<string>();
+  const diagnostics = value.diagnostics.map((diagnostic) => {
+    if (
+      !exactRecord(diagnostic, ["code", "instanceId"]) ||
+      diagnostic.code !== "overlay_placement_conflict" ||
+      typeof diagnostic.instanceId !== "string" ||
+      !expectedInstances.has(diagnostic.instanceId) ||
+      diagnosticIds.has(diagnostic.instanceId)
+    ) {
+      throw new Error("Invalid presentation surface diagnostics");
+    }
+    diagnosticIds.add(diagnostic.instanceId);
+    return Object.freeze({
+      code: "overlay_placement_conflict" as const,
+      instanceId: diagnostic.instanceId,
+    });
+  });
   if (
     effectivePlacements.length !== basePlacements.length ||
     effectivePlacements.some(
@@ -774,7 +901,8 @@ export function parsePresentationSurfaceLayout(value: unknown): PresentationSurf
     (value.source === "tenant_base" &&
       (value.overlayVersion !== 0 ||
         canonicalPlacements(effectivePlacements) !== canonicalPlacements(basePlacements))) ||
-    (value.source === "user_overlay" && value.overlayVersion < 1)
+    (value.source === "user_overlay" && value.overlayVersion < 1) ||
+    (value.source !== "user_overlay" && diagnostics.length > 0)
   ) {
     throw new Error("Presentation surface effective layout drift");
   }
@@ -782,6 +910,7 @@ export function parsePresentationSurfaceLayout(value: unknown): PresentationSurf
     baseDefinitionHash: value.baseDefinitionHash,
     basePlacements,
     baseVersion: value.baseVersion,
+    diagnostics: Object.freeze(diagnostics),
     effectivePlacements,
     overlayVersion: value.overlayVersion,
     source: value.source,
@@ -798,6 +927,7 @@ export function parseUpdatePresentationSurfaceOverlayResponse(
       "basePlacements",
       "baseVersion",
       "billingState",
+      "diagnostics",
       "effectivePlacements",
       "evidenceEventId",
       "overlayVersion",
@@ -817,6 +947,7 @@ export function parseUpdatePresentationSurfaceOverlayResponse(
       baseDefinitionHash: value.baseDefinitionHash,
       basePlacements: value.basePlacements,
       baseVersion: value.baseVersion,
+      diagnostics: value.diagnostics,
       effectivePlacements: value.effectivePlacements,
       overlayVersion: value.overlayVersion,
       source: value.source,

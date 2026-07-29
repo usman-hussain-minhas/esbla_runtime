@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { HR_TIMESHEET_DRAFT_WIDGET_DEFINITION } from "@esbla/contracts";
 import { loadOwnTimesheets, loadTimesheetDetail } from "../../../../lib/hr-timesheet";
 import { hasTimesheetAction } from "../../../../lib/hr-timesheet-core";
 import { TimesheetResult } from "./result";
@@ -78,29 +79,40 @@ export default async function TimesheetsPage({ searchParams }: Props) {
       ) : (
         <>
           {canCreate ? (
-            <form
-              action="/workspace/hr/timesheets/action"
-              className="leave-request-form"
-              method="post"
+            <section
+              aria-labelledby="timesheet-draft-form-heading"
+              data-widget-definition={HR_TIMESHEET_DRAFT_WIDGET_DEFINITION.id}
+              data-widget-definition-version={
+                HR_TIMESHEET_DRAFT_WIDGET_DEFINITION.definitionVersion
+              }
             >
-              <h2>Create a weekly draft</h2>
-              <input name="idempotencyKey" type="hidden" value={randomUUID()} />
-              <input name="operation" type="hidden" value="create" />
-              <div className="form-grid-two">
-                <div className="form-field">
-                  <label htmlFor="timesheet-period-start">Period starts</label>
-                  <input id="timesheet-period-start" name="periodStart" required type="date" />
+              <form
+                action="/workspace/hr/timesheets/action"
+                className="leave-request-form"
+                method="post"
+              >
+                <h2 id="timesheet-draft-form-heading">Create a weekly draft</h2>
+                <input name="idempotencyKey" type="hidden" value={randomUUID()} />
+                <input name="operation" type="hidden" value="create" />
+                <div className="form-grid-two">
+                  <div className="form-field">
+                    <label htmlFor="timesheet-period-start">Period starts</label>
+                    <input id="timesheet-period-start" name="periodStart" required type="date" />
+                  </div>
+                  <div className="form-field">
+                    <label htmlFor="timesheet-period-end">Period ends</label>
+                    <input id="timesheet-period-end" name="periodEnd" required type="date" />
+                  </div>
                 </div>
-                <div className="form-field">
-                  <label htmlFor="timesheet-period-end">Period ends</label>
-                  <input id="timesheet-period-end" name="periodEnd" required type="date" />
-                </div>
-              </div>
-              <p className="field-hint">The period must contain exactly seven inclusive dates.</p>
-              <button className="command-button command-button-primary" type="submit">
-                Create Timesheet draft
-              </button>
-            </form>
+                <p className="field-hint">
+                  The current ratified cadence is weekly: exactly seven inclusive dates. Current
+                  tenant daily-minute limits are enforced when entries are saved.
+                </p>
+                <button className="command-button command-button-primary" type="submit">
+                  Create Timesheet draft
+                </button>
+              </form>
+            </section>
           ) : null}
 
           {selected ? (

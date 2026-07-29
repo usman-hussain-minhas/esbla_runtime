@@ -34,8 +34,12 @@ async function closeActors(...actors) {
 async function post(actor, buttonName) {
   const button = actor.page.getByRole("button", { exact: true, name: buttonName });
   await expect(button).toBeEnabled();
-  await button.focus();
-  await expect(button).toBeFocused();
+  await expect(async () => {
+    await button.focus();
+    await expect(button).toBeFocused({ timeout: 250 });
+    await actor.page.waitForTimeout(75);
+    await expect(button).toBeFocused({ timeout: 250 });
+  }).toPass({ intervals: [50, 100, 250, 500], timeout: 10_000 });
   const [response] = await Promise.all([
     actor.page.waitForResponse(
       (candidate) =>
@@ -71,12 +75,150 @@ async function createAndSubmit(actor, periodStart, periodEnd, workDate, descript
   return new URL(actor.page.url()).pathname.split("/").at(-1);
 }
 
+test("HR Timesheet widget opens a route-backed full-screen form and protects dirty work", async ({
+  browser,
+}, testInfo) => {
+  const actor = await openActor(browser, fixture.employmentEmployeeOrigin);
+  const admin = await openActor(browser, fixture.adminOrigin);
+  let deactivated = false;
+  try {
+    await actor.page.setViewportSize({ height: 500, width: 1280 });
+    const launcher = actor.page.getByRole("link", {
+      exact: true,
+      name: "Open My Timesheets",
+    });
+    await expect(launcher).toHaveAttribute(
+      "href",
+      "/workspace/hr/timesheets?originFocusId=hr-mission-control.my-timesheets.full-screen&returnSurface=hr-mission-control",
+    );
+    await actor.page.locator(".surface-scroll").evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await launcher.scrollIntoViewIfNeeded();
+    await launcher.focus();
+    const originScrollTop = await actor.page
+      .locator(".surface-scroll")
+      .evaluate((element) => Math.round(element.scrollTop));
+    expect(originScrollTop).toBeGreaterThan(0);
+    await launcher.press("Enter");
+    await expect(actor.page).toHaveURL(
+      `${actor.origin}/workspace/hr/timesheets?originFocusId=hr-mission-control.my-timesheets.full-screen&returnSurface=hr-mission-control`,
+    );
+
+    const overlay = actor.page.getByRole("dialog", {
+      exact: true,
+      name: "My Timesheets",
+    });
+    await expect(overlay).toBeVisible();
+    await expect(overlay).toBeFocused();
+    await expect(overlay.locator('[data-widget-definition="hr.timesheet.draft"]')).toBeVisible();
+    await expect(
+      overlay.getByRole("button", { exact: true, name: "Create Timesheet draft" }),
+    ).toBeEnabled();
+    await expect(actor.page.locator(".esbla-shell")).toHaveAttribute("aria-hidden", "true");
+    await expect(actor.page.locator(".esbla-shell")).toHaveAttribute("inert", "");
+
+    const close = overlay.getByRole("button", {
+      exact: true,
+      name: "Close My Timesheets",
+    });
+    const cleanOrigin = actor.page.waitForResponse(
+      (response) =>
+        response.request().isNavigationRequest() &&
+        response.url() === `${actor.origin}/workspace/hr`,
+    );
+    await close.click();
+    expect((await cleanOrigin).status()).toBe(200);
+    await actor.page.waitForLoadState("load");
+    await expect(actor.page).toHaveURL(`${actor.origin}/workspace/hr`);
+    await expect(launcher).toBeFocused();
+    await expect
+      .poll(() =>
+        actor.page.locator(".surface-scroll").evaluate((element) => Math.round(element.scrollTop)),
+      )
+      .toBe(originScrollTop);
+    await launcher.press("Enter");
+    await expect(overlay).toBeVisible();
+    await expect(overlay).toBeFocused();
+
+    const evidencePath = testInfo.outputPath("timesheet-route-backed-full-screen.png");
+    await actor.page.screenshot({ fullPage: false, path: evidencePath });
+    await testInfo.attach("timesheet-route-backed-full-screen", {
+      contentType: "image/png",
+      path: evidencePath,
+    });
+
+    await overlay.getByLabel("Period starts").fill("2029-01-01");
+    actor.page.once("dialog", async (dialog) => {
+      expect(dialog.type()).toBe("confirm");
+      expect(dialog.message()).toBe("Discard unsaved changes and close this full-screen view?");
+      await dialog.dismiss();
+    });
+    await close.click();
+    await expect(overlay).toBeVisible();
+
+    let dismissedBack = false;
+    actor.page.once("dialog", async (dialog) => {
+      expect(dialog.type()).toBe("confirm");
+      expect(dialog.message()).toBe("Discard unsaved changes and close this full-screen view?");
+      dismissedBack = true;
+      await dialog.dismiss();
+    });
+    await actor.page.evaluate(() => window.history.back());
+    await expect.poll(() => dismissedBack).toBe(true);
+    await expect(overlay).toBeVisible();
+
+    await admin.page.goto(`${admin.origin}/workspace/hr/timesheets/settings`);
+    await post(admin, "Deactivate Timesheet");
+    deactivated = true;
+    await expect(admin.page.locator(".leave-status")).toHaveText("Inactive");
+
+    let acceptedBack = false;
+    actor.page.once("dialog", async (dialog) => {
+      expect(dialog.type()).toBe("confirm");
+      expect(dialog.message()).toBe("Discard unsaved changes and close this full-screen view?");
+      acceptedBack = true;
+      await dialog.accept();
+    });
+    const revalidatedOrigin = actor.page.waitForResponse(
+      (response) =>
+        response.request().isNavigationRequest() &&
+        response.url() === `${actor.origin}/workspace/hr`,
+    );
+    await actor.page.evaluate(() => window.history.back());
+    await expect.poll(() => acceptedBack).toBe(true);
+    expect((await revalidatedOrigin).status()).toBe(200);
+    await actor.page.waitForLoadState("load");
+    await expect(actor.page).toHaveURL(`${actor.origin}/workspace/hr`);
+    await expect(overlay).toHaveCount(0);
+    await expect(
+      actor.page.getByRole("link", { exact: true, name: "Open My Timesheets" }),
+    ).toHaveCount(0);
+    await expect(actor.page.locator("main h1")).toBeFocused();
+
+    await admin.page.goto(`${admin.origin}/workspace/hr/timesheets/settings`);
+    await post(admin, "Activate Timesheet");
+    deactivated = false;
+    await expect(admin.page.locator(".leave-status")).toHaveText("Active");
+  } finally {
+    if (deactivated) {
+      await admin.page.goto(`${admin.origin}/workspace/hr/timesheets/settings`);
+      const activate = admin.page.getByRole("button", {
+        exact: true,
+        name: "Activate Timesheet",
+      });
+      if ((await activate.count()) > 0) await post(admin, "Activate Timesheet");
+    }
+    await closeActors(actor, admin);
+  }
+});
+
 test("employee creates, edits, submits, and reloads a rendered weekly Timesheet", async ({
   browser,
 }) => {
   const actor = await openActor(browser, fixture.employmentEmployeeOrigin);
   try {
-    await actor.page.getByRole("link", { name: "My Timesheets" }).click();
+    await actor.page.goto(`${actor.origin}/workspace/hr/timesheets`);
     await expect(actor.page.getByRole("heading", { name: "No Timesheets yet" })).toBeVisible();
 
     await actor.page.getByLabel("Period starts").fill("2029-01-01");
@@ -145,8 +287,7 @@ test("HR operator creates one explicit correction successor with persistent hist
     await post(manager, "Approve Timesheet");
     await expect(manager.page.locator(".leave-status")).toHaveText("Approved");
 
-    await operator.page.goto(`${operator.origin}/workspace/hr`);
-    await operator.page.getByRole("link", { name: "Timesheet corrections" }).click();
+    await operator.page.goto(`${operator.origin}/workspace/hr/timesheets/admin/corrections`);
     await expect(
       operator.page.getByRole("heading", { name: "Timesheet corrections" }),
     ).toBeVisible();
@@ -214,8 +355,7 @@ test("manager decides assigned Timesheets and tenant settings alter rejection be
     await expect(employee.page.locator(".leave-status")).toHaveText("Approved");
     await expect(employee.page.getByText("Reviewed current work-time facts")).toBeVisible();
 
-    await admin.page.goto(`${admin.origin}/workspace/hr`);
-    await admin.page.getByRole("link", { name: "Timesheet settings" }).click();
+    await admin.page.goto(`${admin.origin}/workspace/hr/timesheets/settings`);
     await expect(admin.page.getByRole("heading", { name: "Timesheet settings" })).toBeVisible();
     await admin.page.getByLabel("Rejection note").selectOption("false");
     await post(admin, "Save Timesheet settings");
