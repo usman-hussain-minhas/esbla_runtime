@@ -32,6 +32,12 @@
   --safe-left: env(safe-area-inset-left, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
   --safe-top: env(safe-area-inset-top, 0px);
+  --zen-visual-block-end: 0px;
+  --zen-visual-block-size: 100dvh;
+  --zen-visual-block-start: 0px;
+  --zen-visual-inline-end: 0px;
+  --zen-visual-inline-size: 100vw;
+  --zen-visual-inline-start: 0px;
   --grid-large: 80px;
   --grid-small: 20px;
   --surface-frame-bottom: 126px;
@@ -151,7 +157,6 @@ h1 {
 
 .chrome-button,
 .chrome-popover,
-.session-status,
 .queue-status {
   backdrop-filter: blur(18px) saturate(125%);
   background: var(--surface-chrome);
@@ -235,7 +240,7 @@ h1 {
 }
 
 .zen-shortcut-stack {
-  bottom: calc(var(--edge) + var(--safe-bottom));
+  bottom: calc(var(--edge) + var(--safe-bottom) + var(--zen-visual-block-end));
   display: flex;
   flex-direction: column;
   gap: var(--corner-gap);
@@ -244,11 +249,11 @@ h1 {
 }
 
 .zen-shortcut-universal {
-  left: calc(var(--edge) + var(--safe-left));
+  left: calc(var(--edge) + var(--safe-left) + var(--zen-visual-inline-start));
 }
 
 .zen-shortcut-contextual {
-  right: calc(var(--edge) + var(--safe-right));
+  right: calc(var(--edge) + var(--safe-right) + var(--zen-visual-inline-end));
 }
 
 .zen-shortcut-button {
@@ -256,30 +261,30 @@ h1 {
   text-decoration: none;
 }
 
-.zen-shortcut-universal-button::after,
-.zen-shortcut-universal-launcher::after {
+.chrome-button.zen-shortcut-universal-button::after,
+.chrome-button.zen-shortcut-universal-launcher::after {
   bottom: 0;
   left: calc(100% + 8px);
   top: auto;
   transform: translateX(-3px);
 }
 
-.zen-shortcut-contextual-button::after,
-.zen-shortcut-contextual-launcher::after {
+.chrome-button.zen-shortcut-contextual-button::after,
+.chrome-button.zen-shortcut-contextual-launcher::after {
   bottom: 0;
   right: calc(100% + 8px);
   top: auto;
   transform: translateX(3px);
 }
 
-.zen-shortcut-universal-button:hover::after,
-.zen-shortcut-universal-button:focus-visible::after,
-.zen-shortcut-universal-launcher:hover::after,
-.zen-shortcut-universal-launcher:focus-visible::after,
-.zen-shortcut-contextual-button:hover::after,
-.zen-shortcut-contextual-button:focus-visible::after,
-.zen-shortcut-contextual-launcher:hover::after,
-.zen-shortcut-contextual-launcher:focus-visible::after {
+.chrome-button.zen-shortcut-universal-button:hover::after,
+.chrome-button.zen-shortcut-universal-button:focus-visible::after,
+.chrome-button.zen-shortcut-universal-launcher:hover::after,
+.chrome-button.zen-shortcut-universal-launcher:focus-visible::after,
+.chrome-button.zen-shortcut-contextual-button:hover::after,
+.chrome-button.zen-shortcut-contextual-button:focus-visible::after,
+.chrome-button.zen-shortcut-contextual-launcher:hover::after,
+.chrome-button.zen-shortcut-contextual-launcher:focus-visible::after {
   transform: translateX(0);
 }
 
@@ -294,22 +299,28 @@ h1 {
   background: var(--surface-panel);
   border: 1px solid var(--line-mid);
   border-radius: var(--radius-panel);
-  bottom: calc(var(--edge) + var(--safe-bottom) + var(--corner-button) + var(--corner-gap));
+  bottom: calc(
+    var(--edge) +
+    var(--safe-bottom) +
+    var(--zen-visual-block-end) +
+    var(--corner-button) +
+    var(--corner-gap)
+  );
   box-shadow: var(--shadow-soft);
-  max-height: min(68dvh, 560px);
+  max-height: min(68dvh, 560px, calc(var(--zen-visual-block-size) - 92px));
   overflow-y: auto;
   padding: 16px;
   position: fixed;
-  width: min(408px, calc(100vw - (var(--edge) * 2) - var(--corner-button)));
+  width: min(408px, calc(var(--zen-visual-inline-size) - (var(--edge) * 2) - var(--corner-button)));
   z-index: 36;
 }
 
 .zen-shortcut-universal-panel {
-  left: calc(var(--edge) + var(--safe-left));
+  left: calc(var(--edge) + var(--safe-left) + var(--zen-visual-inline-start));
 }
 
 .zen-shortcut-contextual-panel {
-  right: calc(var(--edge) + var(--safe-right));
+  right: calc(var(--edge) + var(--safe-right) + var(--zen-visual-inline-end));
 }
 
 .zen-shortcut-panel header {
@@ -517,45 +528,69 @@ a.zen-shortcut-picker-link:focus-visible {
 }
 
 .chrome-home {
-  left: calc(var(--edge) + var(--safe-left));
+  left: calc(var(--edge) + var(--safe-left) + var(--zen-visual-inline-start));
   position: fixed;
   text-decoration: none;
-  top: calc(var(--edge) + var(--safe-top));
+  top: calc(var(--edge) + var(--safe-top) + var(--zen-visual-block-start));
   z-index: 20;
 }
 
 .chrome-contextual,
 .chrome-service-groups {
-  left: calc(var(--edge) + var(--safe-left));
+  left: calc(var(--edge) + var(--safe-left) + var(--zen-visual-inline-start));
   position: fixed;
   z-index: 20;
 }
 
 .chrome-contextual {
-  left: calc(var(--edge) + var(--safe-left) + var(--corner-button) + var(--corner-gap));
-  top: calc(var(--edge) + var(--safe-top));
+  left: calc(
+    var(--edge) +
+    var(--safe-left) +
+    var(--zen-visual-inline-start) +
+    var(--corner-button) +
+    var(--corner-gap)
+  );
+  top: calc(var(--edge) + var(--safe-top) + var(--zen-visual-block-start));
 }
 
 .chrome-service-groups {
-  top: calc(var(--edge) + var(--safe-top) + var(--corner-button) + var(--corner-gap));
+  top: calc(
+    var(--edge) +
+    var(--safe-top) +
+    var(--zen-visual-block-start) +
+    var(--corner-button) +
+    var(--corner-gap)
+  );
 }
 
 .chrome-popover {
   border-radius: var(--radius-panel);
   display: grid;
   gap: 4px;
-  max-height: min(70dvh, 520px);
+  max-height: min(70dvh, 520px, calc(var(--zen-visual-block-size) - 92px));
   overflow-y: auto;
   padding: 8px;
   position: fixed;
-  width: min(320px, calc(100vw - (var(--edge) * 2) - var(--corner-button)));
+  width: min(320px, calc(var(--zen-visual-inline-size) - (var(--edge) * 2) - var(--corner-button)));
   z-index: 36;
 }
 
 .chrome-contextual-popover,
 .chrome-service-groups-popover {
-  left: calc(var(--edge) + var(--safe-left) + var(--corner-button) + var(--corner-gap));
-  top: calc(var(--edge) + var(--safe-top) + var(--corner-button) + var(--corner-gap));
+  left: calc(
+    var(--edge) +
+    var(--safe-left) +
+    var(--zen-visual-inline-start) +
+    var(--corner-button) +
+    var(--corner-gap)
+  );
+  top: calc(
+    var(--edge) +
+    var(--safe-top) +
+    var(--zen-visual-block-start) +
+    var(--corner-button) +
+    var(--corner-gap)
+  );
 }
 
 .chrome-popover-link {
@@ -740,8 +775,8 @@ a.zen-shortcut-picker-link:focus-visible {
 
 .system-controls {
   position: fixed;
-  right: calc(var(--edge) + var(--safe-right));
-  top: calc(var(--edge) + var(--safe-top));
+  right: calc(var(--edge) + var(--safe-right) + var(--zen-visual-inline-end));
+  top: calc(var(--edge) + var(--safe-top) + var(--zen-visual-block-start));
   z-index: 20;
 }
 
@@ -749,14 +784,14 @@ a.zen-shortcut-picker-link:focus-visible {
   background: var(--surface-panel);
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-panel);
-  bottom: calc(var(--surface-frame-bottom) + var(--safe-bottom));
+  bottom: calc(var(--surface-frame-bottom) + var(--safe-bottom) + var(--zen-visual-block-end));
   box-shadow: var(--shadow-soft);
-  left: calc(var(--surface-frame-left) + var(--safe-left));
+  left: calc(var(--surface-frame-left) + var(--safe-left) + var(--zen-visual-inline-start));
   min-height: 0;
   overflow: hidden;
   position: fixed;
-  right: calc(var(--surface-frame-right) + var(--safe-right));
-  top: calc(var(--surface-frame-top) + var(--safe-top));
+  right: calc(var(--surface-frame-right) + var(--safe-right) + var(--zen-visual-inline-end));
+  top: calc(var(--surface-frame-top) + var(--safe-top) + var(--zen-visual-block-start));
   z-index: 4;
 }
 
@@ -809,10 +844,10 @@ a.zen-shortcut-picker-link:focus-visible {
 }
 
 .zen-section-navigation {
-  left: calc(var(--edge) + var(--safe-left) + 8px);
+  left: calc(var(--edge) + var(--safe-left) + var(--zen-visual-inline-start) + 8px);
   pointer-events: auto;
   position: fixed;
-  top: 50%;
+  top: calc(var(--zen-visual-block-start) + (var(--zen-visual-block-size) / 2));
   transform: translateY(-50%);
   z-index: 18;
 }
@@ -1044,7 +1079,10 @@ textarea:focus-visible,
   backdrop-filter: blur(14px);
   background: color-mix(in srgb, var(--surface-canvas) 72%, transparent);
   display: flex;
-  inset: 0;
+  bottom: var(--zen-visual-block-end);
+  left: var(--zen-visual-inline-start);
+  right: var(--zen-visual-inline-end);
+  top: var(--zen-visual-block-start);
   justify-content: center;
   overflow-y: auto;
   padding: max(clamp(16px, 4vw, 54px), var(--safe-top))
@@ -1847,10 +1885,9 @@ textarea:focus-visible,
   }
 }
 
-.session-status,
 .queue-status {
   align-items: center;
-  bottom: calc(var(--edge) + var(--safe-bottom));
+  bottom: calc(var(--edge) + var(--safe-bottom) + var(--zen-visual-block-end));
   border-radius: var(--radius-button);
   display: flex;
   font-size: 13px;
@@ -1861,32 +1898,10 @@ textarea:focus-visible,
   z-index: 20;
 }
 
-.session-status {
-  color: var(--text-soft);
-  left: 50%;
-  max-width: min(260px, calc(100vw - 140px));
-  padding: 0 14px;
-  transform: translateX(-50%);
-}
-
-.session-status span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-status-configured {
-  color: var(--success);
-}
-
-.session-status-blocked {
-  color: var(--warning);
-}
-
 .queue-status {
   color: var(--accent-strong);
   justify-content: center;
-  right: calc(var(--edge) + var(--safe-right));
+  right: calc(var(--edge) + var(--safe-right) + var(--zen-visual-inline-end));
   width: calc(var(--corner-button) + 28px);
 }
 
@@ -1926,10 +1941,6 @@ textarea:focus-visible,
     margin-top: 38px;
     min-height: 240px;
     padding: 52px 12px;
-  }
-
-  .session-status {
-    display: none;
   }
 
   .leave-table-wrap {
@@ -2075,9 +2086,15 @@ textarea:focus-visible,
 
 @media (max-width: 1099px) {
   .zen-shortcut-panel {
-    bottom: calc(var(--edge) + var(--safe-bottom) + var(--corner-button) + var(--corner-gap));
-    left: calc(var(--edge) + var(--safe-left));
-    right: calc(var(--edge) + var(--safe-right));
+    bottom: calc(
+      var(--edge) +
+      var(--safe-bottom) +
+      var(--zen-visual-block-end) +
+      var(--corner-button) +
+      var(--corner-gap)
+    );
+    left: calc(var(--edge) + var(--safe-left) + var(--zen-visual-inline-start));
+    right: calc(var(--edge) + var(--safe-right) + var(--zen-visual-inline-end));
     width: auto;
   }
 
@@ -2131,14 +2148,21 @@ textarea:focus-visible,
 
   .chrome-contextual,
   .chrome-service-groups {
-    left: calc(var(--edge) + var(--safe-left) + var(--corner-button) + var(--corner-gap));
-    top: calc(var(--edge) + var(--safe-top));
+    left: calc(
+      var(--edge) +
+      var(--safe-left) +
+      var(--zen-visual-inline-start) +
+      var(--corner-button) +
+      var(--corner-gap)
+    );
+    top: calc(var(--edge) + var(--safe-top) + var(--zen-visual-block-start));
   }
 
   .zen-contextual-navigation + .zen-service-groups-navigation .chrome-service-groups {
     left: calc(
       var(--edge) +
       var(--safe-left) +
+      var(--zen-visual-inline-start) +
       (var(--corner-button) * 2) +
       (var(--corner-gap) * 2)
     );
@@ -2146,14 +2170,23 @@ textarea:focus-visible,
 
   .chrome-contextual-popover,
   .chrome-service-groups-popover {
-    left: calc(var(--edge) + var(--safe-left));
-    top: calc(var(--edge) + var(--safe-top) + var(--corner-button) + var(--corner-gap));
-    width: min(380px, calc(100vw - (var(--edge) * 2) - var(--safe-left) - var(--safe-right)));
+    left: calc(var(--edge) + var(--safe-left) + var(--zen-visual-inline-start));
+    top: calc(
+      var(--edge) +
+      var(--safe-top) +
+      var(--zen-visual-block-start) +
+      var(--corner-button) +
+      var(--corner-gap)
+    );
+    width: min(
+      380px,
+      calc(var(--zen-visual-inline-size) - (var(--edge) * 2) - var(--safe-left) - var(--safe-right))
+    );
   }
 
   .theme-panel {
     max-height: calc(
-      100dvh -
+      var(--zen-visual-block-size) -
       var(--safe-top) -
       var(--safe-bottom) -
       var(--edge) -
@@ -2162,8 +2195,14 @@ textarea:focus-visible,
     );
     overflow-y: auto;
     position: fixed;
-    right: calc(var(--edge) + var(--safe-right));
-    top: calc(var(--edge) + var(--safe-top) + var(--corner-button) + var(--corner-gap));
+    right: calc(var(--edge) + var(--safe-right) + var(--zen-visual-inline-end));
+    top: calc(
+      var(--edge) +
+      var(--safe-top) +
+      var(--zen-visual-block-start) +
+      var(--corner-button) +
+      var(--corner-gap)
+    );
   }
 
   .widget-grid {
@@ -2181,7 +2220,7 @@ textarea:focus-visible,
     max-height: min(
       72dvh,
       calc(
-        100dvh -
+        var(--zen-visual-block-size) -
         var(--safe-top) -
         var(--safe-bottom) -
         (var(--edge) * 2) -

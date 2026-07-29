@@ -57,8 +57,9 @@ async function restartEmployeeApplication() {
     status: "restarted",
   });
 }
-async function openActor(browser, origin, label, contextOptions = {}) {
+async function openActor(browser, origin, label, contextOptions = {}, initScript) {
   const context = await browser.newContext({ ...contextOptions, serviceWorkers: "block" });
+  if (initScript) await context.addInitScript(initScript);
   const page = await context.newPage();
   const diagnostics = { console: [], external: [], page: [], server: [] };
 
@@ -82,6 +83,36 @@ async function openActor(browser, origin, label, contextOptions = {}) {
   });
 
   return { context, diagnostics, label, origin, page };
+}
+
+function installBoundedVisualViewport() {
+  const state = {
+    height: 520,
+    offsetLeft: 25,
+    offsetTop: 60,
+    width: 340,
+  };
+  const viewport = new EventTarget();
+  for (const key of ["height", "offsetLeft", "offsetTop", "width"]) {
+    Object.defineProperty(viewport, key, {
+      configurable: false,
+      enumerable: true,
+      get: () => state[key],
+    });
+  }
+  Object.defineProperties(viewport, {
+    pageLeft: { get: () => state.offsetLeft },
+    pageTop: { get: () => state.offsetTop },
+    scale: { get: () => 1 },
+  });
+  Object.defineProperty(window, "visualViewport", {
+    configurable: true,
+    get: () => viewport,
+  });
+  window.__setEsblaVisualViewport = (next) => {
+    Object.assign(state, next);
+    viewport.dispatchEvent(new Event("resize"));
+  };
 }
 async function closeActors(...actors) {
   for (const actor of actors) {
@@ -162,7 +193,7 @@ async function submitLeave(actor, values) {
   await actor.page.goto(`${actor.origin}/workspace/hr/leave/new`);
   await expect(actor.page).toHaveTitle("Esbla");
   await expect(actor.page.getByRole("heading", { name: "New leave request" })).toBeVisible();
-  await expect(actor.page.getByLabel("Development identity status")).toHaveText(actor.label);
+  await expect(actor.page.locator(".esbla-shell")).toHaveAttribute("data-current-surface", "HR");
 
   const leaveType = actor.page.getByLabel("Leave type");
   const startDate = actor.page.getByLabel("Start date");
@@ -197,7 +228,10 @@ function assignedCard(page, leaveRequestId) {
 async function openAssignedWork(actor, leaveRequestId) {
   await actor.page.goto(`${actor.origin}/workspace/my-work`);
   await expect(actor.page.getByRole("heading", { name: "Assigned work" })).toBeVisible();
-  await expect(actor.page.getByLabel("Development identity status")).toHaveText(actor.label);
+  await expect(actor.page.locator(".esbla-shell")).toHaveAttribute(
+    "data-current-surface",
+    "My Work",
+  );
   await expect(
     actor.page.getByRole("heading", { name: "No workspace tasks on this page" }),
   ).toBeVisible();
@@ -785,6 +819,138 @@ test("Mission Control reuses the real Leave widget and persists independent appe
       ]).catch(() => undefined);
     }
     await closeActors(employee);
+  }
+});
+
+test("Zen chrome remains inside the visual viewport without Product placeholders", async ({
+  browser,
+}, testInfo) => {
+  const actor = await openActor(
+    browser,
+    fixture.employeeOrigin,
+    `${fixture.employeeLabel} bounded viewport`,
+    { viewport: { height: 844, width: 390 } },
+    installBoundedVisualViewport,
+  );
+  try {
+    await actor.page.goto(`${actor.origin}/workspace/hr`);
+    await expect(actor.page.locator(".esbla-shell")).toHaveAttribute("data-current-surface", "HR");
+    await expect(actor.page.getByLabel("Development identity status")).toHaveCount(0);
+    await expect(actor.page.locator("html")).toHaveCSS("--zen-visual-block-start", "60px");
+    await expect(actor.page.locator("html")).toHaveCSS("--zen-visual-block-end", "264px");
+    await expect(actor.page.locator("html")).toHaveCSS("--zen-visual-inline-start", "25px");
+    await expect(actor.page.locator("html")).toHaveCSS("--zen-visual-inline-end", "25px");
+
+    const visualBounds = { bottom: 580, left: 25, right: 365, top: 60 };
+    for (const locator of [
+      actor.page.getByRole("link", { exact: true, name: "Mission Control" }),
+      actor.page.getByRole("button", { exact: true, name: "User and system" }),
+      actor.page.locator(".surface-frame"),
+      actor.page.locator(".zen-shortcut-universal"),
+      actor.page.locator(".zen-shortcut-contextual"),
+    ]) {
+      await expect(locator).toBeVisible();
+      const box = await locator.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box.x).toBeGreaterThanOrEqual(visualBounds.left);
+      expect(box.y).toBeGreaterThanOrEqual(visualBounds.top);
+      expect(box.x + box.width).toBeLessThanOrEqual(visualBounds.right);
+      expect(box.y + box.height).toBeLessThanOrEqual(visualBounds.bottom);
+    }
+
+    const universalLauncher = actor.page.getByRole("button", {
+      exact: true,
+      name: "Universal shortcuts",
+    });
+    await universalLauncher.click();
+    const panel = actor.page.getByRole("dialog", {
+      exact: true,
+      name: "Universal shortcuts",
+    });
+    await expect(panel).toBeVisible();
+    await universalLauncher.hover();
+    await expect
+      .poll(async () =>
+        universalLauncher.evaluate((element) =>
+          Number.parseFloat(getComputedStyle(element, "::after").opacity),
+        ),
+      )
+      .toBe(1);
+    const tooltipBox = await universalLauncher.evaluate((element) => {
+      const launcher = element.getBoundingClientRect();
+      const tooltip = getComputedStyle(element, "::after");
+      const pixels = (value) => Number.parseFloat(value) || 0;
+      const left = Number.parseFloat(tooltip.left);
+      const top = Number.parseFloat(tooltip.top);
+      const contentHeight = Number.parseFloat(tooltip.height);
+      const contentWidth = Number.parseFloat(tooltip.width);
+      const borderBoxHeight =
+        contentHeight +
+        (tooltip.boxSizing === "border-box"
+          ? 0
+          : pixels(tooltip.paddingTop) +
+            pixels(tooltip.paddingBottom) +
+            pixels(tooltip.borderTopWidth) +
+            pixels(tooltip.borderBottomWidth));
+      const borderBoxWidth =
+        contentWidth +
+        (tooltip.boxSizing === "border-box"
+          ? 0
+          : pixels(tooltip.paddingLeft) +
+            pixels(tooltip.paddingRight) +
+            pixels(tooltip.borderLeftWidth) +
+            pixels(tooltip.borderRightWidth));
+      const borderBoxLeft = launcher.x + element.clientLeft + left;
+      const borderBoxTop = launcher.y + element.clientTop + top;
+      return {
+        bottom: borderBoxTop + borderBoxHeight,
+        left: borderBoxLeft,
+        right: borderBoxLeft + borderBoxWidth,
+        top: borderBoxTop,
+        visibility: tooltip.visibility,
+      };
+    });
+    expect(tooltipBox.visibility).toBe("visible");
+    expect(tooltipBox.left).toBeGreaterThanOrEqual(visualBounds.left);
+    expect(tooltipBox.top).toBeGreaterThanOrEqual(visualBounds.top);
+    expect(tooltipBox.right).toBeLessThanOrEqual(visualBounds.right);
+    expect(tooltipBox.bottom).toBeLessThanOrEqual(visualBounds.bottom);
+    await panel.getByRole("heading", { name: "Universal shortcuts" }).hover();
+    await expect
+      .poll(async () =>
+        universalLauncher.evaluate((element) =>
+          Number.parseFloat(getComputedStyle(element, "::after").opacity),
+        ),
+      )
+      .toBe(0);
+    const panelBox = await panel.boundingBox();
+    expect(panelBox).not.toBeNull();
+    expect(panelBox.x).toBeGreaterThanOrEqual(visualBounds.left);
+    expect(panelBox.y).toBeGreaterThanOrEqual(visualBounds.top);
+    expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(visualBounds.right);
+    expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(visualBounds.bottom);
+
+    await actor.page.evaluate(() => {
+      window.__setEsblaVisualViewport({
+        height: 600,
+        offsetLeft: 0,
+        offsetTop: 20,
+        width: 390,
+      });
+    });
+    await expect(actor.page.locator("html")).toHaveCSS("--zen-visual-block-start", "20px");
+    await expect(actor.page.locator("html")).toHaveCSS("--zen-visual-block-end", "224px");
+    await expect(actor.page.locator("html")).toHaveCSS("--zen-visual-inline-start", "0px");
+    await expect(actor.page.locator("html")).toHaveCSS("--zen-visual-inline-end", "0px");
+
+    const evidencePath = testInfo.outputPath("zen-visual-viewport-chrome.png");
+    await actor.page.screenshot({ fullPage: false, path: evidencePath });
+    await testInfo.attach("zen-visual-viewport-chrome", {
+      contentType: "image/png",
+      path: evidencePath,
+    });
+  } finally {
+    await closeActors(actor);
   }
 });
 
@@ -1398,9 +1564,7 @@ test("tenant admin configures and controls Workforce Profile without record acce
   const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
   try {
     await admin.page.goto(`${admin.origin}/workspace/hr`);
-    await expect(admin.page.getByLabel("Development identity status")).toHaveText(
-      fixture.adminLabel,
-    );
+    await expect(admin.page.locator(".esbla-shell")).toHaveAttribute("data-current-surface", "HR");
     await expect(admin.page.getByRole("link", { name: "Workforce administration" })).toHaveCount(0);
     await expect(admin.page.getByRole("link", { name: "Direct reports" })).toHaveCount(0);
     const settingsLink = admin.page.getByRole("link", { name: "Workforce settings" });

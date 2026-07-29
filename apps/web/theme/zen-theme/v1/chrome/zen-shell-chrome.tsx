@@ -14,6 +14,10 @@ import {
   resolveZenResponsiveChrome,
   type ZenResponsiveChromeResult,
 } from "../../../../lib/zen-responsive-chrome-core";
+import {
+  resolveZenVisualViewport,
+  type ZenVisualViewportResult,
+} from "../../../../lib/zen-visual-viewport-core";
 import { UserSystemControl, type ZenSystemPanelState } from "../panels/zen-system-panel";
 import {
   consumeRouteHeadingFocus,
@@ -27,6 +31,41 @@ type ZenChromeLayer =
   | { readonly family: "shortcuts"; readonly scope: ZenShortcutScope }
   | { readonly family: "system"; readonly state: ZenSystemPanelState }
   | undefined;
+
+const visualViewportProperties = [
+  "--zen-visual-block-end",
+  "--zen-visual-block-size",
+  "--zen-visual-block-start",
+  "--zen-visual-inline-end",
+  "--zen-visual-inline-size",
+  "--zen-visual-inline-start",
+] as const;
+
+function readVisualViewport(): ZenVisualViewportResult | undefined {
+  const root = document.documentElement;
+  const layoutBlockSize = root.clientHeight || window.innerHeight;
+  const layoutInlineSize = root.clientWidth || window.innerWidth;
+  if (layoutBlockSize <= 0 || layoutInlineSize <= 0) return undefined;
+  const viewport = window.visualViewport;
+  return resolveZenVisualViewport({
+    layoutBlockSize,
+    layoutInlineSize,
+    viewportBlockSize: viewport?.height ?? layoutBlockSize,
+    viewportBlockStart: viewport?.offsetTop ?? 0,
+    viewportInlineSize: viewport?.width ?? layoutInlineSize,
+    viewportInlineStart: viewport?.offsetLeft ?? 0,
+  });
+}
+
+function publishVisualViewport(viewport: ZenVisualViewportResult): void {
+  const rootStyle = document.documentElement.style;
+  rootStyle.setProperty("--zen-visual-block-end", `${viewport.blockEnd}px`);
+  rootStyle.setProperty("--zen-visual-block-size", `${viewport.blockSize}px`);
+  rootStyle.setProperty("--zen-visual-block-start", `${viewport.blockStart}px`);
+  rootStyle.setProperty("--zen-visual-inline-end", `${viewport.inlineEnd}px`);
+  rootStyle.setProperty("--zen-visual-inline-size", `${viewport.inlineSize}px`);
+  rootStyle.setProperty("--zen-visual-inline-start", `${viewport.inlineStart}px`);
+}
 
 function initialResolution(
   model: ZenNavigationModel,
@@ -79,13 +118,16 @@ export function ZenShellChrome({
   activeLayer.current = layer;
 
   const measure = useCallback(() => {
+    const viewport = readVisualViewport();
+    if (!viewport) return;
+    publishVisualViewport(viewport);
     const buttonInlineSize = buttonProbe.current?.getBoundingClientRect().width ?? 0;
     const clusterGap = clusterGapProbe.current?.getBoundingClientRect().width ?? 0;
     const controlGap = controlGapProbe.current?.getBoundingClientRect().width ?? 0;
     const endInset = endInsetProbe.current?.getBoundingClientRect().width ?? 0;
     const startInset = startInsetProbe.current?.getBoundingClientRect().width ?? 0;
     const next = resolveZenResponsiveChrome({
-      availableInlineSize: document.documentElement.clientWidth,
+      availableInlineSize: viewport.inlineSize,
       buttonInlineSize,
       clusterGap,
       controlGap,
@@ -130,11 +172,15 @@ export function ZenShellChrome({
     for (const probe of probes) observer.observe(probe);
     window.addEventListener("resize", measure);
     window.visualViewport?.addEventListener("resize", measure);
+    window.visualViewport?.addEventListener("scroll", measure);
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
       window.removeEventListener("resize", measure);
       window.visualViewport?.removeEventListener("resize", measure);
+      window.visualViewport?.removeEventListener("scroll", measure);
+      const rootStyle = document.documentElement.style;
+      for (const property of visualViewportProperties) rootStyle.removeProperty(property);
     };
   }, [measure]);
 

@@ -19,6 +19,8 @@ describe("Esbla Theme v1 host contract", () => {
     expect(css).toContain("@media (max-width: 767px)");
     expect(css).toContain("env(safe-area-inset-top");
     expect(css).toContain("env(safe-area-inset-bottom");
+    expect(css).toContain("--zen-visual-block-end");
+    expect(css).toContain("--zen-visual-inline-start");
     expect(css).not.toContain("--corner-button: 42px");
     expect(css).toContain(".surface-frame::after");
     expect(css).not.toContain(".surface-frame::before");
@@ -117,10 +119,14 @@ describe("Esbla Theme v1 host contract", () => {
     expect(shell).not.toContain("WORKSPACE_SURFACES.map");
     expect(shell).toContain("loadOwnPresentationNavigation");
     expect(shell).toContain("ZenShellChrome");
+    expect(shell).not.toContain("Development identity status");
+    expect(shell).not.toContain("getServerDevelopmentSessionSummary");
     expect(shellChrome).toContain("type ZenChromeLayer");
     expect(shellChrome).toContain("ZenNavigationChrome");
     expect(shellChrome).toContain("UserSystemControl");
     expect(shellChrome).toContain("resolveZenResponsiveChrome");
+    expect(shellChrome).toContain("resolveZenVisualViewport");
+    expect(shellChrome).toContain('"scroll", measure');
     expect(shellChrome).toContain("ZenShortcutChrome");
     expect(shortcutChrome).toContain("Universal shortcuts");
     expect(shortcutChrome).toContain("zen-shortcut-contextual");
