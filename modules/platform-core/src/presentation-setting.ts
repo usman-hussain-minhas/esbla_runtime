@@ -24,6 +24,10 @@ export interface PresentationSettingCandidate {
 export type PresentationOrderedSetOperation =
   | {
       readonly id: string;
+      readonly operation: "append";
+    }
+  | {
+      readonly id: string;
       readonly operation: "remove";
     }
   | {
@@ -305,7 +309,10 @@ function parseReplaceValue(
   return value;
 }
 
-function parsePatch(value: unknown): readonly PresentationOrderedSetOperation[] {
+export function parsePresentationOrderedSetPatch(
+  value: unknown,
+  options: { readonly allowAppend: boolean },
+): readonly PresentationOrderedSetOperation[] {
   if (
     typeof value !== "object" ||
     value === null ||
@@ -328,11 +335,14 @@ function parsePatch(value: unknown): readonly PresentationOrderedSetOperation[] 
     ) {
       throw new PresentationSettingResolutionError("invalid_ordered_set_patch");
     }
-    if (operation.operation === "remove") {
+    if (operation.operation === "append" || operation.operation === "remove") {
+      if (operation.operation === "append" && !options.allowAppend) {
+        throw new PresentationSettingResolutionError("invalid_ordered_set_patch");
+      }
       if (JSON.stringify(Object.keys(operation).sort()) !== JSON.stringify(["id", "operation"])) {
         throw new PresentationSettingResolutionError("invalid_ordered_set_patch");
       }
-      operations.push({ id: operation.id, operation: "remove" });
+      operations.push({ id: operation.id, operation: operation.operation });
       continue;
     }
     if (
@@ -365,6 +375,13 @@ function applyPatch(
 ): readonly string[] {
   const values = [...initial];
   for (const operation of operations) {
+    if (operation.operation === "append") {
+      if (values.includes(operation.id)) {
+        throw new PresentationSettingResolutionError("invalid_ordered_set_patch");
+      }
+      values.push(operation.id);
+      continue;
+    }
     if (operation.operation === "remove") {
       const index = values.indexOf(operation.id);
       if (index >= 0) values.splice(index, 1);
@@ -638,12 +655,22 @@ function resolveOrderedSet(
   }
   const user = userCandidates[0];
   if (user) {
-    value = applyPatch(value, parsePatch(user.value));
+    value = applyPatch(
+      value,
+      parsePresentationOrderedSetPatch(user.value, {
+        allowAppend:
+          definition.key === "navigation.universal_shortcuts.v1" ||
+          definition.key === "navigation.contextual_shortcuts.v1",
+      }),
+    );
     appliedScopes.add(user.scope);
     sourceScope = user.scope;
   }
   if (preview) {
-    value = applyPatch(value, parsePatch(preview.value));
+    value = applyPatch(
+      value,
+      parsePresentationOrderedSetPatch(preview.value, { allowAppend: false }),
+    );
     appliedScopes.add(preview.scope);
     sourceScope = preview.scope;
   }

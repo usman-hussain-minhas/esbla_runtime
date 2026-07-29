@@ -18,6 +18,8 @@ export const platformCoreManifest = defineModuleManifest({
     { exposure: "internal", id: "platform.policy.evaluate" },
     { exposure: "internal", id: "platform.presentation.preferences.read_own" },
     { exposure: "internal", id: "platform.presentation.preferences.write_own" },
+    { exposure: "internal", id: "platform.presentation.shortcuts.read_own" },
+    { exposure: "internal", id: "platform.presentation.shortcuts.write_own" },
     { exposure: "internal", id: "platform.presentation.layouts.read_own" },
     { exposure: "internal", id: "platform.presentation.layouts.reset_own" },
     { exposure: "internal", id: "platform.presentation.layouts.write_own" },

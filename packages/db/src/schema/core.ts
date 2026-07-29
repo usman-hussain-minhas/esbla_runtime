@@ -180,6 +180,61 @@ export const presentationSettingValues = pgTable(
   ],
 ).enableRLS();
 
+export const presentationShortcutUserPatches = pgTable(
+  "presentation_shortcut_user_patches",
+  {
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    principalId: uuid("principal_id").notNull(),
+    settingKey: text("setting_key").notNull(),
+    contextKind: text("context_kind").notNull(),
+    contextId: text("context_id").notNull(),
+    patch: jsonb("patch").notNull(),
+    version: integer("version").default(1).notNull(),
+    updatedByPrincipalId: uuid("updated_by_principal_id").notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [
+        table.tenantId,
+        table.principalId,
+        table.settingKey,
+        table.contextKind,
+        table.contextId,
+      ],
+      name: "presentation_shortcut_user_patches_pk",
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.principalId],
+      foreignColumns: [memberships.tenantId, memberships.principalId],
+      name: "presentation_shortcut_user_patches_membership_fk",
+    }).onDelete("restrict"),
+    check(
+      "presentation_shortcut_user_patches_setting_context_valid",
+      sql`(
+        ${table.settingKey} = 'navigation.universal_shortcuts.v1'
+        AND ${table.contextKind} = 'global'
+        AND ${table.contextId} = 'global'
+      ) OR (
+        ${table.settingKey} = 'navigation.contextual_shortcuts.v1'
+        AND ${table.contextKind} IN ('service', 'surface')
+        AND char_length(trim(${table.contextId})) BETWEEN 1 AND 160
+      )`,
+    ),
+    check(
+      "presentation_shortcut_user_patches_own_actor_valid",
+      sql`${table.principalId} = ${table.updatedByPrincipalId}`,
+    ),
+    check(
+      "presentation_shortcut_user_patches_patch_object_valid",
+      sql`jsonb_typeof(${table.patch}) = 'object'`,
+    ),
+    check("presentation_shortcut_user_patches_version_positive", sql`${table.version} > 0`),
+  ],
+).enableRLS();
+
 export const presentationSurfaceVersions = pgTable(
   "presentation_surface_versions",
   {

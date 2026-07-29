@@ -7,12 +7,14 @@ import {
   getOwnPresentationNavigation,
   getOwnPresentationPreferences,
   getOwnPresentationServiceGroups,
+  getOwnPresentationShortcuts,
   getOwnPresentationSurfaceLayout,
   getTenantPresentationSurfaceBaseWorkspace,
   publishTenantPresentationSurfaceDraft,
   resetOwnPresentationSurfaceOverlay,
   rollbackTenantPresentationSurfaceBase,
   updateOwnPresentationPreferences,
+  updateOwnPresentationShortcut,
   updateOwnPresentationSurfaceOverlay,
   upsertTenantPresentationSurfaceDraft,
   validateTenantPresentationSurfaceDraft,
@@ -34,6 +36,90 @@ let pool: Pool;
 
 function context(tenantId: string, actorPrincipalId: string, correlationId = randomUUID()) {
   return { actorPrincipalId, correlationId, tenantId };
+}
+
+async function presentationRows<T extends Record<string, unknown>>(
+  tenantId: string,
+  actorPrincipalId: string,
+  statement: string,
+  values: readonly unknown[] = [],
+): Promise<T[]> {
+  const client = await migrationPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
+    await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [actorPrincipalId]);
+    const result = await client.query<T>(statement, [...values]);
+    await client.query("ROLLBACK");
+    return result.rows;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function shortcutProofSnapshot(tenantId: string, actorPrincipalId: string) {
+  const rows = await presentationRows<{
+    evidence_rows: string;
+    outbox_rows: string;
+    patch_row: string | null;
+  }>(
+    tenantId,
+    actorPrincipalId,
+    `SELECT
+       (
+         SELECT jsonb_build_object(
+           'tenantId',tenant_id,
+           'principalId',principal_id,
+           'settingKey',setting_key,
+           'contextKind',context_kind,
+           'contextId',context_id,
+           'patch',patch,
+           'version',version,
+           'updatedByPrincipalId',updated_by_principal_id,
+           'updatedAt',updated_at
+         )::text
+         FROM presentation_shortcut_user_patches
+         WHERE tenant_id = $1 AND principal_id = $2
+           AND setting_key = 'navigation.universal_shortcuts.v1'
+           AND context_kind = 'global' AND context_id = 'global'
+       ) AS patch_row,
+       (
+         SELECT coalesce(
+           jsonb_agg(
+             jsonb_build_object(
+               'evidenceEventId',evidence_event_id,
+               'eventType',event_type,
+               'subjectType',subject_type,
+               'subjectId',subject_id,
+               'actorPrincipalId',actor_principal_id,
+               'correlationId',correlation_id,
+               'priorState',prior_state,
+               'newState',new_state,
+               'occurredAt',occurred_at
+             )
+             ORDER BY evidence_event_id
+           ),
+           '[]'::jsonb
+         )::text
+         FROM evidence_events
+         WHERE tenant_id = $1 AND subject_type = 'platform_presentation_shortcuts'
+       ) AS evidence_rows,
+       (
+         SELECT coalesce(
+           jsonb_agg(to_jsonb(outbox_events) ORDER BY event_id),
+           '[]'::jsonb
+         )::text
+         FROM outbox_events
+         WHERE tenant_id = $1 AND event_type LIKE 'platform.presentation.shortcut%'
+       ) AS outbox_rows`,
+    [tenantId, actorPrincipalId],
+  );
+  const row = rows[0];
+  if (!row) throw new Error("Shortcut proof snapshot is unavailable");
+  return row;
 }
 
 async function insertMembership(
@@ -521,7 +607,8 @@ beforeAll(async () => {
   });
   await migrationPool.query(`GRANT SELECT, INSERT ON evidence_events TO ${applicationRole}`);
   await migrationPool.query(
-    `GRANT SELECT ON membership_capabilities, service_activations TO ${applicationRole}`,
+    `GRANT SELECT ON membership_capabilities TO ${applicationRole};
+     GRANT SELECT, UPDATE ON service_activations TO ${applicationRole}`,
   );
   pool = createDatabasePool(connectionString, { max: 4 });
 });
@@ -833,6 +920,330 @@ describe("presentation preference persistence", () => {
       false,
     );
     await setPresentationActorRole(ids.tenantA, ids.actorA, "employee");
+  });
+
+  it("replays simultaneous first shortcut writes with one durable receipt", async () => {
+    const mutationContext = context(ids.tenantA, ids.actorAdminA);
+    const input = {
+      contextId: "global",
+      contextKind: "global",
+      expectedVersion: 0,
+      operation: "append",
+      settingKey: "navigation.universal_shortcuts.v1",
+      targetId: "platform.mission_control",
+    } as const;
+    const results = await Promise.all([
+      updateOwnPresentationShortcut(pool, mutationContext, input),
+      updateOwnPresentationShortcut(pool, mutationContext, input),
+    ]);
+    expect(results.map(({ replayed }) => replayed).sort()).toEqual([false, true]);
+    expect(new Set(results.map(({ evidenceEventId }) => evidenceEventId)).size).toBe(1);
+    expect(results.every(({ set }) => set.version === 1)).toBe(true);
+    expect(
+      results.every(({ set }) => set.items.map(({ id }) => id).join() === input.targetId),
+    ).toBe(true);
+    const durable = await presentationRows<{
+      evidence_count: number;
+      patch_count: number;
+    }>(
+      ids.tenantA,
+      ids.actorAdminA,
+      `SELECT
+         (
+           SELECT count(*)::integer
+           FROM evidence_events
+           WHERE tenant_id = $1 AND actor_principal_id = $2
+             AND subject_type = 'platform_presentation_shortcuts'
+             AND correlation_id = $3
+         ) AS evidence_count,
+         (
+           SELECT count(*)::integer
+           FROM presentation_shortcut_user_patches
+           WHERE tenant_id = $1 AND principal_id = $2
+             AND setting_key = 'navigation.universal_shortcuts.v1'
+             AND context_kind = 'global' AND context_id = 'global'
+         ) AS patch_count`,
+      [ids.tenantA, ids.actorAdminA, mutationContext.correlationId],
+    );
+    expect(durable).toEqual([{ evidence_count: 1, patch_count: 1 }]);
+
+    const divergentContext = context(ids.tenantA, ids.actorAdminA);
+    const divergentBase = {
+      contextId: "hr",
+      contextKind: "service",
+      expectedVersion: 0,
+      operation: "append",
+      settingKey: "navigation.contextual_shortcuts.v1",
+    } as const;
+    const divergentResults = await Promise.allSettled([
+      updateOwnPresentationShortcut(pool, divergentContext, {
+        ...divergentBase,
+        targetId: "service_group.hr.mission_control",
+      }),
+      updateOwnPresentationShortcut(pool, divergentContext, {
+        ...divergentBase,
+        targetId: "hr.leave.own",
+      }),
+    ]);
+    const divergentFulfilled = divergentResults.filter(
+      (
+        result,
+      ): result is PromiseFulfilledResult<
+        Awaited<ReturnType<typeof updateOwnPresentationShortcut>>
+      > => result.status === "fulfilled",
+    );
+    const divergentRejected = divergentResults.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    expect(divergentFulfilled).toHaveLength(1);
+    expect(divergentRejected).toHaveLength(1);
+    expect(divergentRejected[0]?.reason).toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    const divergentDurable = await presentationRows<{
+      evidence_count: number;
+      patch_count: number;
+    }>(
+      ids.tenantA,
+      ids.actorAdminA,
+      `SELECT
+         (
+           SELECT count(*)::integer
+           FROM evidence_events
+           WHERE tenant_id = $1 AND actor_principal_id = $2
+             AND subject_type = 'platform_presentation_shortcuts'
+             AND correlation_id = $3
+         ) AS evidence_count,
+         (
+           SELECT count(*)::integer
+           FROM presentation_shortcut_user_patches
+           WHERE tenant_id = $1 AND principal_id = $2
+             AND setting_key = 'navigation.contextual_shortcuts.v1'
+             AND context_kind = 'service' AND context_id = 'hr'
+         ) AS patch_count`,
+      [ids.tenantA, ids.actorAdminA, divergentContext.correlationId],
+    );
+    expect(divergentDurable).toEqual([{ evidence_count: 1, patch_count: 1 }]);
+    expect(divergentFulfilled[0]?.value).toMatchObject({
+      billingState: "non_billable",
+      replayed: false,
+      set: { version: 1 },
+    });
+  });
+
+  it("persists exact own shortcut scopes with CAS, evidence and current eligibility", async () => {
+    const initial = await getOwnPresentationShortcuts(pool, context(ids.tenantA, ids.actorA), {
+      contextServiceGroupId: "hr",
+    });
+    expect(initial).toMatchObject({
+      contextual: {
+        contextId: "hr",
+        contextKind: "service",
+        items: [],
+        settingKey: "navigation.contextual_shortcuts.v1",
+        tombstoneCount: 0,
+        version: 0,
+      },
+      universal: {
+        contextId: "global",
+        contextKind: "global",
+        items: [],
+        settingKey: "navigation.universal_shortcuts.v1",
+        tombstoneCount: 0,
+        version: 0,
+      },
+    });
+    expect(initial.universal.eligibleTargets.map(({ id }) => id)).toEqual([
+      "platform.mission_control",
+      "service_group.hr.mission_control",
+      "hr.leave.own",
+    ]);
+    expect(initial.contextual?.eligibleTargets.map(({ id }) => id)).toEqual([
+      "service_group.hr.mission_control",
+      "hr.leave.own",
+    ]);
+
+    const universalContext = context(ids.tenantA, ids.actorA);
+    const universal = await updateOwnPresentationShortcut(pool, universalContext, {
+      contextId: "global",
+      contextKind: "global",
+      expectedVersion: 0,
+      operation: "append",
+      settingKey: "navigation.universal_shortcuts.v1",
+      targetId: "hr.leave.own",
+    });
+    expect(universal).toMatchObject({
+      billingState: "non_billable",
+      replayed: false,
+      set: {
+        items: [expect.objectContaining({ id: "hr.leave.own" })],
+        tombstoneCount: 0,
+        version: 1,
+      },
+    });
+    expect(
+      await updateOwnPresentationShortcut(pool, universalContext, {
+        contextId: "global",
+        contextKind: "global",
+        expectedVersion: 0,
+        operation: "append",
+        settingKey: "navigation.universal_shortcuts.v1",
+        targetId: "hr.leave.own",
+      }),
+    ).toEqual({ ...universal, replayed: true });
+
+    const contextual = await updateOwnPresentationShortcut(pool, context(ids.tenantA, ids.actorA), {
+      contextId: "hr",
+      contextKind: "service",
+      expectedVersion: 0,
+      operation: "append",
+      settingKey: "navigation.contextual_shortcuts.v1",
+      targetId: "hr.leave.own",
+    });
+    expect(contextual).toMatchObject({
+      billingState: "non_billable",
+      replayed: false,
+      set: {
+        contextId: "hr",
+        items: [expect.objectContaining({ id: "hr.leave.own" })],
+        version: 1,
+      },
+    });
+
+    const beforeConflict = await migrationPool.query<{ count: number }>(
+      `SELECT count(*)::integer AS count
+       FROM evidence_events
+       WHERE tenant_id = $1 AND subject_type = 'platform_presentation_shortcuts'`,
+      [ids.tenantA],
+    );
+    await expect(
+      updateOwnPresentationShortcut(pool, context(ids.tenantA, ids.actorA), {
+        contextId: "global",
+        contextKind: "global",
+        expectedVersion: 0,
+        operation: "append",
+        settingKey: "navigation.universal_shortcuts.v1",
+        targetId: "service_group.hr.mission_control",
+      }),
+    ).rejects.toMatchObject({
+      code: "IDEMPOTENCY_CONFLICT",
+    } satisfies Partial<PlatformError>);
+    expect(
+      (
+        await migrationPool.query<{ count: number }>(
+          `SELECT count(*)::integer AS count
+           FROM evidence_events
+           WHERE tenant_id = $1 AND subject_type = 'platform_presentation_shortcuts'`,
+          [ids.tenantA],
+        )
+      ).rows[0]?.count,
+    ).toBe(beforeConflict.rows[0]?.count);
+
+    await pool.end();
+    pool = createDatabasePool(process.env.DATABASE_URL ?? "", { max: 4 });
+    expect(
+      (
+        await getOwnPresentationShortcuts(pool, context(ids.tenantA, ids.actorA), {
+          contextServiceGroupId: "hr",
+        })
+      ).universal,
+    ).toMatchObject({
+      items: [expect.objectContaining({ id: "hr.leave.own" })],
+      version: 1,
+    });
+
+    await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
+      active: false,
+      capabilities: ["hr.leave.list_own", "hr.leave.view"],
+    });
+    const deactivated = await getOwnPresentationShortcuts(pool, context(ids.tenantA, ids.actorA), {
+      contextServiceGroupId: "hr",
+    });
+    expect(deactivated.contextual).toBeNull();
+    expect(deactivated.universal).toMatchObject({
+      items: [],
+      tombstoneCount: 1,
+      version: 1,
+    });
+    expect(deactivated.universal.eligibleTargets.map(({ id }) => id)).toEqual([
+      "platform.mission_control",
+    ]);
+    const beforeDeniedAppend = await migrationPool.query<{
+      evidence_count: number;
+      patch_version: number;
+    }>(
+      `SELECT
+         (
+           SELECT count(*)::integer
+           FROM evidence_events
+           WHERE tenant_id = $1 AND subject_type = 'platform_presentation_shortcuts'
+         ) AS evidence_count,
+         (
+           SELECT version
+           FROM presentation_shortcut_user_patches
+           WHERE tenant_id = $1 AND principal_id = $2
+             AND setting_key = 'navigation.universal_shortcuts.v1'
+             AND context_kind = 'global' AND context_id = 'global'
+         ) AS patch_version`,
+      [ids.tenantA, ids.actorA],
+    );
+    await expect(
+      updateOwnPresentationShortcut(pool, context(ids.tenantA, ids.actorA), {
+        contextId: "global",
+        contextKind: "global",
+        expectedVersion: 1,
+        operation: "append",
+        settingKey: "navigation.universal_shortcuts.v1",
+        targetId: "service_group.hr.mission_control",
+      }),
+    ).rejects.toMatchObject({
+      code: "POLICY_DENIED",
+    } satisfies Partial<PlatformError>);
+    expect(
+      (
+        await migrationPool.query<{
+          evidence_count: number;
+          patch_version: number;
+        }>(
+          `SELECT
+             (
+               SELECT count(*)::integer
+               FROM evidence_events
+               WHERE tenant_id = $1 AND subject_type = 'platform_presentation_shortcuts'
+             ) AS evidence_count,
+             (
+               SELECT version
+               FROM presentation_shortcut_user_patches
+               WHERE tenant_id = $1 AND principal_id = $2
+                 AND setting_key = 'navigation.universal_shortcuts.v1'
+                 AND context_kind = 'global' AND context_id = 'global'
+             ) AS patch_version`,
+          [ids.tenantA, ids.actorA],
+        )
+      ).rows,
+    ).toEqual(beforeDeniedAppend.rows);
+
+    const removed = await updateOwnPresentationShortcut(pool, context(ids.tenantA, ids.actorA), {
+      contextId: "global",
+      contextKind: "global",
+      expectedVersion: 1,
+      operation: "remove",
+      settingKey: "navigation.universal_shortcuts.v1",
+      targetId: "hr.leave.own",
+    });
+    expect(removed.set).toMatchObject({ items: [], version: 2 });
+    expect(
+      (
+        await migrationPool.query<{ count: number }>(
+          `SELECT count(*)::integer AS count
+           FROM outbox_events
+           WHERE tenant_id = $1 AND event_type LIKE 'platform.presentation.shortcut%'`,
+          [ids.tenantA],
+        )
+      ).rows[0]?.count,
+    ).toBe(0);
+    await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
+      active: true,
+      capabilities: ["hr.leave.list_own", "hr.leave.view"],
+    });
   });
 
   it("fails service-group discovery closed after role demotion with stale capabilities", async () => {
@@ -1502,6 +1913,24 @@ describe("presentation preference persistence", () => {
   });
 
   it("fails closed across tenants, suspended actors, and stale CAS writers", async () => {
+    const shortcutProofBefore = await shortcutProofSnapshot(ids.tenantA, ids.actorA);
+    await expect(
+      getOwnPresentationShortcuts(pool, context(ids.tenantA, ids.actorB), {}),
+    ).rejects.toMatchObject({
+      code: "ACTOR_NOT_ACTIVE_MEMBER",
+    } satisfies Partial<PlatformError>);
+    await expect(
+      updateOwnPresentationShortcut(pool, context(ids.tenantA, ids.actorB), {
+        contextId: "global",
+        contextKind: "global",
+        expectedVersion: 2,
+        operation: "append",
+        settingKey: "navigation.universal_shortcuts.v1",
+        targetId: "platform.mission_control",
+      }),
+    ).rejects.toMatchObject({
+      code: "ACTOR_NOT_ACTIVE_MEMBER",
+    } satisfies Partial<PlatformError>);
     await expect(
       getOwnPresentationPreferences(pool, context(ids.tenantA, ids.actorB)),
     ).rejects.toMatchObject({ code: "ACTOR_NOT_ACTIVE_MEMBER" } satisfies Partial<PlatformError>);
@@ -1533,5 +1962,24 @@ describe("presentation preference persistence", () => {
     await expect(
       getOwnPresentationPreferences(pool, context(ids.tenantA, ids.actorA)),
     ).rejects.toMatchObject({ code: "ACTOR_NOT_ACTIVE_MEMBER" } satisfies Partial<PlatformError>);
+    await expect(
+      getOwnPresentationShortcuts(pool, context(ids.tenantA, ids.actorA), {}),
+    ).rejects.toMatchObject({
+      code: "ACTOR_NOT_ACTIVE_MEMBER",
+    } satisfies Partial<PlatformError>);
+    await expect(
+      updateOwnPresentationShortcut(pool, context(ids.tenantA, ids.actorA), {
+        contextId: "global",
+        contextKind: "global",
+        expectedVersion: 2,
+        operation: "append",
+        settingKey: "navigation.universal_shortcuts.v1",
+        targetId: "platform.mission_control",
+      }),
+    ).rejects.toMatchObject({
+      code: "ACTOR_NOT_ACTIVE_MEMBER",
+    } satisfies Partial<PlatformError>);
+    const shortcutProofAfter = await shortcutProofSnapshot(ids.tenantA, ids.actorA);
+    expect(shortcutProofAfter).toEqual(shortcutProofBefore);
   });
 });

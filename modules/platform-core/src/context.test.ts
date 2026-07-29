@@ -436,6 +436,53 @@ describe("service-bound tenant transaction", () => {
     expect(membershipIndex).toBeGreaterThan(activationIndex);
   });
 
+  it("locks a deterministic activation set before reading current membership", async () => {
+    const statements: string[] = [];
+    const parameters: unknown[][] = [];
+    const client = {
+      query: vi.fn(async (statement: string, values?: unknown[]) => {
+        statements.push(statement);
+        parameters.push(values ?? []);
+        if (statement.includes("FROM service_activations")) {
+          return {
+            rows: [
+              { service_key: "test.first", state: "active", version: 2 },
+              { service_key: "test.second", state: "inactive", version: 3 },
+            ],
+          };
+        }
+        if (statement.includes("esbla_lock_membership_authority")) {
+          return { rows: [{ authority: { roleKey: "hr_operator", status: "active" } }] };
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    } as unknown as PoolClient;
+    const pool = { connect: vi.fn(async () => client) } as unknown as Pool;
+
+    await withTenantTransaction(
+      pool,
+      mockContext,
+      async (transaction) => {
+        expect(transaction.lockedServiceActivations).toEqual([
+          { serviceKey: "test.first", state: "active", version: 2 },
+          { serviceKey: "test.second", state: "inactive", version: 3 },
+        ]);
+      },
+      { serviceActivationKeys: ["test.second", "test.first"] },
+    );
+
+    const activationIndex = statements.findIndex((value) =>
+      value.includes("FROM service_activations"),
+    );
+    const membershipIndex = statements.findIndex((value) =>
+      value.includes("esbla_lock_membership_authority"),
+    );
+    expect(activationIndex).toBeGreaterThan(-1);
+    expect(parameters[activationIndex]?.[1]).toEqual(["test.first", "test.second"]);
+    expect(membershipIndex).toBeGreaterThan(activationIndex);
+  });
+
   it("rejects an invalid activation key before membership authority is read", async () => {
     const statements: string[] = [];
     const client = {

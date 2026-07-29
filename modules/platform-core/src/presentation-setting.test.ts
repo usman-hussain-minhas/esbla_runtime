@@ -139,6 +139,91 @@ describe("typed presentation setting resolver", () => {
     });
   });
 
+  it("appends only registered shortcut user-patch targets at the ordered tail", () => {
+    for (const [key, scope] of [
+      ["navigation.universal_shortcuts.v1", "user_global"],
+      ["navigation.contextual_shortcuts.v1", "user_service"],
+    ] as const) {
+      expect(
+        resolvePresentationSetting(
+          key,
+          [
+            candidate(scope, {
+              operations: [
+                { id: "leave", operation: "append" },
+                { id: "profile", operation: "append" },
+              ],
+            }),
+          ],
+          {
+            authorizedIds: ["leave", "profile"],
+            registeredIds: ["leave", "profile"],
+          },
+        ),
+      ).toMatchObject({
+        sourceScope: scope,
+        tombstones: [],
+        value: ["leave", "profile"],
+      });
+    }
+  });
+
+  it("rejects anchored, duplicate and non-user append operations", () => {
+    for (const run of [
+      () =>
+        resolvePresentationSetting(
+          "navigation.universal_shortcuts.v1",
+          [
+            candidate("user_global", {
+              operations: [{ anchorId: "leave", id: "profile", operation: "append" }],
+            }),
+          ],
+          { authorizedIds: ["leave", "profile"], registeredIds: ["leave", "profile"] },
+        ),
+      () =>
+        resolvePresentationSetting(
+          "navigation.universal_shortcuts.v1",
+          [
+            candidate("tenant_global", ["leave"]),
+            candidate("user_global", {
+              operations: [{ id: "leave", operation: "append" }],
+            }),
+          ],
+          { authorizedIds: ["leave"], registeredIds: ["leave"] },
+        ),
+      () =>
+        resolvePresentationSetting(
+          "navigation.universal_shortcuts.v1",
+          [
+            candidate("session_preview", {
+              operations: [{ id: "leave", operation: "append" }],
+            }),
+          ],
+          { authorizedIds: ["leave"], registeredIds: ["leave"] },
+        ),
+      () =>
+        resolvePresentationSetting(
+          "widget.presentation.visible_fields.v1",
+          [
+            candidate("user_widget_instance", {
+              operations: [{ id: "name", operation: "append" }],
+            }),
+          ],
+          {
+            authorizedIds: ["name"],
+            contextDefaultIds: [],
+            registeredIds: ["name"],
+          },
+        ),
+    ]) {
+      expect(run).toThrowError(
+        expect.objectContaining<Partial<PresentationSettingResolutionError>>({
+          code: "invalid_ordered_set_patch",
+        }),
+      );
+    }
+  });
+
   it("omits a malformed target without discarding valid tenant-base entries", () => {
     const result = resolvePresentationSetting(
       "navigation.universal_shortcuts.v1",

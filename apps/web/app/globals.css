@@ -234,6 +234,251 @@ h1 {
   right: 0;
 }
 
+.zen-shortcut-stack {
+  bottom: calc(var(--edge) + var(--safe-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: var(--corner-gap);
+  position: fixed;
+  z-index: 20;
+}
+
+.zen-shortcut-universal {
+  left: calc(var(--edge) + var(--safe-left));
+}
+
+.zen-shortcut-contextual {
+  right: calc(var(--edge) + var(--safe-right));
+}
+
+.zen-shortcut-button {
+  position: relative;
+  text-decoration: none;
+}
+
+.zen-shortcut-universal-button::after,
+.zen-shortcut-universal-launcher::after {
+  bottom: 0;
+  left: calc(100% + 8px);
+  top: auto;
+  transform: translateX(-3px);
+}
+
+.zen-shortcut-contextual-button::after,
+.zen-shortcut-contextual-launcher::after {
+  bottom: 0;
+  right: calc(100% + 8px);
+  top: auto;
+  transform: translateX(3px);
+}
+
+.zen-shortcut-universal-button:hover::after,
+.zen-shortcut-universal-button:focus-visible::after,
+.zen-shortcut-universal-launcher:hover::after,
+.zen-shortcut-universal-launcher:focus-visible::after,
+.zen-shortcut-contextual-button:hover::after,
+.zen-shortcut-contextual-button:focus-visible::after,
+.zen-shortcut-contextual-launcher:hover::after,
+.zen-shortcut-contextual-launcher:focus-visible::after {
+  transform: translateX(0);
+}
+
+.zen-shortcut-launcher[aria-expanded="true"] {
+  background: var(--surface-chrome-hover);
+  border-color: var(--line-mid);
+  color: var(--accent-strong);
+}
+
+.zen-shortcut-panel {
+  backdrop-filter: blur(22px) saturate(125%);
+  background: var(--surface-panel);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius-panel);
+  bottom: calc(var(--edge) + var(--safe-bottom) + var(--corner-button) + var(--corner-gap));
+  box-shadow: var(--shadow-soft);
+  max-height: min(68dvh, 560px);
+  overflow-y: auto;
+  padding: 16px;
+  position: fixed;
+  width: min(408px, calc(100vw - (var(--edge) * 2) - var(--corner-button)));
+  z-index: 36;
+}
+
+.zen-shortcut-universal-panel {
+  left: calc(var(--edge) + var(--safe-left));
+}
+
+.zen-shortcut-contextual-panel {
+  right: calc(var(--edge) + var(--safe-right));
+}
+
+.zen-shortcut-panel header {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.zen-shortcut-panel h2 {
+  font-size: 22px;
+  font-weight: 520;
+  margin: 2px 0 0;
+}
+
+.zen-shortcut-picker-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.zen-shortcut-picker-item {
+  background: var(--surface-widget);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-chip);
+  display: grid;
+  grid-template-rows: minmax(76px, 1fr) 32px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.zen-shortcut-catalog-item {
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  width: 100%;
+}
+
+.zen-shortcut-catalog-item:hover,
+.zen-shortcut-catalog-item:focus-visible {
+  background: var(--accent-soft);
+  border-color: var(--line-mid);
+}
+
+.zen-shortcut-catalog-item:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.zen-shortcut-picker-item[data-selected="true"] {
+  border-color: var(--line-mid);
+}
+
+.zen-shortcut-picker-link {
+  align-items: center;
+  color: var(--text-main);
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  font-weight: 680;
+  gap: 8px;
+  justify-content: center;
+  line-height: 1.25;
+  min-width: 0;
+  padding: 10px 6px 7px;
+  text-align: center;
+  text-decoration: none;
+}
+
+a.zen-shortcut-picker-link:hover,
+a.zen-shortcut-picker-link:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.zen-shortcut-picker-link span {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.zen-shortcut-picker-item > .zen-shortcut-picker-link:last-child {
+  grid-row: 1 / -1;
+}
+
+.zen-shortcut-picker-action {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+  color: var(--accent-strong);
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+}
+
+.zen-shortcut-picker-action:hover,
+.zen-shortcut-picker-action:focus-visible {
+  background: var(--accent-soft);
+}
+
+.zen-shortcut-picker-action:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.zen-shortcut-add-item {
+  align-items: center;
+  background: transparent;
+  border: 1px dashed var(--line-mid);
+  border-radius: var(--radius-chip);
+  color: var(--accent-strong);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  font-weight: 700;
+  gap: 8px;
+  justify-content: center;
+  min-height: 110px;
+  padding: 10px 6px;
+}
+
+.zen-shortcut-add-item:hover,
+.zen-shortcut-add-item:focus-visible {
+  background: var(--accent-soft);
+  border-style: solid;
+}
+
+.zen-shortcut-measure {
+  contain: strict;
+  height: 1px;
+  left: 0;
+  pointer-events: none;
+  position: fixed;
+  top: 0;
+  visibility: hidden;
+  width: 1px;
+}
+
+.zen-shortcut-measure > span {
+  display: block;
+  position: absolute;
+  width: 1px;
+}
+
+.zen-shortcut-button-probe {
+  height: var(--corner-button);
+}
+
+.zen-shortcut-gap-probe {
+  height: var(--corner-gap);
+}
+
+.zen-shortcut-start-inset-probe {
+  height: calc(var(--edge) + var(--safe-bottom));
+}
+
+.zen-shortcut-end-inset-probe {
+  height: calc(var(--edge) + var(--safe-top));
+}
+
+.zen-shortcut-top-chrome-probe {
+  height: calc((var(--corner-button) * 2) + var(--corner-gap));
+}
+
 .zen-chrome-measure {
   contain: strict;
   height: 1px;
@@ -1618,9 +1863,10 @@ textarea:focus-visible,
 
 .session-status {
   color: var(--text-soft);
-  left: calc(var(--edge) + var(--safe-left));
+  left: 50%;
   max-width: min(260px, calc(100vw - 140px));
   padding: 0 14px;
+  transform: translateX(-50%);
 }
 
 .session-status span {
@@ -1683,7 +1929,7 @@ textarea:focus-visible,
   }
 
   .session-status {
-    max-width: calc(100vw - 102px);
+    display: none;
   }
 
   .leave-table-wrap {
@@ -1828,6 +2074,17 @@ textarea:focus-visible,
 }
 
 @media (max-width: 1099px) {
+  .zen-shortcut-panel {
+    bottom: calc(var(--edge) + var(--safe-bottom) + var(--corner-button) + var(--corner-gap));
+    left: calc(var(--edge) + var(--safe-left));
+    right: calc(var(--edge) + var(--safe-right));
+    width: auto;
+  }
+
+  .zen-shortcut-picker-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
   [data-zen-section-heading] {
     scroll-margin-block-start: 64px;
   }
@@ -1920,6 +2177,34 @@ textarea:focus-visible,
 }
 
 @media (max-width: 767px) {
+  .zen-shortcut-panel {
+    max-height: min(
+      72dvh,
+      calc(
+        100dvh -
+        var(--safe-top) -
+        var(--safe-bottom) -
+        (var(--edge) * 2) -
+        var(--corner-button) -
+        var(--corner-gap)
+      )
+    );
+    padding: 12px;
+  }
+
+  .zen-shortcut-panel h2 {
+    font-size: 20px;
+  }
+
+  .zen-shortcut-picker-grid {
+    gap: 6px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .zen-shortcut-picker-item {
+    grid-template-rows: minmax(70px, 1fr) 32px;
+  }
+
   .zen-section-compact {
     width: 100%;
   }

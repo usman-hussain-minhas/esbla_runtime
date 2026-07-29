@@ -1,6 +1,9 @@
 "use client";
 
-import type { PresentationNavigationDiscovery } from "@esbla/contracts";
+import type {
+  PresentationNavigationDiscovery,
+  PresentationShortcutDiscovery,
+} from "@esbla/contracts";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
@@ -17,9 +20,11 @@ import {
   type ZenDirectOpenMenu,
   ZenNavigationChrome,
 } from "./zen-navigation-chrome";
+import { ZenShortcutChrome, type ZenShortcutScope } from "./zen-shortcut-chrome";
 
 type ZenChromeLayer =
   | { readonly family: "navigation"; readonly menu: Exclude<ZenDirectOpenMenu, undefined> }
+  | { readonly family: "shortcuts"; readonly scope: ZenShortcutScope }
   | { readonly family: "system"; readonly state: ZenSystemPanelState }
   | undefined;
 
@@ -54,9 +59,11 @@ function sameResolution(
 export function ZenShellChrome({
   appearanceAvailable,
   discovery,
+  shortcutDiscovery,
 }: Readonly<{
   appearanceAvailable: boolean;
   discovery: PresentationNavigationDiscovery;
+  shortcutDiscovery: PresentationShortcutDiscovery | undefined;
 }>) {
   const pathname = usePathname();
   const model = useMemo(() => buildZenNavigationModel(discovery, pathname), [discovery, pathname]);
@@ -238,8 +245,12 @@ export function ZenShellChrome({
   const onOpenSystemStateChange = useCallback((state: ZenSystemPanelState | undefined) => {
     setLayer(state ? { family: "system", state } : undefined);
   }, []);
+  const onOpenShortcutScopeChange = useCallback((scope: ZenShortcutScope | undefined) => {
+    setLayer(scope ? { family: "shortcuts", scope } : undefined);
+  }, []);
 
   const openMenu = layer?.family === "navigation" ? layer.menu : undefined;
+  const openShortcutScope = layer?.family === "shortcuts" ? layer.scope : undefined;
   const openSystemState = layer?.family === "system" ? layer.state : undefined;
   const collapsedMenus = new Set<Exclude<ZenDirectOpenMenu, undefined>>();
   if (resolution.collapsed.includes("contextual")) collapsedMenus.add("contextual");
@@ -270,6 +281,18 @@ export function ZenShellChrome({
           systemRequired={resolution.systemRequired}
         />
       </div>
+
+      {shortcutDiscovery ? (
+        <ZenShortcutChrome
+          initialDiscovery={shortcutDiscovery}
+          key={`${pathname}:${shortcutDiscovery.universal.version}:${
+            shortcutDiscovery.contextual?.version ?? "none"
+          }`}
+          onOpenScopeChange={onOpenShortcutScopeChange}
+          openScope={openShortcutScope}
+          responsiveClass={resolution.breakpoint}
+        />
+      ) : null}
 
       <div aria-hidden="true" className="zen-chrome-measure">
         <span className="zen-chrome-button-probe" ref={buttonProbe} />

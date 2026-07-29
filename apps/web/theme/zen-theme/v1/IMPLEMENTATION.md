@@ -107,6 +107,20 @@ versioned multi-section surface supplies the first visible Product consumer;
 this slice does not fabricate a second default section merely to demonstrate
 the rail.
 
+T4-4 adds registered personal shortcut discovery and mutation. Universal
+shortcuts resolve in the exact tenant/member global context; HR shortcuts
+resolve only in the current HR service context. Both sets re-evaluate current
+activation and actor eligibility, persist only ordered registered target IDs,
+use compare-and-swap plus idempotency, emit non-billable evidence, and omit
+stale targets with a non-sensitive tombstone count. Desktop renders measured
+vertical stacks with at most five direct targets and an editable `+` picker.
+Tablet and phone render distinct safe-corner launchers and one arbitrated,
+contained four-to-six-column sheet. Simultaneous first writes with the same
+receipt key converge to one patch and one evidence event; cross-tenant and
+suspended-member reads and writes fail without state movement. The exact patch
+lookup uses its composite primary key at 5,000-row representative cardinality.
+My Work and Tasks remain widget surfaces, not shortcut targets.
+
 ## Requirement trace
 
 | ID | Runtime implementation | Proof in this walking slice |
@@ -120,6 +134,7 @@ the rail.
 | `ZEN-PANEL-002` | the Theme launcher opens the shared Appearance panel and never changes preference implicitly | browser |
 | `ZEN-RESP-001` | 12-column desktop, 8-column tablet and 4-column phone grammar at the exact 1100/768 boundaries, with safe-area chrome and persistent User/System | source and browser boundary checks |
 | `ZEN-RESP-002` | a pure resolver uses measured control geometry and deterministic tablet/phone collapse priority; collapsed navigation remains available in System | unit/browser |
+| `ZEN-RESP-003` | distinct universal and contextual shortcut scopes use measured desktop stacks or mutually exclusive safe-corner tablet/phone trays | unit/integration plus desktop/keyboard, tablet/touch and phone browser proof |
 | `ZEN-SURF-001` | shared code-owned version-one surface manifests and ordered default-instance metadata, startup hash/binding validation, plus tenant-scoped personal overlays with CAS | contract, platform-core, database integration, reload and restart proof |
 | `ZEN-SURF-002` | a pure bounded resolver derives stable 12/8/4 geometry, clamps declared constraints, rejects invalid/duplicate identity, resolves collisions without overlap and returns explicit diagnostics | unit and browser boundary/geometry checks |
 | `ZEN-SURF-003` | code-owned ordered semantic sections require an eligible widget or authorized content anchor; one-section defaults omit all rail markup; the shared rail uses actual section intersections, the one scroll owner, keyboard controls, focus movement, desktop bar/tooltip grammar and a compact tablet/phone chooser without history mutation | resolver/component proof and actual-browser default-absence proof; visible multi-section browser proof remains for the first versioned multi-section surface |
@@ -130,15 +145,16 @@ the rail.
 | `ZEN-SET-001` | HR business settings remain owned by the separate HR service resolver and are not presentation values | source-boundary audit |
 | `ZEN-SET-002` | code-owned immutable manifests define the exact eleven V1 presentation keys, scopes, types, constraints, permissions, non-billable treatment, migrations and canonical hashes; the pure resolver enforces exact priority, floors, locks, ordered patches, safe fallback, tombstones and deterministic diagnostics | contract and platform-core unit tests plus startup registry validation |
 | `ZEN-SET-003` | server-resolved palette and independent contrast reach the initial document and render correctly with client JavaScript disabled | raw SSR plus no-JavaScript first-paint screenshot and hydrated browser proof |
-| `ZEN-SEC-001` | current tenant membership, exact capabilities and service activation are checked on discovery and mutation | integration and browser denial |
-| `ZEN-SEC-002` | preference/layout mutations are tenant scoped, CAS-bound, evidenced and explicitly non-billable | integration/SQL |
+| `ZEN-SEC-001` | current tenant membership, exact capabilities and service activation are checked on discovery and mutation | cross-tenant, suspended-member and deactivation integration plus browser denial |
+| `ZEN-SEC-002` | preference, shortcut and layout mutations are tenant scoped, CAS-bound, evidenced and explicitly non-billable | integration/SQL including simultaneous first-write replay |
 | `ZEN-REL-001` | authoritative preference and layout survive reload plus actual application and database process restarts | restart integration/browser |
+| `ZEN-PERF-001` | shortcut target and persisted-set cardinality are fixed; the exact own-patch lookup uses the composite primary key without a sequential scan at 5,000 rows | representative-cardinality `EXPLAIN (ANALYZE, BUFFERS)` |
 | `ZEN-PROOF-001` | source, unit, integration, browser and visual evidence remain separately labelled | exact-head audit |
 | `ZEN-PROCESS-001` | the real Leave consumer precedes kernel generalization; restart proof reuses bounded existing fixtures | candidate audit |
 
 This trace describes the T2 walking slice, all four bounded T3 generalizations
-and the first three T4 shell slices. It proves the current composition kernel,
-capability-safe navigation, responsive panel arbitration and the truthful
-section-rail contract; it does not claim registered shortcuts, a visible
+and the first four T4 shell slices. It proves the current composition kernel,
+capability-safe navigation, responsive panel arbitration, registered personal
+shortcuts and the truthful section-rail contract; it does not claim a visible
 multi-section Product surface, Studio, the complete Zen shell, complete HR,
 release or deployment.

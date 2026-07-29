@@ -57,8 +57,8 @@ async function restartEmployeeApplication() {
     status: "restarted",
   });
 }
-async function openActor(browser, origin, label) {
-  const context = await browser.newContext({ serviceWorkers: "block" });
+async function openActor(browser, origin, label, contextOptions = {}) {
+  const context = await browser.newContext({ ...contextOptions, serviceWorkers: "block" });
   const page = await context.newPage();
   const diagnostics = { console: [], external: [], page: [], server: [] };
 
@@ -785,6 +785,245 @@ test("Mission Control reuses the real Leave widget and persists independent appe
       ]).catch(() => undefined);
     }
     await closeActors(employee);
+  }
+});
+
+test("registered universal and HR shortcuts persist, arbitrate, and fail closed", async ({
+  browser,
+}, testInfo) => {
+  const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
+  let touchEmployee;
+  let eligibilityChanged = false;
+  try {
+    await employee.page.setViewportSize({ height: 844, width: 1_200 });
+    await employee.page.goto(`${employee.origin}/workspace/hr`);
+    const universalLauncher = employee.page.getByRole("button", {
+      exact: true,
+      name: "Universal shortcuts",
+    });
+    const contextualLauncher = employee.page.getByRole("button", {
+      exact: true,
+      name: "HR shortcuts",
+    });
+    await expect(universalLauncher).toBeVisible();
+    await expect(contextualLauncher).toBeVisible();
+
+    await universalLauncher.click();
+    let universalPanel = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "Universal shortcuts",
+    });
+    await expect(
+      universalPanel.getByRole("heading", { name: "Universal shortcuts" }),
+    ).toBeFocused();
+    await universalPanel.getByRole("button", { exact: true, name: "Add shortcut" }).click();
+    const universalMutation = employee.page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/presentation/shortcuts",
+    );
+    await universalPanel
+      .getByRole("button", {
+        exact: true,
+        name: "Add Leave Requests to Universal shortcuts",
+      })
+      .click();
+    expect((await universalMutation).status()).toBe(200);
+    await expect(
+      universalPanel.getByRole("link", { exact: true, name: "Leave Requests" }),
+    ).toBeVisible();
+    await universalPanel.getByRole("button", { name: "Close universal shortcuts" }).click();
+    const universalLeaveShortcut = employee.page
+      .locator(".zen-shortcut-universal")
+      .getByRole("link", { exact: true, name: "Leave Requests" });
+    await expect(universalLeaveShortcut).toBeVisible();
+
+    await contextualLauncher.click();
+    let contextualPanel = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "HR shortcuts",
+    });
+    await contextualPanel.getByRole("button", { exact: true, name: "Add shortcut" }).click();
+    const contextualMutation = employee.page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/presentation/shortcuts",
+    );
+    await contextualPanel
+      .getByRole("button", {
+        exact: true,
+        name: "Add Leave Requests to HR shortcuts",
+      })
+      .click();
+    expect((await contextualMutation).status()).toBe(200);
+    await contextualPanel.getByRole("button", { name: "Close hr shortcuts" }).click();
+    const contextualLeaveShortcut = employee.page
+      .locator(".zen-shortcut-contextual")
+      .getByRole("link", { exact: true, name: "Leave Requests" });
+    await expect(contextualLeaveShortcut).toBeVisible();
+
+    await employee.page.reload();
+    await expect(universalLeaveShortcut).toBeVisible();
+    await expect(contextualLeaveShortcut).toBeVisible();
+    await employee.page.goto("about:blank");
+    await restartEmployeeApplication();
+    await employee.page.goto(`${employee.origin}/workspace/hr`);
+    await expect(universalLeaveShortcut).toBeVisible();
+    await expect(contextualLeaveShortcut).toBeVisible();
+
+    await universalLauncher.focus();
+    await employee.page.keyboard.press("Enter");
+    universalPanel = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "Universal shortcuts",
+    });
+    await expect(universalPanel).toBeVisible();
+    await employee.page.keyboard.press("Escape");
+    await expect(universalPanel).toBeHidden();
+    await expect(universalLauncher).toBeFocused();
+    await contextualLauncher.focus();
+    await employee.page.keyboard.press("Space");
+    contextualPanel = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "HR shortcuts",
+    });
+    await expect(contextualPanel).toBeVisible();
+    await employee.page.keyboard.press("Escape");
+    await expect(contextualPanel).toBeHidden();
+    await expect(contextualLauncher).toBeFocused();
+
+    touchEmployee = await openActor(
+      browser,
+      fixture.employeeOrigin,
+      `${fixture.employeeLabel} touch`,
+      {
+        hasTouch: true,
+        viewport: { height: 1_024, width: 900 },
+      },
+    );
+    await touchEmployee.page.goto(`${touchEmployee.origin}/workspace/hr`);
+    const touchUniversalLauncher = touchEmployee.page.getByRole("button", {
+      exact: true,
+      name: "Universal shortcuts",
+    });
+    const touchContextualLauncher = touchEmployee.page.getByRole("button", {
+      exact: true,
+      name: "HR shortcuts",
+    });
+    await expect(
+      touchEmployee.page
+        .locator(".zen-shortcut-universal")
+        .getByRole("link", { exact: true, name: "Leave Requests" }),
+    ).toHaveCount(0);
+    await touchUniversalLauncher.tap();
+    const touchUniversalPanel = touchEmployee.page.getByRole("dialog", {
+      exact: true,
+      name: "Universal shortcuts",
+    });
+    await expect(touchUniversalPanel).toBeVisible();
+    await expect
+      .poll(async () =>
+        touchUniversalPanel.locator(".zen-shortcut-picker-grid").evaluate((element) => {
+          const tracks = getComputedStyle(element).gridTemplateColumns.trim();
+          return tracks ? tracks.split(/\s+/).length : 0;
+        }),
+      )
+      .toBe(6);
+    await touchContextualLauncher.tap();
+    await expect(touchUniversalPanel).toBeHidden();
+    await expect(
+      touchEmployee.page.getByRole("dialog", {
+        exact: true,
+        name: "HR shortcuts",
+      }),
+    ).toBeVisible();
+
+    await employee.page.setViewportSize({ height: 844, width: 390 });
+    await expect(universalLeaveShortcut).toHaveCount(0);
+    await expect(contextualLeaveShortcut).toHaveCount(0);
+    await universalLauncher.click();
+    universalPanel = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "Universal shortcuts",
+    });
+    await expect(universalPanel).toBeVisible();
+    await contextualLauncher.click();
+    contextualPanel = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "HR shortcuts",
+    });
+    await expect(universalPanel).toBeHidden();
+    await expect(contextualPanel).toBeVisible();
+    await expect
+      .poll(async () =>
+        contextualPanel.locator(".zen-shortcut-picker-grid").evaluate((element) => {
+          const tracks = getComputedStyle(element).gridTemplateColumns.trim();
+          return tracks ? tracks.split(/\s+/).length : 0;
+        }),
+      )
+      .toBe(4);
+    expect(
+      await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+    const shortcutEvidencePath = testInfo.outputPath("hr-shortcuts-phone.png");
+    await employee.page.screenshot({ fullPage: false, path: shortcutEvidencePath });
+    await testInfo.attach("hr-shortcuts-phone", {
+      contentType: "image/png",
+      path: shortcutEvidencePath,
+    });
+
+    eligibilityChanged = true;
+    await setEmployeeLeavePresentationEligibility(false, ["hr.leave.list_own", "hr.leave.view"]);
+    await employee.page.reload();
+    await universalLauncher.click();
+    universalPanel = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "Universal shortcuts",
+    });
+    await expect(universalPanel).toContainText("1 unavailable shortcut is hidden.");
+    await contextualLauncher.click();
+    contextualPanel = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "HR shortcuts",
+    });
+    await expect(contextualPanel).toContainText("1 unavailable shortcut is hidden.");
+
+    await setEmployeeLeavePresentationEligibility(true, ["hr.leave.list_own", "hr.leave.view"]);
+    eligibilityChanged = false;
+    await employee.page.reload();
+    await universalLauncher.click();
+    universalPanel = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "Universal shortcuts",
+    });
+    const universalRemoval = employee.page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/presentation/shortcuts",
+    );
+    await universalPanel
+      .getByRole("button", {
+        name: "Remove Leave Requests from Universal shortcuts",
+      })
+      .click();
+    expect((await universalRemoval).status()).toBe(200);
+    await universalPanel.getByRole("button", { name: "Close universal shortcuts" }).click();
+    await contextualLauncher.click();
+    contextualPanel = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "HR shortcuts",
+    });
+    const contextualRemoval = employee.page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/presentation/shortcuts",
+    );
+    await contextualPanel
+      .getByRole("button", {
+        name: "Remove Leave Requests from HR shortcuts",
+      })
+      .click();
+    expect((await contextualRemoval).status()).toBe(200);
+  } finally {
+    if (eligibilityChanged) {
+      await setEmployeeLeavePresentationEligibility(true, [
+        "hr.leave.list_own",
+        "hr.leave.view",
+      ]).catch(() => undefined);
+    }
+    await closeActors(employee, ...(touchEmployee ? [touchEmployee] : []));
   }
 });
 

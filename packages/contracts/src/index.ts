@@ -175,6 +175,7 @@ export {
 export * from "./platform-presentation-api.js";
 export * from "./platform-presentation-service-group.js";
 export * from "./platform-presentation-setting.js";
+export * from "./platform-presentation-shortcut-api.js";
 export * from "./platform-presentation-surface-api.js";
 export * from "./platform-presentation-widget.js";
 export * from "./platform-studio-surface-base-api.js";

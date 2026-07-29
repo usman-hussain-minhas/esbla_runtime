@@ -59,6 +59,7 @@ import {
   hrWorkforceOwnQuerySchema,
   hrWorkforceProfilePathSchema,
   hrWorkforceProfileSchema,
+  type PresentationShortcutDiscoveryQuery,
   type PresentationSurfacePath,
   parseHrAttendanceCorrection,
   parseHrAttendanceCorrectionBody,
@@ -81,19 +82,26 @@ import {
   parseHrWorkforceListQuery,
   parseHrWorkforceOwnQuery,
   parseHrWorkforceProfilePath,
+  parsePresentationShortcutDiscoveryQuery,
   parsePresentationSurfacePath,
   parseUpdatePresentationPreferencesBody,
+  parseUpdatePresentationShortcutBody,
   parseUpdatePresentationSurfaceOverlayBody,
   presentationNavigationDiscoverySchema,
   presentationPreferencesSchema,
   presentationServiceGroupDiscoverySchema,
+  presentationShortcutDiscoveryQuerySchema,
+  presentationShortcutDiscoverySchema,
   presentationSurfaceLayoutSchema,
   presentationSurfacePathSchema,
   problemDetailsSchema,
   type UpdatePresentationPreferencesBody,
+  type UpdatePresentationShortcutBody,
   type UpdatePresentationSurfaceOverlayBody,
   updatePresentationPreferencesBodySchema,
   updatePresentationPreferencesResponseSchema,
+  updatePresentationShortcutBodySchema,
+  updatePresentationShortcutResponseSchema,
   updatePresentationSurfaceOverlayBodySchema,
   updatePresentationSurfaceOverlayResponseSchema,
   type WorkspaceCompleteTaskBody,
@@ -148,9 +156,11 @@ import {
   getOwnPresentationNavigation,
   getOwnPresentationPreferences,
   getOwnPresentationServiceGroups,
+  getOwnPresentationShortcuts,
   getOwnPresentationSurfaceLayout,
   type OperationContext,
   updateOwnPresentationPreferences,
+  updateOwnPresentationShortcut,
   updateOwnPresentationSurfaceOverlay,
 } from "@esbla/platform-core";
 import {
@@ -337,11 +347,15 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     hrLeaveRequestDetailSchema,
     presentationNavigationDiscoverySchema,
     presentationPreferencesSchema,
+    presentationShortcutDiscoveryQuerySchema,
+    presentationShortcutDiscoverySchema,
     presentationServiceGroupDiscoverySchema,
     presentationSurfaceLayoutSchema,
     presentationSurfacePathSchema,
     updatePresentationPreferencesBodySchema,
     updatePresentationPreferencesResponseSchema,
+    updatePresentationShortcutBodySchema,
+    updatePresentationShortcutResponseSchema,
     updatePresentationSurfaceOverlayBodySchema,
     updatePresentationSurfaceOverlayResponseSchema,
     workspaceCreateTaskBodySchema,
@@ -410,6 +424,63 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
       },
     },
     async (request) => await getOwnPresentationNavigation(options.pool, operationContext(request)),
+  );
+
+  server.get<{ Querystring: PresentationShortcutDiscoveryQuery }>(
+    "/v1/platform/presentation/shortcuts",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictRequest(parsePresentationShortcutDiscoveryQuery, request.query);
+        },
+      ],
+      schema: {
+        querystring: { $ref: "PresentationShortcutDiscoveryQueryV1#" },
+        response: {
+          200: { $ref: "PresentationShortcutDiscoveryV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request) =>
+      await getOwnPresentationShortcuts(
+        options.pool,
+        operationContext(request),
+        assertStrictRequest(parsePresentationShortcutDiscoveryQuery, request.query),
+      ),
+  );
+
+  server.post<{ Body: UpdatePresentationShortcutBody }>(
+    "/v1/platform/presentation/shortcuts",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictMutationIdempotencyKey(request);
+          assertStrictRequest(parseUpdatePresentationShortcutBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "UpdatePresentationShortcutBodyV1#" },
+        response: {
+          200: { $ref: "UpdatePresentationShortcutResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await updateOwnPresentationShortcut(
+        options.pool,
+        {
+          ...operationContext(request),
+          correlationId: idempotencyKey(request).toLowerCase(),
+        },
+        assertStrictRequest(parseUpdatePresentationShortcutBody, request.body),
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return result;
+    },
   );
 
   server.get(
