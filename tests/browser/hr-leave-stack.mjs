@@ -213,12 +213,17 @@ async function requireActorReady(origin, label, web, pathname = "/workspace/hr/l
       const response = await fetch(new URL(pathname, origin), {
         signal: AbortSignal.timeout(500),
       });
-      if (response.status === 200 && (await response.text()).includes(label) && !web.settled)
+      if (
+        response.status === 200 &&
+        (await response.text()).includes('class="esbla-shell"') &&
+        !web.settled
+      ) {
         return;
+      }
     } catch {}
     await delay(100);
   }
-  throw new Error(`Web identity ${label} did not become ready`);
+  throw new Error(`Web persona ${label} did not become ready`);
 }
 
 async function restartWebPersona(persona) {

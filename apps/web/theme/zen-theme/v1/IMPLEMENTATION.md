@@ -121,6 +121,18 @@ suspended-member reads and writes fail without state movement. The exact patch
 lookup uses its composite primary key at 5,000-row representative cardinality.
 My Work and Tasks remain widget surfaces, not shortcut targets.
 
+T4-5 binds the floating shell, surface frame, route-backed overlays, shortcut
+stacks and contained panels to one bounded visual-viewport geometry. The pure
+resolver clamps browser offsets and sizes to the layout viewport; the shell
+publishes exact block and inline insets and remeasures on visual resize or pan,
+so software-keyboard, zoom and pan obstruction cannot leave current chrome
+behind the visible boundary. Responsive and desktop shortcut capacity use the
+actual visual dimensions. Product chrome no longer exposes the development
+identity capsule; production identity remains separate Core debt and is not
+simulated here. Pure geometry and controlled Chromium visual-viewport proof are
+green. Actual-device software-keyboard screenshots remain unclaimed until the
+module Theme review.
+
 ## Requirement trace
 
 | ID | Runtime implementation | Proof in this walking slice |
@@ -132,8 +144,8 @@ My Work and Tasks remain widget surfaces, not shortcut targets.
 | `ZEN-NAV-004` | persistent navigation and service controls use the closed semantic icon registry | manifest/static |
 | `ZEN-PANEL-001` | one shared state owner arbitrates direct navigation, System, collapsed navigation and Appearance; Escape unwinds nested System content before the containing panel | keyboard/browser |
 | `ZEN-PANEL-002` | the Theme launcher opens the shared Appearance panel and never changes preference implicitly | browser |
-| `ZEN-RESP-001` | 12-column desktop, 8-column tablet and 4-column phone grammar at the exact 1100/768 boundaries, with safe-area chrome and persistent User/System | source and browser boundary checks |
-| `ZEN-RESP-002` | a pure resolver uses measured control geometry and deterministic tablet/phone collapse priority; collapsed navigation remains available in System | unit/browser |
+| `ZEN-RESP-001` | 12-column desktop, 8-column tablet and 4-column phone grammar at the exact 1100/768 boundaries, with safe-area plus bounded visual-viewport chrome and persistent User/System | source, pure geometry and controlled Chromium boundary checks |
+| `ZEN-RESP-002` | pure resolvers use measured control and visual-viewport geometry with deterministic tablet/phone collapse priority; collapsed navigation remains available in System | unit/browser |
 | `ZEN-RESP-003` | distinct universal and contextual shortcut scopes use measured desktop stacks or mutually exclusive safe-corner tablet/phone trays | unit/integration plus desktop/keyboard, tablet/touch and phone browser proof |
 | `ZEN-SURF-001` | shared code-owned version-one surface manifests and ordered default-instance metadata, startup hash/binding validation, plus tenant-scoped personal overlays with CAS | contract, platform-core, database integration, reload and restart proof |
 | `ZEN-SURF-002` | a pure bounded resolver derives stable 12/8/4 geometry, clamps declared constraints, rejects invalid/duplicate identity, resolves collisions without overlap and returns explicit diagnostics | unit and browser boundary/geometry checks |
@@ -153,8 +165,8 @@ My Work and Tasks remain widget surfaces, not shortcut targets.
 | `ZEN-PROCESS-001` | the real Leave consumer precedes kernel generalization; restart proof reuses bounded existing fixtures | candidate audit |
 
 This trace describes the T2 walking slice, all four bounded T3 generalizations
-and the first four T4 shell slices. It proves the current composition kernel,
+and the first five T4 shell slices. It proves the current composition kernel,
 capability-safe navigation, responsive panel arbitration, registered personal
-shortcuts and the truthful section-rail contract; it does not claim a visible
+shortcuts, bounded visual-viewport chrome and the truthful section-rail contract; it does not claim a visible
 multi-section Product surface, Studio, the complete Zen shell, complete HR,
 release or deployment.

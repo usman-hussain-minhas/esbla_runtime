@@ -252,7 +252,7 @@ export function ZenShortcutChrome({
   const measure = useCallback(() => {
     if (responsiveClass !== "desktop") return;
     const next = resolveZenShortcutVisibleItemCount({
-      availableBlockSize: document.documentElement.clientHeight,
+      availableBlockSize: window.visualViewport?.height ?? document.documentElement.clientHeight,
       buttonBlockSize: buttonProbe.current?.getBoundingClientRect().height ?? 0,
       controlGap: gapProbe.current?.getBoundingClientRect().height ?? 0,
       endInset: endInsetProbe.current?.getBoundingClientRect().height ?? 0,
@@ -275,11 +275,13 @@ export function ZenShortcutChrome({
     for (const probe of probes) observer.observe(probe);
     window.addEventListener("resize", measure);
     window.visualViewport?.addEventListener("resize", measure);
+    window.visualViewport?.addEventListener("scroll", measure);
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
       window.removeEventListener("resize", measure);
       window.visualViewport?.removeEventListener("resize", measure);
+      window.visualViewport?.removeEventListener("scroll", measure);
     };
   }, [measure]);
 

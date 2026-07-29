@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { fixture } from "./hr-leave-fixture.mjs";
 
-async function openActor(browser, origin, label) {
+async function openActor(browser, origin) {
   const context = await browser.newContext({ serviceWorkers: "block" });
   const page = await context.newPage();
   const diagnostics = { console: [], external: [], page: [], server: [] };
@@ -19,7 +19,7 @@ async function openActor(browser, origin, label) {
     } else await route.continue();
   });
   await page.goto(`${origin}/workspace/hr`);
-  await expect(page.getByLabel("Development identity status")).toHaveText(label);
+  await expect(page.locator(".esbla-shell")).toHaveAttribute("data-current-surface", "HR");
   return { context, diagnostics, origin, page };
 }
 
@@ -74,11 +74,7 @@ async function createAndSubmit(actor, amount, category, description) {
 test("employee creates, edits, submits, and reloads a rendered bounded Expense Claim", async ({
   browser,
 }) => {
-  const actor = await openActor(
-    browser,
-    fixture.employmentEmployeeOrigin,
-    fixture.employmentEmployeeLabel,
-  );
+  const actor = await openActor(browser, fixture.employmentEmployeeOrigin);
   try {
     await actor.page.getByRole("link", { name: "My Expense Claims" }).click();
     await expect(actor.page.getByRole("heading", { name: "No Expense Claims yet" })).toBeVisible();
@@ -123,13 +119,9 @@ test("employee creates, edits, submits, and reloads a rendered bounded Expense C
 test("manager decisions, employee correction, settings, and deactivation remain rendered and persistent", async ({
   browser,
 }) => {
-  const admin = await openActor(browser, fixture.adminOrigin, fixture.adminLabel);
-  const employee = await openActor(
-    browser,
-    fixture.employmentEmployeeOrigin,
-    fixture.employmentEmployeeLabel,
-  );
-  const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
+  const admin = await openActor(browser, fixture.adminOrigin);
+  const employee = await openActor(browser, fixture.employmentEmployeeOrigin);
+  const manager = await openActor(browser, fixture.managerOrigin);
   try {
     const approvedId = await createAndSubmit(employee, 22001, "other", "Expense approval journey");
     await manager.page.goto(`${manager.origin}/workspace/my-work`);
