@@ -89,6 +89,7 @@ export interface PresentationWidgetLayoutConstraint {
 }
 
 export interface PresentationWidgetDefinition {
+  readonly activationPolicy: "any_provider" | "exact_service";
   readonly activationServiceKey: string;
   readonly allowedCommandIds: readonly string[];
   readonly billingTreatment: "non_billable";
@@ -115,6 +116,7 @@ export interface PresentationWidgetDefinition {
   };
   readonly privacyClassification: "confidential";
   readonly proofRequirementIds: readonly string[];
+  readonly providerEligibility: readonly PresentationWidgetProviderEligibility[];
   readonly readModelId: string;
   readonly refreshPolicy: "manual";
   readonly requiredCapabilityIds: readonly string[];
@@ -126,6 +128,11 @@ export interface PresentationWidgetDefinition {
   readonly supportedStates: readonly PresentationWidgetState[];
   readonly supportedSurfaceTypes: readonly PresentationWidgetSurfaceType[];
   readonly widgetKind: PresentationWidgetKind;
+}
+
+export interface PresentationWidgetProviderEligibility {
+  readonly activationServiceKey: string;
+  readonly requiredCapabilityIds: readonly string[];
 }
 
 export type PresentationWidgetDefinitionWithoutHash = Omit<
@@ -275,9 +282,30 @@ function validInternalRoute(value: unknown): value is string | null {
   );
 }
 
-const HR_LEAVE_MY_REQUESTS_MANIFEST = {
-  activationServiceKey: "hr.leave_request",
-  allowedCommandIds: [],
+function validProviderEligibility(
+  value: unknown,
+): value is readonly PresentationWidgetProviderEligibility[] {
+  if (!Array.isArray(value) || value.length > 20) return false;
+  const serviceKeys = new Set<string>();
+  for (const provider of value) {
+    if (
+      !isRecord(provider) ||
+      !exactKeys(provider, ["activationServiceKey", "requiredCapabilityIds"]) ||
+      !identifier(provider.activationServiceKey) ||
+      serviceKeys.has(provider.activationServiceKey) ||
+      !uniqueStringArray(provider.requiredCapabilityIds, {
+        allowEmpty: false,
+        identifierOnly: true,
+      })
+    ) {
+      return false;
+    }
+    serviceKeys.add(provider.activationServiceKey);
+  }
+  return true;
+}
+
+const COMMON_WIDGET_MANIFEST = {
   billingTreatment: "non_billable",
   cachePolicy: "no_store",
   configurationSchema: {
@@ -285,14 +313,9 @@ const HR_LEAVE_MY_REQUESTS_MANIFEST = {
     properties: {},
     type: "object",
   },
-  definitionVersion: 1,
-  displayName: "My Leave Requests",
   eligibilityPolicyId: "current_tenant_activation_and_capability_v1",
   evidenceRequirements: ["current_authorization", "current_service_activation"],
-  fullScreenRoute: "/workspace/hr/leave",
   fullWidthEligible: true,
-  id: "hr.leave.my-requests",
-  inlineMutationEligible: false,
   layoutConstraints: {
     desktop: {
       maximumColumnSpan: 12,
@@ -319,39 +342,275 @@ const HR_LEAVE_MY_REQUESTS_MANIFEST = {
       preferredRowSpan: 3,
     },
   },
+  privacyClassification: "confidential",
+  proofRequirementIds: ["ZEN-WIDGET-001", "ZEN-WIDGET-002", "ZEN-FULL-001", "ZEN-SEC-001"],
+  refreshPolicy: "manual",
+  showMoreEligible: true,
+  supportedBreakpointVariants: presentationWidgetBreakpointVariants,
+  supportedStates: presentationWidgetStates,
+  supportedSurfaceTypes: presentationWidgetSurfaceTypes,
+} as const;
+
+const HR_EMPLOYMENT_CURRENT_FACTS_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "employment_record",
+  allowedCommandIds: [],
+  definitionVersion: 1,
+  displayName: "Current Employment Facts",
+  fullScreenRoute: "/workspace/hr/employment",
+  id: "hr.employment.current-facts",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.employment.current-facts.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.employment.current-facts.read.v1",
+  requiredCapabilityIds: ["hr.employment.list_authorized", "hr.employment.view_detail"],
+  semanticIcon: "briefcase-business",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "employment_record",
+  widgetKind: "detailed",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const HR_LEAVE_MY_REQUESTS_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "hr.leave_request",
+  allowedCommandIds: [],
+  definitionVersion: 1,
+  displayName: "My Leave Requests",
+  fullScreenRoute: "/workspace/hr/leave",
+  id: "hr.leave.my-requests",
+  inlineMutationEligible: false,
   migration: {
     compatibleFrom: 1,
     compatibleThrough: 1,
     id: "zen.hr.leave.my-requests.v1",
   },
-  privacyClassification: "confidential",
-  proofRequirementIds: ["ZEN-WIDGET-001", "ZEN-WIDGET-002", "ZEN-FULL-001", "ZEN-SEC-001"],
+  providerEligibility: [],
   readModelId: "hr.leave.my-requests.read.v1",
-  refreshPolicy: "manual",
   requiredCapabilityIds: ["hr.leave.list_own", "hr.leave.view"],
   semanticIcon: "calendar-check",
-  showMoreEligible: true,
   sourceServiceGroup: "hr",
   sourceServiceKey: "leave_request",
-  supportedBreakpointVariants: presentationWidgetBreakpointVariants,
-  supportedStates: presentationWidgetStates,
-  supportedSurfaceTypes: presentationWidgetSurfaceTypes,
   widgetKind: "operational",
 } as const satisfies PresentationWidgetDefinitionWithoutHash;
 
+const HR_SHIFT_MY_PUBLISHED_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "shift_assignment",
+  allowedCommandIds: [],
+  definitionVersion: 1,
+  displayName: "My Published Shifts",
+  fullScreenRoute: "/workspace/hr/shifts",
+  id: "hr.shift.my-published",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.shift.my-published.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.shift.my-published.read.v1",
+  requiredCapabilityIds: ["hr.shift.list_roster", "hr.shift.view_detail"],
+  semanticIcon: "calendar-range",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "shift_assignment",
+  widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const HR_TIMESHEET_MINE_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "timesheet",
+  allowedCommandIds: [],
+  definitionVersion: 1,
+  displayName: "My Timesheets",
+  fullScreenRoute: "/workspace/hr/timesheets",
+  id: "hr.timesheet.mine",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.timesheet.mine.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.timesheet.mine.read.v1",
+  requiredCapabilityIds: ["hr.timesheet.list_own", "hr.timesheet.view_detail"],
+  semanticIcon: "list-checks",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "timesheet",
+  widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const HR_TIMESHEET_DRAFT_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "timesheet",
+  allowedCommandIds: ["hr.timesheet.create", "hr.timesheet.edit_draft", "hr.timesheet.submit"],
+  definitionVersion: 1,
+  displayName: "Timesheet Draft",
+  fullScreenRoute: "/workspace/hr/timesheets",
+  id: "hr.timesheet.draft",
+  inlineMutationEligible: true,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.timesheet.draft.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.timesheet.draft.read.v1",
+  requiredCapabilityIds: [
+    "hr.timesheet.list_own",
+    "hr.timesheet.view_detail",
+    "hr.timesheet.create",
+    "hr.timesheet.edit_draft",
+    "hr.timesheet.submit",
+  ],
+  semanticIcon: "list-checks",
+  showMoreEligible: false,
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "timesheet",
+  widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const HR_WORKFORCE_MY_PROFILE_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "workforce_profile",
+  allowedCommandIds: [],
+  definitionVersion: 1,
+  displayName: "My Profile",
+  fullScreenRoute: "/workspace/hr/profile",
+  id: "hr.workforce.my-profile",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.workforce.my-profile.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.workforce.my-profile.read.v1",
+  requiredCapabilityIds: ["hr.workforce.view_own", "hr.workforce.view_authorized_detail"],
+  semanticIcon: "user-round",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "workforce_profile",
+  widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const PLATFORM_MY_WORK_QUEUE_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "any_provider",
+  activationServiceKey: "platform.my_work",
+  allowedCommandIds: [
+    "hr.leave.approve",
+    "hr.leave.reject",
+    "hr.timesheet.approve",
+    "hr.timesheet.reject",
+    "hr.expense.approve",
+    "hr.expense.reject",
+    "workspace.task.complete",
+  ],
+  definitionVersion: 1,
+  displayName: "My Work",
+  fullScreenRoute: "/workspace/my-work",
+  id: "platform.my-work.queue",
+  inlineMutationEligible: true,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.platform.my-work.queue.v1",
+  },
+  providerEligibility: [
+    {
+      activationServiceKey: "hr.leave_request",
+      requiredCapabilityIds: ["hr.leave.list_assigned", "hr.leave.view"],
+    },
+    {
+      activationServiceKey: "timesheet",
+      requiredCapabilityIds: ["hr.timesheet.list_assigned", "hr.timesheet.view_detail"],
+    },
+    {
+      activationServiceKey: "expense_claim_boundary",
+      requiredCapabilityIds: ["hr.expense.list_assigned", "hr.expense.view_detail"],
+    },
+    {
+      activationServiceKey: "workspace.task",
+      requiredCapabilityIds: ["workspace.task.list_assigned", "workspace.task.view"],
+    },
+  ],
+  readModelId: "platform.my-work.queue.read.v1",
+  requiredCapabilityIds: [
+    "hr.leave.list_assigned",
+    "hr.leave.view",
+    "hr.timesheet.list_assigned",
+    "hr.timesheet.view_detail",
+    "hr.expense.list_assigned",
+    "hr.expense.view_detail",
+    "workspace.task.list_assigned",
+    "workspace.task.view",
+  ],
+  semanticIcon: "diamond",
+  sourceServiceGroup: "platform",
+  sourceServiceKey: "my_work",
+  widgetKind: "composite",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+export const HR_EMPLOYMENT_CURRENT_FACTS_WIDGET_DEFINITION = deepFreeze({
+  ...HR_EMPLOYMENT_CURRENT_FACTS_MANIFEST,
+  canonicalHash: "a08e69a049cb21c05cb0337eb0c7b4957ef9f0129ef0f771161c41c6551524a4",
+}) satisfies PresentationWidgetDefinition;
+
 export const HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION = deepFreeze({
   ...HR_LEAVE_MY_REQUESTS_MANIFEST,
-  canonicalHash: "b114b88d602b8b7c79fb2597a6ece9d818c4c530d40759f89df55eea171c3705",
+  canonicalHash: "d6b8b157fe091a9b9a5131b9a41b4de0fc1e1fe38fe90fb028001c4b657527b7",
+}) satisfies PresentationWidgetDefinition;
+
+export const HR_SHIFT_MY_PUBLISHED_WIDGET_DEFINITION = deepFreeze({
+  ...HR_SHIFT_MY_PUBLISHED_MANIFEST,
+  canonicalHash: "4d698d44b10bfaa6e820baffdf973f58bb1724ffdee61ee7e2d4d0c166a26a1d",
+}) satisfies PresentationWidgetDefinition;
+
+export const HR_TIMESHEET_MINE_WIDGET_DEFINITION = deepFreeze({
+  ...HR_TIMESHEET_MINE_MANIFEST,
+  canonicalHash: "0694fe179f2b9d065ab03061ee65185ca683ea2e5d14a2e5d733365f639d1cae",
+}) satisfies PresentationWidgetDefinition;
+
+export const HR_TIMESHEET_DRAFT_WIDGET_DEFINITION = deepFreeze({
+  ...HR_TIMESHEET_DRAFT_MANIFEST,
+  canonicalHash: "5ee53eb955b250115b88ac2900e1f400b3ec63bb324e714ab9456eb7bb3dc5cb",
+}) satisfies PresentationWidgetDefinition;
+
+export const HR_WORKFORCE_MY_PROFILE_WIDGET_DEFINITION = deepFreeze({
+  ...HR_WORKFORCE_MY_PROFILE_MANIFEST,
+  canonicalHash: "42bd72ff3eae15f449cb38811e7e26370a309c4083b4e89cba74ceaaf6b05ca5",
+}) satisfies PresentationWidgetDefinition;
+
+export const PLATFORM_MY_WORK_QUEUE_WIDGET_DEFINITION = deepFreeze({
+  ...PLATFORM_MY_WORK_QUEUE_MANIFEST,
+  canonicalHash: "58870440fb4758c55b78e4ec3dde4037055f3903c5e0bfa4df28bf3851617828",
 }) satisfies PresentationWidgetDefinition;
 
 export const PRESENTATION_WIDGET_DEFINITIONS = deepFreeze([
+  HR_EMPLOYMENT_CURRENT_FACTS_WIDGET_DEFINITION,
   HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION,
+  HR_SHIFT_MY_PUBLISHED_WIDGET_DEFINITION,
+  HR_TIMESHEET_DRAFT_WIDGET_DEFINITION,
+  HR_TIMESHEET_MINE_WIDGET_DEFINITION,
+  HR_WORKFORCE_MY_PROFILE_WIDGET_DEFINITION,
+  PLATFORM_MY_WORK_QUEUE_WIDGET_DEFINITION,
 ] as const) satisfies readonly PresentationWidgetDefinition[];
 
 export function parsePresentationWidgetDefinition(value: unknown): PresentationWidgetDefinition {
   if (!isRecord(value)) throw new Error("Invalid presentation widget definition");
+  const providerEligibility = value.providerEligibility;
   if (
     !exactKeys(value, [
+      "activationPolicy",
       "activationServiceKey",
       "allowedCommandIds",
       "billingTreatment",
@@ -370,6 +629,7 @@ export function parsePresentationWidgetDefinition(value: unknown): PresentationW
       "migration",
       "privacyClassification",
       "proofRequirementIds",
+      "providerEligibility",
       "readModelId",
       "refreshPolicy",
       "requiredCapabilityIds",
@@ -388,6 +648,7 @@ export function parsePresentationWidgetDefinition(value: unknown): PresentationW
     !isPresentationSemanticIconKey(value.semanticIcon) ||
     !identifier(value.sourceServiceGroup) ||
     !identifier(value.sourceServiceKey) ||
+    (value.activationPolicy !== "exact_service" && value.activationPolicy !== "any_provider") ||
     !identifier(value.activationServiceKey) ||
     !identifier(value.readModelId) ||
     !identifier(value.eligibilityPolicyId) ||
@@ -397,6 +658,19 @@ export function parsePresentationWidgetDefinition(value: unknown): PresentationW
       allowEmpty: false,
       identifierOnly: true,
     }) ||
+    !validProviderEligibility(providerEligibility) ||
+    (value.activationPolicy === "exact_service" && providerEligibility.length !== 0) ||
+    (value.activationPolicy === "any_provider" &&
+      (value.widgetKind !== "composite" ||
+        providerEligibility.length === 0 ||
+        new Set(providerEligibility.flatMap((provider) => provider.requiredCapabilityIds)).size !==
+          value.requiredCapabilityIds.length ||
+        value.requiredCapabilityIds.some(
+          (capabilityId) =>
+            !providerEligibility.some((provider) =>
+              provider.requiredCapabilityIds.includes(capabilityId),
+            ),
+        ))) ||
     !Array.isArray(value.supportedSurfaceTypes) ||
     value.supportedSurfaceTypes.length === 0 ||
     value.supportedSurfaceTypes.some(

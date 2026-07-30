@@ -1,0 +1,625 @@
+import { randomUUID } from "node:crypto";
+import type { PresentationWidgetDefinition, PresentationWidgetState } from "@esbla/contracts";
+import { ArrowRight, List, TriangleAlert } from "lucide-react";
+import Link from "next/link";
+import type { ReactNode } from "react";
+import { LeaveApprovalAction } from "../../../../components/leave-approval-action";
+import { loadAssignedProviderWidgetView } from "../../../../lib/assigned-provider-core";
+import { loadEmploymentList } from "../../../../lib/hr-employment-record";
+import { getAssignedExpenseClaims } from "../../../../lib/hr-expense-claim";
+import { getAssignedLeaveRequests } from "../../../../lib/hr-leave-assigned-list";
+import { buildHrLeaveDetailHref } from "../../../../lib/hr-leave-navigation-core";
+import { loadOwnShifts } from "../../../../lib/hr-shift-assignment";
+import { getAssignedTimesheets, loadOwnTimesheets } from "../../../../lib/hr-timesheet";
+import { loadOwnWorkforceProfile } from "../../../../lib/hr-workforce-profile";
+import type { ResponsivePresentationWidgetPlacement } from "../../../../lib/presentation-layout-core";
+import { buildRouteBackedWidgetHref } from "../../../../lib/route-backed-widget-navigation-core";
+import { getAssignedWorkspaceTasks } from "../../../../lib/workspace-task-assigned-list";
+import {
+  getRegisteredSurfaceInstance,
+  getWidgetDefinition,
+  type SurfaceDefinition,
+} from "../index";
+import { SemanticIcon } from "../semantic-icons";
+import { PresentationWidgetFrame, PresentationWidgetStateContent } from "./presentation-widget";
+
+interface RepresentativeWidgetProps {
+  readonly placement: ResponsivePresentationWidgetPlacement;
+  readonly surfaceId: SurfaceDefinition["id"];
+}
+
+type FailureKind =
+  | "conflict"
+  | "denied"
+  | "dependency_unavailable"
+  | "empty"
+  | "inactive"
+  | "not_found"
+  | "operational_error"
+  | "validation";
+
+interface FailureContent {
+  readonly message: string;
+  readonly title: string;
+}
+
+interface RegisteredWidget {
+  readonly definition: PresentationWidgetDefinition;
+  readonly fullScreenRoute: string;
+  readonly placement: ResponsivePresentationWidgetPlacement;
+}
+
+function resolveRegisteredWidget(
+  surfaceId: SurfaceDefinition["id"],
+  placement: ResponsivePresentationWidgetPlacement,
+  expectedDefinitionId?: string,
+): RegisteredWidget {
+  const registered = getRegisteredSurfaceInstance(surfaceId, placement.desktop.instanceId);
+  const definition = getWidgetDefinition(
+    registered.widgetDefinitionId,
+    registered.widgetDefinitionVersion,
+  );
+  if (
+    (expectedDefinitionId !== undefined && definition.id !== expectedDefinitionId) ||
+    [placement.desktop, placement.tablet, placement.phone].some(
+      (candidate) =>
+        candidate.instanceId !== registered.instanceId ||
+        candidate.widgetDefinitionId !== registered.widgetDefinitionId,
+    ) ||
+    definition.fullScreenRoute === null
+  ) {
+    throw new Error("Representative widget registry binding is invalid");
+  }
+  return { definition, fullScreenRoute: definition.fullScreenRoute, placement };
+}
+
+function presentationStateForFailure(kind: FailureKind): PresentationWidgetState {
+  if (kind === "denied") return "permission_denied";
+  if (kind === "inactive") return "service_inactive";
+  if (kind === "not_found") return "not_found";
+  if (kind === "dependency_unavailable") return "unavailable";
+  if (kind === "empty") return "empty";
+  return "operational_error";
+}
+
+function WidgetFrame({
+  children,
+  definition,
+  placement,
+  state,
+  surfaceId,
+}: Readonly<{
+  children: ReactNode;
+  definition: PresentationWidgetDefinition;
+  placement: ResponsivePresentationWidgetPlacement;
+  state: PresentationWidgetState;
+  surfaceId: SurfaceDefinition["id"];
+}>) {
+  const fullScreenControlId = `${placement.desktop.instanceId}.full-screen`;
+  const fullScreenEligible =
+    state !== "permission_denied" && state !== "service_inactive" && state !== "not_found";
+  return (
+    <PresentationWidgetFrame
+      action={
+        definition.fullScreenRoute && fullScreenEligible ? (
+          <Link
+            aria-label={`Open ${definition.displayName}`}
+            className="icon-command"
+            href={buildRouteBackedWidgetHref(
+              definition.fullScreenRoute,
+              surfaceId,
+              fullScreenControlId,
+            )}
+            id={fullScreenControlId}
+            title="Open full screen"
+          >
+            <List aria-hidden="true" size={16} />
+          </Link>
+        ) : undefined
+      }
+      definition={definition}
+      leadingIcon={
+        <SemanticIcon
+          aria-hidden="true"
+          semanticKey={definition.semanticIcon}
+          size={18}
+          strokeWidth={1.7}
+        />
+      }
+      placement={placement}
+      state={state}
+    >
+      {children}
+    </PresentationWidgetFrame>
+  );
+}
+
+function FailureState({
+  content,
+  definition,
+  kind,
+}: Readonly<{
+  content: FailureContent;
+  definition: PresentationWidgetDefinition;
+  kind: FailureKind;
+}>) {
+  const state = presentationStateForFailure(kind);
+  return (
+    <PresentationWidgetStateContent
+      description={content.message}
+      heading={content.title}
+      icon={
+        <SemanticIcon
+          aria-hidden="true"
+          semanticKey={definition.semanticIcon}
+          size={25}
+          strokeWidth={1.6}
+        />
+      }
+      state={state}
+    />
+  );
+}
+
+function EmptyState({
+  definition,
+  description,
+  heading,
+}: Readonly<{
+  definition: PresentationWidgetDefinition;
+  description: string;
+  heading: string;
+}>) {
+  return (
+    <PresentationWidgetStateContent
+      description={description}
+      heading={heading}
+      icon={
+        <SemanticIcon
+          aria-hidden="true"
+          semanticKey={definition.semanticIcon}
+          size={25}
+          strokeWidth={1.6}
+        />
+      }
+      state="empty"
+    />
+  );
+}
+
+export function RepresentativeWidgetLoading({ placement, surfaceId }: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement);
+  return (
+    <PresentationWidgetFrame
+      definition={definition}
+      leadingIcon={
+        <SemanticIcon
+          aria-hidden="true"
+          semanticKey={definition.semanticIcon}
+          size={18}
+          strokeWidth={1.7}
+        />
+      }
+      placement={placement}
+      state="loading"
+    >
+      <PresentationWidgetStateContent
+        description="Keep this surface open while the current authorized data is read."
+        heading={`Loading ${definition.displayName.toLowerCase()}…`}
+        state="loading"
+      />
+    </PresentationWidgetFrame>
+  );
+}
+
+export async function WorkforceProfileWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.workforce.my-profile");
+  const result = await loadOwnWorkforceProfile();
+  let state: PresentationWidgetState;
+  let content: ReactNode;
+  if (result.status === "success") {
+    state = "populated";
+    content = (
+      <PresentationWidgetStateContent state="populated">
+        <div className="zen-widget-summary">
+          <span className="leave-status leave-status-active">Active</span>
+          <strong>{result.profile.employeeNumber ?? "Employee number not assigned"}</strong>
+          <p>
+            {result.profile.principalLinked ? "Principal connected" : "Principal not connected"}
+          </p>
+          <Link
+            className="text-command"
+            href={`/workspace/hr/profile/by-id/${encodeURIComponent(
+              result.profile.workerProfileId,
+            )}?returnContext=own`}
+          >
+            View profile history
+            <ArrowRight aria-hidden="true" size={15} />
+          </Link>
+        </div>
+      </PresentationWidgetStateContent>
+    );
+  } else {
+    state = presentationStateForFailure(result.status);
+    content =
+      result.status === "empty" ? (
+        <EmptyState definition={definition} description={result.message} heading={result.title} />
+      ) : (
+        <FailureState
+          content={{ message: result.message, title: result.title }}
+          definition={definition}
+          kind={result.status}
+        />
+      );
+  }
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
+}
+
+export async function EmploymentFactsWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(
+    surfaceId,
+    placement,
+    "hr.employment.current-facts",
+  );
+  const result = await loadEmploymentList({ pageSize: "5" });
+  const state =
+    result.status === "success"
+      ? result.page.items.length === 0
+        ? "empty"
+        : "populated"
+      : presentationStateForFailure(result.kind);
+  let content: ReactNode;
+  if (result.status !== "success") {
+    content = <FailureState content={result} definition={definition} kind={result.kind} />;
+  } else if (result.page.items.length === 0) {
+    content = (
+      <EmptyState
+        definition={definition}
+        description="No employment facts are available through your current authorized view."
+        heading="No employment records"
+      />
+    );
+  } else {
+    content = (
+      <PresentationWidgetStateContent state="populated">
+        <ol aria-label="Current employment facts" className="zen-widget-list">
+          {result.page.items.slice(0, 5).map((record) => (
+            <li key={record.employmentRecordId}>
+              <Link
+                className="zen-widget-row"
+                href={`/workspace/hr/employment/by-id/${encodeURIComponent(
+                  record.employmentRecordId,
+                )}`}
+              >
+                <span className={`leave-status leave-status-${record.status}`}>
+                  {record.status}
+                </span>
+                <span>
+                  <strong>{record.currentVersion?.positionReference ?? "Employment record"}</strong>
+                  <p>
+                    {record.currentVersion
+                      ? `${record.currentVersion.effectiveFrom}–${
+                          record.currentVersion.effectiveTo ?? "present"
+                        }`
+                      : "No effective version"}
+                  </p>
+                </span>
+                <ArrowRight aria-hidden="true" size={15} />
+              </Link>
+            </li>
+          ))}
+        </ol>
+      </PresentationWidgetStateContent>
+    );
+  }
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
+}
+
+function formatShiftInstant(value: string, timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat("en", {
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      month: "short",
+      timeZone,
+      timeZoneName: "short",
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
+}
+
+export async function PublishedShiftsWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.shift.my-published");
+  const result = await loadOwnShifts({ pageSize: "5" });
+  const state =
+    result.status === "success"
+      ? result.page.items.length === 0
+        ? "empty"
+        : "populated"
+      : presentationStateForFailure(result.kind);
+  let content: ReactNode;
+  if (result.status !== "success") {
+    content = <FailureState content={result} definition={definition} kind={result.kind} />;
+  } else if (result.page.items.length === 0) {
+    content = (
+      <EmptyState
+        definition={definition}
+        description="Published assignments in your current bounded period will appear here."
+        heading="No published shifts"
+      />
+    );
+  } else {
+    content = (
+      <PresentationWidgetStateContent state="populated">
+        <ol aria-label="My published shifts" className="zen-widget-list">
+          {result.page.items.slice(0, 5).map((shift) => (
+            <li key={shift.shiftAssignmentId}>
+              <Link
+                className="zen-widget-row"
+                href={`/workspace/hr/shifts/by-id/${encodeURIComponent(
+                  shift.shiftAssignmentId,
+                )}?returnTo=own`}
+              >
+                <span className="leave-status leave-status-active">Published</span>
+                <span>
+                  <strong>{formatShiftInstant(shift.startsAt, shift.ianaTimezone)}</strong>
+                  <p>Until {formatShiftInstant(shift.endsAt, shift.ianaTimezone)}</p>
+                </span>
+                <ArrowRight aria-hidden="true" size={15} />
+              </Link>
+            </li>
+          ))}
+        </ol>
+      </PresentationWidgetStateContent>
+    );
+  }
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
+}
+
+function formatMinutes(value: number): string {
+  return `${Math.floor(value / 60)}h ${value % 60}m`;
+}
+
+export async function TimesheetsWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.timesheet.mine");
+  const result = await loadOwnTimesheets({ pageSize: "5" });
+  const state =
+    result.status === "success"
+      ? result.page.items.length === 0
+        ? "empty"
+        : "populated"
+      : presentationStateForFailure(result.kind);
+  let content: ReactNode;
+  if (result.status !== "success") {
+    content = <FailureState content={result} definition={definition} kind={result.kind} />;
+  } else if (result.page.items.length === 0) {
+    content = (
+      <EmptyState
+        definition={definition}
+        description="Use the full-screen form to create a weekly draft under current service rules."
+        heading="No Timesheets yet"
+      />
+    );
+  } else {
+    content = (
+      <PresentationWidgetStateContent state="populated">
+        <ol aria-label="My Timesheets" className="zen-widget-list">
+          {result.page.items.slice(0, 5).map((timesheet) => (
+            <li key={timesheet.timesheetId}>
+              <Link
+                className="zen-widget-row"
+                href={`/workspace/hr/timesheets/by-id/${encodeURIComponent(
+                  timesheet.timesheetId,
+                )}?returnTo=own`}
+              >
+                <span className={`leave-status leave-status-${timesheet.status}`}>
+                  {timesheet.status}
+                </span>
+                <span>
+                  <strong>
+                    {timesheet.periodStart}–{timesheet.periodEnd}
+                  </strong>
+                  <p>{formatMinutes(timesheet.totalMinutes)}</p>
+                </span>
+                <ArrowRight aria-hidden="true" size={15} />
+              </Link>
+            </li>
+          ))}
+        </ol>
+      </PresentationWidgetStateContent>
+    );
+  }
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
+}
+
+export async function MyWorkWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "platform.my-work.queue");
+  let view: Awaited<ReturnType<typeof loadAssignedProviderWidgetView>>;
+  try {
+    view = await loadAssignedProviderWidgetView({
+      loadExpense: (cursor, signal) => getAssignedExpenseClaims(cursor, signal),
+      loadHr: (cursor, signal) => getAssignedLeaveRequests(cursor, signal),
+      loadTimesheet: (cursor, signal) => getAssignedTimesheets(cursor, signal),
+      loadWorkspace: (cursor, signal) => getAssignedWorkspaceTasks(cursor, signal),
+      searchParams: {},
+    });
+  } catch {
+    return (
+      <WidgetFrame
+        definition={definition}
+        placement={placement}
+        state="unavailable"
+        surfaceId={surfaceId}
+      >
+        <PresentationWidgetStateContent
+          description="Assigned work could not be loaded. No private error detail is shown."
+          heading="My Work unavailable"
+          icon={<TriangleAlert aria-hidden="true" size={25} strokeWidth={1.6} />}
+          state="unavailable"
+        />
+      </WidgetFrame>
+    );
+  }
+
+  const unavailableCount = [view.hr, view.timesheet, view.expense, view.workspace].filter(
+    ({ unavailable }) => unavailable,
+  ).length;
+  if (view.totalShown === 0) {
+    const unavailable = unavailableCount > 0;
+    return (
+      <WidgetFrame
+        definition={definition}
+        placement={placement}
+        state={unavailable ? "unavailable" : "empty"}
+        surfaceId={surfaceId}
+      >
+        <PresentationWidgetStateContent
+          description={
+            unavailable
+              ? "No assigned items are shown because one or more eligible providers are unavailable."
+              : "Approvals and tasks waiting for your action will appear here."
+          }
+          heading={unavailable ? "Some work providers unavailable" : "Nothing needs your attention"}
+          icon={
+            <SemanticIcon
+              aria-hidden="true"
+              semanticKey={definition.semanticIcon}
+              size={25}
+              strokeWidth={1.6}
+            />
+          }
+          state={unavailable ? "unavailable" : "empty"}
+        />
+      </WidgetFrame>
+    );
+  }
+
+  let remaining = 5;
+  const leaveItems = view.hr.unavailable ? [] : view.hr.page.items.slice(0, remaining);
+  remaining -= leaveItems.length;
+  const timesheetItems = view.timesheet.unavailable
+    ? []
+    : view.timesheet.page.items.slice(0, remaining);
+  remaining -= timesheetItems.length;
+  const expenseItems = view.expense.unavailable ? [] : view.expense.page.items.slice(0, remaining);
+  remaining -= expenseItems.length;
+  const taskItems = view.workspace.unavailable ? [] : view.workspace.page.items.slice(0, remaining);
+
+  return (
+    <WidgetFrame
+      definition={definition}
+      placement={placement}
+      state="populated"
+      surfaceId={surfaceId}
+    >
+      <PresentationWidgetStateContent state="populated">
+        {unavailableCount > 0 ? (
+          <p className="zen-widget-provider-notice">{unavailableCount} provider unavailable</p>
+        ) : null}
+        <ol aria-label="Assigned work across eligible providers" className="zen-widget-list">
+          {leaveItems.map((item, index) => (
+            <li className="zen-widget-work-row" key={item.workItemId}>
+              <Link
+                className="zen-widget-row"
+                href={buildHrLeaveDetailHref(
+                  item.leaveRequestId,
+                  surfaceId === "surface.mission-control"
+                    ? "mission-control"
+                    : "hr-mission-control",
+                  `${placement.desktop.instanceId}.${item.leaveRequestId}`,
+                )}
+                id={`${placement.desktop.instanceId}.${item.leaveRequestId}`}
+              >
+                <span className="leave-status leave-status-submitted">Leave</span>
+                <span>
+                  <strong>{item.employeeDisplayName}</strong>
+                  <p>
+                    {item.startDate}–{item.endDate}
+                  </p>
+                </span>
+                <ArrowRight aria-hidden="true" size={15} />
+              </Link>
+              {index === 0 ? (
+                <div className="zen-widget-inline-command">
+                  <LeaveApprovalAction
+                    expectedVersion={item.version}
+                    idempotencyKey={randomUUID()}
+                    leaveRequestId={item.leaveRequestId}
+                  />
+                </div>
+              ) : null}
+            </li>
+          ))}
+          {timesheetItems.map((item) => (
+            <li key={item.workItemId}>
+              <Link
+                className="zen-widget-row"
+                href={`/workspace/hr/timesheets/by-id/${encodeURIComponent(
+                  item.timesheetId,
+                )}?returnContext=my-work`}
+              >
+                <span className="leave-status leave-status-submitted">Timesheet</span>
+                <span>
+                  <strong>
+                    {item.periodStart}–{item.periodEnd}
+                  </strong>
+                  <p>{formatMinutes(item.totalMinutes)}</p>
+                </span>
+                <ArrowRight aria-hidden="true" size={15} />
+              </Link>
+            </li>
+          ))}
+          {expenseItems.map((item) => (
+            <li key={item.workItemId}>
+              <Link
+                className="zen-widget-row"
+                href={`/workspace/hr/expenses/by-id/${encodeURIComponent(
+                  item.expenseClaimId,
+                )}?returnContext=my-work`}
+              >
+                <span className="leave-status leave-status-submitted">Expense</span>
+                <span>
+                  <strong>
+                    {new Intl.NumberFormat("en").format(item.totalAmountMinor)} {item.currencyCode}
+                  </strong>
+                  <p>Minor units · version {item.version}</p>
+                </span>
+                <ArrowRight aria-hidden="true" size={15} />
+              </Link>
+            </li>
+          ))}
+          {taskItems.map((item) => (
+            <li key={item.workItemId}>
+              <Link className="zen-widget-row" href="/workspace/my-work">
+                <span className="leave-status leave-status-submitted">Task</span>
+                <span>
+                  <strong>{item.title}</strong>
+                  <p>{item.createdByDisplayName}</p>
+                </span>
+                <ArrowRight aria-hidden="true" size={15} />
+              </Link>
+            </li>
+          ))}
+        </ol>
+      </PresentationWidgetStateContent>
+    </WidgetFrame>
+  );
+}

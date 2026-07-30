@@ -16,7 +16,10 @@ import {
 } from "./platform-studio-surface-base-api.js";
 
 const surface = ZEN_V1_SURFACE_CONTRACTS[0];
-const moved = surface.basePlacements.map((placement) => ({ ...placement, row: 6 }));
+const moved = surface.basePlacements.map((placement) => ({
+  ...placement,
+  row: placement.row + 3,
+}));
 const evidenceEventId = "93000000-0000-4000-8000-000000000001";
 
 describe("platform Studio surface-base API contract", () => {
@@ -187,6 +190,7 @@ describe("platform Studio surface-base API contract", () => {
         basePlacements: moved,
         baseVersion: 2,
         billingState: PRESENTATION_BILLING_STATE,
+        diagnostics: [],
         effectivePlacements: moved,
         evidenceEventId,
         overlayVersion: 0,

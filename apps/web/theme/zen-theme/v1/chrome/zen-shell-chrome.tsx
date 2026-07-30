@@ -11,6 +11,10 @@ import {
   type ZenNavigationModel,
 } from "../../../../lib/presentation-navigation-core";
 import {
+  parseRouteBackedWidgetReturnFocus,
+  ROUTE_BACKED_WIDGET_RETURN_FOCUS_KEY,
+} from "../../../../lib/route-backed-widget-navigation-core";
+import {
   resolveZenResponsiveChrome,
   type ZenResponsiveChromeResult,
 } from "../../../../lib/zen-responsive-chrome-core";
@@ -114,6 +118,7 @@ export function ZenShellChrome({
   const controlGapProbe = useRef<HTMLSpanElement>(null);
   const endInsetProbe = useRef<HTMLSpanElement>(null);
   const previousPathname = useRef(pathname);
+  const routeBackedFocusOwnership = useRef(false);
   const startInsetProbe = useRef<HTMLSpanElement>(null);
   activeLayer.current = layer;
 
@@ -183,6 +188,119 @@ export function ZenShellChrome({
       for (const property of visualViewportProperties) rootStyle.removeProperty(property);
     };
   }, [measure]);
+
+  useEffect(() => {
+    let focusFrame: number | undefined;
+    let focusRetry: number | undefined;
+    let focusTimeout: number | undefined;
+    let observer: MutationObserver | undefined;
+    let settled = false;
+    let stored: string | null = null;
+    try {
+      stored = window.sessionStorage.getItem(ROUTE_BACKED_WIDGET_RETURN_FOCUS_KEY);
+      window.sessionStorage.removeItem(ROUTE_BACKED_WIDGET_RETURN_FOCUS_KEY);
+    } catch {}
+    const returnFocus = parseRouteBackedWidgetReturnFocus(stored);
+    if (!returnFocus || returnFocus.fallbackHref !== pathname) return;
+    routeBackedFocusOwnership.current = true;
+    const separator = returnFocus.returnFocusId.lastIndexOf(".");
+    const sourceInstanceId =
+      separator > 0 ? returnFocus.returnFocusId.slice(0, separator) : undefined;
+    const settleFocus = (forceFallback = false) => {
+      if (settled) return;
+      if (focusRetry !== undefined) {
+        window.clearTimeout(focusRetry);
+        focusRetry = undefined;
+      }
+      if (focusFrame !== undefined) cancelAnimationFrame(focusFrame);
+      focusFrame = requestAnimationFrame(() => {
+        const currentLauncher = document.getElementById(returnFocus.returnFocusId);
+        const sourceWidget = sourceInstanceId
+          ? [...document.querySelectorAll<HTMLElement>("[data-surface-instance]")].find(
+              (element) => element.dataset.surfaceInstance === sourceInstanceId,
+            )
+          : undefined;
+        const target =
+          document.readyState === "complete" &&
+          currentLauncher?.isConnected &&
+          !currentLauncher.closest("[inert]")
+            ? currentLauncher
+            : document.readyState === "complete" &&
+                (forceFallback ||
+                  sourceWidget === undefined ||
+                  (sourceWidget !== undefined &&
+                    sourceWidget.dataset.widgetState !== undefined &&
+                    sourceWidget.dataset.widgetState !== "loading"))
+              ? document.querySelector<HTMLElement>("main h1")
+              : undefined;
+        if (!target) return;
+        target.tabIndex = target instanceof HTMLHeadingElement ? -1 : target.tabIndex;
+        target.focus({ preventScroll: target === currentLauncher });
+        if (document.activeElement !== target) {
+          focusRetry = window.setTimeout(() => settleFocus(forceFallback), 50);
+          return;
+        }
+        if (target === currentLauncher) {
+          document
+            .querySelector<HTMLElement>(".surface-scroll")
+            ?.scrollTo(returnFocus.scrollLeft, returnFocus.scrollTop);
+        }
+        settled = true;
+        observer?.disconnect();
+        window.removeEventListener("load", settleAfterLoad);
+        if (focusTimeout !== undefined) window.clearTimeout(focusTimeout);
+        routeBackedFocusOwnership.current = false;
+      });
+    };
+    const settleAfterLoad = () => settleFocus();
+    observer = new MutationObserver(() => settleFocus());
+    observer.observe(document.body, {
+      attributeFilter: ["data-widget-state"],
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+    window.addEventListener("load", settleAfterLoad);
+    focusTimeout = window.setTimeout(() => settleFocus(true), 9_000);
+    settleFocus();
+    return () => {
+      routeBackedFocusOwnership.current = false;
+      observer?.disconnect();
+      window.removeEventListener("load", settleAfterLoad);
+      if (focusRetry !== undefined) window.clearTimeout(focusRetry);
+      if (focusTimeout !== undefined) window.clearTimeout(focusTimeout);
+      if (focusFrame !== undefined) cancelAnimationFrame(focusFrame);
+    };
+  }, [pathname]);
+
+  useEffect(() => {
+    let focusFrame: number | undefined;
+    const queueRouteHeadingFocus = () => {
+      if (focusFrame !== undefined) cancelAnimationFrame(focusFrame);
+      focusFrame = requestAnimationFrame(() => {
+        const heading = document.querySelector<HTMLElement>("main h1");
+        if (!heading) return;
+        heading.tabIndex = -1;
+        heading.focus();
+      });
+    };
+    const restoreRouteHeadingFocus = (event: PageTransitionEvent) => {
+      if (event.persisted && !routeBackedFocusOwnership.current) queueRouteHeadingFocus();
+    };
+    const navigation = performance.getEntriesByType("navigation")[0];
+    if (
+      navigation instanceof PerformanceNavigationTiming &&
+      navigation.type === "back_forward" &&
+      !routeBackedFocusOwnership.current
+    ) {
+      queueRouteHeadingFocus();
+    }
+    window.addEventListener("pageshow", restoreRouteHeadingFocus);
+    return () => {
+      if (focusFrame !== undefined) cancelAnimationFrame(focusFrame);
+      window.removeEventListener("pageshow", restoreRouteHeadingFocus);
+    };
+  }, []);
 
   useEffect(() => {
     const routeFocusRequested = consumeRouteHeadingFocus(pathname);

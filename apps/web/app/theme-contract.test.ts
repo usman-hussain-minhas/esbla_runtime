@@ -62,6 +62,36 @@ describe("Esbla Theme v1 host contract", () => {
     expect(standalone).toContain("HR_LEAVE_CANONICAL_HOST_LINK");
   });
 
+  it("intercepts every T5 representative full-screen route over its live origin", async () => {
+    const intercepted = await Promise.all(
+      [
+        "./@modal/(.)workspace/hr/employment/page.tsx",
+        "./@modal/(.)workspace/hr/leave/page.tsx",
+        "./@modal/(.)workspace/hr/profile/page.tsx",
+        "./@modal/(.)workspace/hr/shifts/page.tsx",
+        "./@modal/(.)workspace/hr/timesheets/page.tsx",
+        "./@modal/(.)workspace/my-work/page.tsx",
+      ].map((path) => readFile(new URL(path, import.meta.url), "utf8")),
+    );
+    for (const source of intercepted) {
+      expect(source).toContain("RouteBackedWidgetOverlay");
+      expect(source).toContain("RouteBackedWidgetFullScreenFace");
+      expect(source).toContain("parseRouteBackedWidgetOrigin");
+    }
+  });
+
+  it("renders the ratified Timesheet Draft definition as the current domain form", async () => {
+    const timesheets = await readFile(
+      new URL("./workspace/hr/timesheets/page.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(timesheets).toContain("HR_TIMESHEET_DRAFT_WIDGET_DEFINITION");
+    expect(timesheets).toContain('action="/workspace/hr/timesheets/action"');
+    expect(timesheets).toContain('value="create"');
+    expect(timesheets).toContain("current ratified cadence is weekly");
+    expect(timesheets).toContain("tenant daily-minute limits are enforced");
+  });
+
   it("routes home to Mission Control and keeps task workflows reachable as widgets", async () => {
     const entry = await readFile(new URL("./page.tsx", import.meta.url), "utf8");
     const surfaces = await readFile(new URL("./workspace-surfaces.ts", import.meta.url), "utf8");
@@ -89,7 +119,7 @@ describe("Esbla Theme v1 host contract", () => {
     );
     const tasks = await readFile(new URL("./workspace/tasks/page.tsx", import.meta.url), "utf8");
     const approval = await readFile(
-      new URL("./workspace/my-work/leave-approval-action.tsx", import.meta.url),
+      new URL("../components/leave-approval-action.tsx", import.meta.url),
       "utf8",
     );
     const rejection = await readFile(
@@ -149,7 +179,7 @@ describe("Esbla Theme v1 host contract", () => {
   it("keeps My Work decision controls accessible and policy-bound", async () => {
     const myWork = await readFile(new URL("./workspace/my-work/page.tsx", import.meta.url), "utf8");
     const approval = await readFile(
-      new URL("./workspace/my-work/leave-approval-action.tsx", import.meta.url),
+      new URL("../components/leave-approval-action.tsx", import.meta.url),
       "utf8",
     );
     const rejection = await readFile(

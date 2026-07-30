@@ -62,29 +62,22 @@ describe("presentation preference core", () => {
   });
 
   it("accepts only the exact surface instance and rejects overlap or registry drift", () => {
-    expect(
-      validatePersonalSurfacePlacements("surface.mission-control", [
-        {
-          column: 2,
-          columnSpan: 4,
-          instanceId: "mission-control.my-leave",
-          row: 5,
-          rowSpan: 3,
-          widgetDefinitionId: "hr.leave.my-requests",
-        },
-      ]),
-    ).toHaveLength(1);
+    const basePlacements = ZEN_V1_SURFACE_CONTRACTS[0].basePlacements;
+    const moved = basePlacements.map((placement) =>
+      placement.instanceId === "mission-control.my-leave" ? { ...placement, row: 10 } : placement,
+    );
+    expect(validatePersonalSurfacePlacements("surface.mission-control", moved)).toHaveLength(
+      basePlacements.length,
+    );
     expect(() =>
-      validatePersonalSurfacePlacements("surface.mission-control", [
-        {
-          column: 1,
-          columnSpan: 4,
-          instanceId: "hr-mission-control.my-leave",
-          row: 1,
-          rowSpan: 3,
-          widgetDefinitionId: "hr.leave.my-requests",
-        },
-      ]),
+      validatePersonalSurfacePlacements(
+        "surface.mission-control",
+        moved.map((placement) =>
+          placement.instanceId === "mission-control.my-leave"
+            ? { ...placement, instanceId: "hr-mission-control.my-leave" }
+            : placement,
+        ),
+      ),
     ).toThrow();
   });
 });

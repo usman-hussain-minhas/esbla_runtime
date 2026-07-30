@@ -14,9 +14,19 @@ import type {
   AssignedWorkspaceTaskPage,
   WorkspaceTaskCursor,
 } from "@esbla/contracts/workspace-task-api";
+import {
+  type PresentationWidgetProviderResult,
+  settlePresentationWidgetProviders,
+} from "./presentation-widget-provider-core";
 
 type AssignedTimesheetPage = Extract<HrTimesheetListResponse, { readonly kind: "assigned" }>;
 type AssignedExpensePage = Extract<HrExpenseClaimListResponse, { readonly kind: "assigned" }>;
+type AssignedProviderPage =
+  | AssignedExpensePage
+  | AssignedTimesheetPage
+  | AssignedWorkspaceTaskPage
+  | HrAssignedLeaveRequestPage;
+type AssignedWidgetFailure = Readonly<{ unavailable: true }>;
 
 export type AssignedProvider =
   | "hr_expense_assigned"
@@ -95,17 +105,25 @@ export interface AssignedProviderViewModel {
 export interface LoadAssignedProviderViewOptions {
   readonly loadExpense: (
     cursor: HrExpenseClaimAssignedCursor | undefined,
+    signal?: AbortSignal,
   ) => Promise<AssignedExpensePage>;
   readonly loadHr: (
     cursor: HrLeaveRequestCursor | undefined,
+    signal?: AbortSignal,
   ) => Promise<HrAssignedLeaveRequestPage>;
   readonly loadTimesheet: (
     cursor: HrTimesheetAssignedCursor | undefined,
+    signal?: AbortSignal,
   ) => Promise<AssignedTimesheetPage>;
   readonly loadWorkspace: (
     cursor: WorkspaceTaskCursor | undefined,
+    signal?: AbortSignal,
   ) => Promise<AssignedWorkspaceTaskPage>;
   readonly searchParams: AssignedProviderSearchParams;
+}
+
+export interface LoadAssignedProviderWidgetViewOptions extends LoadAssignedProviderViewOptions {
+  readonly timeoutMs?: number;
 }
 
 function hasOwn(value: object, key: string): boolean {
@@ -347,6 +365,26 @@ function validateExpensePage(page: AssignedExpensePage): void {
   if (page.nextCursor !== null) validateExpenseCursor(page.nextCursor);
 }
 
+function classifyWidgetProviderResult<Page extends { readonly items: readonly unknown[] }>(
+  result: PresentationWidgetProviderResult<AssignedProviderPage, AssignedWidgetFailure> | undefined,
+  validatePage: (page: Page) => void,
+): AssignedProviderState<Page> {
+  if (result?.status !== "fulfilled") {
+    return Object.freeze({ unavailable: true });
+  }
+  try {
+    const page = result.value as unknown as Page;
+    validatePage(page);
+    return Object.freeze({
+      empty: page.items.length === 0,
+      page,
+      unavailable: false,
+    });
+  } catch {
+    return Object.freeze({ unavailable: true });
+  }
+}
+
 function myWorkHref(
   hr: HrLeaveRequestCursor | undefined,
   timesheet: HrTimesheetAssignedCursor | undefined,
@@ -373,35 +411,13 @@ function myWorkHref(
   return `/workspace/my-work?${parameters.toString()}`;
 }
 
-export async function loadAssignedProviderView(
-  options: LoadAssignedProviderViewOptions,
-): Promise<AssignedProviderViewModel> {
-  const cursors = parseAssignedProviderCursors(options.searchParams);
-  const hrSettlementPromise = settle(() => options.loadHr(cursors.hr));
-  const workspaceSettlementPromise = settle(() => options.loadWorkspace(cursors.workspace));
-  const timesheetSettlementPromise = settle(() => options.loadTimesheet(cursors.timesheet));
-  const expenseSettlementPromise = settle(() => options.loadExpense(cursors.expense));
-  const [hrSettlement, workspaceSettlement, timesheetSettlement, expenseSettlement] =
-    await Promise.all([
-      hrSettlementPromise,
-      workspaceSettlementPromise,
-      timesheetSettlementPromise,
-      expenseSettlementPromise,
-    ]);
-
-  const hr = classifySettlement(hrSettlement, "hr_leave_assigned", validateHrPage);
-  const workspace = classifySettlement(
-    workspaceSettlement,
-    "workspace_task_assigned",
-    validateWorkspacePage,
-  );
-  const timesheet = classifySettlement(
-    timesheetSettlement,
-    "hr_timesheet_assigned",
-    validateTimesheetPage,
-  );
-  const expense = classifySettlement(expenseSettlement, "hr_expense_assigned", validateExpensePage);
-
+function buildAssignedProviderView(
+  cursors: AssignedProviderCursors,
+  expense: AssignedProviderState<AssignedExpensePage>,
+  hr: AssignedProviderState<HrAssignedLeaveRequestPage>,
+  timesheet: AssignedProviderState<AssignedTimesheetPage>,
+  workspace: AssignedProviderState<AssignedWorkspaceTaskPage>,
+): AssignedProviderViewModel {
   const expenseCount = expense.unavailable ? 0 : expense.page.items.length;
   const hrCount = hr.unavailable ? 0 : hr.page.items.length;
   const workspaceCount = workspace.unavailable ? 0 : workspace.page.items.length;
@@ -477,4 +493,97 @@ export async function loadAssignedProviderView(
     totalShown: hrCount + workspaceCount + timesheetCount + expenseCount,
     workspace,
   });
+}
+
+export async function loadAssignedProviderView(
+  options: LoadAssignedProviderViewOptions,
+): Promise<AssignedProviderViewModel> {
+  const cursors = parseAssignedProviderCursors(options.searchParams);
+  const hrSettlementPromise = settle(() => options.loadHr(cursors.hr));
+  const workspaceSettlementPromise = settle(() => options.loadWorkspace(cursors.workspace));
+  const timesheetSettlementPromise = settle(() => options.loadTimesheet(cursors.timesheet));
+  const expenseSettlementPromise = settle(() => options.loadExpense(cursors.expense));
+  const [hrSettlement, workspaceSettlement, timesheetSettlement, expenseSettlement] =
+    await Promise.all([
+      hrSettlementPromise,
+      workspaceSettlementPromise,
+      timesheetSettlementPromise,
+      expenseSettlementPromise,
+    ]);
+
+  const hr = classifySettlement(hrSettlement, "hr_leave_assigned", validateHrPage);
+  const workspace = classifySettlement(
+    workspaceSettlement,
+    "workspace_task_assigned",
+    validateWorkspacePage,
+  );
+  const timesheet = classifySettlement(
+    timesheetSettlement,
+    "hr_timesheet_assigned",
+    validateTimesheetPage,
+  );
+  const expense = classifySettlement(expenseSettlement, "hr_expense_assigned", validateExpensePage);
+
+  return buildAssignedProviderView(cursors, expense, hr, timesheet, workspace);
+}
+
+export async function loadAssignedProviderWidgetView(
+  options: LoadAssignedProviderWidgetViewOptions,
+): Promise<AssignedProviderViewModel> {
+  const cursors = parseAssignedProviderCursors(options.searchParams);
+  const unavailable = Object.freeze({ unavailable: true }) satisfies AssignedWidgetFailure;
+  const results = await settlePresentationWidgetProviders<
+    AssignedProviderPage,
+    AssignedWidgetFailure
+  >(
+    [
+      {
+        classifyFailure: () => ({ scope: "provider", value: unavailable }),
+        eligible: true,
+        id: "hr_leave_assigned",
+        load: (signal) => options.loadHr(cursors.hr, signal),
+        timeoutFailure: { scope: "provider", value: unavailable },
+      },
+      {
+        classifyFailure: () => ({ scope: "provider", value: unavailable }),
+        eligible: true,
+        id: "workspace_task_assigned",
+        load: (signal) => options.loadWorkspace(cursors.workspace, signal),
+        timeoutFailure: { scope: "provider", value: unavailable },
+      },
+      {
+        classifyFailure: () => ({ scope: "provider", value: unavailable }),
+        eligible: true,
+        id: "hr_timesheet_assigned",
+        load: (signal) => options.loadTimesheet(cursors.timesheet, signal),
+        timeoutFailure: { scope: "provider", value: unavailable },
+      },
+      {
+        classifyFailure: () => ({ scope: "provider", value: unavailable }),
+        eligible: true,
+        id: "hr_expense_assigned",
+        load: (signal) => options.loadExpense(cursors.expense, signal),
+        timeoutFailure: { scope: "provider", value: unavailable },
+      },
+    ],
+    { concurrency: 4, timeoutMs: options.timeoutMs ?? 8_000 },
+  );
+  const byId = new Map(results.map((result) => [result.id, result]));
+  const hr = classifyWidgetProviderResult<HrAssignedLeaveRequestPage>(
+    byId.get("hr_leave_assigned"),
+    validateHrPage,
+  );
+  const workspace = classifyWidgetProviderResult<AssignedWorkspaceTaskPage>(
+    byId.get("workspace_task_assigned"),
+    validateWorkspacePage,
+  );
+  const timesheet = classifyWidgetProviderResult<AssignedTimesheetPage>(
+    byId.get("hr_timesheet_assigned"),
+    validateTimesheetPage,
+  );
+  const expense = classifyWidgetProviderResult<AssignedExpensePage>(
+    byId.get("hr_expense_assigned"),
+    validateExpensePage,
+  );
+  return buildAssignedProviderView(cursors, expense, hr, timesheet, workspace);
 }

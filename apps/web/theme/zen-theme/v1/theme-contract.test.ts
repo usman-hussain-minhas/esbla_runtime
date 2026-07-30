@@ -19,6 +19,72 @@ import {
 } from "./index";
 
 describe("Zen Theme v1 composition contract", () => {
+  it("binds each T5 representative definition to every ratified eligible surface instance", () => {
+    expect(
+      DEFAULT_SURFACE_INSTANCES.map(({ id, surfaceId, widgetDefinitionId }) => ({
+        id,
+        surfaceId,
+        widgetDefinitionId,
+      })),
+    ).toEqual([
+      {
+        id: "mission-control.my-work",
+        surfaceId: "surface.mission-control",
+        widgetDefinitionId: "platform.my-work.queue",
+      },
+      {
+        id: "mission-control.my-published-shifts",
+        surfaceId: "surface.mission-control",
+        widgetDefinitionId: "hr.shift.my-published",
+      },
+      {
+        id: "mission-control.my-leave",
+        surfaceId: "surface.mission-control",
+        widgetDefinitionId: "hr.leave.my-requests",
+      },
+      {
+        id: "mission-control.my-timesheets",
+        surfaceId: "surface.mission-control",
+        widgetDefinitionId: "hr.timesheet.mine",
+      },
+      {
+        id: "mission-control.my-profile",
+        surfaceId: "surface.mission-control",
+        widgetDefinitionId: "hr.workforce.my-profile",
+      },
+      {
+        id: "hr-mission-control.my-profile",
+        surfaceId: "surface.hr.mission-control",
+        widgetDefinitionId: "hr.workforce.my-profile",
+      },
+      {
+        id: "hr-mission-control.current-employment",
+        surfaceId: "surface.hr.mission-control",
+        widgetDefinitionId: "hr.employment.current-facts",
+      },
+      {
+        id: "hr-mission-control.my-work",
+        surfaceId: "surface.hr.mission-control",
+        widgetDefinitionId: "platform.my-work.queue",
+      },
+      {
+        id: "hr-mission-control.my-published-shifts",
+        surfaceId: "surface.hr.mission-control",
+        widgetDefinitionId: "hr.shift.my-published",
+      },
+      {
+        id: "hr-mission-control.my-leave",
+        surfaceId: "surface.hr.mission-control",
+        widgetDefinitionId: "hr.leave.my-requests",
+      },
+      {
+        id: "hr-mission-control.my-timesheets",
+        surfaceId: "surface.hr.mission-control",
+        widgetDefinitionId: "hr.timesheet.mine",
+      },
+    ]);
+  });
+
   it("defines exactly the two code-owned Mission Control surfaces", () => {
     expect(SURFACE_DEFINITIONS).toBe(PRESENTATION_SURFACE_DEFINITIONS);
     expect(SURFACE_DEFINITIONS).toEqual([
@@ -52,7 +118,7 @@ describe("Zen Theme v1 composition contract", () => {
     }
   });
 
-  it("reuses one real Leave widget definition on both surfaces", () => {
+  it("reuses each canonical widget definition across its registered surfaces", () => {
     expect(WIDGET_DEFINITIONS).toBe(PRESENTATION_WIDGET_DEFINITIONS);
     expect(WIDGET_DEFINITIONS).toContainEqual(
       expect.objectContaining({
@@ -67,12 +133,24 @@ describe("Zen Theme v1 composition contract", () => {
         sourceServiceGroup: "hr",
       }),
     );
-    const widget = WIDGET_DEFINITIONS[0];
-    if (!widget) throw new Error("Leave widget definition is missing");
-    const { canonicalHash: _canonicalHash, ...manifest } = widget;
-    expect(createHash("sha256").update(canonicalizeWidgetDefinition(manifest)).digest("hex")).toBe(
-      widget?.canonicalHash,
+    expect(WIDGET_DEFINITIONS).toContainEqual(
+      expect.objectContaining({
+        allowedCommandIds: [
+          "hr.timesheet.create",
+          "hr.timesheet.edit_draft",
+          "hr.timesheet.submit",
+        ],
+        fullScreenRoute: "/workspace/hr/timesheets",
+        id: "hr.timesheet.draft",
+        inlineMutationEligible: true,
+      }),
     );
+    for (const widget of WIDGET_DEFINITIONS) {
+      const { canonicalHash: _canonicalHash, ...manifest } = widget;
+      expect(
+        createHash("sha256").update(canonicalizeWidgetDefinition(manifest)).digest("hex"),
+      ).toBe(widget.canonicalHash);
+    }
     expect(
       DEFAULT_SURFACE_INSTANCES.filter(
         (instance) => instance.widgetDefinitionId === "hr.leave.my-requests",
@@ -93,7 +171,13 @@ describe("Zen Theme v1 composition contract", () => {
       expect(registered.widgetDefinitionVersion).toBe(instance.widgetDefinitionVersion);
       expect(
         getWidgetDefinition(registered.widgetDefinitionId, registered.widgetDefinitionVersion),
-      ).toBe(widget);
+      ).toBe(
+        WIDGET_DEFINITIONS.find(
+          ({ definitionVersion, id }) =>
+            id === instance.widgetDefinitionId &&
+            definitionVersion === instance.widgetDefinitionVersion,
+        ),
+      );
       const canonical = getZenV1SurfaceContract(instance.surfaceId).basePlacements.find(
         ({ instanceId }) => instanceId === instance.id,
       );
@@ -108,7 +192,9 @@ describe("Zen Theme v1 composition contract", () => {
     expect(() =>
       getRegisteredSurfaceInstance("surface.mission-control", "hr.leave.my-requests"),
     ).toThrow("Widget is not registered for this Zen surface");
-    expect(presentationSemanticIconKeys).toContain(WIDGET_DEFINITIONS[0]?.semanticIcon);
+    for (const widget of WIDGET_DEFINITIONS) {
+      expect(presentationSemanticIconKeys).toContain(widget.semanticIcon);
+    }
   });
 
   it("keeps high contrast independent from the light or dark palette", () => {

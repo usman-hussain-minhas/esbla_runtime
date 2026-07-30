@@ -5,6 +5,7 @@ import { getOwnLeaveRequests } from "../../../../lib/hr-leave-list";
 import { buildHrLeaveDetailHref } from "../../../../lib/hr-leave-navigation-core";
 import type { ResponsivePresentationWidgetPlacement } from "../../../../lib/presentation-layout-core";
 import { settlePresentationWidgetProviders } from "../../../../lib/presentation-widget-provider-core";
+import { buildRouteBackedWidgetHref } from "../../../../lib/route-backed-widget-navigation-core";
 import {
   getRegisteredSurfaceInstance,
   getWidgetDefinition,
@@ -93,6 +94,7 @@ export async function HrLeaveMyRequestsWidget({
   surfaceId,
 }: HrLeaveMyRequestsWidgetProps) {
   const { definition, fullScreenRoute, instance } = resolveLeaveWidget(surfaceId, placement);
+  const fullScreenControlId = `${instance.desktop.instanceId}.full-screen`;
 
   let content: ReactNode;
   let state: HrLeaveWidgetState;
@@ -192,17 +194,22 @@ export async function HrLeaveMyRequestsWidget({
     );
   }
 
+  const fullScreenEligible =
+    state !== "permission_denied" && state !== "service_inactive" && state !== "not_found";
   return (
     <PresentationWidgetFrame
       action={
-        <a
-          aria-label={`View all ${definition.displayName}`}
-          className="icon-command"
-          href={fullScreenRoute}
-          title="View all"
-        >
-          <List aria-hidden="true" size={16} />
-        </a>
+        fullScreenEligible ? (
+          <Link
+            aria-label={`View all ${definition.displayName}`}
+            className="icon-command"
+            href={buildRouteBackedWidgetHref(fullScreenRoute, surfaceId, fullScreenControlId)}
+            id={fullScreenControlId}
+            title="View all"
+          >
+            <List aria-hidden="true" size={16} />
+          </Link>
+        ) : undefined
       }
       definition={definition}
       leadingIcon={

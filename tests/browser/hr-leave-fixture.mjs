@@ -501,6 +501,7 @@ export async function seedHrLeaveFixture() {
       await client.query(
         `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
          VALUES ($1, $2, 'hr.workforce.view_own'),
+                ($1, $2, 'hr.workforce.view_authorized_detail'),
                 ($1, $2, 'hr.leave.list_own'),
                 ($1, $2, 'hr.leave.view'),
                 ($1, $3, 'hr.workforce.create_profile'),

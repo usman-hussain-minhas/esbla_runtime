@@ -304,7 +304,7 @@ export function UserSystemControl({
           {openState.view === "contextual" && model.contextualMenu ? (
             <nav aria-label={model.contextualMenu.label} className="system-panel-navigation">
               {model.contextualMenu.destinations.map((destination) => (
-                <Link
+                <a
                   aria-current={
                     destination.id === model.contextualMenu?.activeDestinationId
                       ? "page"
@@ -325,7 +325,7 @@ export function UserSystemControl({
                     strokeWidth={1.75}
                   />
                   <span>{destination.label}</span>
-                </Link>
+                </a>
               ))}
             </nav>
           ) : null}

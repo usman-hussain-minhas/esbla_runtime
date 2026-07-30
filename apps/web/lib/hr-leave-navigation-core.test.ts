@@ -90,7 +90,7 @@ describe("HR leave closed navigation", () => {
         "../app/workspace/hr/leave/[leaveRequestId]/page.tsx",
         "../app/workspace/hr/leave/[leaveRequestId]/leave-request-detail-face.tsx",
         "../app/workspace/my-work/page.tsx",
-        "../app/workspace/my-work/leave-approval-action.tsx",
+        "../components/leave-approval-action.tsx",
         "../app/workspace/my-work/leave-rejection-action.tsx",
       ].map(async (path) => await readFile(new URL(path, import.meta.url), "utf8")),
     );

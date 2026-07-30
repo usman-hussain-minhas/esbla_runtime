@@ -21,6 +21,7 @@ import {
   AssignedProviderUnavailableError,
   type LoadAssignedProviderViewOptions,
   loadAssignedProviderView,
+  loadAssignedProviderWidgetView,
   parseAssignedProviderCursors,
 } from "./assigned-provider-core";
 
@@ -148,6 +149,19 @@ function loadView(
     Partial<Pick<LoadAssignedProviderViewOptions, "loadExpense" | "loadTimesheet">>,
 ) {
   return loadAssignedProviderView({
+    loadExpense: async () => expensePage(),
+    loadTimesheet: async () => timesheetPage(),
+    ...options,
+  });
+}
+
+function loadWidgetView(
+  options: Omit<LoadAssignedProviderViewOptions, "loadExpense" | "loadTimesheet"> &
+    Partial<Pick<LoadAssignedProviderViewOptions, "loadExpense" | "loadTimesheet">> & {
+      readonly timeoutMs?: number;
+    },
+) {
+  return loadAssignedProviderWidgetView({
     loadExpense: async () => expensePage(),
     loadTimesheet: async () => timesheetPage(),
     ...options,
@@ -422,6 +436,61 @@ describe("assigned provider core", () => {
     }
     expect(loadHr).toHaveBeenCalledTimes(1);
     expect(loadWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it("localizes fatal and malformed providers while preserving successful widget providers", async () => {
+    const privateFatal = new Error("private provider diagnostic");
+    const view = await loadWidgetView({
+      loadExpense: async () =>
+        expensePage([], {
+          expenseClaimVersionId: "invalid",
+          submittedAt: expenseNext.submittedAt,
+        }),
+      loadHr: async () => {
+        throw privateFatal;
+      },
+      loadWorkspace: async () => workspacePage([workspaceItem]),
+      searchParams: {},
+    });
+
+    expect(view.hr).toEqual({ unavailable: true });
+    expect(view.expense).toEqual({ unavailable: true });
+    expect(view.workspace).toEqual({
+      empty: false,
+      page: workspacePage([workspaceItem]),
+      unavailable: false,
+    });
+    expect(view.totalShown).toBe(1);
+    expect(JSON.stringify(view)).not.toContain(privateFatal.message);
+  });
+
+  it("bounds and aborts only a stalled widget provider without hiding successful peers", async () => {
+    vi.useFakeTimers();
+    try {
+      let hrSignal: AbortSignal | undefined;
+      const viewPromise = loadWidgetView({
+        loadHr: (_cursor, signal) =>
+          new Promise((_resolve, reject) => {
+            hrSignal = signal;
+            signal?.addEventListener("abort", () => reject(new Error("private abort")), {
+              once: true,
+            });
+          }),
+        loadWorkspace: async () => workspacePage([workspaceItem]),
+        searchParams: {},
+        timeoutMs: 100,
+      });
+
+      await vi.advanceTimersByTimeAsync(100);
+      const view = await viewPromise;
+      expect(hrSignal?.aborted).toBe(true);
+      expect(view.hr).toEqual({ unavailable: true });
+      expect(view.workspace).toMatchObject({ empty: false, unavailable: false });
+      expect(view.totalShown).toBe(1);
+      expect(JSON.stringify(view)).not.toContain("private abort");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("starts both synchronous loaders and keeps HR as first fatal", async () => {

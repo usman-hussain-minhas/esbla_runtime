@@ -11,6 +11,51 @@ import {
 } from "./platform-presentation-widget.js";
 
 describe("presentation widget manifest", () => {
+  it("registers the representative T5 Product shapes in canonical identity order", () => {
+    expect(PRESENTATION_WIDGET_DEFINITIONS.map(({ id }) => id)).toEqual([
+      "hr.employment.current-facts",
+      "hr.leave.my-requests",
+      "hr.shift.my-published",
+      "hr.timesheet.draft",
+      "hr.timesheet.mine",
+      "hr.workforce.my-profile",
+      "platform.my-work.queue",
+    ]);
+    expect(
+      PRESENTATION_WIDGET_DEFINITIONS.find(({ id }) => id === "hr.timesheet.draft"),
+    ).toMatchObject({
+      allowedCommandIds: ["hr.timesheet.create", "hr.timesheet.edit_draft", "hr.timesheet.submit"],
+      fullScreenRoute: "/workspace/hr/timesheets",
+      id: "hr.timesheet.draft",
+      inlineMutationEligible: true,
+      readModelId: "hr.timesheet.draft.read.v1",
+      requiredCapabilityIds: [
+        "hr.timesheet.list_own",
+        "hr.timesheet.view_detail",
+        "hr.timesheet.create",
+        "hr.timesheet.edit_draft",
+        "hr.timesheet.submit",
+      ],
+      widgetKind: "operational",
+    });
+    expect(
+      PRESENTATION_WIDGET_DEFINITIONS.find(({ id }) => id === "platform.my-work.queue"),
+    ).toMatchObject({
+      activationServiceKey: "platform.my_work",
+      allowedCommandIds: [
+        "hr.leave.approve",
+        "hr.leave.reject",
+        "hr.timesheet.approve",
+        "hr.timesheet.reject",
+        "hr.expense.approve",
+        "hr.expense.reject",
+        "workspace.task.complete",
+      ],
+      inlineMutationEligible: true,
+      widgetKind: "composite",
+    });
+  });
+
   it("binds the complete immutable Leave definition to its startup hash", () => {
     const { canonicalHash, ...manifest } = HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION;
     expect(

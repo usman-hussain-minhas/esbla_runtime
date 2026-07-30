@@ -1400,8 +1400,20 @@ export function validatePersonalSurfacePlacements(
   untrustedPlacements: unknown,
 ): readonly PresentationWidgetPlacement[] {
   const contract = getZenV1SurfaceContract(surfaceId);
-  const placements = parseSurfacePlacements(untrustedPlacements);
+  const placements = validateRegisteredSurfacePlacementSubset(surfaceId, untrustedPlacements);
   if (placements.length !== contract.basePlacements.length) {
+    throw new PlatformError("SETTING_INVALID", "Presentation surface instance set is invalid");
+  }
+  return placements;
+}
+
+function validateRegisteredSurfacePlacementSubset(
+  surfaceId: ZenV1SurfaceId,
+  untrustedPlacements: unknown,
+): readonly PresentationWidgetPlacement[] {
+  const contract = getZenV1SurfaceContract(surfaceId);
+  const placements = parseSurfacePlacements(untrustedPlacements);
+  if (placements.length === 0 || placements.length > contract.basePlacements.length) {
     throw new PlatformError("SETTING_INVALID", "Presentation surface instance set is invalid");
   }
   const expected = new Map(
@@ -1418,13 +1430,27 @@ export function validatePersonalSurfacePlacements(
       );
     }
   }
-  for (let left = 0; left < placements.length; left += 1) {
-    for (let right = left + 1; right < placements.length; right += 1) {
-      const leftPlacement = placements[left];
-      const rightPlacement = placements[right];
-      if (leftPlacement && rightPlacement && rectanglesOverlap(leftPlacement, rightPlacement)) {
-        throw new PlatformError("SETTING_INVALID", "Presentation surface widgets overlap");
-      }
+  return placements;
+}
+
+function validateEligiblePersonalSurfacePlacements(
+  surfaceId: ZenV1SurfaceId,
+  untrustedPlacements: unknown,
+  eligibleWidgetDefinitionIds: ReadonlySet<string>,
+  basePlacements: readonly PresentationWidgetPlacement[],
+): readonly PresentationWidgetPlacement[] {
+  const placements = validateRegisteredSurfacePlacementSubset(surfaceId, untrustedPlacements);
+  const expected = new Map(
+    basePlacements
+      .filter(({ widgetDefinitionId }) => eligibleWidgetDefinitionIds.has(widgetDefinitionId))
+      .map((placement) => [placement.instanceId, placement.widgetDefinitionId]),
+  );
+  if (expected.size === 0 || placements.length !== expected.size) {
+    throw new PlatformError("POLICY_DENIED", "Presentation surface is not currently eligible");
+  }
+  for (const placement of placements) {
+    if (expected.get(placement.instanceId) !== placement.widgetDefinitionId) {
+      throw new PlatformError("POLICY_DENIED", "Presentation surface is not currently eligible");
     }
   }
   return placements;
@@ -1581,7 +1607,7 @@ async function loadOwnSurfaceOverlay(
   }
   return {
     baseVersion: row.base_version,
-    placements: validatePersonalSurfacePlacements(surfaceId, row.layout),
+    placements: validateRegisteredSurfacePlacementSubset(surfaceId, row.layout),
     version: row.version,
   };
 }
@@ -1649,23 +1675,15 @@ async function rebaseSurfaceOverlay(
   const historicalByInstance = new Map(
     historical.placements.map((placement) => [placement.instanceId, placement]),
   );
-  const personalByInstance = new Map(
-    overlay.placements.map((placement) => [placement.instanceId, placement]),
+  const currentByInstance = new Map(
+    base.basePlacements.map((placement) => [placement.instanceId, placement]),
   );
-  if (
-    historicalByInstance.size !== base.basePlacements.length ||
-    personalByInstance.size !== base.basePlacements.length
-  ) {
-    throw new PlatformError("SETTING_INVALID", "Presentation surface overlay rebase conflicted", {
-      conflict: "instance_set_changed",
-    });
-  }
-  const rebased = base.basePlacements.map((current) => {
-    const historicalPlacement = historicalByInstance.get(current.instanceId);
-    const personal = personalByInstance.get(current.instanceId);
+  const rebased = overlay.placements.map((personal) => {
+    const historicalPlacement = historicalByInstance.get(personal.instanceId);
+    const current = currentByInstance.get(personal.instanceId);
     if (
       !historicalPlacement ||
-      !personal ||
+      !current ||
       historicalPlacement.widgetDefinitionId !== current.widgetDefinitionId ||
       personal.widgetDefinitionId !== current.widgetDefinitionId
     ) {
@@ -1677,7 +1695,7 @@ async function rebaseSurfaceOverlay(
   });
   let placements: readonly PresentationWidgetPlacement[];
   try {
-    placements = parseExactPresentationSurfacePlacementSet(surfaceId, rebased);
+    placements = validateRegisteredSurfacePlacementSubset(surfaceId, rebased);
   } catch {
     throw new PlatformError("SETTING_INVALID", "Presentation surface overlay rebase conflicted", {
       conflict: "geometry_invalid",
@@ -1705,11 +1723,51 @@ function surfaceLayoutResponse(
           eligibleWidgetDefinitionIds.has(widgetDefinitionId),
         )
       : placements;
+  const basePlacements = filterEligible(base.basePlacements);
+  let effectivePlacements: PresentationWidgetPlacement[] = [...basePlacements];
+  const diagnostics: Array<{
+    readonly code: "overlay_placement_conflict";
+    readonly instanceId: string;
+  }> = [];
+  if (overlay) {
+    const overlayByInstance = new Map(
+      overlay.placements.map((placement) => [placement.instanceId, placement]),
+    );
+    const proposed = basePlacements.map(
+      (placement) => overlayByInstance.get(placement.instanceId) ?? placement,
+    );
+    const overlaps = proposed.some((placement, index) =>
+      proposed.slice(index + 1).some((candidate) => rectanglesOverlap(placement, candidate)),
+    );
+    if (!overlaps) {
+      effectivePlacements = proposed;
+    } else {
+      effectivePlacements = [...basePlacements];
+      for (const basePlacement of basePlacements) {
+        const candidate = overlayByInstance.get(basePlacement.instanceId);
+        if (!candidate) continue;
+        const candidateIndex = effectivePlacements.findIndex(
+          ({ instanceId }) => instanceId === candidate.instanceId,
+        );
+        if (candidateIndex < 0) continue;
+        const otherPlacements = effectivePlacements.filter((_, index) => index !== candidateIndex);
+        if (!otherPlacements.some((other) => rectanglesOverlap(candidate, other))) {
+          effectivePlacements[candidateIndex] = candidate;
+        } else {
+          diagnostics.push({
+            code: "overlay_placement_conflict",
+            instanceId: candidate.instanceId,
+          });
+        }
+      }
+    }
+  }
   return {
     baseDefinitionHash: base.definitionHash,
-    basePlacements: filterEligible(base.basePlacements),
+    basePlacements,
     baseVersion: base.baseVersion,
-    effectivePlacements: filterEligible(overlay?.placements ?? base.basePlacements),
+    diagnostics,
+    effectivePlacements,
     overlayVersion: overlay?.version ?? 0,
     source: overlay ? "user_overlay" : codeDefault ? "code_default" : "tenant_base",
     surfaceId,
@@ -1731,10 +1789,24 @@ async function loadEligibleWidgetDefinitionIds(
     .map((definitionId) => getPresentationWidgetDefinition(definitionId))
     .sort((left, right) => left.id.localeCompare(right.id));
   const serviceKeys = [
-    ...new Set(definitions.map(({ activationServiceKey }) => activationServiceKey)),
+    ...new Set(
+      definitions.flatMap((definition) =>
+        definition.activationPolicy === "any_provider"
+          ? definition.providerEligibility.map(({ activationServiceKey }) => activationServiceKey)
+          : [definition.activationServiceKey],
+      ),
+    ),
   ].sort();
   const capabilityIds = [
-    ...new Set(definitions.flatMap(({ requiredCapabilityIds }) => requiredCapabilityIds)),
+    ...new Set(
+      definitions.flatMap((definition) =>
+        definition.activationPolicy === "any_provider"
+          ? definition.providerEligibility.flatMap(
+              ({ requiredCapabilityIds }) => requiredCapabilityIds,
+            )
+          : definition.requiredCapabilityIds,
+      ),
+    ),
   ].sort();
   const activeServiceKeys = new Set<string>();
   const currentCapabilityIds = new Set<string>();
@@ -1786,12 +1858,22 @@ async function loadEligibleWidgetDefinitionIds(
 
   const eligible = new Set<string>();
   for (const definition of definitions) {
-    if (
+    const exactServiceEligible =
+      definition.activationPolicy === "exact_service" &&
       activeServiceKeys.has(definition.activationServiceKey) &&
       definition.requiredCapabilityIds.every((capabilityId) =>
         currentCapabilityIds.has(capabilityId),
-      )
-    ) {
+      );
+    const providerEligible =
+      definition.activationPolicy === "any_provider" &&
+      definition.providerEligibility.some(
+        (provider) =>
+          activeServiceKeys.has(provider.activationServiceKey) &&
+          provider.requiredCapabilityIds.every((capabilityId) =>
+            currentCapabilityIds.has(capabilityId),
+          ),
+      );
+    if (exactServiceEligible || providerEligible) {
       eligible.add(definition.id);
     }
   }
@@ -1900,7 +1982,7 @@ function parseSurfaceOverlayEvidenceState(
       billingState: PRESENTATION_BILLING_STATE,
       expectedVersion: Number(record.expectedVersion),
       materializedBaseDefinitionHashes: record.materializedBaseDefinitionHashes,
-      placements: validatePersonalSurfacePlacements(expectedSurfaceId, record.placements),
+      placements: validateRegisteredSurfacePlacementSubset(expectedSurfaceId, record.placements),
       surfaceId: expectedSurfaceId,
       version: Number(record.version),
     };
@@ -1915,6 +1997,7 @@ async function loadSurfaceOverlayUpdateReplay(
     readonly base: StoredSurfaceBase;
     readonly context: OperationContext;
     readonly expectedVersion: number;
+    readonly eligibleWidgetDefinitionIds: ReadonlySet<string>;
     readonly placements: readonly PresentationWidgetPlacement[];
     readonly subjectId: string;
     readonly surfaceId: ZenV1SurfaceId;
@@ -1956,7 +2039,12 @@ async function loadSurfaceOverlayUpdateReplay(
     throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface overlay retry evidence is invalid");
   }
   return {
-    ...surfaceLayoutResponse(input.surfaceId, input.base, replayOverlay),
+    ...surfaceLayoutResponse(
+      input.surfaceId,
+      input.base,
+      replayOverlay,
+      input.eligibleWidgetDefinitionIds,
+    ),
     billingState: PRESENTATION_BILLING_STATE,
     evidenceEventId: replay.evidence_event_id,
     replayed: true,
@@ -1975,7 +2063,6 @@ export async function updateOwnPresentationSurfaceOverlay(
   } catch {
     throw new PlatformError("SETTING_INVALID", "Presentation surface overlay is invalid");
   }
-  const placements = validatePersonalSurfacePlacements(surfaceId, parsedInput.placements);
   return await withTenantTransaction(
     pool,
     context,
@@ -1990,12 +2077,7 @@ export async function updateOwnPresentationSurfaceOverlay(
         surfaceId,
         "share",
       );
-      if (
-        eligibleWidgetDefinitionIds.size === 0 ||
-        placements.some(
-          ({ widgetDefinitionId }) => !eligibleWidgetDefinitionIds.has(widgetDefinitionId),
-        )
-      ) {
+      if (eligibleWidgetDefinitionIds.size === 0) {
         throw new PlatformError("POLICY_DENIED", "Presentation surface is not currently eligible");
       }
       const bases = await materializeCodeOwnedSurfaceBases(transaction);
@@ -2003,10 +2085,24 @@ export async function updateOwnPresentationSurfaceOverlay(
       if (!base) {
         throw new PlatformError("SETTING_INVALID", "Presentation surface base is unavailable");
       }
+      const eligiblePlacements = validateEligiblePersonalSurfacePlacements(
+        surfaceId,
+        parsedInput.placements,
+        eligibleWidgetDefinitionIds,
+        base.basePlacements,
+      );
+      const current = await rebaseSurfaceOverlay(
+        transaction,
+        surfaceId,
+        base,
+        await loadOwnSurfaceOverlay(transaction, surfaceId),
+      );
+      const placements = eligiblePlacements;
       const subjectId = surfaceOverlaySubjectId(context, surfaceId);
       const replay = await loadSurfaceOverlayUpdateReplay(transaction, {
         base,
         context,
+        eligibleWidgetDefinitionIds,
         expectedVersion: parsedInput.expectedVersion,
         placements,
         subjectId,
@@ -2016,7 +2112,6 @@ export async function updateOwnPresentationSurfaceOverlay(
         return replay;
       }
 
-      const current = await loadOwnSurfaceOverlay(transaction, surfaceId);
       const currentVersion = current?.version ?? 0;
       if (currentVersion !== parsedInput.expectedVersion) {
         throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface overlay version has changed", {
@@ -2064,6 +2159,7 @@ export async function updateOwnPresentationSurfaceOverlay(
           const concurrentReplay = await loadSurfaceOverlayUpdateReplay(transaction, {
             base,
             context,
+            eligibleWidgetDefinitionIds,
             expectedVersion: parsedInput.expectedVersion,
             placements,
             subjectId,
@@ -2102,11 +2198,16 @@ export async function updateOwnPresentationSurfaceOverlay(
         subjectType: SURFACE_OVERLAY_SUBJECT_TYPE,
       });
       return {
-        ...surfaceLayoutResponse(surfaceId, base, {
-          baseVersion: base.baseVersion,
-          placements,
-          version: nextVersion,
-        }),
+        ...surfaceLayoutResponse(
+          surfaceId,
+          base,
+          {
+            baseVersion: base.baseVersion,
+            placements,
+            version: nextVersion,
+          },
+          eligibleWidgetDefinitionIds,
+        ),
         billingState: PRESENTATION_BILLING_STATE,
         evidenceEventId: evidence.evidenceEventId,
         replayed: evidence.replayed,

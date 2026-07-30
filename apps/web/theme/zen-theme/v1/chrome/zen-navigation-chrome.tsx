@@ -129,7 +129,7 @@ export function ZenNavigationChrome({
               ref={contextualPanel}
             >
               {model.contextualMenu.destinations.map((destination) => (
-                <Link
+                <a
                   aria-current={
                     destination.id === model.contextualMenu?.activeDestinationId
                       ? "page"
@@ -150,7 +150,7 @@ export function ZenNavigationChrome({
                     strokeWidth={1.75}
                   />
                   <span>{destination.label}</span>
-                </Link>
+                </a>
               ))}
             </nav>
           ) : null}

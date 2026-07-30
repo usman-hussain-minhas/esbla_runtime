@@ -4,13 +4,13 @@ import type { HrAssignedLeaveRequestSummary } from "@esbla/contracts/hr-leave-ap
 import type { HrTimesheetListItem } from "@esbla/contracts/hr-timesheet-api";
 import type { AssignedWorkspaceTaskSummary } from "@esbla/contracts/workspace-task-api";
 import { ArrowRight, ClipboardCheck, Clock3 } from "lucide-react";
+import { LeaveApprovalAction } from "../../../components/leave-approval-action";
 import { loadAssignedProviderView } from "../../../lib/assigned-provider-core";
 import { getAssignedExpenseClaims } from "../../../lib/hr-expense-claim";
 import { getAssignedLeaveRequests } from "../../../lib/hr-leave-assigned-list";
 import { buildHrLeaveDetailHref } from "../../../lib/hr-leave-navigation-core";
 import { getAssignedTimesheets } from "../../../lib/hr-timesheet";
 import { getAssignedWorkspaceTasks } from "../../../lib/workspace-task-assigned-list";
-import { LeaveApprovalAction } from "./leave-approval-action";
 import { LeaveRejectionAction } from "./leave-rejection-action";
 import { TaskCompleteAction } from "./task-complete-action";
 

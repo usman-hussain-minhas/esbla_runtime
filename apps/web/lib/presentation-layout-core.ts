@@ -2,6 +2,7 @@ import {
   getZenV1SurfaceContract,
   PRESENTATION_WIDGET_DEFINITIONS,
   type PresentationSurfaceLayout,
+  type PresentationSurfaceLayoutDiagnostic,
   type PresentationSurfaceLayoutSource,
   type PresentationWidgetBreakpointVariant,
   type PresentationWidgetDefinition,
@@ -52,6 +53,7 @@ export interface ResolvedResponsivePresentationSurfaceLayout {
   ];
   readonly overlayVersion: number;
   readonly source: PresentationSurfaceLayoutSource;
+  readonly surfaceDiagnostics: readonly PresentationSurfaceLayoutDiagnostic[];
   readonly surfaceId: ZenV1SurfaceId;
 }
 
@@ -339,6 +341,7 @@ export function resolveResponsivePresentationSurfaceLayout(
     layouts,
     overlayVersion: layout.overlayVersion,
     source: layout.source,
+    surfaceDiagnostics: layout.diagnostics,
     surfaceId: layout.surfaceId,
   });
 }
