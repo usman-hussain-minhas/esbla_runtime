@@ -18,17 +18,18 @@ describe("Zen responsive chrome resolver", () => {
         availableInlineSize: 1_100,
         hasAppearance: true,
         hasContextualMenu: true,
+        hasSettings: true,
         hasServiceGroups: true,
       }),
     ).toEqual({
       breakpoint: "desktop",
       collapsed: [],
-      direct: ["contextual", "service-groups", "appearance"],
+      direct: ["contextual", "service-groups", "appearance", "settings"],
       systemRequired: true,
     });
   });
 
-  it("uses tablet priority: Appearance, Current Page, then Service Groups collapse", () => {
+  it("uses tablet priority: Theme, Settings, Current Page, then Service Groups collapse", () => {
     expect(
       resolveZenResponsiveChrome({
         ...roomyGeometry,
@@ -37,17 +38,18 @@ describe("Zen responsive chrome resolver", () => {
         controlGap: 20,
         hasAppearance: true,
         hasContextualMenu: true,
+        hasSettings: true,
         hasServiceGroups: true,
       }),
     ).toEqual({
       breakpoint: "tablet",
-      collapsed: ["appearance", "contextual"],
+      collapsed: ["appearance", "settings", "contextual"],
       direct: ["service-groups"],
       systemRequired: true,
     });
   });
 
-  it("always contains Appearance in System on phone and then collapses Service Groups first", () => {
+  it("always contains Theme and Settings in System on phone before navigation collapse", () => {
     expect(
       resolveZenResponsiveChrome({
         ...roomyGeometry,
@@ -58,12 +60,13 @@ describe("Zen responsive chrome resolver", () => {
         endInset: 20,
         hasAppearance: true,
         hasContextualMenu: true,
+        hasSettings: true,
         hasServiceGroups: true,
         startInset: 20,
       }),
     ).toEqual({
       breakpoint: "phone",
-      collapsed: ["appearance", "service-groups"],
+      collapsed: ["appearance", "settings", "service-groups"],
       direct: ["contextual"],
       systemRequired: true,
     });
@@ -76,6 +79,7 @@ describe("Zen responsive chrome resolver", () => {
         availableInlineSize: 767,
         hasAppearance: false,
         hasContextualMenu: false,
+        hasSettings: false,
         hasServiceGroups: false,
       }),
     ).toEqual({
@@ -94,6 +98,7 @@ describe("Zen responsive chrome resolver", () => {
         buttonInlineSize: 88,
         hasAppearance: false,
         hasContextualMenu: true,
+        hasSettings: false,
         hasServiceGroups: true,
       }),
     ).toEqual({
@@ -109,6 +114,7 @@ describe("Zen responsive chrome resolver", () => {
       ...roomyGeometry,
       hasAppearance: true,
       hasContextualMenu: true,
+      hasSettings: true,
       hasServiceGroups: true,
     };
     expect(resolveZenResponsiveChrome({ ...input, availableInlineSize: 1_100 }).breakpoint).toBe(
@@ -132,11 +138,12 @@ describe("Zen responsive chrome resolver", () => {
         availableInlineSize: Number.NaN,
         hasAppearance: true,
         hasContextualMenu: true,
+        hasSettings: true,
         hasServiceGroups: true,
       }),
     ).toEqual({
       breakpoint: "phone",
-      collapsed: ["appearance", "service-groups", "contextual"],
+      collapsed: ["appearance", "settings", "service-groups", "contextual"],
       direct: [],
       systemRequired: true,
     });

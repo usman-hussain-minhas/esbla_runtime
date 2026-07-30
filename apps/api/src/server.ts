@@ -85,6 +85,7 @@ import {
   parsePresentationShortcutDiscoveryQuery,
   parsePresentationSurfacePath,
   parseResetPresentationPreferencesBody,
+  parseResetPresentationSurfaceOverlayBody,
   parseUpdatePresentationPreferencesBody,
   parseUpdatePresentationShortcutBody,
   parseUpdatePresentationSurfaceOverlayBody,
@@ -98,7 +99,9 @@ import {
   presentationSurfacePathSchema,
   problemDetailsSchema,
   type ResetPresentationPreferencesBody,
+  type ResetPresentationSurfaceOverlayBody,
   resetPresentationPreferencesBodySchema,
+  resetPresentationSurfaceOverlayBodySchema,
   type UpdatePresentationPreferencesBody,
   type UpdatePresentationShortcutBody,
   type UpdatePresentationSurfaceOverlayBody,
@@ -166,6 +169,7 @@ import {
   getOwnPresentationSurfaceLayout,
   type OperationContext,
   resetOwnPresentationPreferences,
+  resetOwnPresentationSurfaceOverlay,
   resetTenantPresentationDefaults,
   updateOwnPresentationPreferences,
   updateOwnPresentationShortcut,
@@ -361,6 +365,7 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     presentationServiceGroupDiscoverySchema,
     presentationSurfaceLayoutSchema,
     presentationSurfacePathSchema,
+    resetPresentationSurfaceOverlayBodySchema,
     resetPresentationPreferencesBodySchema,
     updatePresentationPreferencesBodySchema,
     updatePresentationPreferencesResponseSchema,
@@ -688,6 +693,42 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
         },
         path.surfaceId,
         assertStrictRequest(parseUpdatePresentationSurfaceOverlayBody, request.body),
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return result;
+    },
+  });
+
+  server.post<{
+    Body: ResetPresentationSurfaceOverlayBody;
+    Params: PresentationSurfacePath;
+  }>("/v1/platform/presentation/surfaces/:surfaceId/overlay/reset", {
+    preValidation: [
+      authenticate,
+      async (request) => {
+        assertStrictMutationIdempotencyKey(request);
+        assertStrictRequest(parsePresentationSurfacePath, request.params);
+        assertStrictRequest(parseResetPresentationSurfaceOverlayBody, request.body);
+      },
+    ],
+    schema: {
+      body: { $ref: "ResetPresentationSurfaceOverlayBodyV1#" },
+      params: { $ref: "PresentationSurfacePathV1#" },
+      response: {
+        200: { $ref: "UpdatePresentationSurfaceOverlayResponseV1#" },
+        default: { $ref: "ProblemDetails#" },
+      },
+    },
+    handler: async (request, reply) => {
+      const path = assertStrictRequest(parsePresentationSurfacePath, request.params);
+      const result = await resetOwnPresentationSurfaceOverlay(
+        options.pool,
+        {
+          ...operationContext(request),
+          correlationId: idempotencyKey(request).toLowerCase(),
+        },
+        path.surfaceId,
+        assertStrictRequest(parseResetPresentationSurfaceOverlayBody, request.body),
       );
       reply.header("idempotent-replayed", String(result.replayed));
       return result;

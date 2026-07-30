@@ -1922,6 +1922,316 @@ textarea:focus-visible,
   width: 18px;
 }
 
+.universal-settings-surface {
+  max-width: 1180px;
+}
+
+.universal-settings {
+  display: grid;
+  gap: 58px;
+  margin-top: 48px;
+}
+
+.settings-section {
+  border-top: 1px solid var(--line-mid);
+  display: grid;
+  gap: 24px;
+  padding-top: 24px;
+}
+
+.settings-section > header {
+  align-items: flex-start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 42px minmax(0, 1fr);
+}
+
+.settings-section h2,
+.universal-settings-card h3 {
+  margin: 0;
+}
+
+.settings-section h2 {
+  font-size: clamp(22px, 3vw, 30px);
+}
+
+.settings-section > header p:last-child,
+.universal-settings-card > p,
+.universal-settings-card details p {
+  color: var(--text-soft);
+  line-height: 1.55;
+  margin: 7px 0 0;
+}
+
+.settings-section-index {
+  color: var(--accent-strong);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  margin: 6px 0 0;
+}
+
+.settings-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.universal-settings-card {
+  background: var(--surface-widget);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+  padding: clamp(20px, 3vw, 28px);
+}
+
+.settings-form-card {
+  align-content: start;
+}
+
+.settings-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.settings-actions .command-button,
+.layout-settings-card .command-button {
+  margin-top: 0;
+}
+
+.effective-settings-card {
+  align-content: start;
+}
+
+.effective-setting {
+  border-top: 1px solid var(--line-soft);
+  display: grid;
+  gap: 3px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-top: 13px;
+}
+
+.effective-setting > span {
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.effective-setting > strong {
+  color: var(--heading-main);
+  font-size: 14px;
+  text-transform: capitalize;
+}
+
+.effective-setting > small {
+  color: var(--text-soft);
+  font-size: 12px;
+  grid-column: 1 / -1;
+}
+
+.effective-settings-card details {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 14px;
+}
+
+.effective-settings-card summary {
+  color: var(--accent-strong);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.settings-card-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.universal-settings-card .settings-card-kicker {
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  margin: 0 0 6px;
+  text-transform: uppercase;
+}
+
+.settings-version {
+  background: var(--accent-soft);
+  border-radius: var(--radius-chip);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 8px;
+}
+
+.settings-selection-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.settings-selection-list li {
+  align-items: center;
+  border-top: 1px solid var(--line-soft);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding-top: 10px;
+}
+
+.settings-inline-command {
+  background: transparent;
+  border: 0;
+  color: var(--danger);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.settings-target-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-target-command {
+  align-items: center;
+  background: var(--surface-panel);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  color: var(--text-main);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: 12px;
+  gap: 8px;
+  min-height: 42px;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.settings-target-command:hover,
+.settings-target-command:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.settings-target-command:disabled,
+.settings-inline-command:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.universal-settings-card .settings-note,
+.universal-settings-card .settings-empty {
+  color: var(--text-soft);
+  font-size: 12px;
+  margin: 0;
+}
+
+.layout-settings-card dl {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.layout-settings-card dl div {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.layout-settings-card dt {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.layout-settings-card dd {
+  color: var(--heading-main);
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0;
+  text-align: right;
+}
+
+.tenant-settings-card {
+  max-width: 760px;
+}
+
+.settings-update-banner {
+  align-items: center;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-panel);
+  color: var(--accent-strong);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 14px 16px;
+}
+
+.settings-update-banner div {
+  display: grid;
+  gap: 3px;
+}
+
+.settings-update-banner strong {
+  color: var(--heading-main);
+  font-size: 13px;
+}
+
+.settings-update-banner span {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.settings-update-banner button {
+  background: var(--surface-widget);
+  border: 1px solid var(--line-mid);
+  border-radius: 7px;
+  color: var(--accent-strong);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  min-height: 36px;
+  padding: 7px 10px;
+}
+
+.universal-settings-unavailable,
+.settings-inline-unavailable {
+  border-top: 1px solid var(--line-mid);
+  color: var(--text-soft);
+  margin-top: 44px;
+  padding: 32px 0;
+}
+
+.universal-settings-unavailable p {
+  margin: 8px 0 0;
+}
+
+.universal-settings-loading {
+  display: grid;
+  gap: 14px;
+  margin-top: 40px;
+}
+
+.universal-settings-loading span {
+  background: var(--accent-soft);
+  border-radius: var(--radius-panel);
+  display: block;
+  height: 130px;
+}
+
 .form-error-summary {
   align-items: center;
   background: color-mix(in srgb, var(--danger) 8%, transparent);
@@ -2059,6 +2369,26 @@ textarea:focus-visible,
 
   .form-grid-two {
     grid-template-columns: 1fr;
+  }
+
+  .settings-grid,
+  .settings-target-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .universal-settings {
+    gap: 46px;
+    margin-top: 38px;
+  }
+
+  .settings-update-banner {
+    align-items: start;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .settings-update-banner button {
+    grid-column: 1 / -1;
+    justify-self: start;
   }
 
   .work-queue {

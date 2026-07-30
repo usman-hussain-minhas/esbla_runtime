@@ -88,8 +88,8 @@ Service Groups collapsing before Current Page. When resizing removes a direct
 launcher, its open navigation or Appearance surface moves into the equivalent
 System view with a valid focus and restore target. Collapsed navigation remains
 a readable, keyboard-reachable System entry. Search, Notifications, Team, tenant
-switching, status, Universal Settings and Edit Surface remain absent until
-backed.
+switching, status and Edit Surface remain absent until backed. Universal
+Settings was absent at T4 and is now backed by the T6 implementation below.
 
 T4-3 registers ordered semantic sections separately from user layout geometry
 and binds them to the exact code-owned surface base version, definition hash and
@@ -133,6 +133,39 @@ simulated here. Pure geometry and controlled Chromium visual-viewport proof are
 green. Actual-device software-keyboard screenshots remain unclaimed until the
 module Theme review.
 
+T6 adds a dedicated Universal Settings face without replacing the shared
+Theme/Appearance panel. Desktop renders both as separate square controls;
+constrained layouts move Settings into User/System according to the same
+measured resolver. The face exposes personal appearance/accessibility,
+registered universal and HR shortcuts, effective source and lock information,
+personal Mission Control layout sources and reset, and tenant presentation
+defaults only for an actor with the existing management capability. Team stays
+absent because no presence capability is backed.
+
+All mutations reuse the existing server-authoritative CAS, idempotency, tenant
+scope, policy, evidence and non-billable boundaries. Personal layout reset has
+an exact API and same-origin Web transport and removes only the actor overlay,
+never the published tenant base. A per-session opaque HMAC scope permits
+non-authoritative BroadcastChannel update notices between the same actor's
+tabs. Strict messages contain only the scope, subject, source-tab UUID and
+evidence UUID; malformed, cross-scope and same-tab messages are ignored. A
+notice never overwrites a draft: the actor must explicitly load the latest
+server values. Browser storage remains a disposable first-paint cache.
+
+An absent tenant value is drafted from the immutable code-owned Product
+default, never from the administrator's effective personal preference.
+Tenant defaults for contrast and motion remain distinct from their mandatory
+accessibility floors. Failure of the Appearance provider hides only Appearance:
+registered shortcuts, layout status and their truthful unavailable states
+remain reachable in Universal Settings.
+
+Proof includes strict parsers and transport denial, API replay/cross-tenant/
+evidence assertions, effective-value and locked-floor browser behavior,
+personal reset, same-context multi-tab draft preservation, application and
+database restart, desktop keyboard navigation, 320x568 high-contrast reflow
+containment and full Runtime CI. Search, Notifications, Team, tenant switching,
+status, Edit Surface and arbitrary shortcut targets remain absent.
+
 ## Requirement trace
 
 | ID | Runtime implementation | Proof in this walking slice |
@@ -155,7 +188,7 @@ module Theme review.
 | `ZEN-FULL-001` | parallel intercepted detail route and direct standalone detail route share one face; direct entry returns to the canonical Leave host | browser navigation, direct load and reload |
 | `ZEN-FULL-002` | overlay owns scroll, traps focus, conceals the shell and restores origin focus | keyboard/browser |
 | `ZEN-SET-001` | HR business settings remain owned by the separate HR service resolver and are not presentation values | source-boundary audit |
-| `ZEN-SET-002` | code-owned immutable manifests define the exact eleven V1 presentation keys, scopes, types, constraints, permissions, non-billable treatment, migrations and canonical hashes; the pure resolver enforces exact priority, floors, locks, ordered patches, safe fallback, tombstones and deterministic diagnostics | contract and platform-core unit tests plus startup registry validation |
+| `ZEN-SET-002` | code-owned immutable manifests define the exact eleven V1 presentation keys, scopes, types, constraints, permissions, non-billable treatment, migrations and canonical hashes; the pure resolver enforces exact priority, floors, locks, ordered patches, safe fallback, tombstones and deterministic diagnostics; the dedicated Universal Settings face exposes those effective values, registered shortcuts and personal-layout reset without inventing authority | contract and platform-core unit tests, startup registry validation, API integration and browser |
 | `ZEN-SET-003` | server-resolved palette and independent contrast reach the initial document and render correctly with client JavaScript disabled | raw SSR plus no-JavaScript first-paint screenshot and hydrated browser proof |
 | `ZEN-SEC-001` | current tenant membership, exact capabilities and service activation are checked on discovery and mutation | cross-tenant, suspended-member and deactivation integration plus browser denial |
 | `ZEN-SEC-002` | preference, shortcut and layout mutations are tenant scoped, CAS-bound, evidenced and explicitly non-billable | integration/SQL including simultaneous first-write replay |

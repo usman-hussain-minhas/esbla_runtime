@@ -763,7 +763,7 @@ test("Mission Control reuses the real Leave widget and persists four independent
       document.documentElement.style.setProperty("--corner-button", "260px");
       document.documentElement.style.setProperty("--corner-gap", "20px");
     });
-    await expect(shellChrome).toHaveAttribute("data-collapsed-controls", "appearance");
+    await expect(shellChrome).toHaveAttribute("data-collapsed-controls", "appearance settings");
     await expect(directAppearanceLauncher).toBeHidden();
     await expect(appearancePanel).toBeVisible();
     await appearancePanel.getByRole("button", { name: "Close appearance settings" }).click();
@@ -861,7 +861,7 @@ test("Mission Control reuses the real Leave widget and persists four independent
     });
     await expect(shellChrome).toHaveAttribute(
       "data-collapsed-controls",
-      "appearance service-groups",
+      "appearance settings service-groups",
     );
     await expect(serviceGroupsLauncher).toHaveCount(0);
     const collapsedServiceGroups = employee.page.getByRole("region", {
@@ -883,7 +883,7 @@ test("Mission Control reuses the real Leave widget and persists four independent
       document.documentElement.style.removeProperty("--chrome-cluster-gap");
       document.documentElement.style.removeProperty("--edge");
     });
-    await expect(shellChrome).toHaveAttribute("data-collapsed-controls", "appearance");
+    await expect(shellChrome).toHaveAttribute("data-collapsed-controls", "appearance settings");
     await expect(serviceGroupsLauncher).toBeVisible();
 
     await employee.page.goto(`${employee.origin}/workspace/hr`);
@@ -1530,6 +1530,272 @@ test("registered universal and HR shortcuts persist, arbitrate, and fail closed"
       ]).catch(() => undefined);
     }
     await closeActors(employee, ...(touchEmployee ? [touchEmployee] : []));
+  }
+});
+
+test("Universal Settings preserves Theme, exposes authority, and coordinates tabs without overwriting drafts", async ({
+  browser,
+}, testInfo) => {
+  const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
+  const admin = await openActor(browser, fixture.adminOrigin, fixture.adminLabel);
+  let secondPage;
+  try {
+    await employee.page.setViewportSize({ height: 900, width: 1_280 });
+    await employee.page.goto(employee.origin);
+    await expect(
+      employee.page.getByRole("button", { exact: true, name: "Appearance settings" }),
+    ).toBeVisible();
+    const settingsLauncher = employee.page.getByRole("link", {
+      exact: true,
+      name: "Universal Settings",
+    });
+    await expect(settingsLauncher).toBeVisible();
+    await expect(settingsLauncher).toHaveAttribute("href", "/settings");
+    await settingsLauncher.press("Enter");
+    await expect(employee.page).toHaveURL(`${employee.origin}/settings`);
+    await expect(
+      employee.page.getByRole("heading", { name: "Your Esbla, with its source visible" }),
+    ).toBeFocused();
+
+    for (const heading of [
+      "Appearance & accessibility",
+      "Navigation shortcuts",
+      "Personal layouts",
+    ]) {
+      await expect(
+        employee.page.getByRole("heading", { exact: true, name: heading }),
+      ).toBeVisible();
+    }
+    await expect(
+      employee.page.getByRole("heading", { name: "Tenant presentation defaults" }),
+    ).toHaveCount(0);
+    await expect(employee.page.getByText("Team", { exact: true })).toHaveCount(0);
+    await expect(
+      employee.page.getByText(/Product default|Tenant default|Your preference/).first(),
+    ).toBeVisible();
+
+    const missionLayout = employee.page.locator("article").filter({
+      has: employee.page.getByRole("heading", { exact: true, name: "Mission Control" }),
+    });
+    const resetLayout = missionLayout.getByRole("button", { name: "Reset personal layout" });
+    if (await resetLayout.isEnabled()) {
+      const resetResponse = employee.page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname ===
+          "/presentation/surfaces/surface.mission-control/reset",
+      );
+      await resetLayout.click();
+      expect((await resetResponse).status()).toBe(200);
+    }
+
+    await employee.page.goto(employee.origin);
+    const overlay = await employee.page.evaluate(async () => {
+      const placements = [...document.querySelectorAll("main .zen-widget")].map((element) => {
+        if (!(element instanceof HTMLElement)) throw new Error("Invalid widget element");
+        const value = (name) => Number(element.style.getPropertyValue(name));
+        return {
+          column: value("--widget-desktop-column"),
+          columnSpan: value("--widget-desktop-column-span"),
+          instanceId: element.dataset.surfaceInstance,
+          row: value("--widget-desktop-row"),
+          rowSpan: value("--widget-desktop-row-span"),
+          widgetDefinitionId: element.dataset.widgetDefinition,
+        };
+      });
+      const response = await fetch("/presentation/surfaces/surface.mission-control", {
+        body: JSON.stringify({
+          expectedVersion: 0,
+          idempotencyKey: crypto.randomUUID(),
+          placements: placements.map((placement) =>
+            placement.instanceId === "mission-control.my-leave"
+              ? { ...placement, row: placement.row + 1 }
+              : placement,
+          ),
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      return { body: await response.text(), status: response.status };
+    });
+    expect(overlay.status, overlay.body).toBe(200);
+
+    await employee.page.goto(`${employee.origin}/settings`);
+    await expect(missionLayout).toContainText("Personal layout");
+    await expect(resetLayout).toBeEnabled();
+    const resetResponse = employee.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/presentation/surfaces/surface.mission-control/reset",
+    );
+    await resetLayout.click();
+    expect((await resetResponse).status()).toBe(200);
+    await expect(missionLayout).toContainText("Product layout");
+    await expect(resetLayout).toBeDisabled();
+
+    const universalShortcuts = employee.page.locator("article").filter({
+      has: employee.page.getByRole("heading", { exact: true, name: "Universal shortcuts" }),
+    });
+    const addLeave = universalShortcuts.getByRole("button", {
+      exact: true,
+      name: "Add Leave Requests",
+    });
+    if ((await addLeave.count()) === 0) {
+      const removeExisting = universalShortcuts
+        .getByRole("button", { exact: true, name: "Remove" })
+        .first();
+      if (await removeExisting.isVisible()) await removeExisting.click();
+      await expect(addLeave).toBeVisible();
+    }
+    const shortcutResponse = employee.page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/presentation/shortcuts",
+    );
+    await addLeave.click();
+    expect((await shortcutResponse).status()).toBe(200);
+    await expect(universalShortcuts).toContainText("Leave Requests");
+
+    secondPage = await employee.context.newPage();
+    secondPage.on("console", (message) => {
+      if (message.type() === "error") employee.diagnostics.console.push(message.text());
+    });
+    secondPage.on("pageerror", (error) =>
+      employee.diagnostics.page.push(`${error.name}: ${error.message}`),
+    );
+    secondPage.on("response", (response) => {
+      if (response.status() >= 500) {
+        employee.diagnostics.server.push(
+          `${response.status()} ${new URL(response.url()).pathname}`,
+        );
+      }
+    });
+    await secondPage.route("**/*", async (route) => {
+      if (new URL(route.request().url()).origin !== employee.origin) {
+        employee.diagnostics.external.push(new URL(route.request().url()).origin);
+        await route.abort("blockedbyclient");
+      } else await route.continue();
+    });
+    await secondPage.goto(`${employee.origin}/settings`);
+
+    const palette = employee.page.getByLabel("Palette");
+    const originalPalette = await palette.inputValue();
+    const unsavedPalette = originalPalette === "dark" ? "light" : "dark";
+    await palette.selectOption(unsavedPalette);
+    const secondDensity = secondPage.getByLabel("Density");
+    const savedDensity =
+      (await secondDensity.inputValue()) === "compact" ? "comfortable" : "compact";
+    await secondDensity.selectOption(savedDensity);
+    const saveResponse = secondPage.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/presentation/preferences",
+    );
+    await secondPage.getByRole("button", { name: "Save my appearance" }).click();
+    expect((await saveResponse).status()).toBe(200);
+    await expect(
+      employee.page.getByText("Presentation settings changed in another tab."),
+    ).toBeVisible();
+    await expect(palette).toHaveValue(unsavedPalette);
+    await employee.page.getByRole("button", { name: "Load latest" }).click();
+    await expect(employee.page.getByLabel("Palette")).toHaveValue(originalPalette);
+    await expect(employee.page.getByLabel("Density")).toHaveValue(savedDensity);
+
+    await secondPage.close();
+    secondPage = undefined;
+    await employee.page.goto("about:blank");
+    await restartEmployeeApplication();
+    await employee.page.goto(`${employee.origin}/settings`);
+    await expect(employee.page.getByLabel("Density")).toHaveValue(savedDensity);
+
+    const highContrast = employee.page.getByLabel("High contrast");
+    if (!(await highContrast.isChecked())) await highContrast.check();
+    const highContrastResponse = employee.page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/presentation/preferences",
+    );
+    await employee.page.getByRole("button", { name: "Save my appearance" }).click();
+    expect((await highContrastResponse).status()).toBe(200);
+    await expect(employee.page.locator("html")).toHaveAttribute("data-high-contrast", "true");
+
+    await employee.page.setViewportSize({ height: 568, width: 320 });
+    await expect(
+      employee.page.getByRole("heading", { name: "Your Esbla, with its source visible" }),
+    ).toBeVisible();
+    expect(
+      await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+    const reflowEvidencePath = testInfo.outputPath(
+      "universal-settings-320-high-contrast-reflow.png",
+    );
+    await employee.page.screenshot({ fullPage: false, path: reflowEvidencePath });
+    await testInfo.attach("universal-settings-320-high-contrast-reflow", {
+      contentType: "image/png",
+      path: reflowEvidencePath,
+    });
+
+    await employee.page.goto(employee.origin);
+    await expect(
+      employee.page.getByRole("link", { exact: true, name: "Universal Settings" }),
+    ).toBeHidden();
+    const systemLauncher = employee.page.getByRole("button", {
+      exact: true,
+      name: "User and system",
+    });
+    await systemLauncher.click();
+    const systemPanel = employee.page.getByRole("region", { exact: true, name: "User and system" });
+    await expect(
+      systemPanel.getByRole("link", { exact: true, name: "Universal Settings" }),
+    ).toBeVisible();
+    await systemPanel.getByRole("link", { exact: true, name: "Universal Settings" }).press("Enter");
+    await expect(employee.page).toHaveURL(`${employee.origin}/settings`);
+    const settingsHeading = employee.page.getByRole("heading", {
+      name: "Your Esbla, with its source visible",
+    });
+    await expect(settingsHeading).toBeVisible();
+    await expect(settingsHeading).toBeFocused();
+    expect(
+      await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+    const settingsEvidencePath = testInfo.outputPath("universal-settings-phone.png");
+    await employee.page.screenshot({ fullPage: false, path: settingsEvidencePath });
+    await testInfo.attach("universal-settings-phone", {
+      contentType: "image/png",
+      path: settingsEvidencePath,
+    });
+
+    await systemLauncher.click();
+    const sameRouteSystemPanel = employee.page.getByRole("region", {
+      exact: true,
+      name: "User and system",
+    });
+    await sameRouteSystemPanel
+      .getByRole("link", { exact: true, name: "Universal Settings" })
+      .press("Enter");
+    await expect(employee.page).toHaveURL(`${employee.origin}/settings`);
+    await expect(sameRouteSystemPanel).toBeHidden();
+    await expect(settingsHeading).toBeFocused();
+
+    await admin.page.goto(`${admin.origin}/settings`);
+    await expect(
+      admin.page.getByRole("heading", { name: "Tenant presentation defaults" }),
+    ).toBeVisible();
+    await expect(admin.page.getByLabel("Default to high contrast")).toBeVisible();
+    await expect(admin.page.getByLabel("Default to reduced motion")).toBeVisible();
+    await expect(admin.page.getByLabel("Require high contrast")).toBeVisible();
+    await expect(admin.page.getByLabel("Require reduced motion")).toBeVisible();
+  } finally {
+    await secondPage?.close().catch(() => undefined);
+    await employee.page.setViewportSize({ height: 900, width: 1_280 }).catch(() => undefined);
+    await employee.page.goto(`${employee.origin}/settings`).catch(() => undefined);
+    const removeShortcut = employee.page
+      .locator("article")
+      .filter({
+        has: employee.page.getByRole("heading", { exact: true, name: "Universal shortcuts" }),
+      })
+      .getByRole("button", { exact: true, name: "Remove" })
+      .first();
+    if (await removeShortcut.isVisible().catch(() => false)) {
+      await removeShortcut.click().catch(() => undefined);
+    }
+    const resetAppearance = employee.page.getByRole("button", { name: "Reset my overrides" });
+    if (await resetAppearance.isEnabled().catch(() => false)) {
+      await resetAppearance.click().catch(() => undefined);
+    }
+    await closeActors(employee, admin);
   }
 });
 

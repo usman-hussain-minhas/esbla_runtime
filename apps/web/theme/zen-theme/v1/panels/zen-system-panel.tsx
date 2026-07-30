@@ -4,7 +4,7 @@ import { parseUpdatePresentationPreferencesResponse } from "@esbla/contracts";
 import { Check } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useId, useRef, useState } from "react";
+import { type MouseEvent, useEffect, useId, useRef, useState } from "react";
 import type { ZenNavigationModel } from "../../../../lib/presentation-navigation-core";
 import { writePresentationThemeCache } from "../../../../lib/presentation-theme-cache-core";
 import { prepareRouteHeadingFocus, type ZenDirectOpenMenu } from "../chrome/zen-navigation-chrome";
@@ -119,6 +119,8 @@ export function UserSystemControl({
   onOpenStateChange,
   openState,
   showAppearanceDirect,
+  showSettingsDirect,
+  settingsAvailable,
   systemRequired,
 }: Readonly<{
   appearanceAvailable: boolean;
@@ -127,6 +129,8 @@ export function UserSystemControl({
   onOpenStateChange: (state: ZenSystemPanelState | undefined) => void;
   openState: ZenSystemPanelState | undefined;
   showAppearanceDirect: boolean;
+  showSettingsDirect: boolean;
+  settingsAvailable: boolean;
   systemRequired: boolean;
 }>) {
   const pathname = usePathname();
@@ -208,6 +212,34 @@ export function UserSystemControl({
     requestAnimationFrame(() => launcher?.focus());
   }
 
+  function activateSettings(event: MouseEvent<HTMLAnchorElement>) {
+    const destination = new URL(event.currentTarget.href);
+    const sameRoute =
+      destination.origin === window.location.origin &&
+      destination.pathname === window.location.pathname &&
+      destination.search === window.location.search;
+    if (
+      !sameRoute ||
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      prepareRouteHeadingFocus(event);
+      return;
+    }
+    event.preventDefault();
+    onOpenStateChange(undefined);
+    requestAnimationFrame(() => {
+      const heading = document.querySelector<HTMLElement>("main h1");
+      if (!heading) return;
+      heading.tabIndex = -1;
+      heading.focus();
+    });
+  }
+
   async function persist(patch: Partial<AppearanceValues>) {
     if (pending) return;
     setPending(true);
@@ -277,6 +309,17 @@ export function UserSystemControl({
       >
         <SemanticIcon aria-hidden="true" semanticKey="user" size={18} strokeWidth={1.75} />
       </button>
+      {settingsAvailable && showSettingsDirect ? (
+        <Link
+          aria-label="Universal Settings"
+          className="chrome-button theme-direct-launcher"
+          data-tooltip="Universal Settings"
+          href="/settings"
+          onClick={activateSettings}
+        >
+          <SemanticIcon aria-hidden="true" semanticKey="settings" size={18} strokeWidth={1.75} />
+        </Link>
+      ) : null}
       {appearanceAvailable && showAppearanceDirect ? (
         <button
           aria-controls={panelId}
@@ -374,6 +417,17 @@ export function UserSystemControl({
                   <span>Appearance</span>
                   <span aria-hidden="true">›</span>
                 </button>
+              ) : null}
+              {settingsAvailable && !showSettingsDirect ? (
+                <Link
+                  className="theme-choice theme-choice-wide"
+                  href="/settings"
+                  onClick={activateSettings}
+                >
+                  <SemanticIcon aria-hidden="true" semanticKey="settings" size={17} />
+                  <span>Universal Settings</span>
+                  <span aria-hidden="true">›</span>
+                </Link>
               ) : null}
             </div>
           ) : null}

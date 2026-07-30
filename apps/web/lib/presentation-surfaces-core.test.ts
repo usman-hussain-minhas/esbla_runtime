@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   decodePresentationSurfaceLayoutResponse,
+  decodePresentationSurfaceOverlayResetResponse,
   PresentationSurfaceError,
+  parsePresentationSurfaceOverlayReset,
   parsePresentationSurfaceOverlayUpdate,
 } from "./presentation-surfaces-core";
 
@@ -70,5 +72,43 @@ describe("presentation surface web boundary", () => {
         placements: [],
       }),
     ).toThrow();
+  });
+
+  it("strictly parses and decodes an evidenced overlay reset", async () => {
+    expect(
+      parsePresentationSurfaceOverlayReset({
+        expectedVersion: 2,
+        idempotencyKey: "93000000-0000-4000-8000-000000000001",
+      }),
+    ).toEqual({
+      expectedVersion: 2,
+      idempotencyKey: "93000000-0000-4000-8000-000000000001",
+    });
+    expect(() =>
+      parsePresentationSurfaceOverlayReset({
+        expectedVersion: 0,
+        idempotencyKey: "93000000-0000-4000-8000-000000000001",
+      }),
+    ).toThrow();
+
+    await expect(
+      decodePresentationSurfaceOverlayResetResponse(
+        Promise.resolve(
+          Response.json({
+            baseDefinitionHash: "c75bac3fed1b604fe9ebc9f39e1ccef45b2ad34570f5200ada0e8b77ab8b71fb",
+            basePlacements: [],
+            baseVersion: 1,
+            billingState: "non_billable",
+            diagnostics: [],
+            effectivePlacements: [],
+            evidenceEventId: "94000000-0000-4000-8000-000000000001",
+            overlayVersion: 0,
+            replayed: false,
+            source: "code_default",
+            surfaceId: "surface.mission-control",
+          }),
+        ),
+      ),
+    ).resolves.toMatchObject({ overlayVersion: 0, source: "code_default" });
   });
 });

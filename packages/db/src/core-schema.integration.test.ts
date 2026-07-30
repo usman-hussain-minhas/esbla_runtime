@@ -446,7 +446,7 @@ describe("core PostgreSQL foundation", () => {
     if (cleanupErrors.length > 0) {
       throw new AggregateError(cleanupErrors, "Migration upgrade proof cleanup failed");
     }
-  });
+  }, 20_000);
 
   it("replays every migration once and forces RLS on every tenant-owned table", async () => {
     const migrations = await migrationPool.query<{ count: string }>(

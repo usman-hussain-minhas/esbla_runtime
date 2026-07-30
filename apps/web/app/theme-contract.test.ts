@@ -176,6 +176,24 @@ describe("Esbla Theme v1 host contract", () => {
     expect(shell).not.toContain("statusLabel: string");
   });
 
+  it("keeps Universal Settings reachable when only Appearance is unavailable", async () => {
+    const [shell, settingsPage, settingsFace] = await Promise.all([
+      readFile(new URL("./workspace-shell.tsx", import.meta.url), "utf8"),
+      readFile(new URL("./settings/page.tsx", import.meta.url), "utf8"),
+      readFile(
+        new URL("../theme/zen-theme/v1/settings/universal-settings.tsx", import.meta.url),
+        "utf8",
+      ),
+    ]);
+    expect(shell).toContain("appearanceAvailable={systemEligible}");
+    expect(shell).toContain("settingsAvailable");
+    expect(shell).not.toContain("settingsAvailable={systemEligible}");
+    expect(settingsPage).toContain("initialPreferences={preferences ?? null}");
+    expect(settingsFace).toContain("Appearance preferences are unavailable.");
+    expect(settingsFace).toContain('id="navigation-settings-heading"');
+    expect(settingsFace).toContain('id="layout-settings-heading"');
+  });
+
   it("keeps My Work decision controls accessible and policy-bound", async () => {
     const myWork = await readFile(new URL("./workspace/my-work/page.tsx", import.meta.url), "utf8");
     const approval = await readFile(
