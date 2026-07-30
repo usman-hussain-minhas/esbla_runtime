@@ -74,6 +74,7 @@ function publishVisualViewport(viewport: ZenVisualViewportResult): void {
 function initialResolution(
   model: ZenNavigationModel,
   appearanceAvailable: boolean,
+  settingsAvailable: boolean,
 ): ZenResponsiveChromeResult {
   return {
     breakpoint: "desktop",
@@ -82,8 +83,9 @@ function initialResolution(
       ...(model.contextualMenu ? (["contextual"] as const) : []),
       ...(model.serviceGroups.length > 0 ? (["service-groups"] as const) : []),
       ...(appearanceAvailable ? (["appearance"] as const) : []),
+      ...(settingsAvailable ? (["settings"] as const) : []),
     ],
-    systemRequired: appearanceAvailable,
+    systemRequired: appearanceAvailable || settingsAvailable,
   };
 }
 
@@ -102,17 +104,21 @@ function sameResolution(
 export function ZenShellChrome({
   appearanceAvailable,
   discovery,
+  settingsAvailable,
   shortcutDiscovery,
 }: Readonly<{
   appearanceAvailable: boolean;
   discovery: PresentationNavigationDiscovery;
+  settingsAvailable: boolean;
   shortcutDiscovery: PresentationShortcutDiscovery | undefined;
 }>) {
   const pathname = usePathname();
   const model = useMemo(() => buildZenNavigationModel(discovery, pathname), [discovery, pathname]);
   const [layer, setLayer] = useState<ZenChromeLayer>();
   const activeLayer = useRef(layer);
-  const [resolution, setResolution] = useState(() => initialResolution(model, appearanceAvailable));
+  const [resolution, setResolution] = useState(() =>
+    initialResolution(model, appearanceAvailable, settingsAvailable),
+  );
   const buttonProbe = useRef<HTMLSpanElement>(null);
   const clusterGapProbe = useRef<HTMLSpanElement>(null);
   const controlGapProbe = useRef<HTMLSpanElement>(null);
@@ -139,6 +145,7 @@ export function ZenShellChrome({
       endInset,
       hasAppearance: appearanceAvailable,
       hasContextualMenu: Boolean(model.contextualMenu),
+      hasSettings: settingsAvailable,
       hasServiceGroups: model.serviceGroups.length > 0,
       startInset,
     });
@@ -162,7 +169,7 @@ export function ZenShellChrome({
       }
       return current;
     });
-  }, [appearanceAvailable, model.contextualMenu, model.serviceGroups.length]);
+  }, [appearanceAvailable, model.contextualMenu, model.serviceGroups.length, settingsAvailable]);
 
   useLayoutEffect(() => {
     const frame = requestAnimationFrame(measure);
@@ -442,6 +449,8 @@ export function ZenShellChrome({
           onOpenStateChange={onOpenSystemStateChange}
           openState={openSystemState}
           showAppearanceDirect={resolution.direct.includes("appearance")}
+          showSettingsDirect={resolution.direct.includes("settings")}
+          settingsAvailable={settingsAvailable}
           systemRequired={resolution.systemRequired}
         />
       </div>

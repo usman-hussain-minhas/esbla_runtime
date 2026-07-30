@@ -127,7 +127,7 @@ beforeAll(async () => {
   migrationPool = createDatabasePool(migrationUrl, { max: 3 });
   await migrateDatabase(createDatabase(migrationPool));
   await migrationPool.query(
-    `GRANT SELECT ON membership_capabilities TO ${applicationRole};
+    `GRANT SELECT ON membership_capabilities, service_activations TO ${applicationRole};
      GRANT SELECT,INSERT ON evidence_events TO ${applicationRole}`,
   );
   await migrationPool.query(
@@ -152,6 +152,27 @@ beforeAll(async () => {
         `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
          VALUES ($1,$2,'platform.presentation.tenant_defaults.write')`,
         [ids.tenant, ids.admin],
+      );
+      await client.query(
+        `INSERT INTO service_activations (tenant_id,service_key,state,version)
+         VALUES ($1,'hr.leave_request','active',1)`,
+        [ids.tenant],
+      );
+      await client.query(
+        `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+         SELECT $1,$2,capability_id
+         FROM unnest($3::text[]) AS capability(capability_id)`,
+        [
+          ids.tenant,
+          ids.employee,
+          [
+            "hr.leave.list_own",
+            "hr.leave.view",
+            "platform.presentation.layouts.read_own",
+            "platform.presentation.layouts.reset_own",
+            "platform.presentation.layouts.write_own",
+          ],
+        ],
       );
     });
   } finally {
@@ -312,5 +333,80 @@ describe("presentation preference API", () => {
     expect(ownReset.statusCode, ownReset.body).toBe(200);
     expect(ownReset.json()).toMatchObject({ tenantVersion: 0, userVersion: 0 });
     expect((await proofSnapshot()).outbox).toBe("[]");
+  });
+
+  it("resets only the current actor's exact personal surface overlay with replay evidence", async () => {
+    const surfaceUrl = "/v1/platform/presentation/surfaces/surface.mission-control";
+    const initial = await signedRequest({ method: "GET", url: surfaceUrl });
+    expect(initial.statusCode, initial.body).toBe(200);
+    expect(initial.json()).toMatchObject({ overlayVersion: 0, source: "code_default" });
+
+    const overlay = await signedRequest({
+      body: {
+        expectedVersion: 0,
+        placements: initial.json().effectivePlacements,
+      },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      url: `${surfaceUrl}/overlay`,
+    });
+    expect(overlay.statusCode, overlay.body).toBe(200);
+    expect(overlay.json()).toMatchObject({ overlayVersion: 1, source: "user_overlay" });
+
+    const resetKey = randomUUID();
+    const reset = await signedRequest({
+      body: { expectedVersion: 1 },
+      idempotencyKey: resetKey,
+      method: "POST",
+      url: `${surfaceUrl}/overlay/reset`,
+    });
+    expect(reset.statusCode, reset.body).toBe(200);
+    expect(reset.headers["idempotent-replayed"]).toBe("false");
+    expect(reset.json()).toMatchObject({
+      billingState: "non_billable",
+      overlayVersion: 0,
+      replayed: false,
+      source: "code_default",
+    });
+
+    const replay = await signedRequest({
+      body: { expectedVersion: 1 },
+      idempotencyKey: resetKey,
+      method: "POST",
+      url: `${surfaceUrl}/overlay/reset`,
+    });
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect(replay.headers["idempotent-replayed"]).toBe("true");
+    expect(replay.json()).toEqual({ ...reset.json(), replayed: true });
+
+    const crossTenant = await signedRequest({
+      body: { expectedVersion: 1 },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      tenantId: ids.otherTenant,
+      url: `${surfaceUrl}/overlay/reset`,
+    });
+    expect([crossTenant.statusCode, crossTenant.json().code]).toEqual([
+      403,
+      "ACTOR_NOT_ACTIVE_MEMBER",
+    ]);
+    const client = await migrationPool.connect();
+    try {
+      const state = await tenantTransaction(client, async () =>
+        client.query<{ evidence_count: number; outbox_count: number }>(
+          `SELECT
+             (SELECT count(*)::integer FROM evidence_events
+              WHERE tenant_id=$1 AND subject_type='platform_presentation_surface_overlay')
+               AS evidence_count,
+             (SELECT count(*)::integer FROM outbox_events
+              WHERE tenant_id=$1 AND event_type LIKE 'platform.presentation.surface_overlay.%')
+               AS outbox_count`,
+          [ids.tenant],
+        ),
+      );
+      expect(state.rows[0]).toEqual({ evidence_count: 2, outbox_count: 0 });
+    } finally {
+      client.release();
+    }
   });
 });

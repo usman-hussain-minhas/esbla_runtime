@@ -32,6 +32,7 @@ export async function WorkspaceShell({ children, currentSurface }: WorkspaceShel
       <ZenShellChrome
         appearanceAvailable={systemEligible}
         discovery={navigation}
+        settingsAvailable
         shortcutDiscovery={shortcuts}
       />
 

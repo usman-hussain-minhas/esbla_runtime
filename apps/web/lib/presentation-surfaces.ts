@@ -1,10 +1,15 @@
 import "server-only";
 
-import type { UpdatePresentationSurfaceOverlayBody, ZenV1SurfaceId } from "@esbla/contracts";
+import type {
+  ResetPresentationSurfaceOverlayBody,
+  UpdatePresentationSurfaceOverlayBody,
+  ZenV1SurfaceId,
+} from "@esbla/contracts";
 import { fetchDevelopmentApi } from "./development-session";
 import { resolveResponsivePresentationSurfaceLayout } from "./presentation-layout-core";
 import {
   decodePresentationSurfaceLayoutResponse,
+  decodePresentationSurfaceOverlayResetResponse,
   decodePresentationSurfaceOverlayUpdateResponse,
 } from "./presentation-surfaces-core";
 
@@ -34,6 +39,21 @@ export function persistOwnPresentationSurfaceOverlay(
       idempotencyKey,
       method: "POST",
       path: `/v1/platform/presentation/surfaces/${encodeURIComponent(surfaceId)}/overlay`,
+    }),
+  );
+}
+
+export function resetOwnPresentationSurfaceOverlay(
+  surfaceId: ZenV1SurfaceId,
+  body: ResetPresentationSurfaceOverlayBody,
+  idempotencyKey: string,
+) {
+  return decodePresentationSurfaceOverlayResetResponse(
+    fetchDevelopmentApi({
+      body,
+      idempotencyKey,
+      method: "POST",
+      path: `/v1/platform/presentation/surfaces/${encodeURIComponent(surfaceId)}/overlay/reset`,
     }),
   );
 }

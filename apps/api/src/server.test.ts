@@ -285,6 +285,16 @@ describe("runtime probes", () => {
         })
       ).statusCode,
     ).toBe(401);
+    expect(
+      (
+        await server.inject({
+          body: { expectedVersion: 1 },
+          headers: { "idempotency-key": randomUUID() },
+          method: "POST",
+          url: "/v1/platform/presentation/surfaces/surface.mission-control/overlay/reset",
+        })
+      ).statusCode,
+    ).toBe(401);
     expect(query).not.toHaveBeenCalled();
   });
 
