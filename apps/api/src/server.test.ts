@@ -176,16 +176,50 @@ describe("runtime probes", () => {
         })
       ).statusCode,
     ).toBe(401);
-    expect(
-      (
-        await server.inject({
-          body: { expectedVersion: 0, highContrast: false, palette: "light" },
-          headers: { "idempotency-key": randomUUID() },
-          method: "POST",
-          url: "/v1/platform/presentation/preferences",
-        })
-      ).statusCode,
-    ).toBe(401);
+    for (const request of [
+      {
+        body: {
+          density: "comfortable",
+          expectedVersion: 0,
+          highContrast: false,
+          palette: "light",
+          reducedMotion: "auto",
+        },
+        url: "/v1/platform/presentation/preferences",
+      },
+      {
+        body: { expectedVersion: 1 },
+        url: "/v1/platform/presentation/preferences/reset",
+      },
+      {
+        body: {
+          density: "comfortable",
+          expectedVersion: 0,
+          highContrast: false,
+          lockDensity: false,
+          palette: "light",
+          reducedMotion: "auto",
+          requireHighContrast: false,
+          requireReducedMotion: false,
+        },
+        url: "/v1/platform/presentation/tenant-defaults",
+      },
+      {
+        body: { expectedVersion: 1 },
+        url: "/v1/platform/presentation/tenant-defaults/reset",
+      },
+    ] as const) {
+      expect(
+        (
+          await server.inject({
+            body: request.body,
+            headers: { "idempotency-key": randomUUID() },
+            method: "POST",
+            url: request.url,
+          })
+        ).statusCode,
+      ).toBe(401);
+    }
     expect(query).not.toHaveBeenCalled();
   });
 

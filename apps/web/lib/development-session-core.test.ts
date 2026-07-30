@@ -1,6 +1,7 @@
 import { signDevelopmentPrincipal } from "@esbla/contracts/development-principal";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  deriveDevelopmentSessionSubjectScope,
   prepareDevelopmentRequest,
   readDevelopmentSessionConfig,
   summarizeDevelopmentSession,
@@ -42,6 +43,30 @@ describe("server-only development session boundary", () => {
     expect(JSON.stringify(summary)).not.toContain(secret);
     expect(JSON.stringify(summary)).not.toContain(tenantId);
     expect(JSON.stringify(summary)).not.toContain(principalId);
+  });
+
+  it("derives an opaque cache scope bound to tenant, principal, and session secret", () => {
+    const config = readDevelopmentSessionConfig(environment());
+    const scope = deriveDevelopmentSessionSubjectScope(config);
+    expect(scope).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(scope).toBe(deriveDevelopmentSessionSubjectScope(config));
+    expect(scope).not.toContain(tenantId);
+    expect(scope).not.toContain(principalId);
+    expect(scope).not.toContain(secret);
+    expect(
+      deriveDevelopmentSessionSubjectScope(
+        readDevelopmentSessionConfig(
+          environment({ ESBLA_DEV_TENANT_ID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab" }),
+        ),
+      ),
+    ).not.toBe(scope);
+    expect(
+      deriveDevelopmentSessionSubjectScope(
+        readDevelopmentSessionConfig(
+          environment({ ESBLA_DEV_PRINCIPAL_ID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbc" }),
+        ),
+      ),
+    ).not.toBe(scope);
   });
 
   it("fails closed for production, public secrets, remote origins, weak secrets, and invalid IDs", () => {

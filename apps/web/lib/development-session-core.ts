@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { signDevelopmentPrincipal } from "@esbla/contracts/development-principal";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -41,6 +41,14 @@ export interface DevelopmentRequestInput {
   readonly idempotencyKey?: string;
   readonly method: string;
   readonly path: string;
+}
+
+export function deriveDevelopmentSessionSubjectScope(config: DevelopmentSessionConfig): string {
+  return createHmac("sha256", config.secret)
+    .update(config.tenantId)
+    .update("\0")
+    .update(config.principalId)
+    .digest("base64url");
 }
 
 export interface PreparedDevelopmentRequest {

@@ -85,9 +85,11 @@ try {
     }
 
     await updateOwnPresentationPreferences(applicationPool, context(), {
+      density: "compact",
       expectedVersion: 0,
       highContrast: true,
       palette: "dark",
+      reducedMotion: "reduce",
     });
     const initialLayout = await getOwnPresentationSurfaceLayout(
       applicationPool,
@@ -115,10 +117,47 @@ try {
     );
   } else {
     assert.deepEqual(await getOwnPresentationPreferences(applicationPool, context()), {
-      highContrast: true,
-      palette: "dark",
-      source: "user_override",
-      version: 1,
+      appearance: {
+        density: {
+          effectiveValue: "compact",
+          key: "appearance.density.v1",
+          locked: false,
+          lockReason: null,
+          source: "user_global",
+          tenantValue: null,
+          userValue: "compact",
+        },
+        highContrast: {
+          effectiveValue: true,
+          key: "appearance.high_contrast.v1",
+          locked: false,
+          lockReason: null,
+          source: "user_global",
+          tenantValue: null,
+          userValue: true,
+        },
+        palette: {
+          effectiveValue: "dark",
+          key: "appearance.palette.v1",
+          locked: false,
+          lockReason: null,
+          source: "user_global",
+          tenantValue: null,
+          userValue: "dark",
+        },
+        reducedMotion: {
+          effectiveValue: "reduce",
+          key: "appearance.reduced_motion.v1",
+          locked: false,
+          lockReason: null,
+          source: "user_global",
+          tenantValue: null,
+          userValue: "reduce",
+        },
+      },
+      canManageTenantDefaults: false,
+      tenantVersion: 0,
+      userVersion: 1,
     });
     const layout = await getOwnPresentationSurfaceLayout(
       applicationPool,

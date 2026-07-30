@@ -467,7 +467,7 @@ test("manager My Work widget renders as a responsive route-backed product", asyn
   }
 });
 
-test("Mission Control reuses the real Leave widget and persists independent appearance", async ({
+test("Mission Control reuses the real Leave widget and persists four independent appearance values", async ({
   browser,
 }, testInfo) => {
   const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
@@ -556,17 +556,49 @@ test("Mission Control reuses the real Leave widget and persists independent appe
     await expect(contextualLauncher).toBeFocused();
 
     await enableDarkHighContrast(employee);
+    const completeAppearance = await openAppearance(employee);
+    const compactResponse = employee.page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/presentation/preferences",
+    );
+    await completeAppearance.getByRole("button", { name: "Compact" }).click();
+    expect((await compactResponse).status()).toBe(200);
+    await expect(employee.page.locator("html")).toHaveAttribute("data-density", "compact");
+    const motionResponse = employee.page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/presentation/preferences",
+    );
+    await completeAppearance.getByRole("button", { name: "Reduce motion" }).click();
+    expect((await motionResponse).status()).toBe(200);
+    await expect(employee.page.locator("html")).toHaveAttribute("data-reduced-motion", "reduce");
     await employee.page.reload();
+    await expect(employee.page.locator("html")).toHaveAttribute("data-density", "compact");
     await expect(employee.page.locator("html")).toHaveAttribute("data-palette", "dark");
     await expect(employee.page.locator("html")).toHaveAttribute("data-high-contrast", "true");
+    await expect(employee.page.locator("html")).toHaveAttribute("data-reduced-motion", "reduce");
     await expect(employee.page.locator("html")).toHaveAttribute(
       "data-preference-status",
       "authoritative",
     );
+    const preferenceCacheScope = await employee.page
+      .locator("html")
+      .getAttribute("data-preference-cache-scope");
+    expect(preferenceCacheScope).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(
+      await employee.page.evaluate(() =>
+        JSON.parse(localStorage.getItem("esbla.presentation.cache.v1") ?? "null"),
+      ),
+    ).toMatchObject({
+      density: "compact",
+      highContrast: true,
+      palette: "dark",
+      reducedMotion: "reduce",
+      scope: preferenceCacheScope,
+    });
 
     const serverDocumentBeforeRestart = await (await fetch(employee.origin)).text();
+    expect(serverDocumentBeforeRestart).toContain('data-density="compact"');
     expect(serverDocumentBeforeRestart).toContain('data-high-contrast="true"');
     expect(serverDocumentBeforeRestart).toContain('data-palette="dark"');
+    expect(serverDocumentBeforeRestart).toContain('data-reduced-motion="reduce"');
     expect(serverDocumentBeforeRestart).toContain('data-preference-status="authoritative"');
     const ssrContext = await browser.newContext({
       javaScriptEnabled: false,
@@ -580,8 +612,10 @@ test("Mission Control reuses the real Leave widget and persists independent appe
         } else await route.continue();
       });
       await ssrPage.goto(employee.origin);
+      await expect(ssrPage.locator("html")).toHaveAttribute("data-density", "compact");
       await expect(ssrPage.locator("html")).toHaveAttribute("data-palette", "dark");
       await expect(ssrPage.locator("html")).toHaveAttribute("data-high-contrast", "true");
+      await expect(ssrPage.locator("html")).toHaveAttribute("data-reduced-motion", "reduce");
       await expect(ssrPage.locator("html")).toHaveAttribute(
         "data-preference-status",
         "authoritative",
@@ -616,12 +650,20 @@ test("Mission Control reuses the real Leave widget and persists independent appe
       });
       await storageFailureActor.page.goto(storageFailureActor.origin);
       await expect(storageFailureActor.page.locator("html")).toHaveAttribute(
+        "data-density",
+        "compact",
+      );
+      await expect(storageFailureActor.page.locator("html")).toHaveAttribute(
         "data-palette",
         "dark",
       );
       await expect(storageFailureActor.page.locator("html")).toHaveAttribute(
         "data-high-contrast",
         "true",
+      );
+      await expect(storageFailureActor.page.locator("html")).toHaveAttribute(
+        "data-reduced-motion",
+        "reduce",
       );
       expect(
         await storageFailureActor.page
@@ -655,8 +697,10 @@ test("Mission Control reuses the real Leave widget and persists independent appe
 
     await restartEmployeeApplication();
     await employee.page.goto(employee.origin);
+    await expect(employee.page.locator("html")).toHaveAttribute("data-density", "compact");
     await expect(employee.page.locator("html")).toHaveAttribute("data-palette", "dark");
     await expect(employee.page.locator("html")).toHaveAttribute("data-high-contrast", "true");
+    await expect(employee.page.locator("html")).toHaveAttribute("data-reduced-motion", "reduce");
     await expect(employee.page.locator("html")).toHaveAttribute(
       "data-preference-status",
       "authoritative",
@@ -1007,6 +1051,114 @@ test("Mission Control reuses the real Leave widget and persists independent appe
       ]).catch(() => undefined);
     }
     await closeActors(employee);
+  }
+});
+
+test("tenant appearance floors render locked while stale browser tabs fail closed", async ({
+  browser,
+}, testInfo) => {
+  const admin = await openActor(browser, fixture.adminOrigin, fixture.adminLabel);
+  const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
+  const staleEmployee = await openActor(
+    browser,
+    fixture.employeeOrigin,
+    "Browser Employee stale appearance tab",
+  );
+  let tenantDefaultsCreated = false;
+  try {
+    await admin.page.goto(admin.origin);
+    const tenantUpdate = await admin.page.evaluate(async () => {
+      const response = await fetch("/presentation/tenant-defaults", {
+        body: JSON.stringify({
+          density: "comfortable",
+          expectedVersion: 0,
+          highContrast: true,
+          idempotencyKey: crypto.randomUUID(),
+          lockDensity: true,
+          palette: "light",
+          reducedMotion: "reduce",
+          requireHighContrast: true,
+          requireReducedMotion: true,
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      return { body: await response.text(), status: response.status };
+    });
+    expect(tenantUpdate.status, tenantUpdate.body).toBe(200);
+    tenantDefaultsCreated = true;
+
+    await Promise.all([
+      employee.page.goto(employee.origin),
+      staleEmployee.page.goto(employee.origin),
+    ]);
+    for (const actor of [employee, staleEmployee]) {
+      await expect(actor.page.locator("html")).toHaveAttribute("data-density", "comfortable");
+      await expect(actor.page.locator("html")).toHaveAttribute("data-density-locked", "true");
+      await expect(actor.page.locator("html")).toHaveAttribute("data-high-contrast", "true");
+      await expect(actor.page.locator("html")).toHaveAttribute("data-high-contrast-locked", "true");
+      await expect(actor.page.locator("html")).toHaveAttribute("data-reduced-motion", "reduce");
+      await expect(actor.page.locator("html")).toHaveAttribute(
+        "data-reduced-motion-locked",
+        "true",
+      );
+    }
+    const employeePanel = await openAppearance(employee);
+    await expect(employeePanel.getByRole("button", { name: "Comfortable" })).toBeDisabled();
+    await expect(employeePanel.getByRole("button", { name: /High contrast/ })).toBeDisabled();
+    await expect(employeePanel.getByRole("button", { name: /Reduce motion/ })).toBeDisabled();
+    await expect(employeePanel.getByRole("button", { name: "Light" })).toBeEnabled();
+
+    const stalePanel = await openAppearance(staleEmployee);
+    const employeePalette =
+      (await employee.page.locator("html").getAttribute("data-palette")) === "dark"
+        ? "Light"
+        : "Dark";
+    const employeeSave = employee.page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/presentation/preferences",
+    );
+    await employeePanel.getByRole("button", { name: employeePalette }).click();
+    expect((await employeeSave).status()).toBe(200);
+    const staleSave = staleEmployee.page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/presentation/preferences",
+    );
+    await stalePanel.getByRole("button", { name: employeePalette }).click();
+    expect((await staleSave).status()).toBe(409);
+    await expect(stalePanel.getByRole("alert")).toContainText("Appearance could not be saved");
+    await expect
+      .poll(() => staleEmployee.diagnostics.console)
+      .toEqual(["Failed to load resource: the server responded with a status of 409 (Conflict)"]);
+    staleEmployee.diagnostics.console.length = 0;
+    await staleEmployee.page.reload();
+    await expect(staleEmployee.page.locator("html")).toHaveAttribute(
+      "data-palette",
+      employeePalette.toLowerCase(),
+    );
+
+    await employee.page.setViewportSize({ height: 844, width: 390 });
+    const lockedEvidencePath = testInfo.outputPath("appearance-tenant-floors-mobile.png");
+    await employee.page.screenshot({ fullPage: false, path: lockedEvidencePath });
+    await testInfo.attach("appearance-tenant-floors-mobile", {
+      contentType: "image/png",
+      path: lockedEvidencePath,
+    });
+  } finally {
+    if (tenantDefaultsCreated) {
+      await admin.page.goto(admin.origin);
+      const reset = await admin.page.evaluate(async () => {
+        const response = await fetch("/presentation/tenant-defaults/reset", {
+          body: JSON.stringify({
+            expectedVersion: 1,
+            idempotencyKey: crypto.randomUUID(),
+          }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        });
+        return { body: await response.text(), status: response.status };
+      });
+      expect(reset.status, reset.body).toBe(200);
+    }
+    await closeActors(admin, employee, staleEmployee);
   }
 });
 
