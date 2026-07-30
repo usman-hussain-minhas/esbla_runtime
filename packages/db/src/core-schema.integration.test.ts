@@ -1,4 +1,15 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Pool, PoolClient, QueryResult } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -250,6 +261,193 @@ afterAll(async () => {
 });
 
 describe("core PostgreSQL foundation", () => {
+  it("upgrades a prior two-key appearance layer without losing its version or provenance", async () => {
+    const migrationConnectionString = process.env.DATABASE_MIGRATION_URL;
+    if (!migrationConnectionString) throw new Error("Migration connection is required");
+    const databaseName =
+      `esbla_upgrade_${process.pid}_${randomUUID().replaceAll("-", "").slice(0, 12)}`.toLowerCase();
+    if (!/^[a-z0-9_]+$/.test(databaseName)) throw new Error("Unsafe upgrade database name");
+    const localConnection = migrationConnectionString.match(
+      /^(postgres(?:ql)?:\/\/)[^@/]+@\/[^?]+(\?.+)$/,
+    );
+    if (!localConnection) throw new Error("Unsupported migration-upgrade test connection");
+    const [, scheme, connectionOptions] = localConnection;
+    const adminPool = createDatabasePool(`${scheme}postgres@/postgres${connectionOptions}`, {
+      max: 1,
+    });
+    const legacyMigrationDirectory = mkdtempSync(join(tmpdir(), "esbla-legacy-migrations-"));
+    mkdirSync(join(legacyMigrationDirectory, "meta"));
+    const cleanupErrors: unknown[] = [];
+    let primaryError: unknown;
+    let upgradePool: Pool | undefined;
+    try {
+      await adminPool.query(`CREATE DATABASE "${databaseName}" OWNER esbla_migrator`);
+      upgradePool = createDatabasePool(
+        `${scheme}esbla_migrator@/${databaseName}${connectionOptions}`,
+        { max: 2 },
+      );
+      const legacyEntries = migrationJournal.entries.filter(
+        ({ tag }) => String(tag) !== "0029_wise_warbound",
+      );
+      for (const { tag } of legacyEntries) {
+        const name = `${String(tag)}.sql`;
+        copyFileSync(join(migrationDirectory, name), join(legacyMigrationDirectory, name));
+      }
+      writeFileSync(
+        join(legacyMigrationDirectory, "meta", "_journal.json"),
+        `${JSON.stringify({ ...migrationJournal, entries: legacyEntries }, null, 2)}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      );
+      await migrateDatabase(createDatabase(upgradePool), legacyMigrationDirectory);
+
+      const actor = "51000000-0000-4000-8000-000000000001";
+      const membership = "52000000-0000-4000-8000-000000000001";
+      const tenant = "50000000-0000-4000-8000-000000000001";
+      const updatedAt = new Date("2026-01-02T03:04:05.000Z");
+      const legacyClient = await upgradePool.connect();
+      try {
+        await legacyClient.query("BEGIN");
+        await legacyClient.query("SELECT set_config('app.tenant_id', $1, true)", [tenant]);
+        await legacyClient.query("SELECT set_config('app.actor_principal_id', $1, true)", [actor]);
+        await legacyClient.query("INSERT INTO tenants (tenant_id, name) VALUES ($1, 'Upgrade')", [
+          tenant,
+        ]);
+        await legacyClient.query(
+          "INSERT INTO principals (principal_id, display_name) VALUES ($1, 'Upgrade Actor')",
+          [actor],
+        );
+        await legacyClient.query(
+          `INSERT INTO memberships
+             (membership_id, tenant_id, principal_id, role_key, status)
+           VALUES ($1, $2, $3, 'employee', 'active')`,
+          [membership, tenant, actor],
+        );
+        await legacyClient.query(
+          `INSERT INTO presentation_setting_values
+             (tenant_id, subject_type, subject_id, setting_key, value, version,
+              updated_by_principal_id, updated_at)
+           VALUES
+             ($1, 'user_override', $2, 'appearance.palette.v1', '"dark"'::jsonb, 7, $2, $3),
+             ($1, 'user_override', $2, 'appearance.high_contrast.v1', 'true'::jsonb, 7, $2, $3)`,
+          [tenant, actor, updatedAt],
+        );
+        await legacyClient.query("COMMIT");
+      } catch (error) {
+        await legacyClient.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        legacyClient.release();
+      }
+
+      copyFileSync(
+        join(migrationDirectory, "0029_wise_warbound.sql"),
+        join(legacyMigrationDirectory, "0029_wise_warbound.sql"),
+      );
+      writeFileSync(
+        join(legacyMigrationDirectory, "meta", "_journal.json"),
+        `${JSON.stringify(migrationJournal, null, 2)}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      );
+      await migrateDatabase(createDatabase(upgradePool), legacyMigrationDirectory);
+
+      const readClient = await upgradePool.connect();
+      let rows: QueryResult<{
+        locked: boolean;
+        setting_key: string;
+        updated_at: Date;
+        updated_by_principal_id: string;
+        value: unknown;
+        version: number;
+      }>;
+      try {
+        await readClient.query("BEGIN");
+        await readClient.query("SELECT set_config('app.tenant_id', $1, true)", [tenant]);
+        await readClient.query("SELECT set_config('app.actor_principal_id', $1, true)", [actor]);
+        rows = await readClient.query(
+          `SELECT setting_key, value, locked, version, updated_by_principal_id, updated_at
+           FROM presentation_setting_values
+           WHERE tenant_id = $1 AND subject_type = 'user_override' AND subject_id = $2
+           ORDER BY setting_key`,
+          [tenant, actor],
+        );
+        await readClient.query("ROLLBACK");
+      } finally {
+        readClient.release();
+      }
+      expect(rows.rows).toEqual([
+        {
+          locked: false,
+          setting_key: "appearance.density.v1",
+          updated_at: updatedAt,
+          updated_by_principal_id: actor,
+          value: "comfortable",
+          version: 7,
+        },
+        {
+          locked: false,
+          setting_key: "appearance.high_contrast.v1",
+          updated_at: updatedAt,
+          updated_by_principal_id: actor,
+          value: true,
+          version: 7,
+        },
+        {
+          locked: false,
+          setting_key: "appearance.palette.v1",
+          updated_at: updatedAt,
+          updated_by_principal_id: actor,
+          value: "dark",
+          version: 7,
+        },
+        {
+          locked: false,
+          setting_key: "appearance.reduced_motion.v1",
+          updated_at: updatedAt,
+          updated_by_principal_id: actor,
+          value: "auto",
+          version: 7,
+        },
+      ]);
+      const applied = await upgradePool.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations",
+      );
+      expect(applied.rows).toEqual([{ count: String(migrationJournal.entries.length) }]);
+    } catch (error) {
+      primaryError = error;
+    } finally {
+      try {
+        await upgradePool?.end();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
+        await adminPool.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
+        await adminPool.end();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
+        rmSync(legacyMigrationDirectory, { force: true, recursive: true });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (primaryError !== undefined && cleanupErrors.length > 0) {
+      throw new AggregateError(
+        [primaryError, ...cleanupErrors],
+        "Migration upgrade proof and cleanup failed",
+      );
+    }
+    if (primaryError !== undefined) throw primaryError;
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(cleanupErrors, "Migration upgrade proof cleanup failed");
+    }
+  });
+
   it("replays every migration once and forces RLS on every tenant-owned table", async () => {
     const migrations = await migrationPool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations`,
@@ -348,6 +546,7 @@ describe("core PostgreSQL foundation", () => {
        ORDER BY indexname`,
       [
         [
+          "presentation_setting_values_tenant_subject_idx",
           "presentation_surface_drafts_tenant_updated_idx",
           "presentation_surface_overlays_tenant_principal_idx",
           "presentation_surface_versions_tenant_surface_published_idx",
@@ -355,11 +554,16 @@ describe("core PostgreSQL foundation", () => {
       ],
     );
     expect(indexes.rows.map(({ name }) => name)).toEqual([
+      "presentation_setting_values_tenant_subject_idx",
       "presentation_surface_drafts_tenant_updated_idx",
       "presentation_surface_overlays_tenant_principal_idx",
       "presentation_surface_versions_tenant_surface_published_idx",
     ]);
     expect(indexes.rows.every(({ definition }) => definition.includes("USING btree"))).toBe(true);
+    expect(
+      indexes.rows.find(({ name }) => name === "presentation_setting_values_tenant_subject_idx")
+        ?.definition,
+    ).toContain("(tenant_id, subject_type, subject_id)");
 
     const policies = await migrationPool.query<{
       command: string;
@@ -373,6 +577,7 @@ describe("core PostgreSQL foundation", () => {
        ORDER BY tablename, policyname`,
       [
         [
+          "presentation_setting_values",
           "presentation_shortcut_user_patches",
           "presentation_surface_drafts",
           "presentation_surface_heads",
@@ -384,6 +589,9 @@ describe("core PostgreSQL foundation", () => {
     expect(
       policies.rows.map(({ command, name, table_name }) => `${table_name}|${name}|${command}`),
     ).toEqual([
+      "presentation_setting_values|presentation_setting_values_read|SELECT",
+      "presentation_setting_values|presentation_setting_values_write_own|ALL",
+      "presentation_setting_values|presentation_setting_values_write_tenant|ALL",
       "presentation_shortcut_user_patches|presentation_shortcut_user_patches_read_own|SELECT",
       "presentation_shortcut_user_patches|presentation_shortcut_user_patches_write_own|ALL",
       "presentation_surface_drafts|presentation_surface_drafts_publish|DELETE",
@@ -401,6 +609,11 @@ describe("core PostgreSQL foundation", () => {
 
     const privileges = await migrationPool.query<{ actual: boolean[] }>(
       `SELECT ARRAY[
+         has_table_privilege('esbla_app', 'presentation_setting_values', 'SELECT'),
+         has_table_privilege('esbla_app', 'presentation_setting_values', 'INSERT'),
+         has_table_privilege('esbla_app', 'presentation_setting_values', 'UPDATE'),
+         has_table_privilege('esbla_app', 'presentation_setting_values', 'DELETE'),
+         NOT has_table_privilege('esbla_app', 'presentation_setting_values', 'TRUNCATE'),
          has_table_privilege('esbla_app', 'presentation_shortcut_user_patches', 'SELECT'),
          has_table_privilege('esbla_app', 'presentation_shortcut_user_patches', 'INSERT'),
          has_table_privilege('esbla_app', 'presentation_shortcut_user_patches', 'UPDATE'),
@@ -432,7 +645,33 @@ describe("core PostgreSQL foundation", () => {
          )
        ] AS actual`,
     );
-    expect(privileges.rows).toEqual([{ actual: Array.from({ length: 21 }, () => true) }]);
+    expect(privileges.rows).toEqual([{ actual: Array.from({ length: 26 }, () => true) }]);
+
+    const preferenceConstraints = await migrationPool.query<{ definition: string; name: string }>(
+      `SELECT constraint_name AS name, check_clause AS definition
+       FROM information_schema.check_constraints
+       WHERE constraint_schema = 'public'
+         AND constraint_name = ANY($1::text[])
+       ORDER BY constraint_name`,
+      [
+        [
+          "presentation_setting_values_key_valid",
+          "presentation_setting_values_lock_valid",
+          "presentation_setting_values_value_valid",
+        ],
+      ],
+    );
+    expect(preferenceConstraints.rows.map(({ name }) => name)).toEqual([
+      "presentation_setting_values_key_valid",
+      "presentation_setting_values_lock_valid",
+      "presentation_setting_values_value_valid",
+    ]);
+    expect(
+      preferenceConstraints.rows.find(({ name }) => name.endsWith("key_valid"))?.definition,
+    ).toContain("appearance.reduced_motion.v1");
+    expect(
+      preferenceConstraints.rows.find(({ name }) => name.endsWith("lock_valid"))?.definition,
+    ).toContain("tenant_default");
 
     const functionAcl = await migrationPool.query<{
       config: string;

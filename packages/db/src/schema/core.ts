@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   check,
   foreignKey,
   index,
@@ -145,6 +146,7 @@ export const presentationSettingValues = pgTable(
     subjectId: uuid("subject_id").notNull(),
     settingKey: text("setting_key").notNull(),
     value: jsonb("value").notNull(),
+    locked: boolean("locked").default(false).notNull(),
     version: integer("version").default(1).notNull(),
     updatedByPrincipalId: uuid("updated_by_principal_id").notNull(),
     updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
@@ -174,7 +176,41 @@ export const presentationSettingValues = pgTable(
     ),
     check(
       "presentation_setting_values_key_valid",
-      sql`${table.settingKey} IN ('appearance.palette.v1', 'appearance.high_contrast.v1')`,
+      sql`${table.settingKey} IN (
+        'appearance.palette.v1',
+        'appearance.high_contrast.v1',
+        'appearance.reduced_motion.v1',
+        'appearance.density.v1'
+      )`,
+    ),
+    check(
+      "presentation_setting_values_value_valid",
+      sql`(
+        (${table.settingKey} = 'appearance.palette.v1'
+          AND ${table.value} IN ('"light"'::jsonb, '"dark"'::jsonb))
+        OR (${table.settingKey} = 'appearance.high_contrast.v1'
+          AND ${table.value} IN ('true'::jsonb, 'false'::jsonb))
+        OR (${table.settingKey} = 'appearance.reduced_motion.v1'
+          AND ${table.value} IN ('"auto"'::jsonb, '"reduce"'::jsonb))
+        OR (${table.settingKey} = 'appearance.density.v1'
+          AND ${table.value} IN ('"comfortable"'::jsonb, '"compact"'::jsonb))
+      )`,
+    ),
+    check(
+      "presentation_setting_values_lock_valid",
+      sql`(
+        ${table.locked} = false
+        OR (
+          ${table.subjectType} = 'tenant_default'
+          AND (
+            ${table.settingKey} = 'appearance.density.v1'
+            OR (${table.settingKey} = 'appearance.high_contrast.v1'
+              AND ${table.value} = 'true'::jsonb)
+            OR (${table.settingKey} = 'appearance.reduced_motion.v1'
+              AND ${table.value} = '"reduce"'::jsonb)
+          )
+        )
+      )`,
     ),
     check("presentation_setting_values_version_positive", sql`${table.version} > 0`),
   ],

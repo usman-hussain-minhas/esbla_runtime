@@ -534,7 +534,8 @@ export async function seedHrLeaveFixture() {
                 ($1, $5, 'hr.expense.activate_service'),
                 ($1, $5, 'hr.expense.configure_service'),
                 ($1, $5, 'hr.expense.deactivate_service'),
-                ($1, $5, 'hr.expense.view_service_control')`,
+                ($1, $5, 'hr.expense.view_service_control'),
+                ($1, $5, 'platform.presentation.tenant_defaults.write')`,
         [
           fixture.tenantId,
           fixture.employeePrincipalId,

@@ -84,9 +84,11 @@ import {
   parseHrWorkforceProfilePath,
   parsePresentationShortcutDiscoveryQuery,
   parsePresentationSurfacePath,
+  parseResetPresentationPreferencesBody,
   parseUpdatePresentationPreferencesBody,
   parseUpdatePresentationShortcutBody,
   parseUpdatePresentationSurfaceOverlayBody,
+  parseUpdateTenantPresentationDefaultsBody,
   presentationNavigationDiscoverySchema,
   presentationPreferencesSchema,
   presentationServiceGroupDiscoverySchema,
@@ -95,15 +97,19 @@ import {
   presentationSurfaceLayoutSchema,
   presentationSurfacePathSchema,
   problemDetailsSchema,
+  type ResetPresentationPreferencesBody,
+  resetPresentationPreferencesBodySchema,
   type UpdatePresentationPreferencesBody,
   type UpdatePresentationShortcutBody,
   type UpdatePresentationSurfaceOverlayBody,
+  type UpdateTenantPresentationDefaultsBody,
   updatePresentationPreferencesBodySchema,
   updatePresentationPreferencesResponseSchema,
   updatePresentationShortcutBodySchema,
   updatePresentationShortcutResponseSchema,
   updatePresentationSurfaceOverlayBodySchema,
   updatePresentationSurfaceOverlayResponseSchema,
+  updateTenantPresentationDefaultsBodySchema,
   type WorkspaceCompleteTaskBody,
   type WorkspaceCreateTaskBody,
   type WorkspaceTaskListQuery,
@@ -159,9 +165,12 @@ import {
   getOwnPresentationShortcuts,
   getOwnPresentationSurfaceLayout,
   type OperationContext,
+  resetOwnPresentationPreferences,
+  resetTenantPresentationDefaults,
   updateOwnPresentationPreferences,
   updateOwnPresentationShortcut,
   updateOwnPresentationSurfaceOverlay,
+  updateTenantPresentationDefaults,
 } from "@esbla/platform-core";
 import {
   completeWorkspaceTask,
@@ -352,8 +361,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     presentationServiceGroupDiscoverySchema,
     presentationSurfaceLayoutSchema,
     presentationSurfacePathSchema,
+    resetPresentationPreferencesBodySchema,
     updatePresentationPreferencesBodySchema,
     updatePresentationPreferencesResponseSchema,
+    updateTenantPresentationDefaultsBodySchema,
     updatePresentationShortcutBodySchema,
     updatePresentationShortcutResponseSchema,
     updatePresentationSurfaceOverlayBodySchema,
@@ -523,6 +534,102 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
           correlationId: idempotencyKey(request).toLowerCase(),
         },
         assertStrictRequest(parseUpdatePresentationPreferencesBody, request.body),
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return result;
+    },
+  );
+
+  server.post<{ Body: ResetPresentationPreferencesBody }>(
+    "/v1/platform/presentation/preferences/reset",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictMutationIdempotencyKey(request);
+          assertStrictRequest(parseResetPresentationPreferencesBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "ResetPresentationPreferencesBodyV1#" },
+        response: {
+          200: { $ref: "UpdatePresentationPreferencesResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await resetOwnPresentationPreferences(
+        options.pool,
+        {
+          ...operationContext(request),
+          correlationId: idempotencyKey(request).toLowerCase(),
+        },
+        assertStrictRequest(parseResetPresentationPreferencesBody, request.body),
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return result;
+    },
+  );
+
+  server.post<{ Body: UpdateTenantPresentationDefaultsBody }>(
+    "/v1/platform/presentation/tenant-defaults",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictMutationIdempotencyKey(request);
+          assertStrictRequest(parseUpdateTenantPresentationDefaultsBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "UpdateTenantPresentationDefaultsBodyV1#" },
+        response: {
+          200: { $ref: "UpdatePresentationPreferencesResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await updateTenantPresentationDefaults(
+        options.pool,
+        {
+          ...operationContext(request),
+          correlationId: idempotencyKey(request).toLowerCase(),
+        },
+        assertStrictRequest(parseUpdateTenantPresentationDefaultsBody, request.body),
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return result;
+    },
+  );
+
+  server.post<{ Body: ResetPresentationPreferencesBody }>(
+    "/v1/platform/presentation/tenant-defaults/reset",
+    {
+      preValidation: [
+        authenticate,
+        async (request) => {
+          assertStrictMutationIdempotencyKey(request);
+          assertStrictRequest(parseResetPresentationPreferencesBody, request.body);
+        },
+      ],
+      schema: {
+        body: { $ref: "ResetPresentationPreferencesBodyV1#" },
+        response: {
+          200: { $ref: "UpdatePresentationPreferencesResponseV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request, reply) => {
+      const result = await resetTenantPresentationDefaults(
+        options.pool,
+        {
+          ...operationContext(request),
+          correlationId: idempotencyKey(request).toLowerCase(),
+        },
+        assertStrictRequest(parseResetPresentationPreferencesBody, request.body),
       );
       reply.header("idempotent-replayed", String(result.replayed));
       return result;

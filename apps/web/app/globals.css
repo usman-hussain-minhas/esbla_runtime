@@ -92,6 +92,16 @@
   --text-soft: color-mix(in oklab, var(--text-main), transparent 16%);
 }
 
+:root[data-density="compact"] {
+  --zen-widget-gap: 8px;
+  --zen-widget-row: 88px;
+}
+
+:root[data-reduced-motion="reduce"] {
+  --motion-fast: 1ms;
+  --motion-standard: 1ms;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -2335,4 +2345,12 @@ textarea:focus-visible,
     grid-column: var(--widget-phone-column) / span var(--widget-phone-column-span);
     grid-row: var(--widget-phone-row) / span var(--widget-phone-row-span);
   }
+}
+
+:root[data-reduced-motion="reduce"] *,
+:root[data-reduced-motion="reduce"] *::before,
+:root[data-reduced-motion="reduce"] *::after {
+  animation-duration: 1ms;
+  animation-iteration-count: 1;
+  scroll-behavior: auto;
 }

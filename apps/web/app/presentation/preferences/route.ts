@@ -33,9 +33,11 @@ export async function POST(request: Request) {
     const input = parsePresentationPreferencesUpdate(await request.json());
     const result = await persistOwnPresentationPreferences(
       {
+        density: input.density,
         expectedVersion: input.expectedVersion,
         highContrast: input.highContrast,
         palette: input.palette,
+        reducedMotion: input.reducedMotion,
       },
       input.idempotencyKey,
     );

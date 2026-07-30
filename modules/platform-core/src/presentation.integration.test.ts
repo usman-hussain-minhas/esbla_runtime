@@ -11,11 +11,14 @@ import {
   getOwnPresentationSurfaceLayout,
   getTenantPresentationSurfaceBaseWorkspace,
   publishTenantPresentationSurfaceDraft,
+  resetOwnPresentationPreferences,
   resetOwnPresentationSurfaceOverlay,
+  resetTenantPresentationDefaults,
   rollbackTenantPresentationSurfaceBase,
   updateOwnPresentationPreferences,
   updateOwnPresentationShortcut,
   updateOwnPresentationSurfaceOverlay,
+  updateTenantPresentationDefaults,
   upsertTenantPresentationSurfaceDraft,
   validateTenantPresentationSurfaceDraft,
 } from "./presentation.js";
@@ -119,6 +122,42 @@ async function shortcutProofSnapshot(tenantId: string, actorPrincipalId: string)
   );
   const row = rows[0];
   if (!row) throw new Error("Shortcut proof snapshot is unavailable");
+  return row;
+}
+
+async function preferenceProofSnapshot(tenantId: string) {
+  const result = await migrationPool.query<{
+    evidence_rows: string;
+    outbox_rows: string;
+    setting_rows: string;
+  }>(
+    `SELECT
+       (
+         SELECT coalesce(jsonb_agg(to_jsonb(setting) ORDER BY subject_type, subject_id, setting_key),
+                         '[]'::jsonb)::text
+         FROM presentation_setting_values setting
+         WHERE tenant_id = $1
+       ) AS setting_rows,
+       (
+         SELECT coalesce(jsonb_agg(to_jsonb(evidence) ORDER BY evidence_event_id),
+                         '[]'::jsonb)::text
+         FROM evidence_events evidence
+         WHERE tenant_id = $1
+           AND subject_type IN (
+             'platform_presentation_preferences',
+             'platform_presentation_tenant_defaults'
+           )
+       ) AS evidence_rows,
+       (
+         SELECT coalesce(jsonb_agg(to_jsonb(outbox) ORDER BY event_id), '[]'::jsonb)::text
+         FROM outbox_events outbox
+         WHERE tenant_id = $1
+           AND event_type LIKE 'platform.presentation.%preferences%'
+       ) AS outbox_rows`,
+    [tenantId],
+  );
+  const row = result.rows[0];
+  if (!row) throw new Error("Preference proof snapshot is unavailable");
   return row;
 }
 
@@ -621,34 +660,79 @@ afterAll(async () => {
 });
 
 describe("presentation preference persistence", () => {
-  it("persists independent palette and contrast values through a pool restart", async () => {
+  it("persists all four independent appearance values through a pool restart", async () => {
     const initial = await getOwnPresentationPreferences(pool, context(ids.tenantA, ids.actorA));
     expect(initial).toEqual({
-      highContrast: false,
-      palette: "light",
-      source: "code_default",
-      version: 0,
+      appearance: {
+        density: {
+          effectiveValue: "comfortable",
+          key: "appearance.density.v1",
+          locked: false,
+          lockReason: null,
+          source: "product_default",
+          tenantValue: null,
+          userValue: null,
+        },
+        highContrast: {
+          effectiveValue: false,
+          key: "appearance.high_contrast.v1",
+          locked: false,
+          lockReason: null,
+          source: "product_default",
+          tenantValue: null,
+          userValue: null,
+        },
+        palette: {
+          effectiveValue: "light",
+          key: "appearance.palette.v1",
+          locked: false,
+          lockReason: null,
+          source: "product_default",
+          tenantValue: null,
+          userValue: null,
+        },
+        reducedMotion: {
+          effectiveValue: "auto",
+          key: "appearance.reduced_motion.v1",
+          locked: false,
+          lockReason: null,
+          source: "product_default",
+          tenantValue: null,
+          userValue: null,
+        },
+      },
+      canManageTenantDefaults: false,
+      tenantVersion: 0,
+      userVersion: 0,
     });
 
     const mutationContext = context(ids.tenantA, ids.actorA);
     const updated = await updateOwnPresentationPreferences(pool, mutationContext, {
+      density: "compact",
       expectedVersion: 0,
-      highContrast: true,
+      highContrast: false,
       palette: "dark",
+      reducedMotion: "reduce",
     });
     expect(updated).toMatchObject({
       billingState: "non_billable",
-      highContrast: true,
-      palette: "dark",
+      appearance: {
+        density: { effectiveValue: "compact", source: "user_global" },
+        highContrast: { effectiveValue: false, source: "user_global" },
+        palette: { effectiveValue: "dark", source: "user_global" },
+        reducedMotion: { effectiveValue: "reduce", source: "user_global" },
+      },
       replayed: false,
-      source: "user_override",
-      version: 1,
+      tenantVersion: 0,
+      userVersion: 1,
     });
     expect(
       await updateOwnPresentationPreferences(pool, mutationContext, {
+        density: "compact",
         expectedVersion: 0,
-        highContrast: true,
+        highContrast: false,
         palette: "dark",
+        reducedMotion: "reduce",
       }),
     ).toEqual({ ...updated, replayed: true });
 
@@ -657,16 +741,43 @@ describe("presentation preference persistence", () => {
       await stored.query("BEGIN");
       await stored.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenantA]);
       await stored.query("SELECT set_config('app.actor_principal_id', $1, true)", [ids.actorA]);
-      const rows = await stored.query<{ setting_key: string; value: unknown; version: number }>(
-        `SELECT setting_key, value, version
+      const rows = await stored.query<{
+        locked: boolean;
+        setting_key: string;
+        value: unknown;
+        version: number;
+      }>(
+        `SELECT setting_key, value, locked, version
          FROM presentation_setting_values
          WHERE tenant_id = $1 AND subject_type = 'user_override' AND subject_id = $2
          ORDER BY setting_key`,
         [ids.tenantA, ids.actorA],
       );
       expect(rows.rows).toEqual([
-        { setting_key: "appearance.high_contrast.v1", value: true, version: 1 },
-        { setting_key: "appearance.palette.v1", value: "dark", version: 1 },
+        {
+          locked: false,
+          setting_key: "appearance.density.v1",
+          value: "compact",
+          version: 1,
+        },
+        {
+          locked: false,
+          setting_key: "appearance.high_contrast.v1",
+          value: false,
+          version: 1,
+        },
+        {
+          locked: false,
+          setting_key: "appearance.palette.v1",
+          value: "dark",
+          version: 1,
+        },
+        {
+          locked: false,
+          setting_key: "appearance.reduced_motion.v1",
+          value: "reduce",
+          version: 1,
+        },
       ]);
       await stored.query("ROLLBACK");
     } finally {
@@ -675,12 +786,286 @@ describe("presentation preference persistence", () => {
 
     await pool.end();
     pool = createDatabasePool(process.env.DATABASE_URL ?? "", { max: 4 });
-    expect(await getOwnPresentationPreferences(pool, context(ids.tenantA, ids.actorA))).toEqual({
-      highContrast: true,
-      palette: "dark",
-      source: "user_override",
-      version: 1,
+    expect(
+      await getOwnPresentationPreferences(pool, context(ids.tenantA, ids.actorA)),
+    ).toMatchObject({
+      appearance: {
+        density: { effectiveValue: "compact", source: "user_global" },
+        highContrast: { effectiveValue: false, source: "user_global" },
+        palette: { effectiveValue: "dark", source: "user_global" },
+        reducedMotion: { effectiveValue: "reduce", source: "user_global" },
+      },
+      canManageTenantDefaults: false,
+      tenantVersion: 0,
+      userVersion: 1,
     });
+  });
+
+  it("enforces current tenant capability, accessibility floors, CAS, reset and zero outbox", async () => {
+    await setPresentationCapability(
+      ids.tenantA,
+      ids.actorAdminA,
+      "platform.presentation.tenant_defaults.write",
+      true,
+    );
+    const tenantContext = context(ids.tenantA, ids.actorAdminA);
+    const tenantDefaults = await updateTenantPresentationDefaults(pool, tenantContext, {
+      density: "comfortable",
+      expectedVersion: 0,
+      highContrast: true,
+      lockDensity: true,
+      palette: "light",
+      reducedMotion: "reduce",
+      requireHighContrast: true,
+      requireReducedMotion: true,
+    });
+    expect(tenantDefaults).toMatchObject({
+      billingState: "non_billable",
+      canManageTenantDefaults: true,
+      replayed: false,
+      tenantVersion: 1,
+      userVersion: 0,
+    });
+    expect(
+      await updateTenantPresentationDefaults(pool, tenantContext, {
+        density: "comfortable",
+        expectedVersion: 0,
+        highContrast: true,
+        lockDensity: true,
+        palette: "light",
+        reducedMotion: "reduce",
+        requireHighContrast: true,
+        requireReducedMotion: true,
+      }),
+    ).toEqual({ ...tenantDefaults, replayed: true });
+
+    const employee = await getOwnPresentationPreferences(pool, context(ids.tenantA, ids.actorA));
+    expect(employee).toMatchObject({
+      appearance: {
+        density: {
+          effectiveValue: "comfortable",
+          locked: true,
+          lockReason: "tenant_density_lock",
+          source: "tenant_global",
+          tenantValue: "comfortable",
+          userValue: "compact",
+        },
+        highContrast: {
+          effectiveValue: true,
+          locked: true,
+          lockReason: "accessibility_high_contrast_floor",
+          source: "tenant_global",
+          tenantValue: true,
+          userValue: false,
+        },
+        palette: {
+          effectiveValue: "dark",
+          locked: false,
+          source: "user_global",
+          tenantValue: "light",
+          userValue: "dark",
+        },
+        reducedMotion: {
+          effectiveValue: "reduce",
+          locked: true,
+          lockReason: "motion_reduction_floor",
+          source: "tenant_global",
+          tenantValue: "reduce",
+          userValue: "reduce",
+        },
+      },
+      canManageTenantDefaults: false,
+      tenantVersion: 1,
+      userVersion: 1,
+    });
+
+    const hiddenOverride = await updateOwnPresentationPreferences(
+      pool,
+      context(ids.tenantA, ids.actorA),
+      {
+        density: "compact",
+        expectedVersion: 1,
+        highContrast: false,
+        palette: "dark",
+        reducedMotion: "auto",
+      },
+    );
+    expect(hiddenOverride).toMatchObject({
+      appearance: {
+        density: { effectiveValue: "comfortable", userValue: "compact" },
+        highContrast: { effectiveValue: true, userValue: false },
+        palette: { effectiveValue: "dark", userValue: "dark" },
+        reducedMotion: { effectiveValue: "reduce", userValue: "auto" },
+      },
+      tenantVersion: 1,
+      userVersion: 2,
+    });
+
+    const beforeDenied = await preferenceProofSnapshot(ids.tenantA);
+    await setPresentationCapability(
+      ids.tenantA,
+      ids.actorAdminA,
+      "platform.presentation.tenant_defaults.write",
+      false,
+    );
+    await expect(
+      updateTenantPresentationDefaults(pool, context(ids.tenantA, ids.actorAdminA), {
+        density: "compact",
+        expectedVersion: 1,
+        highContrast: false,
+        lockDensity: false,
+        palette: "dark",
+        reducedMotion: "auto",
+        requireHighContrast: false,
+        requireReducedMotion: false,
+      }),
+    ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
+    expect(await preferenceProofSnapshot(ids.tenantA)).toEqual(beforeDenied);
+    await expect(
+      updateTenantPresentationDefaults(pool, context(ids.tenantB, ids.actorAdminA), {
+        density: "compact",
+        expectedVersion: 1,
+        highContrast: false,
+        lockDensity: false,
+        palette: "dark",
+        reducedMotion: "auto",
+        requireHighContrast: false,
+        requireReducedMotion: false,
+      }),
+    ).rejects.toMatchObject({
+      code: "ACTOR_NOT_ACTIVE_MEMBER",
+    } satisfies Partial<PlatformError>);
+
+    await setPresentationCapability(
+      ids.tenantA,
+      ids.actorAdminA,
+      "platform.presentation.tenant_defaults.write",
+      true,
+    );
+    const concurrent = await Promise.allSettled([
+      updateTenantPresentationDefaults(pool, context(ids.tenantA, ids.actorAdminA), {
+        density: "compact",
+        expectedVersion: 1,
+        highContrast: false,
+        lockDensity: false,
+        palette: "dark",
+        reducedMotion: "auto",
+        requireHighContrast: false,
+        requireReducedMotion: false,
+      }),
+      updateTenantPresentationDefaults(pool, context(ids.tenantA, ids.actorAdminA), {
+        density: "comfortable",
+        expectedVersion: 1,
+        highContrast: true,
+        lockDensity: false,
+        palette: "light",
+        reducedMotion: "reduce",
+        requireHighContrast: false,
+        requireReducedMotion: false,
+      }),
+    ]);
+    expect(concurrent.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    expect(concurrent.filter(({ status }) => status === "rejected")).toHaveLength(1);
+    expect(concurrent.find(({ status }) => status === "rejected")).toMatchObject({
+      reason: { code: "IDEMPOTENCY_CONFLICT" },
+      status: "rejected",
+    });
+
+    const tenantResetContext = context(ids.tenantA, ids.actorAdminA);
+    const tenantReset = await resetTenantPresentationDefaults(pool, tenantResetContext, {
+      expectedVersion: 2,
+    });
+    expect(tenantReset).toMatchObject({
+      billingState: "non_billable",
+      canManageTenantDefaults: true,
+      replayed: false,
+      tenantVersion: 0,
+      userVersion: 0,
+    });
+    expect(
+      await resetTenantPresentationDefaults(pool, tenantResetContext, {
+        expectedVersion: 2,
+      }),
+    ).toEqual({ ...tenantReset, replayed: true });
+
+    const ownResetContext = context(ids.tenantA, ids.actorA);
+    const ownReset = await resetOwnPresentationPreferences(pool, ownResetContext, {
+      expectedVersion: 2,
+    });
+    expect(ownReset).toMatchObject({
+      appearance: {
+        density: { effectiveValue: "comfortable", source: "product_default" },
+        highContrast: { effectiveValue: false, source: "product_default" },
+        palette: { effectiveValue: "light", source: "product_default" },
+        reducedMotion: { effectiveValue: "auto", source: "product_default" },
+      },
+      canManageTenantDefaults: false,
+      replayed: false,
+      tenantVersion: 0,
+      userVersion: 0,
+    });
+    expect(
+      await resetOwnPresentationPreferences(pool, ownResetContext, {
+        expectedVersion: 2,
+      }),
+    ).toEqual({ ...ownReset, replayed: true });
+    expect((await preferenceProofSnapshot(ids.tenantA)).outbox_rows).toBe("[]");
+  });
+
+  it("lets any current capability holder succeed independent of role or prior writer", async () => {
+    await setPresentationCapability(
+      ids.tenantA,
+      ids.actorA,
+      "platform.presentation.tenant_defaults.write",
+      true,
+    );
+    const firstWriter = await updateTenantPresentationDefaults(
+      pool,
+      context(ids.tenantA, ids.actorA),
+      {
+        density: "compact",
+        expectedVersion: 0,
+        highContrast: false,
+        lockDensity: false,
+        palette: "dark",
+        reducedMotion: "auto",
+        requireHighContrast: false,
+        requireReducedMotion: false,
+      },
+    );
+    expect(firstWriter).toMatchObject({
+      canManageTenantDefaults: true,
+      tenantVersion: 1,
+    });
+
+    const secondWriter = await updateTenantPresentationDefaults(
+      pool,
+      context(ids.tenantA, ids.actorAdminA),
+      {
+        density: "comfortable",
+        expectedVersion: 1,
+        highContrast: true,
+        lockDensity: false,
+        palette: "light",
+        reducedMotion: "reduce",
+        requireHighContrast: false,
+        requireReducedMotion: false,
+      },
+    );
+    expect(secondWriter).toMatchObject({
+      canManageTenantDefaults: true,
+      tenantVersion: 2,
+    });
+
+    await resetTenantPresentationDefaults(pool, context(ids.tenantA, ids.actorAdminA), {
+      expectedVersion: 2,
+    });
+    await setPresentationCapability(
+      ids.tenantA,
+      ids.actorA,
+      "platform.presentation.tenant_defaults.write",
+      false,
+    );
   });
 
   it("materializes distinct bases and persists an own overlay through a pool restart", async () => {
@@ -1991,9 +2376,11 @@ describe("presentation preference persistence", () => {
 
     await expect(
       updateOwnPresentationPreferences(pool, context(ids.tenantA, ids.actorA), {
-        expectedVersion: 0,
+        density: "comfortable",
+        expectedVersion: 999,
         highContrast: false,
         palette: "light",
+        reducedMotion: "auto",
       }),
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" } satisfies Partial<PlatformError>);
 

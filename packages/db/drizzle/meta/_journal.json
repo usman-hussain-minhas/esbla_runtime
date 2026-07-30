@@ -204,6 +204,13 @@
       "when": 1785286950969,
       "tag": "0028_mysterious_penance",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1785390674942,
+      "tag": "0029_wise_warbound",
+      "breakpoints": true
     }
   ]
 }

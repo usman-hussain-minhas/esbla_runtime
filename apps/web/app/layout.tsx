@@ -2,7 +2,11 @@ import type { PresentationPreferences } from "@esbla/contracts";
 import type { Metadata } from "next";
 import Script from "next/script";
 import type { ReactNode } from "react";
-import { loadOwnPresentationPreferences } from "../lib/presentation-preferences";
+import {
+  loadOwnPresentationPreferences,
+  loadPresentationPreferenceCacheScope,
+} from "../lib/presentation-preferences";
+import { buildPresentationThemeInitializer } from "../lib/presentation-theme-cache-core";
 import { ESBLA_THEME_CACHE_KEY } from "./theme-contract";
 import "./globals.css";
 
@@ -11,70 +15,102 @@ export const metadata: Metadata = {
   title: "Esbla",
 };
 
-function themeInitializer(input: {
-  readonly highContrast: boolean;
-  readonly palette: "dark" | "light";
-  readonly serverAvailable: boolean;
-  readonly version: number;
-}) {
-  return `(() => {
-  const serverAvailable = ${JSON.stringify(input.serverAvailable)};
-  let palette = ${JSON.stringify(input.palette)};
-  let highContrast = ${JSON.stringify(input.highContrast)};
-  let version = ${JSON.stringify(input.version)};
-  if (!serverAvailable) {
-    try {
-      const cached = JSON.parse(localStorage.getItem(${JSON.stringify(ESBLA_THEME_CACHE_KEY)}) || "null");
-      if (cached && (cached.palette === "light" || cached.palette === "dark")
-          && typeof cached.highContrast === "boolean"
-          && Number.isSafeInteger(cached.version) && cached.version >= 0) {
-        ({ palette, highContrast, version } = cached);
-      }
-    } catch {}
-  }
-  document.documentElement.dataset.palette = palette;
-  document.documentElement.dataset.highContrast = String(highContrast);
-  document.documentElement.dataset.preferenceVersion = String(version);
-  document.documentElement.style.colorScheme = palette;
-  if (serverAvailable) {
-    try {
-      localStorage.setItem(${JSON.stringify(ESBLA_THEME_CACHE_KEY)}, JSON.stringify({
-        highContrast, palette, version
-      }));
-    } catch {}
-  }
-})();`;
-}
-
 export default async function RootLayout({
   children,
   modal,
 }: Readonly<{ children: ReactNode; modal?: ReactNode }>) {
   let preferences: PresentationPreferences = {
-    highContrast: false,
-    palette: "light" as const,
-    source: "code_default" as const,
-    version: 0,
+    appearance: {
+      density: {
+        effectiveValue: "comfortable",
+        key: "appearance.density.v1",
+        locked: false,
+        lockReason: null,
+        source: "product_default",
+        tenantValue: null,
+        userValue: null,
+      },
+      highContrast: {
+        effectiveValue: false,
+        key: "appearance.high_contrast.v1",
+        locked: false,
+        lockReason: null,
+        source: "product_default",
+        tenantValue: null,
+        userValue: null,
+      },
+      palette: {
+        effectiveValue: "light",
+        key: "appearance.palette.v1",
+        locked: false,
+        lockReason: null,
+        source: "product_default",
+        tenantValue: null,
+        userValue: null,
+      },
+      reducedMotion: {
+        effectiveValue: "auto",
+        key: "appearance.reduced_motion.v1",
+        locked: false,
+        lockReason: null,
+        source: "product_default",
+        tenantValue: null,
+        userValue: null,
+      },
+    },
+    canManageTenantDefaults: false,
+    tenantVersion: 0,
+    userVersion: 0,
   };
+  let cacheScope: string | null = null;
   let serverAvailable = false;
+  try {
+    cacheScope = loadPresentationPreferenceCacheScope();
+  } catch {
+    // Without an exact subject scope, any prior hydration cache is discarded.
+  }
   try {
     preferences = await loadOwnPresentationPreferences();
     serverAvailable = true;
   } catch {
     // The cache may hydrate visual preference only; it never grants Product authority.
   }
+  const appearance = preferences.appearance;
   return (
     <html
-      data-high-contrast={String(preferences.highContrast)}
-      data-palette={preferences.palette}
+      data-density={appearance.density.effectiveValue}
+      data-density-locked={String(appearance.density.locked)}
+      data-high-contrast={String(appearance.highContrast.effectiveValue)}
+      data-high-contrast-locked={String(appearance.highContrast.locked)}
+      data-palette={appearance.palette.effectiveValue}
+      data-preference-cache-scope={cacheScope ?? undefined}
       data-preference-status={serverAvailable ? "authoritative" : "cache-fallback"}
-      data-preference-version={String(preferences.version)}
+      data-preference-version={String(preferences.userVersion)}
+      data-reduced-motion={appearance.reducedMotion.effectiveValue}
+      data-reduced-motion-locked={String(appearance.reducedMotion.locked)}
+      data-user-density={appearance.density.userValue ?? appearance.density.effectiveValue}
+      data-user-high-contrast={String(
+        appearance.highContrast.userValue ?? appearance.highContrast.effectiveValue,
+      )}
+      data-user-palette={appearance.palette.userValue ?? appearance.palette.effectiveValue}
+      data-user-reduced-motion={
+        appearance.reducedMotion.userValue ?? appearance.reducedMotion.effectiveValue
+      }
       lang="en"
       suppressHydrationWarning
     >
       <body>
         <Script id="esbla-theme-init" strategy="beforeInteractive">
-          {themeInitializer({ ...preferences, serverAvailable })}
+          {buildPresentationThemeInitializer({
+            cacheKey: ESBLA_THEME_CACHE_KEY,
+            cacheScope,
+            density: appearance.density.effectiveValue,
+            highContrast: appearance.highContrast.effectiveValue,
+            palette: appearance.palette.effectiveValue,
+            reducedMotion: appearance.reducedMotion.effectiveValue,
+            serverAvailable,
+            version: preferences.userVersion,
+          })}
         </Script>
         {children}
         {modal}

@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import type {
+  PresentationAppearancePreferences,
+  PresentationDensity,
   PresentationNavigationDiscovery,
   PresentationPalette,
-  PresentationPreferenceSource,
   PresentationPreferences,
+  PresentationReducedMotion,
   PresentationServiceGroupDiscovery,
   PresentationShortcutDiscovery,
   PresentationShortcutDiscoveryQuery,
@@ -20,6 +22,7 @@ import type {
   PresentationWidgetDefinition,
   PresentationWidgetPlacement,
   PublishPresentationSurfaceDraftBody,
+  ResetPresentationPreferencesBody,
   ResetPresentationSurfaceOverlayBody,
   ResetPresentationSurfaceOverlayResponse,
   RollbackPresentationSurfaceBaseBody,
@@ -29,6 +32,7 @@ import type {
   UpdatePresentationShortcutResponse,
   UpdatePresentationSurfaceOverlayBody,
   UpdatePresentationSurfaceOverlayResponse,
+  UpdateTenantPresentationDefaultsBody,
   UpsertPresentationSurfaceDraftBody,
   UpsertPresentationSurfaceDraftResponse,
   ValidatePresentationSurfaceDraftBody,
@@ -53,17 +57,20 @@ import {
   PRESENTATION_SURFACE_DEFINITIONS,
   PRESENTATION_WIDGET_DEFINITIONS,
   parseExactPresentationSurfacePlacementSet,
+  parsePresentationPreferences,
   parsePresentationShortcutDiscoveryQuery,
   parsePresentationSurfaceBaseMutationResponse,
   parsePresentationSurfaceBaseVersion,
   parsePresentationSurfaceDraft,
   parsePresentationWidgetDefinition,
+  parseResetPresentationPreferencesBody,
   parseResetPresentationSurfaceOverlayBody,
   parseResetPresentationSurfaceOverlayResponse,
   parseRollbackPresentationSurfaceBaseBody,
   parseUpdatePresentationPreferencesBody,
   parseUpdatePresentationShortcutBody,
   parseUpdatePresentationSurfaceOverlayBody,
+  parseUpdateTenantPresentationDefaultsBody,
   parseUpsertPresentationSurfaceDraftBody,
   parseUpsertPresentationSurfaceDraftResponse,
   parseValidatePresentationSurfaceDraftBody,
@@ -87,9 +94,20 @@ import { appendEvidence, deriveStableUuid } from "./proof.js";
 
 const APPEARANCE_PALETTE_KEY = "appearance.palette.v1";
 const APPEARANCE_HIGH_CONTRAST_KEY = "appearance.high_contrast.v1";
-const APPEARANCE_SETTING_KEYS = [APPEARANCE_PALETTE_KEY, APPEARANCE_HIGH_CONTRAST_KEY] as const;
+const APPEARANCE_REDUCED_MOTION_KEY = "appearance.reduced_motion.v1";
+const APPEARANCE_DENSITY_KEY = "appearance.density.v1";
+const APPEARANCE_SETTING_KEYS = [
+  APPEARANCE_DENSITY_KEY,
+  APPEARANCE_HIGH_CONTRAST_KEY,
+  APPEARANCE_PALETTE_KEY,
+  APPEARANCE_REDUCED_MOTION_KEY,
+] as const;
 const PREFERENCE_EVENT_TYPE = "platform.presentation.preferences.updated";
+const PREFERENCE_RESET_EVENT_TYPE = "platform.presentation.preferences.reset";
+const TENANT_PREFERENCE_EVENT_TYPE = "platform.presentation.tenant_defaults.updated";
+const TENANT_PREFERENCE_RESET_EVENT_TYPE = "platform.presentation.tenant_defaults.reset";
 const PREFERENCE_SUBJECT_TYPE = "platform_presentation_preferences";
+const TENANT_PREFERENCE_SUBJECT_TYPE = "platform_presentation_tenant_defaults";
 const SHORTCUT_EVENT_TYPE = "platform.presentation.shortcut.updated";
 const SHORTCUT_SUBJECT_TYPE = "platform_presentation_shortcuts";
 const SURFACE_OVERLAY_EVENT_TYPE = "platform.presentation.surface_overlay.updated";
@@ -180,19 +198,25 @@ assertPresentationCompositionRegistriesCurrent();
 assertPresentationSettingRegistryCurrent();
 
 export interface AppearanceValues {
+  readonly density: PresentationDensity;
   readonly highContrast: boolean;
   readonly palette: PresentationPalette;
+  readonly reducedMotion: PresentationReducedMotion;
+}
+
+export interface TenantAppearanceValues extends AppearanceValues {
+  readonly lockDensity: boolean;
+  readonly requireHighContrast: boolean;
+  readonly requireReducedMotion: boolean;
 }
 
 export interface PresentationPreferenceResolutionInput {
   readonly codeDefault: AppearanceValues;
-  readonly tenantDefault?: AppearanceValues;
+  readonly tenantDefault?: TenantAppearanceValues;
   readonly userOverride?: AppearanceValues;
 }
 
-interface StoredPreferenceLayer {
-  readonly highContrast: boolean;
-  readonly palette: PresentationPalette;
+interface StoredPreferenceLayer extends TenantAppearanceValues {
   readonly version: number;
 }
 
@@ -201,7 +225,9 @@ function invalidStoredPreference(): PlatformError {
 }
 
 function parseStoredPreferenceLayer(
+  subjectType: "tenant_default" | "user_override",
   rows: readonly {
+    readonly locked: unknown;
     readonly setting_key: string;
     readonly value: unknown;
     readonly version: unknown;
@@ -210,23 +236,41 @@ function parseStoredPreferenceLayer(
   if (rows.length === 0) return undefined;
   if (rows.length !== APPEARANCE_SETTING_KEYS.length) throw invalidStoredPreference();
   const byKey = new Map(rows.map((row) => [row.setting_key, row]));
+  const density = byKey.get(APPEARANCE_DENSITY_KEY);
   const palette = byKey.get(APPEARANCE_PALETTE_KEY);
   const highContrast = byKey.get(APPEARANCE_HIGH_CONTRAST_KEY);
+  const reducedMotion = byKey.get(APPEARANCE_REDUCED_MOTION_KEY);
+  const version = density?.version;
   if (
+    !density ||
     !palette ||
     !highContrast ||
+    !reducedMotion ||
+    (density.value !== "comfortable" && density.value !== "compact") ||
     (palette.value !== "light" && palette.value !== "dark") ||
     typeof highContrast.value !== "boolean" ||
-    !Number.isSafeInteger(palette.version) ||
-    Number(palette.version) < 1 ||
-    palette.version !== highContrast.version
+    (reducedMotion.value !== "auto" && reducedMotion.value !== "reduce") ||
+    !Number.isSafeInteger(version) ||
+    Number(version) < 1 ||
+    APPEARANCE_SETTING_KEYS.some((key) => byKey.get(key)?.version !== version) ||
+    APPEARANCE_SETTING_KEYS.some((key) => typeof byKey.get(key)?.locked !== "boolean") ||
+    palette.locked !== false ||
+    (subjectType === "user_override" &&
+      APPEARANCE_SETTING_KEYS.some((key) => byKey.get(key)?.locked !== false)) ||
+    (highContrast.locked && highContrast.value !== true) ||
+    (reducedMotion.locked && reducedMotion.value !== "reduce")
   ) {
     throw invalidStoredPreference();
   }
   return {
+    density: density.value,
     highContrast: highContrast.value,
+    lockDensity: density.locked === true,
     palette: palette.value,
-    version: Number(palette.version),
+    reducedMotion: reducedMotion.value,
+    requireHighContrast: highContrast.locked === true,
+    requireReducedMotion: reducedMotion.locked === true,
+    version: Number(version),
   };
 }
 
@@ -242,8 +286,13 @@ export function parsePresentationPreferenceInput(
 
 export function resolvePresentationPreferences(
   input: PresentationPreferenceResolutionInput,
-): AppearanceValues & { readonly source: PresentationPreferenceSource } {
-  if (input.codeDefault.palette !== "light" || input.codeDefault.highContrast !== false) {
+): PresentationAppearancePreferences {
+  if (
+    input.codeDefault.density !== "comfortable" ||
+    input.codeDefault.palette !== "light" ||
+    input.codeDefault.highContrast !== false ||
+    input.codeDefault.reducedMotion !== "auto"
+  ) {
     throw invalidStoredPreference();
   }
   const candidates = (key: keyof AppearanceValues): readonly PresentationSettingCandidate[] => [
@@ -268,34 +317,56 @@ export function resolvePresentationPreferences(
         ]
       : []),
   ];
-  const palette = resolvePresentationSetting("appearance.palette.v1", candidates("palette"));
-  const highContrast = resolvePresentationSetting(
-    "appearance.high_contrast.v1",
-    candidates("highContrast"),
-  );
+  const metadata = <TKey extends keyof AppearanceValues>(
+    key: TKey,
+    settingKey: PresentationAppearancePreferences[TKey]["key"],
+    environment: Parameters<typeof resolvePresentationSetting>[2] = {},
+  ): PresentationAppearancePreferences[TKey] => {
+    const resolved = resolvePresentationSetting(settingKey, candidates(key), environment);
+    const source = resolved.locked && input.tenantDefault ? "tenant_global" : resolved.sourceScope;
+    if (source !== "product_default" && source !== "tenant_global" && source !== "user_global") {
+      throw invalidStoredPreference();
+    }
+    return {
+      effectiveValue: resolved.value,
+      key: settingKey,
+      locked: resolved.locked,
+      lockReason: resolved.lockReason ?? null,
+      source,
+      tenantValue: input.tenantDefault?.[key] ?? null,
+      userValue: input.userOverride?.[key] ?? null,
+    } as PresentationAppearancePreferences[TKey];
+  };
+  const density = metadata("density", APPEARANCE_DENSITY_KEY, {
+    ...(input.tenantDefault?.lockDensity
+      ? {
+          tenantLock: {
+            reason: "tenant_density_lock",
+            value: input.tenantDefault.density,
+          },
+        }
+      : {}),
+  });
+  const highContrast = metadata("highContrast", APPEARANCE_HIGH_CONTRAST_KEY, {
+    ...(input.tenantDefault?.requireHighContrast ? { requireHighContrast: true } : {}),
+  });
+  const palette = metadata("palette", APPEARANCE_PALETTE_KEY);
+  const reducedMotion = metadata("reducedMotion", APPEARANCE_REDUCED_MOTION_KEY, {
+    ...(input.tenantDefault?.requireReducedMotion ? { requireReducedMotion: true } : {}),
+  });
   if (
-    (palette.value !== "light" && palette.value !== "dark") ||
-    typeof highContrast.value !== "boolean" ||
-    palette.sourceScope !== highContrast.sourceScope
+    (density.effectiveValue !== "comfortable" && density.effectiveValue !== "compact") ||
+    typeof highContrast.effectiveValue !== "boolean" ||
+    (palette.effectiveValue !== "light" && palette.effectiveValue !== "dark") ||
+    (reducedMotion.effectiveValue !== "auto" && reducedMotion.effectiveValue !== "reduce")
   ) {
     throw invalidStoredPreference();
   }
-  const sourceByScope = {
-    product_default: "code_default",
-    tenant_global: "tenant_default",
-    user_global: "user_override",
-  } as const;
-  const source =
-    palette.sourceScope === "product_default" ||
-    palette.sourceScope === "tenant_global" ||
-    palette.sourceScope === "user_global"
-      ? sourceByScope[palette.sourceScope]
-      : undefined;
-  if (!source) throw invalidStoredPreference();
   return {
-    highContrast: highContrast.value,
-    palette: palette.value,
-    source,
+    density,
+    highContrast,
+    palette,
+    reducedMotion,
   };
 }
 
@@ -305,6 +376,10 @@ function preferenceSubjectId(context: OperationContext): string {
     context.tenantId,
     context.actorPrincipalId,
   );
+}
+
+function tenantPreferenceSubjectId(context: OperationContext): string {
+  return deriveStableUuid("platform.presentation.tenant-defaults", context.tenantId);
 }
 
 function assertOwnPresentationPolicy(
@@ -341,37 +416,63 @@ async function loadScopedPreference(
   transaction: TenantTransaction,
   subjectType: "tenant_default" | "user_override",
   subjectId: string,
+  lock = false,
 ): Promise<StoredPreferenceLayer | undefined> {
   const result = await transaction.client.query<{
+    locked: boolean;
     setting_key: string;
     value: unknown;
     version: number;
   }>(
-    `SELECT setting_key, value, version
+    `SELECT setting_key, value, locked, version
      FROM presentation_setting_values
      WHERE tenant_id = $1 AND subject_type = $2 AND subject_id = $3
        AND setting_key = ANY($4::text[])
-     ORDER BY setting_key`,
+     ORDER BY setting_key
+     ${lock ? "FOR UPDATE" : ""}`,
     [transaction.context.tenantId, subjectType, subjectId, APPEARANCE_SETTING_KEYS],
   );
-  return parseStoredPreferenceLayer(result.rows);
+  return parseStoredPreferenceLayer(subjectType, result.rows);
+}
+
+async function hasCurrentTenantPresentationCapability(
+  transaction: TenantTransaction,
+): Promise<boolean> {
+  const capability = await transaction.client.query<{ capability_current: boolean }>(
+    `SELECT public.esbla_lock_membership_capability($1, $2, $3) AS capability_current`,
+    [
+      transaction.context.tenantId,
+      transaction.context.actorPrincipalId,
+      "platform.presentation.tenant_defaults.write",
+    ],
+  );
+  return capability.rows[0]?.capability_current === true;
 }
 
 async function loadPreferencesInTransaction(
   transaction: TenantTransaction,
+  canManageTenantDefaults?: boolean,
 ): Promise<PresentationPreferences> {
   const [tenantDefault, userOverride] = await Promise.all([
     loadScopedPreference(transaction, "tenant_default", transaction.context.tenantId),
     loadScopedPreference(transaction, "user_override", transaction.context.actorPrincipalId),
   ]);
   const resolved = resolvePresentationPreferences({
-    codeDefault: { highContrast: false, palette: "light" },
+    codeDefault: {
+      density: "comfortable",
+      highContrast: false,
+      palette: "light",
+      reducedMotion: "auto",
+    },
     ...(tenantDefault ? { tenantDefault } : {}),
     ...(userOverride ? { userOverride } : {}),
   });
   return {
-    ...resolved,
-    version: userOverride?.version ?? 0,
+    appearance: resolved,
+    canManageTenantDefaults:
+      canManageTenantDefaults ?? (await hasCurrentTenantPresentationCapability(transaction)),
+    tenantVersion: tenantDefault?.version ?? 0,
+    userVersion: userOverride?.version ?? 0,
   };
 }
 
@@ -1155,12 +1256,19 @@ export async function updateOwnPresentationShortcut(
   );
 }
 
-function parseEvidenceState(value: string): {
-  readonly billingState: typeof PRESENTATION_BILLING_STATE;
-  readonly expectedVersion: number;
-  readonly highContrast: boolean;
-  readonly palette: PresentationPalette;
-  readonly version: number;
+type PreferenceMutationOperation =
+  | "reset_tenant_defaults"
+  | "reset_user_preferences"
+  | "update_tenant_defaults"
+  | "update_user_preferences";
+
+function parsePreferenceEvidenceState<TInput>(
+  value: string,
+  operation: PreferenceMutationOperation,
+  parseInput: (input: unknown) => TInput,
+): {
+  readonly request: TInput;
+  readonly snapshot: PresentationPreferences;
 } {
   try {
     const parsed = JSON.parse(value) as unknown;
@@ -1169,34 +1277,251 @@ function parseEvidenceState(value: string): {
       parsed === null ||
       Array.isArray(parsed) ||
       JSON.stringify(Object.keys(parsed).sort()) !==
-        JSON.stringify(
-          ["billingState", "expectedVersion", "highContrast", "palette", "version"].sort(),
-        )
+        JSON.stringify(["billingState", "operation", "request", "snapshot"].sort())
     ) {
       throw new Error("invalid");
     }
     const record = parsed as Record<string, unknown>;
-    if (
-      record.billingState !== PRESENTATION_BILLING_STATE ||
-      !Number.isSafeInteger(record.expectedVersion) ||
-      Number(record.expectedVersion) < 0 ||
-      typeof record.highContrast !== "boolean" ||
-      (record.palette !== "light" && record.palette !== "dark") ||
-      !Number.isSafeInteger(record.version) ||
-      Number(record.version) < 1
-    ) {
+    if (record.billingState !== PRESENTATION_BILLING_STATE || record.operation !== operation) {
       throw new Error("invalid");
     }
     return {
-      billingState: PRESENTATION_BILLING_STATE,
-      expectedVersion: Number(record.expectedVersion),
-      highContrast: record.highContrast,
-      palette: record.palette,
-      version: Number(record.version),
+      request: parseInput(record.request),
+      snapshot: parsePresentationPreferences(record.snapshot),
     };
   } catch {
     throw new PlatformError("IDEMPOTENCY_CONFLICT", "Preference retry evidence is invalid");
   }
+}
+
+function preferenceMutationResponse(
+  preferences: PresentationPreferences,
+  evidenceEventId: string,
+  replayed: boolean,
+): UpdatePresentationPreferencesResponse {
+  return {
+    ...preferences,
+    billingState: PRESENTATION_BILLING_STATE,
+    evidenceEventId,
+    replayed,
+  };
+}
+
+async function readPreferenceReplay<TInput>(
+  transaction: TenantTransaction,
+  input: TInput,
+  operation: PreferenceMutationOperation,
+  eventType: string,
+  subjectType: string,
+  subjectId: string,
+  parseInput: (value: unknown) => TInput,
+): Promise<UpdatePresentationPreferencesResponse | undefined> {
+  const result = await transaction.client.query<{
+    actor_principal_id: string;
+    evidence_event_id: string;
+    new_state: string;
+  }>(
+    `SELECT evidence_event_id, actor_principal_id, new_state
+     FROM evidence_events
+     WHERE tenant_id = $1 AND subject_type = $2 AND subject_id = $3
+       AND event_type = $4 AND correlation_id = $5`,
+    [
+      transaction.context.tenantId,
+      subjectType,
+      subjectId,
+      eventType,
+      transaction.context.correlationId,
+    ],
+  );
+  const replay = result.rows[0];
+  if (!replay) return undefined;
+  const state = parsePreferenceEvidenceState(replay.new_state, operation, parseInput);
+  if (
+    replay.actor_principal_id !== transaction.context.actorPrincipalId ||
+    JSON.stringify(state.request) !== JSON.stringify(input)
+  ) {
+    throw new PlatformError("IDEMPOTENCY_CONFLICT", "Preference retry changed its semantics");
+  }
+  return preferenceMutationResponse(state.snapshot, replay.evidence_event_id, true);
+}
+
+async function lockPreferenceSubject(
+  transaction: TenantTransaction,
+  subjectType: "tenant_default" | "user_override",
+  subjectId: string,
+): Promise<StoredPreferenceLayer | undefined> {
+  await transaction.client.query(
+    `SELECT pg_advisory_xact_lock(
+       hashtextextended('platform.presentation.preferences:' || $1 || ':' || $2 || ':' || $3, 0)
+     )`,
+    [transaction.context.tenantId, subjectType, subjectId],
+  );
+  return await loadScopedPreference(transaction, subjectType, subjectId, true);
+}
+
+function preferenceRows(
+  input: AppearanceValues,
+  locks: {
+    readonly lockDensity: boolean;
+    readonly requireHighContrast: boolean;
+    readonly requireReducedMotion: boolean;
+  },
+): readonly (readonly [string, boolean | string, boolean])[] {
+  return [
+    [APPEARANCE_DENSITY_KEY, input.density, locks.lockDensity],
+    [APPEARANCE_HIGH_CONTRAST_KEY, input.highContrast, locks.requireHighContrast],
+    [APPEARANCE_PALETTE_KEY, input.palette, false],
+    [APPEARANCE_REDUCED_MOTION_KEY, input.reducedMotion, locks.requireReducedMotion],
+  ];
+}
+
+async function writePreferenceLayer(
+  transaction: TenantTransaction,
+  subjectType: "tenant_default" | "user_override",
+  subjectId: string,
+  current: StoredPreferenceLayer | undefined,
+  input: AppearanceValues,
+  locks: {
+    readonly lockDensity: boolean;
+    readonly requireHighContrast: boolean;
+    readonly requireReducedMotion: boolean;
+  },
+): Promise<void> {
+  const nextVersion = (current?.version ?? 0) + 1;
+  const rows = preferenceRows(input, locks);
+  if (current) {
+    const result = await transaction.client.query(
+      `UPDATE presentation_setting_values AS stored
+       SET value = candidate.value::jsonb,
+           locked = candidate.locked,
+           version = $4,
+           updated_at = now(),
+           updated_by_principal_id = $5
+       FROM (
+         VALUES ($6::text, $7::text, $8::boolean),
+                ($9::text, $10::text, $11::boolean),
+                ($12::text, $13::text, $14::boolean),
+                ($15::text, $16::text, $17::boolean)
+       ) AS candidate(setting_key, value, locked)
+       WHERE stored.tenant_id = $1
+         AND stored.subject_type = $2
+         AND stored.subject_id = $3
+         AND stored.setting_key = candidate.setting_key
+         AND stored.version = $18`,
+      [
+        transaction.context.tenantId,
+        subjectType,
+        subjectId,
+        nextVersion,
+        transaction.context.actorPrincipalId,
+        ...rows.flatMap(([key, value, locked]) => [key, JSON.stringify(value), locked]),
+        current.version,
+      ],
+    );
+    if (result.rowCount !== APPEARANCE_SETTING_KEYS.length) {
+      throw new PlatformError("IDEMPOTENCY_CONFLICT", "Preference version has changed");
+    }
+    return;
+  }
+  const result = await transaction.client.query(
+    `INSERT INTO presentation_setting_values
+       (tenant_id, subject_type, subject_id, setting_key, value, locked, version,
+        updated_by_principal_id)
+     SELECT $1, $2, $3, candidate.setting_key, candidate.value::jsonb,
+            candidate.locked, 1, $4
+     FROM (
+       VALUES ($5::text, $6::text, $7::boolean),
+              ($8::text, $9::text, $10::boolean),
+              ($11::text, $12::text, $13::boolean),
+              ($14::text, $15::text, $16::boolean)
+     ) AS candidate(setting_key, value, locked)
+     ON CONFLICT DO NOTHING`,
+    [
+      transaction.context.tenantId,
+      subjectType,
+      subjectId,
+      transaction.context.actorPrincipalId,
+      ...rows.flatMap(([key, value, locked]) => [key, JSON.stringify(value), locked]),
+    ],
+  );
+  if (result.rowCount !== APPEARANCE_SETTING_KEYS.length) {
+    throw new PlatformError("IDEMPOTENCY_CONFLICT", "Preference version has changed");
+  }
+}
+
+async function deletePreferenceLayer(
+  transaction: TenantTransaction,
+  subjectType: "tenant_default" | "user_override",
+  subjectId: string,
+  expectedVersion: number,
+): Promise<void> {
+  const result = await transaction.client.query(
+    `DELETE FROM presentation_setting_values
+     WHERE tenant_id = $1 AND subject_type = $2 AND subject_id = $3
+       AND version = $4 AND setting_key = ANY($5::text[])`,
+    [
+      transaction.context.tenantId,
+      subjectType,
+      subjectId,
+      expectedVersion,
+      APPEARANCE_SETTING_KEYS,
+    ],
+  );
+  if (result.rowCount !== APPEARANCE_SETTING_KEYS.length) {
+    throw new PlatformError("IDEMPOTENCY_CONFLICT", "Preference version has changed");
+  }
+}
+
+async function recordPreferenceMutation(
+  transaction: TenantTransaction,
+  operation: PreferenceMutationOperation,
+  eventType: string,
+  subjectType: string,
+  subjectId: string,
+  request:
+    | UpdatePresentationPreferencesBody
+    | UpdateTenantPresentationDefaultsBody
+    | ResetPresentationPreferencesBody,
+  current: StoredPreferenceLayer | undefined,
+  snapshot: PresentationPreferences,
+): Promise<UpdatePresentationPreferencesResponse> {
+  const evidence = await appendEvidence(transaction, {
+    eventType,
+    newState: JSON.stringify({
+      billingState: PRESENTATION_BILLING_STATE,
+      operation,
+      request,
+      snapshot,
+    }),
+    priorState: current ? JSON.stringify(current) : null,
+    subjectId,
+    subjectType,
+  });
+  return preferenceMutationResponse(snapshot, evidence.evidenceEventId, evidence.replayed);
+}
+
+async function assertCurrentTenantPresentationCapability(
+  transaction: TenantTransaction,
+): Promise<void> {
+  const capabilityCurrent = await hasCurrentTenantPresentationCapability(transaction);
+  const actionKey = "platform.presentation.tenant_defaults.write";
+  const resourceKey = `tenant:${transaction.context.tenantId}:presentation-defaults`;
+  const decision = evaluatePolicy(
+    {
+      actionKey,
+      input: { capabilityCurrent },
+      resourceKey,
+      transaction,
+    },
+    [
+      {
+        effect: "allow",
+        id: "presentation.current-explicit-capability-may-manage-tenant-defaults",
+        matches: (input) => input.capabilityCurrent,
+      },
+    ],
+  );
+  assertPolicyAllowed(decision, transaction, actionKey, resourceKey);
 }
 
 export async function updateOwnPresentationPreferences(
@@ -1215,145 +1540,223 @@ export async function updateOwnPresentationPreferences(
         `principal:${transaction.context.actorPrincipalId}:presentation`,
       );
       const subjectId = preferenceSubjectId(context);
-      const priorEvidence = await transaction.client.query<{
-        actor_principal_id: string;
-        evidence_event_id: string;
-        new_state: string;
-      }>(
-        `SELECT evidence_event_id, actor_principal_id, new_state
-         FROM evidence_events
-         WHERE tenant_id = $1 AND subject_type = $2 AND subject_id = $3
-           AND event_type = $4 AND correlation_id = $5`,
-        [
-          context.tenantId,
-          PREFERENCE_SUBJECT_TYPE,
-          subjectId,
-          PREFERENCE_EVENT_TYPE,
-          context.correlationId,
-        ],
-      );
-      const replay = priorEvidence.rows[0];
-      if (replay) {
-        const state = parseEvidenceState(replay.new_state);
-        if (
-          replay.actor_principal_id !== context.actorPrincipalId ||
-          state.expectedVersion !== input.expectedVersion ||
-          state.highContrast !== input.highContrast ||
-          state.palette !== input.palette
-        ) {
-          throw new PlatformError("IDEMPOTENCY_CONFLICT", "Preference retry changed its semantics");
-        }
-        return {
-          billingState: PRESENTATION_BILLING_STATE,
-          evidenceEventId: replay.evidence_event_id,
-          highContrast: state.highContrast,
-          palette: state.palette,
-          replayed: true,
-          source: "user_override",
-          version: state.version,
-        };
-      }
-
-      const current = await loadScopedPreference(
+      const current = await lockPreferenceSubject(
         transaction,
         "user_override",
         context.actorPrincipalId,
       );
+      const replay = await readPreferenceReplay(
+        transaction,
+        input,
+        "update_user_preferences",
+        PREFERENCE_EVENT_TYPE,
+        PREFERENCE_SUBJECT_TYPE,
+        subjectId,
+        parsePresentationPreferenceInput,
+      );
+      if (replay) return replay;
       const currentVersion = current?.version ?? 0;
       if (currentVersion !== input.expectedVersion) {
         throw new PlatformError("IDEMPOTENCY_CONFLICT", "Preference version has changed", {
           currentVersion,
         });
       }
-      const nextVersion = currentVersion + 1;
-      const serializedPalette = JSON.stringify(input.palette);
-      const serializedHighContrast = JSON.stringify(input.highContrast);
-      if (current) {
-        const updatedPalette = await transaction.client.query(
-          `UPDATE presentation_setting_values
-           SET value = $5::jsonb, version = $6, updated_at = now(),
-               updated_by_principal_id = $3
-           WHERE tenant_id = $1 AND subject_type = 'user_override'
-             AND subject_id = $2 AND updated_by_principal_id IS NOT NULL
-             AND setting_key = $4 AND version = $7`,
-          [
-            context.tenantId,
-            context.actorPrincipalId,
-            context.actorPrincipalId,
-            APPEARANCE_PALETTE_KEY,
-            serializedPalette,
-            nextVersion,
-            currentVersion,
-          ],
-        );
-        const updatedHighContrast = await transaction.client.query(
-          `UPDATE presentation_setting_values
-           SET value = $5::jsonb, version = $6, updated_at = now(),
-               updated_by_principal_id = $3
-           WHERE tenant_id = $1 AND subject_type = 'user_override'
-             AND subject_id = $2 AND updated_by_principal_id IS NOT NULL
-             AND setting_key = $4 AND version = $7`,
-          [
-            context.tenantId,
-            context.actorPrincipalId,
-            context.actorPrincipalId,
-            APPEARANCE_HIGH_CONTRAST_KEY,
-            serializedHighContrast,
-            nextVersion,
-            currentVersion,
-          ],
-        );
-        if (updatedPalette.rowCount !== 1 || updatedHighContrast.rowCount !== 1) {
-          throw new PlatformError("IDEMPOTENCY_CONFLICT", "Preference version has changed");
-        }
-      } else {
-        await transaction.client.query(
-          `INSERT INTO presentation_setting_values
-             (tenant_id, subject_type, subject_id, setting_key, value, version,
-              updated_by_principal_id)
-           VALUES ($1, 'user_override', $2, $3, $5::jsonb, 1, $2),
-                  ($1, 'user_override', $2, $4, $6::jsonb, 1, $2)`,
-          [
-            context.tenantId,
-            context.actorPrincipalId,
-            APPEARANCE_PALETTE_KEY,
-            APPEARANCE_HIGH_CONTRAST_KEY,
-            serializedPalette,
-            serializedHighContrast,
-          ],
-        );
-      }
-
-      const newState = JSON.stringify({
-        billingState: PRESENTATION_BILLING_STATE,
-        expectedVersion: input.expectedVersion,
-        highContrast: input.highContrast,
-        palette: input.palette,
-        version: nextVersion,
-      });
-      const priorState = current
-        ? JSON.stringify({
-            highContrast: current.highContrast,
-            palette: current.palette,
-            version: current.version,
-          })
-        : null;
-      const evidence = await appendEvidence(transaction, {
-        eventType: PREFERENCE_EVENT_TYPE,
-        newState,
-        priorState,
+      await writePreferenceLayer(
+        transaction,
+        "user_override",
+        context.actorPrincipalId,
+        current,
+        input,
+        {
+          lockDensity: false,
+          requireHighContrast: false,
+          requireReducedMotion: false,
+        },
+      );
+      const snapshot = await loadPreferencesInTransaction(transaction);
+      return await recordPreferenceMutation(
+        transaction,
+        "update_user_preferences",
+        PREFERENCE_EVENT_TYPE,
+        PREFERENCE_SUBJECT_TYPE,
         subjectId,
-        subjectType: PREFERENCE_SUBJECT_TYPE,
+        input,
+        current,
+        snapshot,
+      );
+    },
+    { migrationBarrier: "shared" },
+  );
+}
+
+export async function resetOwnPresentationPreferences(
+  pool: Pool,
+  context: OperationContext,
+  untrustedInput: unknown,
+): Promise<UpdatePresentationPreferencesResponse> {
+  let input: ResetPresentationPreferencesBody;
+  try {
+    input = parseResetPresentationPreferencesBody(untrustedInput);
+  } catch {
+    throw new PlatformError("SETTING_INVALID", "Presentation preference reset is invalid");
+  }
+  return await withTenantTransaction(
+    pool,
+    context,
+    async (transaction) => {
+      assertOwnPresentationPolicy(
+        transaction,
+        "platform.presentation.preferences.write_own",
+        `principal:${transaction.context.actorPrincipalId}:presentation`,
+      );
+      const subjectId = preferenceSubjectId(context);
+      const current = await lockPreferenceSubject(
+        transaction,
+        "user_override",
+        context.actorPrincipalId,
+      );
+      const replay = await readPreferenceReplay(
+        transaction,
+        input,
+        "reset_user_preferences",
+        PREFERENCE_RESET_EVENT_TYPE,
+        PREFERENCE_SUBJECT_TYPE,
+        subjectId,
+        parseResetPresentationPreferencesBody,
+      );
+      if (replay) return replay;
+      if (!current || current.version !== input.expectedVersion) {
+        throw new PlatformError("IDEMPOTENCY_CONFLICT", "Preference version has changed", {
+          currentVersion: current?.version ?? 0,
+        });
+      }
+      await deletePreferenceLayer(
+        transaction,
+        "user_override",
+        context.actorPrincipalId,
+        input.expectedVersion,
+      );
+      const snapshot = await loadPreferencesInTransaction(transaction);
+      return await recordPreferenceMutation(
+        transaction,
+        "reset_user_preferences",
+        PREFERENCE_RESET_EVENT_TYPE,
+        PREFERENCE_SUBJECT_TYPE,
+        subjectId,
+        input,
+        current,
+        snapshot,
+      );
+    },
+    { migrationBarrier: "shared" },
+  );
+}
+
+export async function updateTenantPresentationDefaults(
+  pool: Pool,
+  context: OperationContext,
+  untrustedInput: unknown,
+): Promise<UpdatePresentationPreferencesResponse> {
+  let input: UpdateTenantPresentationDefaultsBody;
+  try {
+    input = parseUpdateTenantPresentationDefaultsBody(untrustedInput);
+  } catch {
+    throw new PlatformError("SETTING_INVALID", "Tenant presentation defaults are invalid");
+  }
+  return await withTenantTransaction(
+    pool,
+    context,
+    async (transaction) => {
+      await assertCurrentTenantPresentationCapability(transaction);
+      const subjectId = tenantPreferenceSubjectId(context);
+      const current = await lockPreferenceSubject(transaction, "tenant_default", context.tenantId);
+      const replay = await readPreferenceReplay(
+        transaction,
+        input,
+        "update_tenant_defaults",
+        TENANT_PREFERENCE_EVENT_TYPE,
+        TENANT_PREFERENCE_SUBJECT_TYPE,
+        subjectId,
+        parseUpdateTenantPresentationDefaultsBody,
+      );
+      if (replay) return replay;
+      const currentVersion = current?.version ?? 0;
+      if (currentVersion !== input.expectedVersion) {
+        throw new PlatformError("IDEMPOTENCY_CONFLICT", "Tenant preference version has changed", {
+          currentVersion,
+        });
+      }
+      await writePreferenceLayer(transaction, "tenant_default", context.tenantId, current, input, {
+        lockDensity: input.lockDensity,
+        requireHighContrast: input.requireHighContrast,
+        requireReducedMotion: input.requireReducedMotion,
       });
-      return {
-        billingState: PRESENTATION_BILLING_STATE,
-        evidenceEventId: evidence.evidenceEventId,
-        highContrast: input.highContrast,
-        palette: input.palette,
-        replayed: evidence.replayed,
-        source: "user_override",
-        version: nextVersion,
-      };
+      const snapshot = await loadPreferencesInTransaction(transaction, true);
+      return await recordPreferenceMutation(
+        transaction,
+        "update_tenant_defaults",
+        TENANT_PREFERENCE_EVENT_TYPE,
+        TENANT_PREFERENCE_SUBJECT_TYPE,
+        subjectId,
+        input,
+        current,
+        snapshot,
+      );
+    },
+    { migrationBarrier: "shared" },
+  );
+}
+
+export async function resetTenantPresentationDefaults(
+  pool: Pool,
+  context: OperationContext,
+  untrustedInput: unknown,
+): Promise<UpdatePresentationPreferencesResponse> {
+  let input: ResetPresentationPreferencesBody;
+  try {
+    input = parseResetPresentationPreferencesBody(untrustedInput);
+  } catch {
+    throw new PlatformError("SETTING_INVALID", "Tenant presentation reset is invalid");
+  }
+  return await withTenantTransaction(
+    pool,
+    context,
+    async (transaction) => {
+      await assertCurrentTenantPresentationCapability(transaction);
+      const subjectId = tenantPreferenceSubjectId(context);
+      const current = await lockPreferenceSubject(transaction, "tenant_default", context.tenantId);
+      const replay = await readPreferenceReplay(
+        transaction,
+        input,
+        "reset_tenant_defaults",
+        TENANT_PREFERENCE_RESET_EVENT_TYPE,
+        TENANT_PREFERENCE_SUBJECT_TYPE,
+        subjectId,
+        parseResetPresentationPreferencesBody,
+      );
+      if (replay) return replay;
+      if (!current || current.version !== input.expectedVersion) {
+        throw new PlatformError("IDEMPOTENCY_CONFLICT", "Tenant preference version has changed", {
+          currentVersion: current?.version ?? 0,
+        });
+      }
+      await deletePreferenceLayer(
+        transaction,
+        "tenant_default",
+        context.tenantId,
+        input.expectedVersion,
+      );
+      const snapshot = await loadPreferencesInTransaction(transaction, true);
+      return await recordPreferenceMutation(
+        transaction,
+        "reset_tenant_defaults",
+        TENANT_PREFERENCE_RESET_EVENT_TYPE,
+        TENANT_PREFERENCE_SUBJECT_TYPE,
+        subjectId,
+        input,
+        current,
+        snapshot,
+      );
     },
     { migrationBarrier: "shared" },
   );

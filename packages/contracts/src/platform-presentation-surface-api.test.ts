@@ -306,23 +306,60 @@ describe("platform presentation surface API contract", () => {
   it("requires explicit non-billing treatment on a preference mutation response", () => {
     expect(
       parseUpdatePresentationPreferencesResponse({
+        appearance: {
+          density: {
+            effectiveValue: "comfortable",
+            key: "appearance.density.v1",
+            locked: false,
+            lockReason: null,
+            source: "product_default",
+            tenantValue: null,
+            userValue: null,
+          },
+          highContrast: {
+            effectiveValue: true,
+            key: "appearance.high_contrast.v1",
+            locked: false,
+            lockReason: null,
+            source: "user_global",
+            tenantValue: null,
+            userValue: true,
+          },
+          palette: {
+            effectiveValue: "dark",
+            key: "appearance.palette.v1",
+            locked: false,
+            lockReason: null,
+            source: "user_global",
+            tenantValue: null,
+            userValue: "dark",
+          },
+          reducedMotion: {
+            effectiveValue: "auto",
+            key: "appearance.reduced_motion.v1",
+            locked: false,
+            lockReason: null,
+            source: "product_default",
+            tenantValue: null,
+            userValue: null,
+          },
+        },
         billingState: "non_billable",
+        canManageTenantDefaults: false,
         evidenceEventId: "93000000-0000-4000-8000-000000000001",
-        highContrast: true,
-        palette: "dark",
         replayed: false,
-        source: "user_override",
-        version: 1,
+        tenantVersion: 0,
+        userVersion: 1,
       }),
     ).toMatchObject({ billingState: "non_billable" });
     expect(() =>
       parseUpdatePresentationPreferencesResponse({
+        appearance: {},
+        canManageTenantDefaults: false,
         evidenceEventId: "93000000-0000-4000-8000-000000000001",
-        highContrast: true,
-        palette: "dark",
         replayed: false,
-        source: "user_override",
-        version: 1,
+        tenantVersion: 0,
+        userVersion: 1,
       }),
     ).toThrow();
   });

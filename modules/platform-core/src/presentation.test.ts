@@ -33,31 +33,86 @@ describe("presentation preference core", () => {
   it("rejects coupled or unrecognized appearance values", () => {
     expect(() =>
       parsePresentationPreferenceInput({
+        density: "comfortable",
         expectedVersion: 1,
         highContrast: "high-contrast",
         palette: "light",
+        reducedMotion: "auto",
       }),
     ).toThrow();
     expect(() =>
       parsePresentationPreferenceInput({
+        density: "comfortable",
         expectedVersion: 1,
         highContrast: false,
         palette: "system",
+        reducedMotion: "auto",
       }),
     ).toThrow();
   });
 
-  it("resolves a user override over tenant and code defaults without coupling contrast", () => {
+  it("resolves each appearance value independently and applies only ratified tenant floors", () => {
     expect(
       resolvePresentationPreferences({
-        codeDefault: { highContrast: false, palette: "light" },
-        tenantDefault: { highContrast: true, palette: "light" },
-        userOverride: { highContrast: true, palette: "dark" },
+        codeDefault: {
+          density: "comfortable",
+          highContrast: false,
+          palette: "light",
+          reducedMotion: "auto",
+        },
+        tenantDefault: {
+          density: "comfortable",
+          highContrast: true,
+          lockDensity: true,
+          palette: "light",
+          reducedMotion: "reduce",
+          requireHighContrast: true,
+          requireReducedMotion: true,
+        },
+        userOverride: {
+          density: "compact",
+          highContrast: false,
+          palette: "dark",
+          reducedMotion: "auto",
+        },
       }),
     ).toEqual({
-      highContrast: true,
-      palette: "dark",
-      source: "user_override",
+      density: {
+        effectiveValue: "comfortable",
+        key: "appearance.density.v1",
+        locked: true,
+        lockReason: "tenant_density_lock",
+        source: "tenant_global",
+        tenantValue: "comfortable",
+        userValue: "compact",
+      },
+      highContrast: {
+        effectiveValue: true,
+        key: "appearance.high_contrast.v1",
+        locked: true,
+        lockReason: "accessibility_high_contrast_floor",
+        source: "tenant_global",
+        tenantValue: true,
+        userValue: false,
+      },
+      palette: {
+        effectiveValue: "dark",
+        key: "appearance.palette.v1",
+        locked: false,
+        lockReason: null,
+        source: "user_global",
+        tenantValue: "light",
+        userValue: "dark",
+      },
+      reducedMotion: {
+        effectiveValue: "reduce",
+        key: "appearance.reduced_motion.v1",
+        locked: true,
+        lockReason: "motion_reduction_floor",
+        source: "tenant_global",
+        tenantValue: "reduce",
+        userValue: "auto",
+      },
     });
   });
 

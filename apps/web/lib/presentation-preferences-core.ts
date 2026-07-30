@@ -2,10 +2,14 @@ import {
   type PresentationPreferences,
   parseApiProblemDetails,
   parsePresentationPreferences,
+  parseResetPresentationPreferencesBody,
   parseUpdatePresentationPreferencesBody,
   parseUpdatePresentationPreferencesResponse,
+  parseUpdateTenantPresentationDefaultsBody,
+  type ResetPresentationPreferencesBody,
   type UpdatePresentationPreferencesBody,
   type UpdatePresentationPreferencesResponse,
+  type UpdateTenantPresentationDefaultsBody,
 } from "@esbla/contracts";
 
 export type PresentationPreferencesErrorKind =
@@ -22,6 +26,15 @@ export class PresentationPreferencesError extends Error {
     this.name = "PresentationPreferencesError";
     this.kind = kind;
   }
+}
+
+function hasExactKeys(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort())
+  );
 }
 
 function errorForStatus(status: number, code: string): PresentationPreferencesError {
@@ -65,6 +78,37 @@ export function parsePresentationPreferencesUpdate(
   value: unknown,
 ): UpdatePresentationPreferencesBody & { readonly idempotencyKey: string } {
   if (
+    !hasExactKeys(value, [
+      "density",
+      "expectedVersion",
+      "highContrast",
+      "idempotencyKey",
+      "palette",
+      "reducedMotion",
+    ]) ||
+    typeof value.idempotencyKey !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value.idempotencyKey,
+    )
+  ) {
+    throw new PresentationPreferencesError("invalid_input");
+  }
+  try {
+    const body = parseUpdatePresentationPreferencesBody({
+      density: "density" in value ? value.density : undefined,
+      expectedVersion: "expectedVersion" in value ? value.expectedVersion : undefined,
+      highContrast: "highContrast" in value ? value.highContrast : undefined,
+      palette: "palette" in value ? value.palette : undefined,
+      reducedMotion: "reducedMotion" in value ? value.reducedMotion : undefined,
+    });
+    return { ...body, idempotencyKey: value.idempotencyKey };
+  } catch {
+    throw new PresentationPreferencesError("invalid_input");
+  }
+}
+
+function idempotencyKey(value: unknown): string {
+  if (
     typeof value !== "object" ||
     value === null ||
     Array.isArray(value) ||
@@ -76,13 +120,60 @@ export function parsePresentationPreferencesUpdate(
   ) {
     throw new PresentationPreferencesError("invalid_input");
   }
+  return value.idempotencyKey;
+}
+
+export function parseTenantPresentationDefaultsUpdate(
+  value: unknown,
+): UpdateTenantPresentationDefaultsBody & { readonly idempotencyKey: string } {
+  const key = idempotencyKey(value);
   try {
-    const body = parseUpdatePresentationPreferencesBody({
+    if (
+      !hasExactKeys(value, [
+        "density",
+        "expectedVersion",
+        "highContrast",
+        "idempotencyKey",
+        "lockDensity",
+        "palette",
+        "reducedMotion",
+        "requireHighContrast",
+        "requireReducedMotion",
+      ])
+    ) {
+      throw new Error("invalid");
+    }
+    const body = parseUpdateTenantPresentationDefaultsBody({
+      density: "density" in value ? value.density : undefined,
       expectedVersion: "expectedVersion" in value ? value.expectedVersion : undefined,
       highContrast: "highContrast" in value ? value.highContrast : undefined,
+      lockDensity: "lockDensity" in value ? value.lockDensity : undefined,
       palette: "palette" in value ? value.palette : undefined,
+      reducedMotion: "reducedMotion" in value ? value.reducedMotion : undefined,
+      requireHighContrast: "requireHighContrast" in value ? value.requireHighContrast : undefined,
+      requireReducedMotion:
+        "requireReducedMotion" in value ? value.requireReducedMotion : undefined,
     });
-    return { ...body, idempotencyKey: value.idempotencyKey };
+    return { ...body, idempotencyKey: key };
+  } catch {
+    throw new PresentationPreferencesError("invalid_input");
+  }
+}
+
+export function parsePresentationPreferencesReset(
+  value: unknown,
+): ResetPresentationPreferencesBody & { readonly idempotencyKey: string } {
+  const key = idempotencyKey(value);
+  try {
+    if (!hasExactKeys(value, ["expectedVersion", "idempotencyKey"])) {
+      throw new Error("invalid");
+    }
+    return {
+      ...parseResetPresentationPreferencesBody({
+        expectedVersion: "expectedVersion" in value ? value.expectedVersion : undefined,
+      }),
+      idempotencyKey: key,
+    };
   } catch {
     throw new PresentationPreferencesError("invalid_input");
   }
