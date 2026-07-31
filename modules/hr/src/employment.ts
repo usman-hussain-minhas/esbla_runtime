@@ -16,6 +16,7 @@ import {
 } from "@esbla/contracts";
 import {
   appendEvidence,
+  appendNotificationIntent,
   assertPolicyAllowed,
   deriveStableUuid,
   evaluatePolicy,
@@ -828,8 +829,8 @@ async function recordMutation(
   beforeVersion: number | null,
   priorState: EmploymentRecordStatus | null,
   record: EmploymentRecordDetailResult,
-): Promise<void> {
-  await recordMutationProof(transaction, {
+): Promise<string> {
+  const proof = await recordMutationProof(transaction, {
     evidence: {
       eventType: receipt.eventType,
       newState: record.status,
@@ -860,6 +861,47 @@ async function recordMutation(
     subjectType: RECEIPT_SUBJECT_TYPE,
   });
   if (binding.replayed) throw idempotencyConflict();
+  return proof.outboxEventId;
+}
+
+async function linkedWorkerPrincipal(
+  transaction: TenantTransaction,
+  workerProfileId: string,
+): Promise<string | null> {
+  const result = await transaction.client.query<{ principal_id: string | null }>(
+    `SELECT principal_id FROM hr_worker_profiles
+     WHERE tenant_id=$1 AND worker_profile_id=$2 FOR SHARE`,
+    [transaction.context.tenantId, workerProfileId],
+  );
+  if (result.rows.length !== 1 || !result.rows[0]) {
+    throw employmentConflict("Worker Profile is not available");
+  }
+  return result.rows[0].principal_id;
+}
+
+async function appendEmploymentNotification(
+  transaction: TenantTransaction,
+  sourceEventId: string,
+  record: EmploymentRecordDetailResult,
+  recipientPrincipalId: string | null,
+  title: "Your employment record was created" | "Your employment record was updated",
+): Promise<void> {
+  if (
+    recipientPrincipalId === null ||
+    recipientPrincipalId === transaction.context.actorPrincipalId
+  ) {
+    return;
+  }
+  await appendNotificationIntent(transaction, {
+    category: "hr.employment_record",
+    recipientPrincipalId,
+    safeSummary: "Open your employment record for details.",
+    sourceEventId,
+    sourceServiceKey: HR_EMPLOYMENT_RECORD_SERVICE_KEY,
+    targetKind: "hr.employment_record.detail",
+    targetResourceId: record.employmentRecordId,
+    title,
+  });
 }
 
 function mutationResult(
@@ -946,7 +988,14 @@ export async function createEmploymentRecord(
         const row = await readRecord(transaction, employmentRecordId);
         if (!row) throw employmentConflict();
         const record = await detailFromRow(transaction, row, "tenant");
-        await recordMutation(transaction, receipt, null, null, record);
+        const sourceEventId = await recordMutation(transaction, receipt, null, null, record);
+        await appendEmploymentNotification(
+          transaction,
+          sourceEventId,
+          record,
+          profile.principal_id,
+          "Your employment record was created",
+        );
         return mutationResult(receipt.action, record, false);
       },
       employmentTransactionOptions,
@@ -1030,6 +1079,10 @@ export async function createEmploymentRecordVersion(
         const beforeRow = await readRecord(transaction, employmentRecordId, "update");
         if (!beforeRow) throw employmentNotFound();
         const before = mapRecord(beforeRow);
+        const recipientPrincipalId = await linkedWorkerPrincipal(
+          transaction,
+          before.workerProfileId,
+        );
         if (before.version !== input.expectedVersion || before.status === "ended") {
           throw employmentVersionConflict();
         }
@@ -1102,7 +1155,20 @@ export async function createEmploymentRecordVersion(
         const afterRow = await readRecord(transaction, employmentRecordId);
         if (!afterRow) throw employmentConflict();
         const record = await detailFromRow(transaction, afterRow, "tenant");
-        await recordMutation(transaction, receipt, before.version, before.status, record);
+        const sourceEventId = await recordMutation(
+          transaction,
+          receipt,
+          before.version,
+          before.status,
+          record,
+        );
+        await appendEmploymentNotification(
+          transaction,
+          sourceEventId,
+          record,
+          recipientPrincipalId,
+          "Your employment record was updated",
+        );
         return mutationResult(receipt.action, record, false);
       },
       employmentTransactionOptions,
@@ -1140,6 +1206,10 @@ export async function endEmploymentRecord(
         const beforeRow = await readRecord(transaction, employmentRecordId, "update");
         if (!beforeRow) throw employmentNotFound();
         const before = mapRecord(beforeRow);
+        const recipientPrincipalId = await linkedWorkerPrincipal(
+          transaction,
+          before.workerProfileId,
+        );
         const current = before.currentVersion;
         if (
           before.status !== "active" ||
@@ -1192,7 +1262,20 @@ export async function endEmploymentRecord(
         const afterRow = await readRecord(transaction, employmentRecordId);
         if (!afterRow) throw employmentConflict();
         const record = await detailFromRow(transaction, afterRow, "tenant");
-        await recordMutation(transaction, receipt, before.version, before.status, record);
+        const sourceEventId = await recordMutation(
+          transaction,
+          receipt,
+          before.version,
+          before.status,
+          record,
+        );
+        await appendEmploymentNotification(
+          transaction,
+          sourceEventId,
+          record,
+          recipientPrincipalId,
+          "Your employment record was updated",
+        );
         return mutationResult(receipt.action, record, false);
       },
       employmentTransactionOptions,

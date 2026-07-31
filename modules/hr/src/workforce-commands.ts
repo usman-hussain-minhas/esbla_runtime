@@ -1,4 +1,5 @@
 import {
+  appendNotificationIntent,
   lockMembershipAuthority,
   type OperationContext,
   PlatformError,
@@ -402,13 +403,31 @@ export async function changeWorkforceStatus(
       const row = updated.rows[0];
       if (!row) throw workforceVersionConflict();
       const profile = mapWorkforceProfile(row);
-      await recordWorkforceMutation(
+      const sourceEventId = await recordWorkforceMutation(
         transaction,
         receipt,
         before.row_version,
         before.workforce_status,
         profile,
       );
+      if (
+        observed.principal_id !== null &&
+        observed.principal_id !== transaction.context.actorPrincipalId
+      ) {
+        await appendNotificationIntent(transaction, {
+          category: "hr.workforce_profile",
+          recipientPrincipalId: observed.principal_id,
+          safeSummary: "Open your workforce profile for details.",
+          sourceEventId,
+          sourceServiceKey: "workforce_profile",
+          targetKind: "hr.workforce_profile.detail",
+          targetResourceId: profile.workerProfileId,
+          title:
+            before.workforce_status === "draft" && profile.workforceStatus === "active"
+              ? "Your workforce profile is available"
+              : "Your workforce profile status changed",
+        });
+      }
       return commandResult(profile, false);
     },
     workforceTransactionOptions,
@@ -581,13 +600,59 @@ export async function changeWorkforceReportingRelationship(
           relationshipRow,
           workerProfileVersion,
         );
-        await recordWorkforceReportingMutation(
+        const sourceEventId = await recordWorkforceReportingMutation(
           transaction,
           receipt,
           current.current_relationship_status,
           priorRelationshipVersion,
           relationship,
         );
+        const recipients = new Map<
+          string,
+          {
+            readonly targetKind:
+              | "hr.workforce_profile.detail"
+              | "hr.workforce_profile.direct_reports";
+            readonly targetResourceId: string | null;
+          }
+        >();
+        if (
+          report.principal_id !== null &&
+          report.principal_id !== transaction.context.actorPrincipalId
+        ) {
+          recipients.set(report.principal_id, {
+            targetKind: "hr.workforce_profile.detail",
+            targetResourceId: report.worker_profile_id,
+          });
+        }
+        const managerPrincipalId = managerWorkerProfileId
+          ? profiles.get(managerWorkerProfileId)?.principal_id
+          : null;
+        if (
+          managerPrincipalId &&
+          managerPrincipalId !== transaction.context.actorPrincipalId &&
+          !recipients.has(managerPrincipalId)
+        ) {
+          recipients.set(managerPrincipalId, {
+            targetKind: "hr.workforce_profile.direct_reports",
+            targetResourceId: null,
+          });
+        }
+        for (const [recipientPrincipalId, target] of recipients) {
+          await appendNotificationIntent(transaction, {
+            category: "hr.workforce_profile",
+            recipientPrincipalId,
+            safeSummary:
+              target.targetKind === "hr.workforce_profile.detail"
+                ? "Open your workforce profile for details."
+                : "Open direct reports for details.",
+            sourceEventId,
+            sourceServiceKey: "workforce_profile",
+            targetKind: target.targetKind,
+            targetResourceId: target.targetResourceId,
+            title: "A reporting relationship changed",
+          });
+        }
         return reportingCommandResult(relationship, false);
       },
       workforceTransactionOptions,

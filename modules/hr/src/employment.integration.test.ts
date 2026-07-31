@@ -50,6 +50,8 @@ const ids = {
   tenantSettingsRace: randomUUID(),
 };
 let appPool: Pool, migrationPool: Pool, migrationReadPool: Pool;
+let notificationReadPool: Pool;
+let employmentApplicationRole: string;
 function context(
   actorPrincipalId: string = ids.hrA,
   tenantId: string = ids.tenantA,
@@ -84,6 +86,26 @@ async function tenantRows<Row extends QueryResultRow>(
     rows = (await client.query<Row>(text, [...values])).rows;
   });
   return rows;
+}
+
+async function notificationTenantRows<Row extends QueryResultRow>(
+  tenantId: string,
+  text: string,
+  values: readonly unknown[] = [],
+): Promise<Row[]> {
+  const client = await notificationReadPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.tenant_id',$1,true)", [tenantId]);
+    const rows = (await client.query<Row>(text, [...values])).rows;
+    await client.query("COMMIT");
+    return rows;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 async function setMember(principalId: string, roleKey: string): Promise<void> {
   await tenantRows(
@@ -191,15 +213,18 @@ async function restoreRuntimeTableAuthority(applicationRole: string): Promise<vo
 async function setup(): Promise<void> {
   const runtimeUrl = process.env.DATABASE_URL;
   const migrationUrl = process.env.DATABASE_MIGRATION_URL;
+  const notificationProjectorUrl = process.env.DATABASE_NOTIFICATION_PROJECTOR_URL;
   const applicationRole = process.env.ESBLA_TEST_APPLICATION_ROLE;
-  if (!runtimeUrl || !migrationUrl || !applicationRole) {
+  if (!runtimeUrl || !migrationUrl || !notificationProjectorUrl || !applicationRole) {
     throw new Error("PostgreSQL harness environment is required");
   }
   if (!/^[a-z_][a-z0-9_]*$/.test(applicationRole)) {
     throw new Error("Application role is not a safe PostgreSQL identifier");
   }
+  employmentApplicationRole = applicationRole;
   migrationPool = createDatabasePool(migrationUrl, { max: 3 });
   migrationReadPool = createDatabasePool(migrationUrl, { max: 2 });
+  notificationReadPool = createDatabasePool(notificationProjectorUrl, { max: 1 });
   await migrateDatabase(createDatabase(migrationPool));
   await restoreRuntimeTableAuthority(applicationRole);
   await migrationPool.query(`GRANT USAGE ON SCHEMA public TO ${applicationRole}`);
@@ -311,14 +336,14 @@ async function setup(): Promise<void> {
     ids.employeeDetailRace,
   );
 }
-async function createActiveEmployeeProfile(): Promise<string> {
+async function createActiveEmployeeProfile(principalId: string = ids.employeeA): Promise<string> {
   const created = await createWorkforceProfile(appPool, context(), {
     idempotencyKey: randomUUID(),
   });
   const linked = await linkWorkforcePrincipal(appPool, context(), {
     expectedVersion: created.profile.version,
     idempotencyKey: randomUUID(),
-    principalId: ids.employeeA,
+    principalId,
     workerProfileId: created.profile.workerProfileId,
   });
   const active = await changeWorkforceStatus(appPool, context(), {
@@ -418,6 +443,7 @@ describe("Employment Record complete domain", () => {
   afterAll(async () => {
     await appPool?.end();
     await migrationReadPool?.end();
+    await notificationReadPool?.end();
     await migrationPool?.end();
   });
   it("keeps effective facts tenant-scoped, immutable, current-authority checked, and atomic", async () => {
@@ -707,6 +733,81 @@ describe("Employment Record complete domain", () => {
         payloadVersion: 1,
       });
     }
+    const notificationRows = await notificationTenantRows<{
+      intent_payload: Record<string, unknown>;
+      recipient_principal_id: string;
+      source_event_id: string;
+    }>(
+      ids.tenantA,
+      `SELECT source_event_id,recipient_principal_id,intent_payload
+       FROM notification_intents
+       WHERE tenant_id=$1 AND intent_payload->>'targetResourceId'=$2`,
+      [ids.tenantA, employmentRecordId],
+    );
+    const notificationSources = await tenantRows<{
+      aggregate_version: number;
+      event_id: string;
+      event_type: string;
+    }>(
+      ids.tenantA,
+      `SELECT event_id,event_type,aggregate_version FROM outbox_events
+       WHERE tenant_id=$1 AND event_id=ANY($2::uuid[])`,
+      [ids.tenantA, notificationRows.map(({ source_event_id }) => source_event_id)],
+    );
+    const sourcesById = new Map(notificationSources.map((source) => [source.event_id, source]));
+    expect(
+      notificationRows
+        .map(({ intent_payload, recipient_principal_id, source_event_id }) => {
+          const source = sourcesById.get(source_event_id);
+          return {
+            aggregateVersion: source?.aggregate_version,
+            category: intent_payload.category,
+            eventType: source?.event_type,
+            recipientPrincipalId: recipient_principal_id,
+            targetKind: intent_payload.targetKind,
+            targetResourceId: intent_payload.targetResourceId,
+            title: intent_payload.title,
+          };
+        })
+        .sort((left, right) => Number(left.aggregateVersion) - Number(right.aggregateVersion)),
+    ).toEqual([
+      {
+        aggregateVersion: 1,
+        category: "hr.employment_record",
+        eventType: "hr.employment_record.create_record",
+        recipientPrincipalId: ids.employeeA,
+        targetKind: "hr.employment_record.detail",
+        targetResourceId: employmentRecordId,
+        title: "Your employment record was created",
+      },
+      {
+        aggregateVersion: 2,
+        category: "hr.employment_record",
+        eventType: "hr.employment_record.create_version",
+        recipientPrincipalId: ids.employeeA,
+        targetKind: "hr.employment_record.detail",
+        targetResourceId: employmentRecordId,
+        title: "Your employment record was updated",
+      },
+      {
+        aggregateVersion: 3,
+        category: "hr.employment_record",
+        eventType: "hr.employment_record.create_version",
+        recipientPrincipalId: ids.employeeA,
+        targetKind: "hr.employment_record.detail",
+        targetResourceId: employmentRecordId,
+        title: "Your employment record was updated",
+      },
+      {
+        aggregateVersion: 4,
+        category: "hr.employment_record",
+        eventType: "hr.employment_record.end_record",
+        recipientPrincipalId: ids.employeeA,
+        targetKind: "hr.employment_record.detail",
+        targetResourceId: employmentRecordId,
+        title: "Your employment record was updated",
+      },
+    ]);
     const originalCreatePayload = mutationProof[0]?.payload;
     if (!originalCreatePayload) throw new Error("Employment create proof was unavailable");
     await tenantRows(
@@ -839,6 +940,50 @@ describe("Employment Record complete domain", () => {
       }),
       "EMPLOYMENT_NOT_FOUND",
     );
+    const selfProfileId = await createActiveEmployeeProfile(ids.hrA);
+    const selfRecord = await createEmploymentRecord(appPool, context(), {
+      idempotencyKey: randomUUID(),
+      workerProfileId: selfProfileId,
+    });
+    expect(
+      await notificationTenantRows<{ count: number }>(
+        ids.tenantA,
+        `SELECT count(*)::integer count FROM notification_intents
+         WHERE tenant_id=$1 AND intent_payload->>'targetResourceId'=$2`,
+        [ids.tenantA, selfRecord.mutation.employmentRecordId],
+      ),
+    ).toEqual([{ count: 0 }]);
+
+    const managerProfileId = await createActiveEmployeeProfile(ids.managerA);
+    const notificationFailureBaseline = await snapshot();
+    const notificationCountBefore = await notificationTenantRows<{ count: number }>(
+      ids.tenantA,
+      "SELECT count(*)::integer count FROM notification_intents WHERE tenant_id=$1",
+      [ids.tenantA],
+    );
+    await migrationPool.query(
+      `REVOKE INSERT ON notification_intents FROM ${employmentApplicationRole}`,
+    );
+    try {
+      await expect(
+        createEmploymentRecord(appPool, context(), {
+          idempotencyKey: randomUUID(),
+          workerProfileId: managerProfileId,
+        }),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" });
+    } finally {
+      await migrationPool.query(
+        `GRANT INSERT ON notification_intents TO ${employmentApplicationRole}`,
+      );
+    }
+    expect(await snapshot()).toEqual(notificationFailureBaseline);
+    expect(
+      await notificationTenantRows<{ count: number }>(
+        ids.tenantA,
+        "SELECT count(*)::integer count FROM notification_intents WHERE tenant_id=$1",
+        [ids.tenantA],
+      ),
+    ).toEqual(notificationCountBefore);
     const deniedBaseline = await snapshot();
     await setMember(ids.hrA, "employee");
     await expectCode(endEmploymentRecord(appPool, endContext, endInput), "POLICY_DENIED");

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { QueryResultRow } from "pg";
+import { createDatabasePool } from "@esbla/db";
+import type { Pool, QueryResultRow } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   readWorkforceTenantSnapshot,
@@ -50,6 +51,28 @@ async function tenantQuery<Row extends QueryResultRow>(
   });
   return rows;
 }
+
+async function notificationTenantQuery<Row extends QueryResultRow>(
+  tenantId: string,
+  text: string,
+  values: readonly unknown[] = [],
+): Promise<Row[]> {
+  const client = await workforceNotificationPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.tenant_id',$1,true)", [tenantId]);
+    const rows = (await client.query<Row>(text, [...values])).rows;
+    await client.query("COMMIT");
+    return rows;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+let workforceNotificationPool: Pool;
 
 async function setCapability(capabilityId: string, present: boolean): Promise<void> {
   await tenantQuery(
@@ -190,7 +213,11 @@ async function createActiveReportingProfile(
     status: "active",
     workerProfileId: created.profile.workerProfileId,
   });
-  return { principalId, workerProfileId: active.profile.workerProfileId };
+  return {
+    principalId,
+    version: active.profile.version,
+    workerProfileId: active.profile.workerProfileId,
+  };
 }
 function reportingInput(
   workerProfileId: string,
@@ -273,8 +300,16 @@ async function reportingSnapshot(tenantId: string, workerProfileId: string) {
   return state;
 }
 describe("Workforce Profile domain", () => {
-  beforeAll(setupWorkforceIntegration);
-  afterAll(teardownWorkforceIntegration);
+  beforeAll(async () => {
+    await setupWorkforceIntegration();
+    const projectorUrl = process.env.DATABASE_NOTIFICATION_PROJECTOR_URL;
+    if (!projectorUrl) throw new Error("Notification projector database URL is required");
+    workforceNotificationPool = createDatabasePool(projectorUrl, { max: 1 });
+  });
+  afterAll(async () => {
+    await workforceNotificationPool?.end();
+    await teardownWorkforceIntegration();
+  });
 
   it("requires the current HR-operator role even when tenant admin has the capability", async () => {
     const before = await readWorkforceTenantSnapshot(workforceIds.tenantA);
@@ -676,6 +711,40 @@ describe("Workforce Profile domain", () => {
     }
     expect(await readWorkforceTenantSnapshot(workforceIds.tenantA)).toEqual(before);
   });
+  it("rolls status, evidence, outbox, and notification back when intent cannot commit", async () => {
+    const profile = await createActiveReportingProfile("employee");
+    const before = await readWorkforceTenantSnapshot(workforceIds.tenantA);
+    const notificationBefore = await notificationTenantQuery<{ count: number }>(
+      workforceIds.tenantA,
+      "SELECT count(*)::integer count FROM notification_intents WHERE tenant_id=$1",
+      [workforceIds.tenantA],
+    );
+    await workforceMigrationPool.query(
+      `REVOKE INSERT ON notification_intents FROM ${workforceApplicationRole}`,
+    );
+    try {
+      await expect(
+        changeWorkforceStatus(workforcePool, context(), {
+          expectedVersion: profile.version,
+          idempotencyKey: randomUUID(),
+          status: "suspended",
+          workerProfileId: profile.workerProfileId,
+        }),
+      ).rejects.toMatchObject({ code: "42501" });
+    } finally {
+      await workforceMigrationPool.query(
+        `GRANT INSERT ON notification_intents TO ${workforceApplicationRole}`,
+      );
+    }
+    expect(await readWorkforceTenantSnapshot(workforceIds.tenantA)).toEqual(before);
+    expect(
+      await notificationTenantQuery<{ count: number }>(
+        workforceIds.tenantA,
+        "SELECT count(*)::integer count FROM notification_intents WHERE tenant_id=$1",
+        [workforceIds.tenantA],
+      ),
+    ).toEqual(notificationBefore);
+  });
   it("appends and replays one immutable assign/unassign chain with minimized proof", async () => {
     const report = await createActiveReportingProfile("employee");
     const manager = await createActiveReportingProfile("manager");
@@ -780,6 +849,193 @@ describe("Workforce Profile domain", () => {
       "action afterVersion beforeVersion managerAssigned receiptId relationshipStatus reportingRelationshipId workerProfileId workerProfileVersion";
     for (const { payload } of proof)
       expect(Object.keys(payload).sort()).toEqual(proofKeys.split(" "));
+
+    const notificationRows = await notificationTenantQuery<{
+      intent_payload: Record<string, unknown>;
+      recipient_principal_id: string;
+      source_event_id: string;
+    }>(
+      workforceIds.tenantA,
+      `SELECT source_event_id,recipient_principal_id,intent_payload
+       FROM notification_intents
+       WHERE tenant_id=$1
+         AND (
+           intent_payload->>'targetResourceId'=ANY($2::text[])
+           OR (recipient_principal_id=$3
+               AND intent_payload->>'targetKind'='hr.workforce_profile.direct_reports')
+         )`,
+      [
+        workforceIds.tenantA,
+        [report.workerProfileId, manager.workerProfileId],
+        manager.principalId,
+      ],
+    );
+    const notificationSources = await tenantQuery<{
+      aggregate_id: string;
+      event_id: string;
+      event_type: string;
+    }>(
+      workforceIds.tenantA,
+      `SELECT event_id,aggregate_id,event_type FROM outbox_events
+       WHERE tenant_id=$1 AND event_id=ANY($2::uuid[])`,
+      [workforceIds.tenantA, notificationRows.map(({ source_event_id }) => source_event_id)],
+    );
+    const sourcesById = new Map(notificationSources.map((source) => [source.event_id, source]));
+    const actualNotifications = notificationRows
+      .map(({ intent_payload, recipient_principal_id, source_event_id }) => {
+        const source = sourcesById.get(source_event_id);
+        return {
+          aggregateId: source?.aggregate_id,
+          category: intent_payload.category,
+          eventType: source?.event_type,
+          recipientPrincipalId: recipient_principal_id,
+          targetKind: intent_payload.targetKind,
+          targetResourceId: intent_payload.targetResourceId,
+          title: intent_payload.title,
+        };
+      })
+      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+    const expectedNotifications = [
+      {
+        aggregateId: report.workerProfileId,
+        category: "hr.workforce_profile",
+        eventType: "hr.workforce_profile.change_status",
+        recipientPrincipalId: report.principalId,
+        targetKind: "hr.workforce_profile.detail",
+        targetResourceId: report.workerProfileId,
+        title: "Your workforce profile is available",
+      },
+      {
+        aggregateId: manager.workerProfileId,
+        category: "hr.workforce_profile",
+        eventType: "hr.workforce_profile.change_status",
+        recipientPrincipalId: manager.principalId,
+        targetKind: "hr.workforce_profile.detail",
+        targetResourceId: manager.workerProfileId,
+        title: "Your workforce profile is available",
+      },
+      {
+        aggregateId: assigned.relationship.reportingRelationshipId,
+        category: "hr.workforce_profile",
+        eventType: "hr.workforce_profile.change_reporting_relationship",
+        recipientPrincipalId: report.principalId,
+        targetKind: "hr.workforce_profile.detail",
+        targetResourceId: report.workerProfileId,
+        title: "A reporting relationship changed",
+      },
+      {
+        aggregateId: assigned.relationship.reportingRelationshipId,
+        category: "hr.workforce_profile",
+        eventType: "hr.workforce_profile.change_reporting_relationship",
+        recipientPrincipalId: manager.principalId,
+        targetKind: "hr.workforce_profile.direct_reports",
+        targetResourceId: null,
+        title: "A reporting relationship changed",
+      },
+      {
+        aggregateId: unassigned.relationship.reportingRelationshipId,
+        category: "hr.workforce_profile",
+        eventType: "hr.workforce_profile.change_reporting_relationship",
+        recipientPrincipalId: report.principalId,
+        targetKind: "hr.workforce_profile.detail",
+        targetResourceId: report.workerProfileId,
+        title: "A reporting relationship changed",
+      },
+    ].sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+    expect(actualNotifications).toEqual(expectedNotifications);
+
+    const suspended = await changeWorkforceStatus(workforcePool, context(), {
+      expectedVersion: unassigned.relationship.workerProfileVersion,
+      idempotencyKey: randomUUID(),
+      status: "suspended",
+      workerProfileId: report.workerProfileId,
+    });
+    const laterStatusSource = await tenantQuery<{ event_id: string }>(
+      workforceIds.tenantA,
+      `SELECT event_id FROM outbox_events
+       WHERE tenant_id=$1 AND aggregate_id=$2
+         AND aggregate_version=$3
+         AND event_type='hr.workforce_profile.change_status'`,
+      [workforceIds.tenantA, report.workerProfileId, suspended.profile.version],
+    );
+    const laterStatusIntents = await notificationTenantQuery<{
+      recipient_principal_id: string;
+      title: string;
+    }>(
+      workforceIds.tenantA,
+      `SELECT recipient_principal_id,intent_payload->>'title' title
+       FROM notification_intents
+       WHERE tenant_id=$1 AND source_event_id=ANY($2::uuid[])`,
+      [workforceIds.tenantA, laterStatusSource.map(({ event_id }) => event_id)],
+    );
+    expect(laterStatusIntents).toEqual([
+      {
+        recipient_principal_id: report.principalId,
+        title: "Your workforce profile status changed",
+      },
+    ]);
+
+    const self = await createWorkforceProfile(workforcePool, context(), {
+      idempotencyKey: randomUUID(),
+    });
+    const selfLinked = await linkWorkforcePrincipal(workforcePool, context(), {
+      expectedVersion: self.profile.version,
+      idempotencyKey: randomUUID(),
+      principalId: workforceIds.hrOperatorA,
+      workerProfileId: self.profile.workerProfileId,
+    });
+    const selfLinkSource = await tenantQuery<{ event_id: string }>(
+      workforceIds.tenantA,
+      `SELECT event_id FROM outbox_events
+       WHERE tenant_id=$1 AND aggregate_id=$2
+         AND event_type='hr.workforce_profile.link_principal'`,
+      [workforceIds.tenantA, self.profile.workerProfileId],
+    );
+    const linkIntents = await notificationTenantQuery<{ count: number }>(
+      workforceIds.tenantA,
+      `SELECT count(*)::integer count FROM notification_intents
+       WHERE tenant_id=$1 AND source_event_id=ANY($2::uuid[])`,
+      [workforceIds.tenantA, selfLinkSource.map(({ event_id }) => event_id)],
+    );
+    expect(linkIntents[0]?.count).toBe(0);
+    const selfActive = await changeWorkforceStatus(workforcePool, context(), {
+      expectedVersion: selfLinked.profile.version,
+      idempotencyKey: randomUUID(),
+      status: "active",
+      workerProfileId: self.profile.workerProfileId,
+    });
+    const actorIntents = await notificationTenantQuery<{ count: number }>(
+      workforceIds.tenantA,
+      `SELECT count(*)::integer count
+       FROM notification_intents
+       WHERE tenant_id=$1 AND intent_payload->>'targetResourceId'=$2`,
+      [workforceIds.tenantA, self.profile.workerProfileId],
+    );
+    expect(actorIntents[0]?.count).toBe(0);
+    const selfAssigned = await changeReporting(
+      reportingInput(
+        self.profile.workerProfileId,
+        selfActive.profile.version,
+        manager.workerProfileId,
+      ),
+    );
+    const selfReportingSource = await tenantQuery<{ event_id: string }>(
+      workforceIds.tenantA,
+      `SELECT event_id FROM outbox_events
+       WHERE tenant_id=$1 AND aggregate_id=$2
+         AND event_type='hr.workforce_profile.change_reporting_relationship'`,
+      [workforceIds.tenantA, selfAssigned.relationship.reportingRelationshipId],
+    );
+    const selfReportingRecipients = await notificationTenantQuery<{
+      recipient_principal_id: string;
+    }>(
+      workforceIds.tenantA,
+      `SELECT recipient_principal_id FROM notification_intents
+       WHERE tenant_id=$1 AND source_event_id=ANY($2::uuid[])
+       ORDER BY recipient_principal_id`,
+      [workforceIds.tenantA, selfReportingSource.map(({ event_id }) => event_id)],
+    );
+    expect(selfReportingRecipients).toEqual([{ recipient_principal_id: manager.principalId }]);
   });
   it("lists status-filtered workforce or current direct reports through current authority", async () => {
     const manager = await createActiveReportingProfile("manager");
