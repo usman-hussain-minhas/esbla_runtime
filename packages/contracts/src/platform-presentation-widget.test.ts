@@ -20,7 +20,10 @@ describe("presentation widget manifest", () => {
       "hr.employment.current-facts",
       "hr.employment.history",
       "hr.expense.mine",
+      "hr.leave.assigned",
+      "hr.leave.history",
       "hr.leave.my-requests",
+      "hr.leave.request-form",
       "hr.shift.my-published",
       "hr.shift.publish-queue",
       "hr.shift.roster-overview",
@@ -102,6 +105,33 @@ describe("presentation widget manifest", () => {
     });
     expect(
       PRESENTATION_WIDGET_DEFINITIONS.filter(({ id }) =>
+        ["hr.leave.assigned", "hr.leave.history", "hr.leave.request-form"].includes(id),
+      ),
+    ).toMatchObject([
+      {
+        allowedCommandIds: ["hr.leave.approve", "hr.leave.reject"],
+        fullScreenRoute: "/workspace/my-work",
+        id: "hr.leave.assigned",
+        inlineMutationEligible: true,
+        requiredCapabilityIds: ["hr.leave.list_assigned", "hr.leave.view"],
+      },
+      {
+        allowedCommandIds: [],
+        fullScreenRoute: "/workspace/hr/leave",
+        id: "hr.leave.history",
+        inlineMutationEligible: false,
+        requiredCapabilityIds: ["hr.leave.list_own", "hr.leave.view"],
+      },
+      {
+        allowedCommandIds: ["hr.leave.submit"],
+        fullScreenRoute: "/workspace/hr/leave/new",
+        id: "hr.leave.request-form",
+        inlineMutationEligible: false,
+        requiredCapabilityIds: ["hr.leave.submit"],
+      },
+    ]);
+    expect(
+      PRESENTATION_WIDGET_DEFINITIONS.filter(({ id }) =>
         [
           "hr.attendance.correction-queue",
           "hr.attendance.reports",
@@ -174,14 +204,17 @@ describe("presentation widget manifest", () => {
     });
   });
 
-  it("binds the complete immutable Leave definition to its startup hash", () => {
-    const { canonicalHash, ...manifest } = HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION;
-    expect(
-      createHash("sha256").update(canonicalizePresentationWidgetDefinition(manifest)).digest("hex"),
-    ).toBe(canonicalHash);
-    expect(parsePresentationWidgetDefinition(HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION)).toBe(
-      HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION,
-    );
+  it("binds every complete immutable widget definition to its startup hash", () => {
+    for (const definition of PRESENTATION_WIDGET_DEFINITIONS) {
+      const { canonicalHash, ...manifest } = definition;
+      expect(
+        createHash("sha256")
+          .update(canonicalizePresentationWidgetDefinition(manifest))
+          .digest("hex"),
+      ).toBe(canonicalHash);
+      expect(parsePresentationWidgetDefinition(definition)).toBe(definition);
+      expect(Object.isFrozen(definition)).toBe(true);
+    }
   });
 
   it("aligns the proven Leave face with the ratified V1 manifest semantics", () => {

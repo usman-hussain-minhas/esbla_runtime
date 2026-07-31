@@ -552,6 +552,79 @@ const HR_LEAVE_MY_REQUESTS_MANIFEST = {
   widgetKind: "operational",
 } as const satisfies PresentationWidgetDefinitionWithoutHash;
 
+const HR_LEAVE_ASSIGNED_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "hr.leave_request",
+  allowedCommandIds: ["hr.leave.approve", "hr.leave.reject"],
+  definitionVersion: 1,
+  displayName: "Assigned Leave Approvals",
+  fullScreenRoute: "/workspace/my-work",
+  id: "hr.leave.assigned",
+  inlineMutationEligible: true,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.leave.assigned.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.leave.assigned.read.v1",
+  requiredCapabilityIds: ["hr.leave.list_assigned", "hr.leave.view"],
+  semanticIcon: "calendar-check",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "leave_request",
+  widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const HR_LEAVE_HISTORY_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "hr.leave_request",
+  allowedCommandIds: [],
+  definitionVersion: 1,
+  displayName: "Leave Request History",
+  fullScreenRoute: "/workspace/hr/leave",
+  id: "hr.leave.history",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.leave.history.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.leave.history.read.v1",
+  requiredCapabilityIds: ["hr.leave.list_own", "hr.leave.view"],
+  semanticIcon: "calendar-check",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "leave_request",
+  widgetKind: "detailed",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const HR_LEAVE_REQUEST_FORM_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "hr.leave_request",
+  allowedCommandIds: ["hr.leave.submit"],
+  definitionVersion: 1,
+  displayName: "Submit Leave Request",
+  fullScreenRoute: "/workspace/hr/leave/new",
+  id: "hr.leave.request-form",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.leave.request-form.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.leave.request-form.read.v1",
+  requiredCapabilityIds: ["hr.leave.submit"],
+  semanticIcon: "calendar-check",
+  showMoreEligible: false,
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "leave_request",
+  widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
 const HR_SHIFT_MY_PUBLISHED_MANIFEST = {
   ...COMMON_WIDGET_MANIFEST,
   activationPolicy: "exact_service",
@@ -904,9 +977,24 @@ export const HR_EXPENSE_MINE_WIDGET_DEFINITION = deepFreeze({
   canonicalHash: "770fe892c414c43f34fa49c2d81bf45b52d3876e539b4c8fc9b56eea47c9c3b8",
 }) satisfies PresentationWidgetDefinition;
 
+export const HR_LEAVE_ASSIGNED_WIDGET_DEFINITION = deepFreeze({
+  ...HR_LEAVE_ASSIGNED_MANIFEST,
+  canonicalHash: "0d2b506961d59ad127561a455ec9ccf7a2f21b720069023a3a333f090eb7bcac",
+}) satisfies PresentationWidgetDefinition;
+
+export const HR_LEAVE_HISTORY_WIDGET_DEFINITION = deepFreeze({
+  ...HR_LEAVE_HISTORY_MANIFEST,
+  canonicalHash: "13d37b77673875ef2d3e29969a6352f9146faae45aa46cfb1c1bd0ea5bbeb8e0",
+}) satisfies PresentationWidgetDefinition;
+
 export const HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION = deepFreeze({
   ...HR_LEAVE_MY_REQUESTS_MANIFEST,
   canonicalHash: "d6b8b157fe091a9b9a5131b9a41b4de0fc1e1fe38fe90fb028001c4b657527b7",
+}) satisfies PresentationWidgetDefinition;
+
+export const HR_LEAVE_REQUEST_FORM_WIDGET_DEFINITION = deepFreeze({
+  ...HR_LEAVE_REQUEST_FORM_MANIFEST,
+  canonicalHash: "b8dfbfd473b6f7fa00e9d0d81adffb56ea2abd7d4f9a9704a373be5ddbd83409",
 }) satisfies PresentationWidgetDefinition;
 
 export const HR_SHIFT_MY_PUBLISHED_WIDGET_DEFINITION = deepFreeze({
@@ -972,7 +1060,10 @@ export const PRESENTATION_WIDGET_DEFINITIONS = deepFreeze([
   HR_EMPLOYMENT_CURRENT_FACTS_WIDGET_DEFINITION,
   HR_EMPLOYMENT_HISTORY_WIDGET_DEFINITION,
   HR_EXPENSE_MINE_WIDGET_DEFINITION,
+  HR_LEAVE_ASSIGNED_WIDGET_DEFINITION,
+  HR_LEAVE_HISTORY_WIDGET_DEFINITION,
   HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION,
+  HR_LEAVE_REQUEST_FORM_WIDGET_DEFINITION,
   HR_SHIFT_MY_PUBLISHED_WIDGET_DEFINITION,
   HR_SHIFT_PUBLISH_QUEUE_WIDGET_DEFINITION,
   HR_SHIFT_ROSTER_OVERVIEW_WIDGET_DEFINITION,
