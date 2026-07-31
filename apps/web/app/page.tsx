@@ -1,16 +1,21 @@
-import { loadOwnResponsivePresentationSurfaceLayout } from "../lib/presentation-surfaces";
+import { resolveResponsivePresentationSurfaceLayout } from "../lib/presentation-layout-core";
+import { loadOwnPresentationPersonalSurfaceEditorWorkspace } from "../lib/presentation-surfaces";
 import { getEligibleZenSurfaceSections } from "../lib/zen-section-rail-core";
 import { getSurfaceDefinition } from "../theme/zen-theme/v1";
 import { ZenSectionRail } from "../theme/zen-theme/v1/surfaces/zen-section-rail";
+import { ZenSurfaceEditLauncher } from "../theme/zen-theme/v1/surfaces/zen-surface-edit-launcher";
 import { ZenSurfaceWidgets } from "../theme/zen-theme/v1/surfaces/zen-surface-widgets";
 import { WorkspaceShell } from "./workspace-shell";
 
 export const dynamic = "force-dynamic";
 
 export default async function MissionControlPage() {
-  const layout = await loadOwnResponsivePresentationSurfaceLayout("surface.mission-control").catch(
-    () => undefined,
-  );
+  const editorWorkspace = await loadOwnPresentationPersonalSurfaceEditorWorkspace(
+    "surface.mission-control",
+  ).catch(() => undefined);
+  const layout = editorWorkspace
+    ? resolveResponsivePresentationSurfaceLayout(editorWorkspace.layout)
+    : undefined;
   const eligibleWidgetInstanceIds =
     layout?.layouts[0].placements.map(({ instanceId }) => instanceId) ?? [];
   const eligibleSections = getEligibleZenSurfaceSections(
@@ -35,7 +40,17 @@ export default async function MissionControlPage() {
               Your work, one surface
             </h1>
           </div>
-          <p className="surface-summary">Live service widgets share one source of Product truth.</p>
+          <div className="surface-heading-actions">
+            <p className="surface-summary">
+              Live service widgets share one source of Product truth.
+            </p>
+            {editorWorkspace?.editable ? (
+              <ZenSurfaceEditLauncher
+                ariaLabel="Edit Mission Control personal layout"
+                href="/studio/surfaces/surface.mission-control/personal"
+              />
+            ) : null}
+          </div>
         </header>
         <div className="widget-grid">
           {layout && eligibleWidgetInstanceIds.length > 0 ? (

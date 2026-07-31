@@ -68,7 +68,11 @@ try {
       );
       await client.query(
         `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
-         VALUES ($1, $2, 'hr.leave.list_own'), ($1, $2, 'hr.leave.view')`,
+         VALUES ($1, $2, 'hr.leave.list_own'),
+                ($1, $2, 'hr.leave.view'),
+                ($1, $2, 'platform.presentation.layouts.read_own'),
+                ($1, $2, 'platform.presentation.layouts.reset_own'),
+                ($1, $2, 'platform.presentation.layouts.write_own')`,
         [ids.tenant, ids.actor],
       );
       await client.query(
@@ -111,6 +115,7 @@ try {
             row: 5,
             rowSpan: 3,
             widgetDefinitionId: "hr.leave.my-requests",
+            widgetDefinitionVersion: 1,
           },
         ],
       },
@@ -174,6 +179,7 @@ try {
         row: 5,
         rowSpan: 3,
         widgetDefinitionId: "hr.leave.my-requests",
+        widgetDefinitionVersion: 1,
       },
     ]);
     const client = await migrationPool.connect();

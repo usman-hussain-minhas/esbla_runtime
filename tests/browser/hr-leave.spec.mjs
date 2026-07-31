@@ -52,6 +52,22 @@ async function setEmployeeWorkforcePresentationEligibility(eligible) {
   ).toEqual({ status: "updated" });
 }
 
+async function setEmployeePresentationLayoutWrite(enabled) {
+  expect(
+    await testControl("/__esbla-test-control/presentation-layout-write", {
+      enabled,
+    }),
+  ).toEqual({ status: "updated" });
+}
+
+async function setMissionControlPersonalization(enabled) {
+  expect(
+    await testControl("/__esbla-test-control/presentation-surface-personalization", {
+      enabled,
+    }),
+  ).toEqual({ status: "updated" });
+}
+
 async function restartEmployeeApplication() {
   expect(await testControl("/__esbla-test-control/restart-web", { persona: "employee" })).toEqual({
     status: "restarted",
@@ -503,6 +519,7 @@ test("Mission Control reuses the real Leave widget and persists four independent
           row: value("--widget-desktop-row"),
           rowSpan: value("--widget-desktop-row-span"),
           widgetDefinitionId: element.dataset.widgetDefinition,
+          widgetDefinitionVersion: Number(element.dataset.widgetDefinitionVersion),
         };
       });
       const response = await fetch("/presentation/surfaces/surface.mission-control", {
@@ -727,12 +744,7 @@ test("Mission Control reuses the real Leave widget and persists four independent
       const expectedPlacement =
         width >= 1_100
           ? { column: "2", columnSpan: "span 4", row: "11", rowSpan: "span 3" }
-          : {
-              column: "1",
-              columnSpan: "span 4",
-              row: width >= 768 ? "4" : "7",
-              rowSpan: "span 3",
-            };
+          : { column: "1", columnSpan: "span 4", row: "1", rowSpan: "span 3" };
       await expect
         .poll(async () =>
           universalWidget.evaluate((element) => {
@@ -992,6 +1004,7 @@ test("Mission Control reuses the real Leave widget and persists four independent
               row: 5,
               rowSpan: 3,
               widgetDefinitionId: "hr.leave.my-requests",
+              widgetDefinitionVersion: 1,
             },
           ],
         }),
@@ -1049,6 +1062,304 @@ test("Mission Control reuses the real Leave widget and persists four independent
         "hr.leave.list_own",
         "hr.leave.view",
       ]).catch(() => undefined);
+    }
+    await closeActors(employee);
+  }
+});
+
+test("personal Surface Editor saves pointer and keyboard layout changes and fails closed", async ({
+  browser,
+}, testInfo) => {
+  const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
+  let leaveActivationChanged = false;
+  let personalizationDisabled = false;
+  let staleEditor;
+  let writeCapabilityRemoved = false;
+  try {
+    await employee.page.setViewportSize({ height: 900, width: 1_280 });
+    await employee.page.goto(employee.origin);
+    const editLauncher = employee.page.getByRole("link", {
+      exact: true,
+      name: "Edit Mission Control personal layout",
+    });
+    await expect(editLauncher).toBeVisible();
+    await editLauncher.press("Enter");
+    await expect(employee.page).toHaveURL(
+      `${employee.origin}/studio/surfaces/surface.mission-control/personal`,
+    );
+    await expect(
+      employee.page.getByRole("heading", { name: "Shape your Mission Control" }),
+    ).toBeFocused();
+
+    const reset = employee.page.getByRole("button", { name: "Restore tenant layout" });
+    if (await reset.isEnabled()) {
+      employee.page.once("dialog", (dialog) => dialog.accept());
+      const resetResponse = employee.page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname ===
+          "/presentation/surfaces/surface.mission-control/reset",
+      );
+      await reset.click();
+      expect((await resetResponse).status()).toBe(200);
+    }
+
+    staleEditor = await openActor(browser, fixture.employeeOrigin, "stale personal editor");
+    await staleEditor.page.goto(
+      `${staleEditor.origin}/studio/surfaces/surface.mission-control/personal`,
+    );
+    await expect(
+      staleEditor.page.getByRole("heading", { name: "Shape your Mission Control" }),
+    ).toBeVisible();
+
+    const profileWidget = employee.page.getByRole("button", {
+      name: /My Profile, 4 columns by 3 rows/,
+    });
+    await expect(profileWidget).toBeVisible();
+    await profileWidget.scrollIntoViewIfNeeded();
+    const profileBox = await profileWidget.boundingBox();
+    if (!profileBox) throw new Error("Surface Editor profile widget has no pointer target");
+    const pointerPosition = {
+      x: profileBox.width / 2,
+      y: Math.min(40, profileBox.height / 2),
+    };
+    await profileWidget.hover({
+      position: pointerPosition,
+    });
+    await employee.page.mouse.down();
+    await employee.page.mouse.move(
+      profileBox.x + pointerPosition.x,
+      profileBox.y + pointerPosition.y + 56,
+    );
+    await employee.page.mouse.up();
+    await expect(profileWidget).toHaveCSS("grid-row-start", "8");
+    await expect(employee.page.getByText("My Profile moved to column 5, row 8.")).toBeVisible();
+    const resizeHandle = profileWidget.locator(".surface-editor-widget-resize-handle");
+    const resizeBox = await resizeHandle.boundingBox();
+    if (!resizeBox) throw new Error("Surface Editor profile widget has no pointer resize target");
+    await employee.page.mouse.move(
+      resizeBox.x + resizeBox.width / 2,
+      resizeBox.y + resizeBox.height / 2,
+    );
+    await employee.page.mouse.down();
+    await employee.page.mouse.move(
+      resizeBox.x + resizeBox.width / 2,
+      resizeBox.y + resizeBox.height / 2 + 56,
+    );
+    await employee.page.mouse.up();
+    const resizedProfile = employee.page.getByRole("button", {
+      name: /My Profile, 4 columns by 4 rows/,
+    });
+    await expect(resizedProfile).toBeVisible();
+    await expect(
+      employee.page.getByText("My Profile resized to 4 columns by 4 rows."),
+    ).toBeVisible();
+    await resizedProfile.press("ArrowDown");
+    await expect(resizedProfile).toHaveCSS("grid-row-start", "9");
+    await expect(employee.page.getByText("My Profile moved to column 5, row 9.")).toBeVisible();
+    await expect(employee.page.getByText("Unsaved changes", { exact: true })).toBeVisible();
+
+    const save = employee.page.getByRole("button", { name: "Save personal layout" });
+    const saveResponse = employee.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/presentation/surfaces/surface.mission-control",
+    );
+    await save.click();
+    expect((await saveResponse).status()).toBe(200);
+    await expect(employee.page.getByText("Saved", { exact: true })).toBeVisible();
+    await employee.page.reload();
+    await expect(
+      employee.page.getByRole("button", { name: /My Profile, 4 columns by 4 rows/ }),
+    ).toHaveCSS("grid-row-start", "9");
+    const desktopEvidencePath = testInfo.outputPath("surface-editor-personal-desktop.png");
+    await employee.page.screenshot({ fullPage: false, path: desktopEvidencePath });
+    await testInfo.attach("surface-editor-personal-desktop", {
+      contentType: "image/png",
+      path: desktopEvidencePath,
+    });
+
+    const staleProfile = staleEditor.page.getByRole("button", { name: /My Profile, / });
+    await staleProfile.click();
+    await staleEditor.page.getByRole("button", { name: "Remove from surface" }).click();
+    const staleResponse = staleEditor.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/presentation/surfaces/surface.mission-control",
+    );
+    await staleEditor.page.getByRole("button", { name: "Save personal layout" }).click();
+    expect((await staleResponse).status()).toBe(409);
+    await expect(
+      staleEditor.page.getByText(
+        "This layout changed in another tab. Reload before editing again.",
+      ),
+    ).toBeVisible();
+    expect(staleEditor.diagnostics.console).toEqual([
+      "Failed to load resource: the server responded with a status of 409 (Conflict)",
+    ]);
+    staleEditor.diagnostics.console.length = 0;
+    await staleEditor.page.getByRole("button", { name: "Reload" }).click();
+    await expect(
+      staleEditor.page.getByRole("button", { name: /My Profile, 4 columns by 4 rows/ }),
+    ).toHaveCSS("grid-row-start", "9");
+    await closeActors(staleEditor);
+    staleEditor = undefined;
+
+    await employee.page.getByRole("button", { name: /My Profile, 4 columns by 4 rows/ }).click();
+    await employee.page.getByRole("button", { name: "Remove from surface" }).click();
+    const removeResponse = employee.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/presentation/surfaces/surface.mission-control",
+    );
+    await save.click();
+    expect((await removeResponse).status()).toBe(200);
+    await employee.page.reload();
+    await expect(employee.page.getByRole("button", { name: /My Profile, / })).toHaveCount(0);
+    const addProfile = employee.page.getByRole("button", { name: "Add My Profile" });
+    await expect(addProfile).toBeVisible();
+    await addProfile.click();
+    const addResponse = employee.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/presentation/surfaces/surface.mission-control",
+    );
+    await save.click();
+    expect((await addResponse).status()).toBe(200);
+    await employee.page.reload();
+    await expect(employee.page.getByRole("button", { name: /My Profile, / })).toHaveCount(1);
+
+    await employee.page.getByRole("button", { name: "Tablet preview" }).click();
+    await expect(employee.page.locator(".surface-editor-viewport")).toHaveAttribute(
+      "data-preview-mode",
+      "tablet",
+    );
+    await employee.page.getByRole("button", { name: "Phone preview" }).click();
+    await expect(employee.page.locator(".surface-editor-viewport")).toHaveAttribute(
+      "data-preview-mode",
+      "phone",
+    );
+    expect(
+      await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+
+    await employee.page.setViewportSize({ height: 720, width: 390 });
+    await expect(
+      employee.page.getByText(
+        "Editing controls are available on tablet and desktop. Phone preview remains read-only.",
+      ),
+    ).toBeVisible();
+    await expect(save).toBeHidden();
+    const phoneEvidencePath = testInfo.outputPath("surface-editor-personal-phone.png");
+    await employee.page.screenshot({ fullPage: false, path: phoneEvidencePath });
+    await testInfo.attach("surface-editor-personal-phone", {
+      contentType: "image/png",
+      path: phoneEvidencePath,
+    });
+
+    await employee.page.setViewportSize({ height: 900, width: 1_280 });
+    await employee.page.getByRole("link", { name: "Return to Mission Control" }).press("Enter");
+    await expect(employee.page).toHaveURL(employee.origin);
+    await expect(
+      employee.page.getByRole("heading", { name: "Your work, one surface" }),
+    ).toBeFocused();
+    await editLauncher.press("Enter");
+    await expect(
+      employee.page.getByRole("heading", { name: "Shape your Mission Control" }),
+    ).toBeVisible();
+
+    const currentProfileBeforeDeactivation = employee.page.getByRole("button", {
+      name: /My Profile, /,
+    });
+    await currentProfileBeforeDeactivation.click();
+    await employee.page.getByRole("button", { name: "Remove from surface" }).click();
+    await setEmployeeLeavePresentationEligibility(false, ["hr.leave.list_own", "hr.leave.view"]);
+    leaveActivationChanged = true;
+    const deactivatedResponse = employee.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/presentation/surfaces/surface.mission-control",
+    );
+    await save.click();
+    expect((await deactivatedResponse).status()).toBe(403);
+    await expect(
+      employee.page.getByText("Your access or this service’s availability is no longer current."),
+    ).toBeVisible();
+    await expect(employee.page.getByText("Personal editing is locked")).toBeVisible();
+    expect(employee.diagnostics.console).toEqual([
+      "Failed to load resource: the server responded with a status of 403 (Forbidden)",
+    ]);
+    employee.diagnostics.console.length = 0;
+    await setEmployeeLeavePresentationEligibility(true, ["hr.leave.list_own", "hr.leave.view"]);
+    leaveActivationChanged = false;
+    await employee.page.reload();
+    await expect(employee.page.getByRole("button", { name: /My Profile, / })).toHaveCount(1);
+    await expect(employee.page.getByRole("button", { name: /My Leave Requests, / })).toHaveCount(1);
+
+    const profileBeforeTenantLock = employee.page.getByRole("button", { name: /My Profile, / });
+    await profileBeforeTenantLock.click();
+    await employee.page.getByRole("button", { name: "Remove from surface" }).click();
+    await setMissionControlPersonalization(false);
+    personalizationDisabled = true;
+    const tenantLockedResponse = employee.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/presentation/surfaces/surface.mission-control",
+    );
+    await save.click();
+    expect((await tenantLockedResponse).status()).toBe(403);
+    await expect(
+      employee.page.getByText("Your access or this service’s availability is no longer current."),
+    ).toBeVisible();
+    await employee.page.reload();
+    await expect(employee.page.getByText("Personal editing is locked")).toBeVisible();
+    await expect(employee.page.getByRole("button", { name: /My Profile, / })).toHaveCount(1);
+    await expect(save).toBeDisabled();
+    expect(employee.diagnostics.console).toEqual([
+      "Failed to load resource: the server responded with a status of 403 (Forbidden)",
+    ]);
+    employee.diagnostics.console.length = 0;
+    await setMissionControlPersonalization(true);
+    personalizationDisabled = false;
+    await employee.page.reload();
+    await expect(employee.page.getByText("Personal editing is locked")).toHaveCount(0);
+    await expect(employee.page.getByRole("button", { name: /My Profile, / })).toBeEnabled();
+
+    writeCapabilityRemoved = true;
+    await setEmployeePresentationLayoutWrite(false);
+    const currentProfile = employee.page.getByRole("button", { name: /My Profile, / });
+    await currentProfile.click();
+    await employee.page.getByRole("button", { name: "Remove from surface" }).click();
+    await expect(employee.page.getByText("Unsaved changes", { exact: true })).toBeVisible();
+    const deniedResponse = employee.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/presentation/surfaces/surface.mission-control",
+    );
+    await save.click();
+    expect((await deniedResponse).status()).toBe(403);
+    await expect(
+      employee.page.getByText("Your access or this service’s availability is no longer current."),
+    ).toBeVisible();
+    await expect(employee.page.getByText("Personal editing is locked")).toBeVisible();
+    expect(employee.diagnostics.console).toEqual([
+      "Failed to load resource: the server responded with a status of 403 (Forbidden)",
+    ]);
+    employee.diagnostics.console.length = 0;
+  } finally {
+    if (staleEditor) {
+      await closeActors(staleEditor).catch(() => undefined);
+    }
+    if (leaveActivationChanged) {
+      await setEmployeeLeavePresentationEligibility(true, [
+        "hr.leave.list_own",
+        "hr.leave.view",
+      ]).catch(() => undefined);
+    }
+    if (personalizationDisabled) {
+      await setMissionControlPersonalization(true).catch(() => undefined);
+    }
+    if (writeCapabilityRemoved) {
+      await setEmployeePresentationLayoutWrite(true).catch(() => undefined);
+    }
+    await employee.page.setViewportSize({ height: 900, width: 1_280 }).catch(() => undefined);
+    await employee.page.reload().catch(() => undefined);
+    const reset = employee.page.getByRole("button", { name: "Restore tenant layout" });
+    if (await reset.isEnabled().catch(() => false)) {
+      employee.page.once("dialog", (dialog) => dialog.accept());
+      await reset.click().catch(() => undefined);
     }
     await closeActors(employee);
   }
@@ -1600,6 +1911,7 @@ test("Universal Settings preserves Theme, exposes authority, and coordinates tab
           row: value("--widget-desktop-row"),
           rowSpan: value("--widget-desktop-row-span"),
           widgetDefinitionId: element.dataset.widgetDefinition,
+          widgetDefinitionVersion: Number(element.dataset.widgetDefinitionVersion),
         };
       });
       const response = await fetch("/presentation/surfaces/surface.mission-control", {
@@ -1740,6 +2052,9 @@ test("Universal Settings preserves Theme, exposes authority, and coordinates tab
     await expect(
       systemPanel.getByRole("link", { exact: true, name: "Universal Settings" }),
     ).toBeVisible();
+    await expect(
+      systemPanel.getByRole("heading", { exact: true, name: "User and system" }),
+    ).toBeFocused();
     await systemPanel.getByRole("link", { exact: true, name: "Universal Settings" }).press("Enter");
     await expect(employee.page).toHaveURL(`${employee.origin}/settings`);
     const settingsHeading = employee.page.getByRole("heading", {
@@ -1762,6 +2077,9 @@ test("Universal Settings preserves Theme, exposes authority, and coordinates tab
       exact: true,
       name: "User and system",
     });
+    await expect(
+      sameRouteSystemPanel.getByRole("heading", { exact: true, name: "User and system" }),
+    ).toBeFocused();
     await sameRouteSystemPanel
       .getByRole("link", { exact: true, name: "Universal Settings" })
       .press("Enter");

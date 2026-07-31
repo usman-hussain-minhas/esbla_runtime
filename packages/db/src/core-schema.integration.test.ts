@@ -261,7 +261,7 @@ afterAll(async () => {
 });
 
 describe("core PostgreSQL foundation", () => {
-  it("upgrades a prior two-key appearance layer without losing its version or provenance", async () => {
+  it("upgrades prior appearance and surface layouts without rewriting append-only evidence", async () => {
     const migrationConnectionString = process.env.DATABASE_MIGRATION_URL;
     if (!migrationConnectionString) throw new Error("Migration connection is required");
     const databaseName =
@@ -287,7 +287,10 @@ describe("core PostgreSQL foundation", () => {
         { max: 2 },
       );
       const legacyEntries = migrationJournal.entries.filter(
-        ({ tag }) => String(tag) !== "0029_wise_warbound",
+        ({ tag }) => String(tag).localeCompare("0029_wise_warbound") < 0,
+      );
+      const upgradeEntries = migrationJournal.entries.filter(
+        ({ tag }) => String(tag).localeCompare("0029_wise_warbound") >= 0,
       );
       for (const { tag } of legacyEntries) {
         const name = `${String(tag)}.sql`;
@@ -304,6 +307,27 @@ describe("core PostgreSQL foundation", () => {
       const membership = "52000000-0000-4000-8000-000000000001";
       const tenant = "50000000-0000-4000-8000-000000000001";
       const updatedAt = new Date("2026-01-02T03:04:05.000Z");
+      const legacyPlacement = {
+        column: 1,
+        columnSpan: 7,
+        instanceId: "mission-control.my-work",
+        row: 1,
+        rowSpan: 3,
+        widgetDefinitionId: "platform.my-work.queue",
+      };
+      const legacyLayout = JSON.stringify([legacyPlacement]);
+      const legacyEvidenceState = JSON.stringify({
+        baseVersion: 1,
+        billingState: "non_billable",
+        expectedVersion: 0,
+        materializedBaseDefinitionHashes: [
+          "c75bac3fed1b604fe9ebc9f39e1ccef45b2ad34570f5200ada0e8b77ab8b71fb",
+          "12e135cb9be3deeef974ec5af2362d7a8e68057bdba904976a29709afe601c36",
+        ],
+        placements: [legacyPlacement],
+        surfaceId: "surface.mission-control",
+        version: 1,
+      });
       const legacyClient = await upgradePool.connect();
       try {
         await legacyClient.query("BEGIN");
@@ -331,6 +355,61 @@ describe("core PostgreSQL foundation", () => {
              ($1, 'user_override', $2, 'appearance.high_contrast.v1', 'true'::jsonb, 7, $2, $3)`,
           [tenant, actor, updatedAt],
         );
+        await legacyClient.query(
+          `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+           VALUES ($1,$2,'platform.studio.surface_base.draft')`,
+          [tenant, actor],
+        );
+        await legacyClient.query(
+          `INSERT INTO presentation_surface_versions
+             (tenant_id,surface_id,base_version,based_on_version,definition_hash,layout,
+              published_by_principal_id)
+           VALUES ($1,'surface.mission-control',1,NULL,$2,$3::jsonb,$4)`,
+          [
+            tenant,
+            "c75bac3fed1b604fe9ebc9f39e1ccef45b2ad34570f5200ada0e8b77ab8b71fb",
+            legacyLayout,
+            actor,
+          ],
+        );
+        await legacyClient.query(
+          `INSERT INTO presentation_surface_heads
+             (tenant_id,surface_id,current_base_version,row_version,updated_by_principal_id)
+           VALUES ($1,'surface.mission-control',1,1,$2)`,
+          [tenant, actor],
+        );
+        await legacyClient.query(
+          `INSERT INTO presentation_surface_drafts
+             (tenant_id,surface_id,based_on_version,definition_hash,layout,version,
+              updated_by_principal_id)
+           VALUES ($1,'surface.mission-control',1,$2,$3::jsonb,1,$4)`,
+          [
+            tenant,
+            "c75bac3fed1b604fe9ebc9f39e1ccef45b2ad34570f5200ada0e8b77ab8b71fb",
+            legacyLayout,
+            actor,
+          ],
+        );
+        await legacyClient.query(
+          `INSERT INTO presentation_surface_overlays
+             (tenant_id,principal_id,surface_id,base_version,layout,version,
+              updated_by_principal_id)
+           VALUES ($1,$2,'surface.mission-control',1,$3::jsonb,1,$2)`,
+          [tenant, actor, legacyLayout],
+        );
+        await legacyClient.query(
+          `INSERT INTO evidence_events
+             (evidence_event_id,tenant_id,event_type,subject_type,subject_id,
+              actor_principal_id,correlation_id,prior_state,new_state)
+           VALUES (
+             '53000000-0000-4000-8000-000000000001',$1,
+             'platform.presentation.surface_overlay.updated',
+             'platform_presentation_surface_overlay',
+             '54000000-0000-4000-8000-000000000001',$2,
+             '55000000-0000-4000-8000-000000000001',NULL,$3
+           )`,
+          [tenant, actor, legacyEvidenceState],
+        );
         await legacyClient.query("COMMIT");
       } catch (error) {
         await legacyClient.query("ROLLBACK").catch(() => undefined);
@@ -339,10 +418,10 @@ describe("core PostgreSQL foundation", () => {
         legacyClient.release();
       }
 
-      copyFileSync(
-        join(migrationDirectory, "0029_wise_warbound.sql"),
-        join(legacyMigrationDirectory, "0029_wise_warbound.sql"),
-      );
+      for (const { tag } of upgradeEntries) {
+        const name = `${String(tag)}.sql`;
+        copyFileSync(join(migrationDirectory, name), join(legacyMigrationDirectory, name));
+      }
       writeFileSync(
         join(legacyMigrationDirectory, "meta", "_journal.json"),
         `${JSON.stringify(migrationJournal, null, 2)}\n`,
@@ -359,6 +438,11 @@ describe("core PostgreSQL foundation", () => {
         value: unknown;
         version: number;
       }>;
+      let upgradedSurfaceRows: QueryResult<{
+        source: string;
+        widget_definition_version: number | null;
+      }>;
+      let preservedEvidence: QueryResult<{ new_state: string }>;
       try {
         await readClient.query("BEGIN");
         await readClient.query("SELECT set_config('app.tenant_id', $1, true)", [tenant]);
@@ -369,6 +453,31 @@ describe("core PostgreSQL foundation", () => {
            WHERE tenant_id = $1 AND subject_type = 'user_override' AND subject_id = $2
            ORDER BY setting_key`,
           [tenant, actor],
+        );
+        upgradedSurfaceRows = await readClient.query(
+          `SELECT source,
+                  (layout->0->>'widgetDefinitionVersion')::integer
+                    AS widget_definition_version
+           FROM (
+             SELECT 'draft' AS source,layout
+             FROM presentation_surface_drafts
+             WHERE tenant_id=$1 AND surface_id='surface.mission-control'
+             UNION ALL
+             SELECT 'overlay' AS source,layout
+             FROM presentation_surface_overlays
+             WHERE tenant_id=$1 AND surface_id='surface.mission-control'
+             UNION ALL
+             SELECT 'version' AS source,layout
+             FROM presentation_surface_versions
+             WHERE tenant_id=$1 AND surface_id='surface.mission-control' AND base_version=1
+           ) migrated
+           ORDER BY source`,
+          [tenant],
+        );
+        preservedEvidence = await readClient.query(
+          `SELECT new_state
+           FROM evidence_events
+           WHERE evidence_event_id='53000000-0000-4000-8000-000000000001'`,
         );
         await readClient.query("ROLLBACK");
       } finally {
@@ -408,6 +517,12 @@ describe("core PostgreSQL foundation", () => {
           version: 7,
         },
       ]);
+      expect(upgradedSurfaceRows.rows).toEqual([
+        { source: "draft", widget_definition_version: 1 },
+        { source: "overlay", widget_definition_version: 1 },
+        { source: "version", widget_definition_version: 1 },
+      ]);
+      expect(preservedEvidence.rows).toEqual([{ new_state: legacyEvidenceState }]);
       const applied = await upgradePool.query<{ count: string }>(
         "SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations",
       );
@@ -505,6 +620,7 @@ describe("core PostgreSQL foundation", () => {
           "presentation_surface_drafts",
           "presentation_surface_heads",
           "presentation_surface_overlays",
+          "presentation_surface_settings",
           "presentation_surface_versions",
           "service_activations",
           "tenant_settings",
@@ -514,7 +630,7 @@ describe("core PostgreSQL foundation", () => {
       ],
     );
 
-    expect(rowSecurity.rows).toHaveLength(18);
+    expect(rowSecurity.rows).toHaveLength(19);
     expect(rowSecurity.rows.every((row) => row.row_security && row.force_row_security)).toBe(true);
     const schemaPrivilege = await pool.query<{ can_create: boolean; current_schema: string }>(
       `SELECT has_schema_privilege(current_user, 'public', 'CREATE') AS can_create,
@@ -538,6 +654,10 @@ describe("core PostgreSQL foundation", () => {
   });
 
   it("bounds versioned presentation storage with exact indexes, policies, grants and capability locking", async () => {
+    const surfaceSettingTable = await migrationPool.query<{ table_name: string | null }>(
+      `SELECT to_regclass('public.presentation_surface_settings')::text AS table_name`,
+    );
+    expect(surfaceSettingTable.rows).toEqual([{ table_name: "presentation_surface_settings" }]);
     const indexes = await migrationPool.query<{ definition: string; name: string }>(
       `SELECT indexname AS name, indexdef AS definition
        FROM pg_catalog.pg_indexes
@@ -582,6 +702,7 @@ describe("core PostgreSQL foundation", () => {
           "presentation_surface_drafts",
           "presentation_surface_heads",
           "presentation_surface_overlays",
+          "presentation_surface_settings",
           "presentation_surface_versions",
         ],
       ],
@@ -602,6 +723,8 @@ describe("core PostgreSQL foundation", () => {
       "presentation_surface_heads|presentation_surface_heads_initialize|INSERT",
       "presentation_surface_heads|presentation_surface_heads_read|SELECT",
       "presentation_surface_overlays|presentation_surface_overlays_own|ALL",
+      "presentation_surface_settings|presentation_surface_settings_read|SELECT",
+      "presentation_surface_settings|presentation_surface_settings_write|ALL",
       "presentation_surface_versions|presentation_surface_versions_initialize|INSERT",
       "presentation_surface_versions|presentation_surface_versions_publish|INSERT",
       "presentation_surface_versions|presentation_surface_versions_read|SELECT",
@@ -628,6 +751,11 @@ describe("core PostgreSQL foundation", () => {
          has_table_privilege('esbla_app', 'presentation_surface_heads', 'UPDATE'),
          NOT has_table_privilege('esbla_app', 'presentation_surface_heads', 'DELETE'),
          has_table_privilege('esbla_app', 'presentation_surface_overlays', 'DELETE'),
+         has_table_privilege('esbla_app', 'presentation_surface_settings', 'SELECT'),
+         has_table_privilege('esbla_app', 'presentation_surface_settings', 'INSERT'),
+         has_table_privilege('esbla_app', 'presentation_surface_settings', 'UPDATE'),
+         NOT has_table_privilege('esbla_app', 'presentation_surface_settings', 'DELETE'),
+         NOT has_table_privilege('esbla_app', 'presentation_surface_settings', 'TRUNCATE'),
          has_table_privilege('esbla_app', 'presentation_surface_drafts', 'SELECT'),
          has_table_privilege('esbla_app', 'presentation_surface_drafts', 'INSERT'),
          has_table_privilege('esbla_app', 'presentation_surface_drafts', 'UPDATE'),
@@ -642,10 +770,72 @@ describe("core PostgreSQL foundation", () => {
            'esbla_app',
            'public.esbla_lock_service_activation(uuid, uuid, text)',
            'EXECUTE'
+         ),
+         has_function_privilege(
+           'esbla_app',
+           'public.esbla_lock_presentation_surface_setting_write()',
+           'EXECUTE'
          )
        ] AS actual`,
     );
-    expect(privileges.rows).toEqual([{ actual: Array.from({ length: 26 }, () => true) }]);
+    expect(privileges.rows).toEqual([{ actual: Array.from({ length: 32 }, () => true) }]);
+
+    await migrationPool.query(
+      "ALTER TABLE presentation_surface_settings NO FORCE ROW LEVEL SECURITY",
+    );
+    try {
+      await migrationPool.query(
+        `INSERT INTO presentation_surface_settings
+           (tenant_id,surface_id,personalization_enabled,version,updated_by_principal_id)
+         VALUES ($1,'surface.mission-control',false,1,$2)`,
+        [ids.tenantA, ids.managerA],
+      );
+    } finally {
+      await migrationPool.query(
+        "ALTER TABLE presentation_surface_settings FORCE ROW LEVEL SECURITY",
+      );
+    }
+    const crossTenantSurfaceSetting = await tenantTransaction(ids.tenantB, async (client) => {
+      await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [ids.managerB]);
+      return await client.query<{ count: number }>(
+        `SELECT count(*)::integer AS count
+         FROM presentation_surface_settings
+         WHERE tenant_id=$1 AND surface_id='surface.mission-control'`,
+        [ids.tenantA],
+      );
+    });
+    expect(crossTenantSurfaceSetting.rows).toEqual([{ count: 0 }]);
+    const deniedSurfaceSettingUpdate = await tenantTransaction(ids.tenantA, async (client) => {
+      await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [ids.employeeA]);
+      return await client.query(
+        `UPDATE presentation_surface_settings
+         SET personalization_enabled=true,version=version+1,updated_by_principal_id=$2
+         WHERE tenant_id=$1 AND surface_id='surface.mission-control'`,
+        [ids.tenantA, ids.employeeA],
+      );
+    });
+    expect(deniedSurfaceSettingUpdate.rowCount).toBe(0);
+    expect(
+      (
+        await migrationTenantTransaction(ids.tenantA, async (client) => {
+          await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [
+            ids.managerA,
+          ]);
+          return await client.query(
+            `SELECT personalization_enabled,version,updated_by_principal_id
+           FROM presentation_surface_settings
+           WHERE tenant_id=$1 AND surface_id='surface.mission-control'`,
+            [ids.tenantA],
+          );
+        })
+      ).rows,
+    ).toEqual([
+      {
+        personalization_enabled: false,
+        updated_by_principal_id: ids.managerA,
+        version: 1,
+      },
+    ]);
 
     const preferenceConstraints = await migrationPool.query<{ definition: string; name: string }>(
       `SELECT constraint_name AS name, check_clause AS definition

@@ -33,6 +33,7 @@ export interface PresentationLayoutDiagnostic {
 export interface UnpositionedPresentationWidget {
   readonly instanceId: string;
   readonly widgetDefinitionId: string;
+  readonly widgetDefinitionVersion: number;
 }
 
 export type PresentationLayoutItem = PresentationWidgetPlacement | UnpositionedPresentationWidget;
@@ -95,7 +96,8 @@ function validateIdentity(item: PresentationLayoutItem): void {
     !identifierPattern.test(item.instanceId) ||
     typeof item.widgetDefinitionId !== "string" ||
     item.widgetDefinitionId.length > 160 ||
-    !identifierPattern.test(item.widgetDefinitionId)
+    !identifierPattern.test(item.widgetDefinitionId) ||
+    !safePositiveInteger(item.widgetDefinitionVersion, 2_147_483_647)
   ) {
     throw new PresentationLayoutError("Invalid presentation widget identity");
   }
@@ -105,7 +107,10 @@ function definitionFor(
   item: PresentationLayoutItem,
   definitions: readonly PresentationWidgetDefinition[],
 ): PresentationWidgetDefinition {
-  const matches = definitions.filter(({ id }) => id === item.widgetDefinitionId);
+  const matches = definitions.filter(
+    ({ definitionVersion, id }) =>
+      id === item.widgetDefinitionId && definitionVersion === item.widgetDefinitionVersion,
+  );
   if (matches.length !== 1 || !matches[0]) {
     throw new PresentationLayoutError("Unknown or ambiguous presentation widget definition");
   }
@@ -281,6 +286,7 @@ export function resolvePresentationBreakpointLayout(
       instanceId: item.instanceId,
       rowSpan: geometry.rowSpan,
       widgetDefinitionId: item.widgetDefinitionId,
+      widgetDefinitionVersion: item.widgetDefinitionVersion,
     };
     let placement: PresentationWidgetPlacement;
     if (geometry.column === undefined || geometry.row === undefined) {
@@ -333,8 +339,16 @@ export function resolveResponsivePresentationSurfaceLayout(
     );
   const layouts = [
     resolvePresentationBreakpointLayout(layout.effectivePlacements, "desktop", definitions),
-    resolvePersistedPresentationBreakpointLayout(persistedBase("tablet"), "tablet", definitions),
-    resolvePersistedPresentationBreakpointLayout(persistedBase("phone"), "phone", definitions),
+    layout.source === "user_overlay"
+      ? resolvePresentationBreakpointLayout(layout.effectivePlacements, "tablet", definitions)
+      : resolvePersistedPresentationBreakpointLayout(
+          persistedBase("tablet"),
+          "tablet",
+          definitions,
+        ),
+    layout.source === "user_overlay"
+      ? resolvePresentationBreakpointLayout(layout.effectivePlacements, "phone", definitions)
+      : resolvePersistedPresentationBreakpointLayout(persistedBase("phone"), "phone", definitions),
   ] as const;
   return Object.freeze({
     baseVersion: layout.baseVersion,

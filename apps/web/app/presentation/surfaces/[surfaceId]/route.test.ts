@@ -22,6 +22,7 @@ const validBody = {
       row: 4,
       rowSpan: 3,
       widgetDefinitionId: "hr.leave.my-requests",
+      widgetDefinitionVersion: 1,
     },
   ],
 };

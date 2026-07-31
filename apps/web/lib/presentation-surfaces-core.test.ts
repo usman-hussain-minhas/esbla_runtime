@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  decodePresentationPersonalSurfaceEditorWorkspaceResponse,
   decodePresentationSurfaceLayoutResponse,
   decodePresentationSurfaceOverlayResetResponse,
   PresentationSurfaceError,
@@ -22,6 +23,7 @@ describe("presentation surface web boundary", () => {
                 row: 4,
                 rowSpan: 3,
                 widgetDefinitionId: "hr.leave.my-requests",
+                widgetDefinitionVersion: 1,
               },
             ],
             baseVersion: 1,
@@ -34,6 +36,7 @@ describe("presentation surface web boundary", () => {
                 row: 4,
                 rowSpan: 3,
                 widgetDefinitionId: "hr.leave.my-requests",
+                widgetDefinitionVersion: 1,
               },
             ],
             overlayVersion: 0,
@@ -61,6 +64,7 @@ describe("presentation surface web boundary", () => {
             row: 4,
             rowSpan: 3,
             widgetDefinitionId: "hr.leave.my-requests",
+            widgetDefinitionVersion: 1,
           },
         ],
       }),
@@ -72,6 +76,36 @@ describe("presentation surface web boundary", () => {
         placements: [],
       }),
     ).toThrow();
+  });
+
+  it("decodes one capability-bound personal editor workspace", async () => {
+    await expect(
+      decodePresentationPersonalSurfaceEditorWorkspaceResponse(
+        Promise.resolve(
+          Response.json({
+            editable: false,
+            layout: {
+              baseDefinitionHash:
+                "c75bac3fed1b604fe9ebc9f39e1ccef45b2ad34570f5200ada0e8b77ab8b71fb",
+              basePlacements: [],
+              baseVersion: 1,
+              diagnostics: [],
+              effectivePlacements: [],
+              overlayVersion: 0,
+              source: "code_default",
+              surfaceId: "surface.mission-control",
+            },
+            lockReason: "layout_write_capability_absent",
+            resettable: true,
+          }),
+        ),
+      ),
+    ).resolves.toMatchObject({
+      editable: false,
+      layout: { surfaceId: "surface.mission-control" },
+      lockReason: "layout_write_capability_absent",
+      resettable: true,
+    });
   });
 
   it("strictly parses and decodes an evidenced overlay reset", async () => {

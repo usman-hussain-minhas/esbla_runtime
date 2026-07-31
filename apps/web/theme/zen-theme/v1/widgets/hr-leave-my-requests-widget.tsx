@@ -48,7 +48,8 @@ function resolveLeaveWidget(
     [placement.desktop, placement.tablet, placement.phone].some(
       (candidate) =>
         candidate.instanceId !== registered.instanceId ||
-        candidate.widgetDefinitionId !== registered.widgetDefinitionId,
+        candidate.widgetDefinitionId !== registered.widgetDefinitionId ||
+        candidate.widgetDefinitionVersion !== registered.widgetDefinitionVersion,
     ) ||
     definition.fullScreenRoute === null
   ) {

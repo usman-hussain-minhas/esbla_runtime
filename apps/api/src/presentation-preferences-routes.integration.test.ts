@@ -54,6 +54,31 @@ async function setTenantAuthority(enabled: boolean): Promise<void> {
   }
 }
 
+async function setEmployeeLayoutCapability(
+  capabilityId:
+    | "platform.presentation.layouts.read_own"
+    | "platform.presentation.layouts.reset_own"
+    | "platform.presentation.layouts.write_own",
+  enabled: boolean,
+): Promise<void> {
+  const client = await migrationPool.connect();
+  try {
+    await tenantTransaction(client, async () => {
+      await client.query(
+        enabled
+          ? `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+             VALUES ($1,$2,$3)
+             ON CONFLICT DO NOTHING`
+          : `DELETE FROM membership_capabilities
+             WHERE tenant_id=$1 AND principal_id=$2 AND capability_id=$3`,
+        [ids.tenant, ids.employee, capabilityId],
+      );
+    });
+  } finally {
+    client.release();
+  }
+}
+
 async function signedRequest(options: {
   readonly body?: object;
   readonly idempotencyKey?: string;
@@ -408,5 +433,96 @@ describe("presentation preference API", () => {
     } finally {
       client.release();
     }
+  });
+
+  it("discovers a personal editor only through current read and write capabilities", async () => {
+    const surfaceUrl = "/v1/platform/presentation/surfaces/surface.mission-control";
+    const editorUrl = `${surfaceUrl}/personal-editor`;
+    const initial = await signedRequest({ method: "GET", url: editorUrl });
+    expect(initial.statusCode, initial.body).toBe(200);
+    expect(initial.json()).toMatchObject({
+      editable: true,
+      layout: {
+        overlayVersion: 0,
+        surfaceId: "surface.mission-control",
+      },
+      lockReason: null,
+      resettable: true,
+    });
+
+    await setEmployeeLayoutCapability("platform.presentation.layouts.reset_own", false);
+    const resetLocked = await signedRequest({ method: "GET", url: editorUrl });
+    expect(resetLocked.statusCode, resetLocked.body).toBe(200);
+    expect(resetLocked.json()).toMatchObject({
+      editable: true,
+      lockReason: null,
+      resettable: false,
+    });
+    await setEmployeeLayoutCapability("platform.presentation.layouts.reset_own", true);
+
+    await setEmployeeLayoutCapability("platform.presentation.layouts.write_own", false);
+    const locked = await signedRequest({ method: "GET", url: editorUrl });
+    expect(locked.statusCode, locked.body).toBe(200);
+    expect(locked.json()).toMatchObject({
+      editable: false,
+      lockReason: "layout_write_capability_absent",
+      resettable: true,
+    });
+    const beforeDenied = await migrationPool.query<{
+      evidence_count: number;
+      outbox_count: number;
+      overlay_count: number;
+    }>(
+      `SELECT
+         (SELECT count(*)::integer FROM presentation_surface_overlays
+          WHERE tenant_id=$1 AND principal_id=$2) overlay_count,
+         (SELECT count(*)::integer FROM evidence_events
+          WHERE tenant_id=$1 AND subject_type='platform_presentation_surface_overlay')
+           evidence_count,
+         (SELECT count(*)::integer FROM outbox_events
+          WHERE tenant_id=$1 AND event_type LIKE 'platform.presentation.surface_overlay.%')
+           outbox_count`,
+      [ids.tenant, ids.employee],
+    );
+    const denied = await signedRequest({
+      body: {
+        expectedVersion: 0,
+        placements: initial.json().layout.effectivePlacements,
+      },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      url: `${surfaceUrl}/overlay`,
+    });
+    expect([denied.statusCode, denied.json().code]).toEqual([403, "POLICY_DENIED"]);
+    expect(
+      await migrationPool.query(
+        `SELECT
+           (SELECT count(*)::integer FROM presentation_surface_overlays
+            WHERE tenant_id=$1 AND principal_id=$2) overlay_count,
+           (SELECT count(*)::integer FROM evidence_events
+            WHERE tenant_id=$1 AND subject_type='platform_presentation_surface_overlay')
+             evidence_count,
+           (SELECT count(*)::integer FROM outbox_events
+            WHERE tenant_id=$1 AND event_type LIKE 'platform.presentation.surface_overlay.%')
+             outbox_count`,
+        [ids.tenant, ids.employee],
+      ),
+    ).toMatchObject({ rows: beforeDenied.rows });
+
+    await setEmployeeLayoutCapability("platform.presentation.layouts.write_own", true);
+    await setEmployeeLayoutCapability("platform.presentation.layouts.read_own", false);
+    const unreadable = await signedRequest({ method: "GET", url: editorUrl });
+    expect([unreadable.statusCode, unreadable.json().code]).toEqual([403, "POLICY_DENIED"]);
+    await setEmployeeLayoutCapability("platform.presentation.layouts.read_own", true);
+
+    const crossTenant = await signedRequest({
+      method: "GET",
+      tenantId: ids.otherTenant,
+      url: editorUrl,
+    });
+    expect([crossTenant.statusCode, crossTenant.json().code]).toEqual([
+      403,
+      "ACTOR_NOT_ACTIVE_MEMBER",
+    ]);
   });
 });

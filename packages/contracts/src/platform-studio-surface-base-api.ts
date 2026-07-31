@@ -114,6 +114,7 @@ function canonicalPlacements(placements: readonly PresentationWidgetPlacement[])
       row: placement.row,
       rowSpan: placement.rowSpan,
       widgetDefinitionId: placement.widgetDefinitionId,
+      widgetDefinitionVersion: placement.widgetDefinitionVersion,
     })),
   );
 }
@@ -125,15 +126,16 @@ export function parseExactPresentationSurfacePlacementSet(
   const placements = parsePresentationWidgetPlacements(value);
   const contract = getZenV1SurfaceContract(surfaceId);
   const expected = new Map(
-    contract.basePlacements.map(({ instanceId, widgetDefinitionId }) => [
+    contract.basePlacements.map(({ instanceId, widgetDefinitionId, widgetDefinitionVersion }) => [
       instanceId,
-      widgetDefinitionId,
+      `${widgetDefinitionId}@${widgetDefinitionVersion}`,
     ]),
   );
   if (
     placements.length !== expected.size ||
     placements.some(
-      ({ instanceId, widgetDefinitionId }) => expected.get(instanceId) !== widgetDefinitionId,
+      ({ instanceId, widgetDefinitionId, widgetDefinitionVersion }) =>
+        expected.get(instanceId) !== `${widgetDefinitionId}@${widgetDefinitionVersion}`,
     )
   ) {
     throw new Error("Invalid presentation surface instance set");

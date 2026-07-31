@@ -380,6 +380,72 @@ server.post("/__esbla-test-control/workforce-presentation-eligibility", async (r
   return { status: "updated" };
 });
 
+server.post("/__esbla-test-control/presentation-layout-write", async (request, reply) => {
+  if (!testControlAuthorized(request)) return await reply.code(404).send({ status: "not_found" });
+  if (!hasExactKeys(request.body, ["enabled"]) || typeof request.body.enabled !== "boolean") {
+    return await reply.code(400).send({ status: "invalid" });
+  }
+  const client = await migrationReadPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.tenant_id', $1, true)", [fixture.tenantId]);
+    await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [
+      fixture.employeePrincipalId,
+    ]);
+    await client.query(
+      request.body.enabled
+        ? `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+           VALUES ($1,$2,'platform.presentation.layouts.write_own')
+           ON CONFLICT DO NOTHING`
+        : `DELETE FROM membership_capabilities
+           WHERE tenant_id=$1 AND principal_id=$2
+             AND capability_id='platform.presentation.layouts.write_own'`,
+      [fixture.tenantId, fixture.employeePrincipalId],
+    );
+    await client.query("COMMIT");
+  } catch {
+    await client.query("ROLLBACK").catch(() => undefined);
+    return await reply.code(500).send({ status: "failed" });
+  } finally {
+    client.release();
+  }
+  return { status: "updated" };
+});
+
+server.post(
+  "/__esbla-test-control/presentation-surface-personalization",
+  async (request, reply) => {
+    if (!testControlAuthorized(request)) return await reply.code(404).send({ status: "not_found" });
+    if (!hasExactKeys(request.body, ["enabled"]) || typeof request.body.enabled !== "boolean") {
+      return await reply.code(400).send({ status: "invalid" });
+    }
+    const client = await migrationReadPool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("ALTER TABLE presentation_surface_settings NO FORCE ROW LEVEL SECURITY");
+      await client.query(
+        `INSERT INTO presentation_surface_settings
+         (tenant_id,surface_id,personalization_enabled,version,updated_by_principal_id)
+       VALUES ($1,'surface.mission-control',$2,1,$3)
+       ON CONFLICT (tenant_id,surface_id)
+       DO UPDATE SET personalization_enabled=EXCLUDED.personalization_enabled,
+                     version=presentation_surface_settings.version+1,
+                     updated_at=now(),
+                     updated_by_principal_id=EXCLUDED.updated_by_principal_id`,
+        [fixture.tenantId, request.body.enabled, fixture.employeePrincipalId],
+      );
+      await client.query("ALTER TABLE presentation_surface_settings FORCE ROW LEVEL SECURITY");
+      await client.query("COMMIT");
+    } catch {
+      await client.query("ROLLBACK").catch(() => undefined);
+      return await reply.code(500).send({ status: "failed" });
+    } finally {
+      client.release();
+    }
+    return { status: "updated" };
+  },
+);
+
 const handleSignal = () => {
   interrupted = true;
   process.exitCode = 1;

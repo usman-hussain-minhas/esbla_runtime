@@ -632,6 +632,31 @@ export async function seedHrLeaveFixture() {
         ],
       );
       await client.query(
+        `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+         SELECT $1, principal_id, capability_id
+         FROM unnest($2::uuid[]) AS principal(principal_id)
+         CROSS JOIN unnest($3::text[]) AS capability(capability_id)
+         ON CONFLICT DO NOTHING`,
+        [
+          fixture.tenantId,
+          [
+            fixture.employeePrincipalId,
+            fixture.managerPrincipalId,
+            fixture.operatorPrincipalId,
+            fixture.adminPrincipalId,
+            fixture.employmentEmployeePrincipalId,
+            fixture.employmentActionOperatorPrincipalId,
+            fixture.employmentViewAdminPrincipalId,
+            fixture.employmentListOperatorPrincipalId,
+          ],
+          [
+            "platform.presentation.layouts.read_own",
+            "platform.presentation.layouts.reset_own",
+            "platform.presentation.layouts.write_own",
+          ],
+        ],
+      );
+      await client.query(
         `INSERT INTO service_activations (tenant_id, service_key, state, version)
          VALUES ($1, 'hr.leave_request', 'active', 1),
                 ($1, 'workforce_profile', 'active', 1),

@@ -91,6 +91,7 @@ import {
   parseUpdatePresentationSurfaceOverlayBody,
   parseUpdateTenantPresentationDefaultsBody,
   presentationNavigationDiscoverySchema,
+  presentationPersonalSurfaceEditorWorkspaceSchema,
   presentationPreferencesSchema,
   presentationServiceGroupDiscoverySchema,
   presentationShortcutDiscoveryQuerySchema,
@@ -163,6 +164,7 @@ import {
 } from "@esbla/hr";
 import {
   getOwnPresentationNavigation,
+  getOwnPresentationPersonalSurfaceEditorWorkspace,
   getOwnPresentationPreferences,
   getOwnPresentationServiceGroups,
   getOwnPresentationShortcuts,
@@ -359,6 +361,7 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     hrLeaveRequestPageSchema,
     hrLeaveRequestDetailSchema,
     presentationNavigationDiscoverySchema,
+    presentationPersonalSurfaceEditorWorkspaceSchema,
     presentationPreferencesSchema,
     presentationShortcutDiscoveryQuerySchema,
     presentationShortcutDiscoverySchema,
@@ -656,6 +659,28 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     async (request) => {
       const path = assertStrictRequest(parsePresentationSurfacePath, request.params);
       return await getOwnPresentationSurfaceLayout(
+        options.pool,
+        operationContext(request),
+        path.surfaceId,
+      );
+    },
+  );
+
+  server.get<{ Params: PresentationSurfacePath }>(
+    "/v1/platform/presentation/surfaces/:surfaceId/personal-editor",
+    {
+      preHandler: authenticate,
+      schema: {
+        params: { $ref: "PresentationSurfacePathV1#" },
+        response: {
+          200: { $ref: "PresentationPersonalSurfaceEditorWorkspaceV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request) => {
+      const path = assertStrictRequest(parsePresentationSurfacePath, request.params);
+      return await getOwnPresentationPersonalSurfaceEditorWorkspace(
         options.pool,
         operationContext(request),
         path.surfaceId,

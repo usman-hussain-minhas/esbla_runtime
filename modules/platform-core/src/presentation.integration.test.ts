@@ -1,10 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createDatabase, createDatabasePool, migrateDatabase } from "@esbla/db";
 import type { Pool, PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { PlatformError } from "./errors.js";
 import {
   getOwnPresentationNavigation,
+  getOwnPresentationPersonalSurfaceEditorWorkspace,
   getOwnPresentationPreferences,
   getOwnPresentationServiceGroups,
   getOwnPresentationShortcuts,
@@ -323,6 +324,100 @@ async function setPresentationCapability(
   }
 }
 
+async function setSurfacePersonalization(
+  tenantId: string,
+  surfaceId: "surface.hr.mission-control" | "surface.mission-control",
+  updatedByPrincipalId: string,
+  enabled: boolean,
+): Promise<void> {
+  await migrationPool.query(
+    "ALTER TABLE presentation_surface_settings NO FORCE ROW LEVEL SECURITY",
+  );
+  try {
+    await migrationPool.query(
+      `INSERT INTO presentation_surface_settings
+         (tenant_id,surface_id,personalization_enabled,version,updated_by_principal_id)
+       VALUES ($1,$2,$3,1,$4)
+       ON CONFLICT (tenant_id,surface_id)
+       DO UPDATE SET personalization_enabled=EXCLUDED.personalization_enabled,
+                     version=presentation_surface_settings.version+1,
+                     updated_at=now(),
+                     updated_by_principal_id=EXCLUDED.updated_by_principal_id`,
+      [tenantId, surfaceId, enabled, updatedByPrincipalId],
+    );
+  } finally {
+    await migrationPool.query("ALTER TABLE presentation_surface_settings FORCE ROW LEVEL SECURITY");
+  }
+}
+
+function legacyCanonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(legacyCanonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${legacyCanonicalJson(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function withoutWidgetDefinitionVersions(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutWidgetDefinitionVersions);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => key !== "widgetDefinitionVersion")
+      .map(([key, child]) => [key, withoutWidgetDefinitionVersions(child)]),
+  );
+}
+
+async function rewriteSurfaceEvidenceAsLegacyV1(
+  tenantId: string,
+  actorPrincipalId: string,
+  evidenceEventId: string,
+  legacyRequestHash?: string,
+): Promise<void> {
+  await migrationPool.query(
+    "ALTER TABLE evidence_events DISABLE TRIGGER evidence_events_reject_update_delete",
+  );
+  try {
+    const client = await migrationPool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
+      await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [
+        actorPrincipalId,
+      ]);
+      const current = await client.query<{ new_state: string }>(
+        "SELECT new_state FROM evidence_events WHERE evidence_event_id = $1",
+        [evidenceEventId],
+      );
+      const row = current.rows[0];
+      if (!row) throw new Error("Surface evidence is unavailable");
+      const state = withoutWidgetDefinitionVersions(JSON.parse(row.new_state)) as Record<
+        string,
+        unknown
+      >;
+      if (legacyRequestHash) state.requestHash = legacyRequestHash;
+      await client.query("UPDATE evidence_events SET new_state = $2 WHERE evidence_event_id = $1", [
+        evidenceEventId,
+        legacyCanonicalJson(state),
+      ]);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  } finally {
+    await migrationPool.query(
+      "ALTER TABLE evidence_events ENABLE TRIGGER evidence_events_reject_update_delete",
+    );
+  }
+}
+
 const studioSurfaceBaseCapabilities = [
   "platform.studio.surface_base.read",
   "platform.studio.surface_base.draft",
@@ -371,6 +466,7 @@ async function surfaceMutationFootprint(
   readonly evidenceCount: number;
   readonly headBaseVersion: number | null;
   readonly headRowVersion: number | null;
+  readonly overlayRows: string;
   readonly outboxCount: number;
   readonly versionCount: number;
 }> {
@@ -379,6 +475,7 @@ async function surfaceMutationFootprint(
     evidence_count: number;
     head_base_version: number | null;
     head_row_version: number | null;
+    overlay_rows: string;
     outbox_count: number;
     version_count: number;
   }>(
@@ -395,6 +492,12 @@ async function surfaceMutationFootprint(
        (SELECT row_version
         FROM presentation_surface_heads
         WHERE tenant_id = $1 AND surface_id = $2) AS head_row_version,
+       (SELECT coalesce(
+          jsonb_agg(to_jsonb(presentation_surface_overlays) ORDER BY principal_id),
+          '[]'::jsonb
+        )::text
+        FROM presentation_surface_overlays
+        WHERE tenant_id = $1 AND surface_id = $2) AS overlay_rows,
        (SELECT count(*)::integer
         FROM evidence_events
         WHERE tenant_id = $1) AS evidence_count,
@@ -410,6 +513,7 @@ async function surfaceMutationFootprint(
     evidenceCount: row.evidence_count,
     headBaseVersion: row.head_base_version,
     headRowVersion: row.head_row_version,
+    overlayRows: row.overlay_rows,
     outboxCount: row.outbox_count,
     versionCount: row.version_count,
   };
@@ -646,6 +750,19 @@ beforeAll(async () => {
     active: true,
     capabilities: ["hr.leave.list_own", "hr.leave.view"],
   });
+  for (const [tenantId, principalId] of [
+    [ids.tenantA, ids.actorA],
+    [ids.tenantA, ids.actorAdminA],
+    [ids.tenantB, ids.actorB],
+  ] as const) {
+    for (const capabilityId of [
+      "platform.presentation.layouts.read_own",
+      "platform.presentation.layouts.reset_own",
+      "platform.presentation.layouts.write_own",
+    ]) {
+      await setPresentationCapability(tenantId, principalId, capabilityId, true);
+    }
+  }
   await migrationPool.query(`GRANT SELECT, INSERT ON evidence_events TO ${applicationRole}`);
   await migrationPool.query(
     `GRANT SELECT ON membership_capabilities TO ${applicationRole};
@@ -1112,6 +1229,7 @@ describe("presentation preference persistence", () => {
             row: 5,
             rowSpan: 3,
             widgetDefinitionId: "hr.leave.my-requests",
+            widgetDefinitionVersion: 1,
           },
         ],
       },
@@ -1153,19 +1271,13 @@ describe("presentation preference persistence", () => {
     );
     expect(expandedEligibility.effectivePlacements.map(({ instanceId }) => instanceId)).toEqual([
       "mission-control.my-leave",
-      "mission-control.my-profile",
     ]);
     expect(
       expandedEligibility.effectivePlacements.find(
         ({ instanceId }) => instanceId === "mission-control.my-leave",
       ),
-    ).toMatchObject({ column: 1, row: 4 });
-    expect(expandedEligibility.diagnostics).toEqual([
-      {
-        code: "overlay_placement_conflict",
-        instanceId: "mission-control.my-leave",
-      },
-    ]);
+    ).toMatchObject({ column: 2, row: 5 });
+    expect(expandedEligibility.diagnostics).toEqual([]);
 
     await setWorkforcePresentationEligibility(ids.tenantA, ids.actorA, false);
     expect(
@@ -1255,7 +1367,7 @@ describe("presentation preference persistence", () => {
           "surface.mission-control",
         )
       ).effectivePlacements.map(({ widgetDefinitionId }) => widgetDefinitionId),
-    ).toEqual(["platform.my-work.queue"]);
+    ).toEqual([]);
     await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
       active: true,
       capabilities: ["hr.leave.list_own", "hr.leave.view"],
@@ -1720,17 +1832,23 @@ describe("presentation preference persistence", () => {
       ...placement,
       column: 2,
     }));
-    const personal = await updateOwnPresentationSurfaceOverlay(
-      pool,
-      context(ids.tenantA, ids.actorAdminA),
-      surfaceId,
-      { expectedVersion: 0, placements: movedOnlyByColumn },
-    );
+    const personalContext = context(ids.tenantA, ids.actorAdminA);
+    const personal = await updateOwnPresentationSurfaceOverlay(pool, personalContext, surfaceId, {
+      expectedVersion: 0,
+      placements: movedOnlyByColumn,
+    });
     expect(personal).toMatchObject({
       baseVersion: 1,
       overlayVersion: 1,
       source: "user_overlay",
     });
+    await rewriteSurfaceEvidenceAsLegacyV1(ids.tenantA, ids.actorAdminA, personal.evidenceEventId);
+    expect(
+      await updateOwnPresentationSurfaceOverlay(pool, personalContext, surfaceId, {
+        expectedVersion: 0,
+        placements: movedOnlyByColumn,
+      }),
+    ).toEqual({ ...personal, replayed: true });
 
     const beforeDeniedRead = await surfaceMutationFootprint(ids.tenantA, surfaceId);
     await expect(
@@ -1797,6 +1915,22 @@ describe("presentation preference persistence", () => {
       },
       replayed: false,
     });
+    const legacyDraftRequestHash = createHash("sha256")
+      .update(
+        legacyCanonicalJson({
+          expectedDraftVersion: 0,
+          expectedHeadRowVersion: 1,
+          placements: withoutWidgetDefinitionVersions(proposedBase),
+          surfaceId,
+        }),
+      )
+      .digest("hex");
+    await rewriteSurfaceEvidenceAsLegacyV1(
+      ids.tenantA,
+      ids.actorAdminA,
+      drafted.evidenceEventId,
+      legacyDraftRequestHash,
+    );
     expect(
       await upsertTenantPresentationSurfaceDraft(pool, draftContext, surfaceId, {
         expectedDraftVersion: 0,
@@ -1902,6 +2036,13 @@ describe("presentation preference persistence", () => {
       headRowVersion: 2,
       replayed: false,
     });
+    await rewriteSurfaceEvidenceAsLegacyV1(ids.tenantA, ids.actorAdminA, published.evidenceEventId);
+    expect(
+      await publishTenantPresentationSurfaceDraft(pool, publishContext, surfaceId, {
+        expectedDraftVersion: 1,
+        expectedHeadRowVersion: 1,
+      }),
+    ).toEqual({ ...published, replayed: true });
 
     const rebased = await getOwnPresentationSurfaceLayout(
       pool,
@@ -1985,6 +2126,17 @@ describe("presentation preference persistence", () => {
       headRowVersion: 3,
       replayed: false,
     });
+    await rewriteSurfaceEvidenceAsLegacyV1(
+      ids.tenantA,
+      ids.actorAdminA,
+      rolledBack.evidenceEventId,
+    );
+    expect(
+      await rollbackTenantPresentationSurfaceBase(pool, rollbackContext, surfaceId, {
+        expectedHeadRowVersion: 2,
+        sourceBaseVersion: 1,
+      }),
+    ).toEqual({ ...rolledBack, replayed: true });
 
     const resetContext = context(ids.tenantA, ids.actorAdminA);
     const reset = await resetOwnPresentationSurfaceOverlay(pool, resetContext, surfaceId, {
@@ -1997,6 +2149,7 @@ describe("presentation preference persistence", () => {
       replayed: false,
       source: "tenant_base",
     });
+    await rewriteSurfaceEvidenceAsLegacyV1(ids.tenantA, ids.actorAdminA, reset.evidenceEventId);
     expect(
       await resetOwnPresentationSurfaceOverlay(pool, resetContext, surfaceId, {
         expectedVersion: 2,
@@ -2349,6 +2502,195 @@ describe("presentation preference persistence", () => {
       status: "fulfilled",
       value: undefined,
     });
+  });
+
+  it("supports remove-all and re-add while current layout capabilities fail closed", async () => {
+    const surfaceId = "surface.mission-control" as const;
+    await setLeavePresentationEligibility(ids.tenantB, ids.actorB, {
+      active: true,
+      capabilities: ["hr.leave.list_own", "hr.leave.view"],
+    });
+    for (const capabilityId of [
+      "platform.presentation.layouts.read_own",
+      "platform.presentation.layouts.reset_own",
+      "platform.presentation.layouts.write_own",
+    ]) {
+      await setPresentationCapability(ids.tenantB, ids.actorB, capabilityId, true);
+    }
+    const initial = await getOwnPresentationSurfaceLayout(
+      pool,
+      context(ids.tenantB, ids.actorB),
+      surfaceId,
+    );
+    expect(initial.effectivePlacements).toHaveLength(1);
+
+    const removedAll = await updateOwnPresentationSurfaceOverlay(
+      pool,
+      context(ids.tenantB, ids.actorB),
+      surfaceId,
+      { expectedVersion: 0, placements: [] },
+    );
+    expect(removedAll).toMatchObject({
+      effectivePlacements: [],
+      overlayVersion: 1,
+      source: "user_overlay",
+    });
+
+    await setPresentationCapability(
+      ids.tenantB,
+      ids.actorB,
+      "platform.presentation.layouts.write_own",
+      false,
+    );
+    const beforeDeniedWrite = await surfaceMutationFootprint(ids.tenantB, surfaceId);
+    await expect(
+      updateOwnPresentationSurfaceOverlay(pool, context(ids.tenantB, ids.actorB), surfaceId, {
+        expectedVersion: 1,
+        placements: initial.effectivePlacements,
+      }),
+    ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
+    expect(await surfaceMutationFootprint(ids.tenantB, surfaceId)).toEqual(beforeDeniedWrite);
+
+    await setPresentationCapability(
+      ids.tenantB,
+      ids.actorB,
+      "platform.presentation.layouts.write_own",
+      true,
+    );
+    const restored = await updateOwnPresentationSurfaceOverlay(
+      pool,
+      context(ids.tenantB, ids.actorB),
+      surfaceId,
+      { expectedVersion: 1, placements: initial.effectivePlacements },
+    );
+    expect(restored).toMatchObject({
+      effectivePlacements: initial.effectivePlacements,
+      overlayVersion: 2,
+    });
+
+    await setPresentationCapability(
+      ids.tenantB,
+      ids.actorB,
+      "platform.presentation.layouts.reset_own",
+      false,
+    );
+    const beforeDeniedReset = await surfaceMutationFootprint(ids.tenantB, surfaceId);
+    await expect(
+      resetOwnPresentationSurfaceOverlay(pool, context(ids.tenantB, ids.actorB), surfaceId, {
+        expectedVersion: 2,
+      }),
+    ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
+    expect(await surfaceMutationFootprint(ids.tenantB, surfaceId)).toEqual(beforeDeniedReset);
+
+    await setPresentationCapability(
+      ids.tenantB,
+      ids.actorB,
+      "platform.presentation.layouts.reset_own",
+      true,
+    );
+    await expect(
+      resetOwnPresentationSurfaceOverlay(pool, context(ids.tenantB, ids.actorB), surfaceId, {
+        expectedVersion: 2,
+      }),
+    ).resolves.toMatchObject({ overlayVersion: 0 });
+  });
+
+  it("persists a tenant-surface personalization lock and blocks editor mutations unchanged", async () => {
+    const surfaceId = "surface.mission-control" as const;
+    await setPresentationCapability(
+      ids.tenantA,
+      ids.actorAdminA,
+      "platform.presentation.tenant_defaults.write",
+      true,
+    );
+    await setSurfacePersonalization(ids.tenantA, surfaceId, ids.actorAdminA, true);
+    const sharedLockClient = await pool.connect();
+    const settingWriter = await pool.connect();
+    try {
+      const lockKey = `platform.presentation.surface.personalization:${ids.tenantA}:${surfaceId}`;
+      await sharedLockClient.query("BEGIN");
+      await sharedLockClient.query("SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))", [
+        lockKey,
+      ]);
+      await settingWriter.query("BEGIN");
+      await settingWriter.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenantA]);
+      await settingWriter.query("SELECT set_config('app.actor_principal_id', $1, true)", [
+        ids.actorAdminA,
+      ]);
+      await settingWriter.query("SET LOCAL lock_timeout = '250ms'");
+      await expect(
+        settingWriter.query(
+          `UPDATE presentation_surface_settings
+           SET personalization_enabled=false,version=version+1,
+               updated_at=now(),updated_by_principal_id=$2
+           WHERE tenant_id=$1 AND surface_id=$3`,
+          [ids.tenantA, ids.actorAdminA, surfaceId],
+        ),
+      ).rejects.toMatchObject({ code: "55P03" });
+      await settingWriter.query("ROLLBACK");
+      expect(
+        await presentationRows<{ personalization_enabled: boolean }>(
+          ids.tenantA,
+          ids.actorAdminA,
+          `SELECT personalization_enabled
+           FROM presentation_surface_settings
+           WHERE tenant_id=$1 AND surface_id=$2`,
+          [ids.tenantA, surfaceId],
+        ),
+      ).toEqual([{ personalization_enabled: true }]);
+      await sharedLockClient.query("COMMIT");
+
+      await settingWriter.query("BEGIN");
+      await settingWriter.query("SELECT set_config('app.tenant_id', $1, true)", [ids.tenantA]);
+      await settingWriter.query("SELECT set_config('app.actor_principal_id', $1, true)", [
+        ids.actorAdminA,
+      ]);
+      const disabled = await settingWriter.query(
+        `UPDATE presentation_surface_settings
+         SET personalization_enabled=false,version=version+1,
+             updated_at=now(),updated_by_principal_id=$2
+         WHERE tenant_id=$1 AND surface_id=$3`,
+        [ids.tenantA, ids.actorAdminA, surfaceId],
+      );
+      expect(disabled.rowCount).toBe(1);
+      await settingWriter.query("COMMIT");
+    } finally {
+      await sharedLockClient.query("ROLLBACK").catch(() => undefined);
+      await settingWriter.query("ROLLBACK").catch(() => undefined);
+      sharedLockClient.release();
+      settingWriter.release();
+    }
+    const locked = await getOwnPresentationPersonalSurfaceEditorWorkspace(
+      pool,
+      context(ids.tenantA, ids.actorA),
+      surfaceId,
+    );
+    expect(locked).toMatchObject({
+      editable: false,
+      lockReason: "tenant_personalization_disabled",
+      resettable: false,
+    });
+    const beforeDenied = await surfaceMutationFootprint(ids.tenantA, surfaceId);
+    await expect(
+      updateOwnPresentationSurfaceOverlay(pool, context(ids.tenantA, ids.actorA), surfaceId, {
+        expectedVersion: locked.layout.overlayVersion,
+        placements: locked.layout.effectivePlacements,
+      }),
+    ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
+    expect(await surfaceMutationFootprint(ids.tenantA, surfaceId)).toEqual(beforeDenied);
+    await expect(
+      resetOwnPresentationSurfaceOverlay(pool, context(ids.tenantA, ids.actorA), surfaceId, {
+        expectedVersion: locked.layout.overlayVersion,
+      }),
+    ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
+    expect(await surfaceMutationFootprint(ids.tenantA, surfaceId)).toEqual(beforeDenied);
+    await setSurfacePersonalization(ids.tenantA, surfaceId, ids.actorAdminA, true);
+    await setPresentationCapability(
+      ids.tenantA,
+      ids.actorAdminA,
+      "platform.presentation.tenant_defaults.write",
+      false,
+    );
   });
 
   it("fails closed across tenants, suspended actors, and stale CAS writers", async () => {

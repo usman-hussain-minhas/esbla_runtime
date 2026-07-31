@@ -74,6 +74,7 @@ export function PresentationWidgetFrame({
       className: "zen-widget",
       "data-surface-instance": instanceId,
       "data-widget-definition": definition.id,
+      "data-widget-definition-version": definition.definitionVersion,
       "data-widget-state": state,
       style: widgetStyle(placement),
     },

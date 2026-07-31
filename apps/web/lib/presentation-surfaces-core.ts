@@ -1,6 +1,8 @@
 import {
+  type PresentationPersonalSurfaceEditorWorkspace,
   type PresentationSurfaceLayout,
   parseApiProblemDetails,
+  parsePresentationPersonalSurfaceEditorWorkspace,
   parsePresentationSurfaceLayout,
   parseResetPresentationSurfaceOverlayBody,
   parseResetPresentationSurfaceOverlayResponse,
@@ -59,6 +61,23 @@ export async function decodePresentationSurfaceLayoutResponse(
   if (response.status !== 200) throw await strictProblem(response);
   try {
     return parsePresentationSurfaceLayout(await response.json());
+  } catch {
+    throw new PresentationSurfaceError("unavailable");
+  }
+}
+
+export async function decodePresentationPersonalSurfaceEditorWorkspaceResponse(
+  responsePromise: Promise<Response>,
+): Promise<PresentationPersonalSurfaceEditorWorkspace> {
+  let response: Response;
+  try {
+    response = await responsePromise;
+  } catch {
+    throw new PresentationSurfaceError("unavailable");
+  }
+  if (response.status !== 200) throw await strictProblem(response);
+  try {
+    return parsePresentationPersonalSurfaceEditorWorkspace(await response.json());
   } catch {
     throw new PresentationSurfaceError("unavailable");
   }
