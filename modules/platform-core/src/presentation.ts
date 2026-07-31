@@ -2962,6 +2962,13 @@ type StudioSurfaceBaseAction =
   | "platform.studio.surface_base.rollback"
   | "platform.studio.surface_base.validate";
 
+const STUDIO_SURFACE_BASE_ACTIONS = [
+  "platform.studio.surface_base.draft",
+  "platform.studio.surface_base.publish",
+  "platform.studio.surface_base.rollback",
+  "platform.studio.surface_base.validate",
+] as const satisfies readonly StudioSurfaceBaseAction[];
+
 async function assertCurrentStudioSurfaceBaseCapability(
   transaction: TenantTransaction,
   actionKey: StudioSurfaceBaseAction,
@@ -2992,6 +2999,33 @@ async function assertCurrentStudioSurfaceBaseCapability(
     actionKey,
     `tenant:${transaction.context.tenantId}:surface:${surfaceId}:base`,
   );
+}
+
+async function currentStudioSurfaceBaseActions(transaction: TenantTransaction) {
+  const result = await transaction.client.query<{
+    action_key: (typeof STUDIO_SURFACE_BASE_ACTIONS)[number];
+    capability_current: boolean;
+  }>(
+    `SELECT action_key,
+            public.esbla_lock_membership_capability($1, $2, action_key)
+              AS capability_current
+     FROM unnest($3::text[]) AS action(action_key)
+     ORDER BY action_key`,
+    [
+      transaction.context.tenantId,
+      transaction.context.actorPrincipalId,
+      STUDIO_SURFACE_BASE_ACTIONS,
+    ],
+  );
+  const current = new Map(
+    result.rows.map(({ action_key, capability_current }) => [action_key, capability_current]),
+  );
+  return {
+    canDraft: current.get("platform.studio.surface_base.draft") === true,
+    canPublish: current.get("platform.studio.surface_base.publish") === true,
+    canRollback: current.get("platform.studio.surface_base.rollback") === true,
+    canValidate: current.get("platform.studio.surface_base.validate") === true,
+  };
 }
 
 function surfaceBaseSubjectId(context: OperationContext, surfaceId: ZenV1SurfaceId): string {
@@ -3224,12 +3258,14 @@ export async function getTenantPresentationSurfaceBaseWorkspace(
         "platform.studio.surface_base.read",
         surfaceId,
       );
+      const actions = await currentStudioSurfaceBaseActions(transaction);
       const stored = await loadStoredSurfaceBase(transaction, surfaceId);
       const current = stored ?? codeDefaultSurfaceBase(surfaceId);
       const history = stored
         ? await loadSurfaceHistory(transaction, surfaceId)
         : [surfaceBaseVersion(surfaceId, current)];
       return {
+        actions,
         currentBase: surfaceBaseVersion(surfaceId, current),
         draft: (await loadSurfaceDraft(transaction, surfaceId)) ?? null,
         headRowVersion: current.headRowVersion,
@@ -3275,12 +3311,26 @@ export async function upsertTenantPresentationSurfaceDraft(
         subjectType: SURFACE_BASE_SUBJECT_TYPE,
       });
       if (replay) {
+        const replayRecord =
+          typeof replay.response === "object" &&
+          replay.response !== null &&
+          !Array.isArray(replay.response)
+            ? (replay.response as Readonly<Record<string, unknown>>)
+            : undefined;
+        const replayDraft = replayRecord?.draft ?? replay.response;
+        const replayHeadRowVersion = replayRecord?.headRowVersion;
+        const currentBase =
+          Number.isSafeInteger(replayHeadRowVersion) && Number(replayHeadRowVersion) >= 1
+            ? undefined
+            : await loadStoredSurfaceBase(transaction, surfaceId);
         return parseUpsertPresentationSurfaceDraftResponse({
           billingState: PRESENTATION_BILLING_STATE,
-          draft: upgradeLegacyV1SurfacePlacementProperties(surfaceId, replay.response, [
-            "placements",
-          ]),
+          draft: upgradeLegacyV1SurfacePlacementProperties(surfaceId, replayDraft, ["placements"]),
           evidenceEventId: replay.evidenceEventId,
+          headRowVersion:
+            Number.isSafeInteger(replayHeadRowVersion) && Number(replayHeadRowVersion) >= 1
+              ? replayHeadRowVersion
+              : currentBase?.headRowVersion,
           replayed: true,
         });
       }
@@ -3349,7 +3399,10 @@ export async function upsertTenantPresentationSurfaceDraft(
       });
       const evidence = await appendEvidence(transaction, {
         eventType: SURFACE_BASE_DRAFT_EVENT_TYPE,
-        newState: replayState(requestHash, draft),
+        newState: replayState(requestHash, {
+          draft,
+          headRowVersion: base.headRowVersion,
+        }),
         priorState: current ? canonicalJson(current) : null,
         subjectId,
         subjectType: SURFACE_BASE_SUBJECT_TYPE,
@@ -3358,6 +3411,7 @@ export async function upsertTenantPresentationSurfaceDraft(
         billingState: PRESENTATION_BILLING_STATE,
         draft,
         evidenceEventId: evidence.evidenceEventId,
+        headRowVersion: base.headRowVersion,
         replayed: evidence.replayed,
       };
     },

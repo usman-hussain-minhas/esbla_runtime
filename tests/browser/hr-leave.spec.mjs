@@ -68,6 +68,15 @@ async function setMissionControlPersonalization(enabled) {
   ).toEqual({ status: "updated" });
 }
 
+async function setStudioSurfaceBaseCapability(capabilityId, enabled) {
+  expect(
+    await testControl("/__esbla-test-control/studio-surface-base-capability", {
+      capabilityId,
+      enabled,
+    }),
+  ).toEqual({ status: "updated" });
+}
+
 async function restartEmployeeApplication() {
   expect(await testControl("/__esbla-test-control/restart-web", { persona: "employee" })).toEqual({
     status: "restarted",
@@ -273,6 +282,13 @@ function workforceRecordVersion(page) {
 function serviceControlFact(page, label) {
   return page
     .locator(".leave-detail-facts > div")
+    .filter({ has: page.getByText(label, { exact: true }) })
+    .locator("dd");
+}
+
+function tenantSurfaceFact(page, label) {
+  return page
+    .locator(".tenant-surface-facts > div")
     .filter({ has: page.getByText(label, { exact: true }) })
     .locator("dd");
 }
@@ -1844,6 +1860,164 @@ test("registered universal and HR shortcuts persist, arbitrate, and fail closed"
   }
 });
 
+test("Tenant Base Surface Editor separates draft, validation, publish and rollback", async ({
+  browser,
+}, testInfo) => {
+  const admin = await openActor(browser, fixture.adminOrigin, fixture.adminLabel);
+  const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
+  let publishCapabilityRemoved = false;
+  try {
+    await admin.page.setViewportSize({ height: 900, width: 1_280 });
+    await admin.page.goto(`${admin.origin}/settings`);
+    const tenantBaseLink = admin.page.getByRole("link", {
+      exact: true,
+      name: "Edit Mission Control tenant base",
+    });
+    await expect(tenantBaseLink).toBeVisible();
+    await tenantBaseLink.press("Enter");
+    await expect(admin.page).toHaveURL(
+      `${admin.origin}/studio/surfaces/surface.mission-control/tenant`,
+    );
+    await expect(
+      admin.page.getByRole("heading", { name: "Publish the Mission Control base" }),
+    ).toBeFocused();
+
+    const profileWidget = admin.page.getByRole("button", {
+      name: /My Profile, 4 columns by 3 rows/,
+    });
+    await expect(profileWidget).toBeVisible();
+    await profileWidget.press("ArrowDown");
+    await expect(profileWidget).toHaveCSS("grid-row-start", "8");
+    await expect(admin.page.getByText("Unsaved draft changes", { exact: true })).toBeVisible();
+
+    const draftResponse = admin.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+        "/presentation/surfaces/surface.mission-control/tenant-base/draft",
+    );
+    await admin.page.getByRole("button", { name: "Save tenant-base draft" }).click();
+    expect((await draftResponse).status()).toBe(200);
+    await expect(tenantSurfaceFact(admin.page, "Draft")).toHaveText("v1 · candidate v2");
+    await expect(tenantSurfaceFact(admin.page, "Published base")).toHaveText("v1");
+    await expect(tenantSurfaceFact(admin.page, "Evidence")).not.toHaveText(
+      "No mutation in this session",
+    );
+    await expect(tenantSurfaceFact(admin.page, "Evidence")).toHaveText(fixtureId);
+
+    const validateResponse = admin.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+        "/presentation/surfaces/surface.mission-control/tenant-base/validate",
+    );
+    await admin.page.getByRole("button", { name: "Validate draft" }).click();
+    expect((await validateResponse).status()).toBe(200);
+    await expect(
+      admin.page.getByText("Draft v1 is valid. Validation did not publish it."),
+    ).toBeVisible();
+
+    await setStudioSurfaceBaseCapability("platform.studio.surface_base.publish", false);
+    publishCapabilityRemoved = true;
+    admin.page.once("dialog", (dialog) => dialog.accept());
+    const deniedPublish = admin.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+        "/presentation/surfaces/surface.mission-control/tenant-base/publish",
+    );
+    await admin.page.getByRole("button", { name: "Publish draft" }).click();
+    expect((await deniedPublish).status()).toBe(403);
+    await expect(
+      admin.page.getByText(
+        "Your access or this service’s availability is no longer current. Nothing was changed.",
+      ),
+    ).toBeVisible();
+    await expect(tenantSurfaceFact(admin.page, "Draft")).toHaveText("v1 · candidate v2");
+    await expect(tenantSurfaceFact(admin.page, "Published base")).toHaveText("v1");
+    expect(admin.diagnostics.console).toEqual([
+      "Failed to load resource: the server responded with a status of 403 (Forbidden)",
+    ]);
+    admin.diagnostics.console.length = 0;
+
+    await setStudioSurfaceBaseCapability("platform.studio.surface_base.publish", true);
+    publishCapabilityRemoved = false;
+    await admin.page.reload();
+    await expect(tenantSurfaceFact(admin.page, "Draft")).toHaveText("v1 · candidate v2");
+    admin.page.once("dialog", (dialog) => dialog.accept());
+    const publishResponse = admin.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+        "/presentation/surfaces/surface.mission-control/tenant-base/publish",
+    );
+    await admin.page.getByRole("button", { name: "Publish draft" }).click();
+    expect((await publishResponse).status()).toBe(200);
+    await expect(admin.page.getByText("Published tenant base v2.")).toBeVisible();
+    await expect(tenantSurfaceFact(admin.page, "Draft")).toHaveText("None");
+    await expect(admin.page.getByText("Base v2", { exact: true })).toBeVisible();
+    await expect(admin.page.getByText("Base v1", { exact: true })).toBeVisible();
+
+    admin.page.once("dialog", (dialog) => dialog.accept());
+    const rollbackResponse = admin.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+        "/presentation/surfaces/surface.mission-control/tenant-base/rollback",
+    );
+    await admin.page.getByRole("button", { name: "Publish new version from base v1" }).click();
+    expect((await rollbackResponse).status()).toBe(200);
+    await expect(
+      admin.page.getByText("Published tenant base v3 from historical v1."),
+    ).toBeVisible();
+    await expect(admin.page.getByText("Base v3", { exact: true })).toBeVisible();
+    await expect(admin.page.getByText("Base v2", { exact: true })).toBeVisible();
+    await expect(admin.page.getByText("Base v1", { exact: true })).toBeVisible();
+    await admin.page.reload();
+    await expect(tenantSurfaceFact(admin.page, "Published base")).toHaveText("v3");
+    await expect(
+      admin.page.getByRole("button", { name: /My Profile, 4 columns by 3 rows/ }),
+    ).toHaveCSS("grid-row-start", "7");
+
+    const desktopPath = testInfo.outputPath("surface-editor-tenant-base-desktop.png");
+    await admin.page.screenshot({ fullPage: false, path: desktopPath });
+    await testInfo.attach("surface-editor-tenant-base-desktop", {
+      contentType: "image/png",
+      path: desktopPath,
+    });
+
+    await admin.page.setViewportSize({ height: 844, width: 390 });
+    await expect(admin.page.getByText(/Tenant Base authoring is desktop-only in V1/)).toBeVisible();
+    await expect(admin.page.getByRole("button", { name: "Save tenant-base draft" })).toBeHidden();
+    expect(
+      await admin.page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
+    const phonePath = testInfo.outputPath("surface-editor-tenant-base-phone.png");
+    await admin.page.screenshot({ fullPage: false, path: phonePath });
+    await testInfo.attach("surface-editor-tenant-base-phone", {
+      contentType: "image/png",
+      path: phonePath,
+    });
+
+    await employee.page.goto(`${employee.origin}/settings`);
+    await expect(
+      employee.page.getByRole("link", {
+        exact: true,
+        name: "Edit Mission Control tenant base",
+      }),
+    ).toHaveCount(0);
+    await employee.page.goto(`${employee.origin}/studio/surfaces/surface.mission-control/tenant`);
+    await expect(
+      employee.page.getByRole("heading", { name: "Tenant Base editor unavailable" }),
+    ).toBeVisible();
+    await expect(employee.page.getByText(/private policy detail/i)).toHaveCount(1);
+  } finally {
+    if (publishCapabilityRemoved) {
+      await setStudioSurfaceBaseCapability("platform.studio.surface_base.publish", true).catch(
+        () => undefined,
+      );
+    }
+    await closeActors(admin, employee);
+  }
+});
+
 test("Universal Settings preserves Theme, exposes authority, and coordinates tabs without overwriting drafts", async ({
   browser,
 }, testInfo) => {
@@ -1940,7 +2114,7 @@ test("Universal Settings preserves Theme, exposes authority, and coordinates tab
     );
     await resetLayout.click();
     expect((await resetResponse).status()).toBe(200);
-    await expect(missionLayout).toContainText("Product layout");
+    await expect(missionLayout).toContainText(/Product layout|Published tenant layout/);
     await expect(resetLayout).toBeDisabled();
 
     const universalShortcuts = employee.page.locator("article").filter({

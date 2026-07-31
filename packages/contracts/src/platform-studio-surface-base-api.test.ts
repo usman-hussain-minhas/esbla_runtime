@@ -58,6 +58,12 @@ describe("platform Studio surface-base API contract", () => {
   it("requires descending same-surface history and an exact-head draft", () => {
     expect(
       parsePresentationSurfaceBaseWorkspace({
+        actions: {
+          canDraft: true,
+          canPublish: false,
+          canRollback: true,
+          canValidate: true,
+        },
         currentBase: {
           basedOnVersion: 1,
           baseVersion: 2,
@@ -84,9 +90,23 @@ describe("platform Studio surface-base API contract", () => {
           },
         ],
       }),
-    ).toMatchObject({ headRowVersion: 2 });
+    ).toMatchObject({
+      actions: {
+        canDraft: true,
+        canPublish: false,
+        canRollback: true,
+        canValidate: true,
+      },
+      headRowVersion: 2,
+    });
     expect(() =>
       parsePresentationSurfaceBaseWorkspace({
+        actions: {
+          canDraft: true,
+          canPublish: false,
+          canRollback: true,
+          canValidate: true,
+        },
         currentBase: {
           basedOnVersion: 1,
           baseVersion: 2,
@@ -97,6 +117,34 @@ describe("platform Studio surface-base API contract", () => {
         draft: null,
         headRowVersion: 2,
         history: [],
+      }),
+    ).toThrow();
+    expect(() =>
+      parsePresentationSurfaceBaseWorkspace({
+        actions: {
+          canDraft: true,
+          canPublish: "yes",
+          canRollback: true,
+          canValidate: true,
+        },
+        currentBase: {
+          basedOnVersion: null,
+          baseVersion: 1,
+          definitionHash: surface.definitionHash,
+          placements: surface.basePlacements,
+          surfaceId: surface.surfaceId,
+        },
+        draft: null,
+        headRowVersion: 1,
+        history: [
+          {
+            basedOnVersion: null,
+            baseVersion: 1,
+            definitionHash: surface.definitionHash,
+            placements: surface.basePlacements,
+            surfaceId: surface.surfaceId,
+          },
+        ],
       }),
     ).toThrow();
   });
@@ -148,9 +196,10 @@ describe("platform Studio surface-base API contract", () => {
         billingState: PRESENTATION_BILLING_STATE,
         draft,
         evidenceEventId,
+        headRowVersion: 1,
         replayed: false,
       }),
-    ).toMatchObject({ billingState: "non_billable", replayed: false });
+    ).toMatchObject({ billingState: "non_billable", headRowVersion: 1, replayed: false });
     expect(
       parsePresentationSurfaceBaseMutationResponse({
         basedOnVersion: 1,
@@ -168,6 +217,7 @@ describe("platform Studio surface-base API contract", () => {
       parseUpsertPresentationSurfaceDraftResponse({
         draft,
         evidenceEventId,
+        headRowVersion: 1,
         replayed: false,
       }),
     ).toThrow();

@@ -412,6 +412,50 @@ server.post("/__esbla-test-control/presentation-layout-write", async (request, r
   return { status: "updated" };
 });
 
+const studioSurfaceBaseCapabilities = new Set([
+  "platform.studio.surface_base.draft",
+  "platform.studio.surface_base.publish",
+  "platform.studio.surface_base.read",
+  "platform.studio.surface_base.rollback",
+  "platform.studio.surface_base.validate",
+]);
+
+server.post("/__esbla-test-control/studio-surface-base-capability", async (request, reply) => {
+  if (!testControlAuthorized(request)) return await reply.code(404).send({ status: "not_found" });
+  if (
+    !hasExactKeys(request.body, ["capabilityId", "enabled"]) ||
+    typeof request.body.capabilityId !== "string" ||
+    !studioSurfaceBaseCapabilities.has(request.body.capabilityId) ||
+    typeof request.body.enabled !== "boolean"
+  ) {
+    return await reply.code(400).send({ status: "invalid" });
+  }
+  const client = await migrationReadPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.tenant_id', $1, true)", [fixture.tenantId]);
+    await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [
+      fixture.adminPrincipalId,
+    ]);
+    await client.query(
+      request.body.enabled
+        ? `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+           VALUES ($1,$2,$3)
+           ON CONFLICT DO NOTHING`
+        : `DELETE FROM membership_capabilities
+           WHERE tenant_id=$1 AND principal_id=$2 AND capability_id=$3`,
+      [fixture.tenantId, fixture.adminPrincipalId, request.body.capabilityId],
+    );
+    await client.query("COMMIT");
+  } catch {
+    await client.query("ROLLBACK").catch(() => undefined);
+    return await reply.code(500).send({ status: "failed" });
+  } finally {
+    client.release();
+  }
+  return { status: "updated" };
+});
+
 server.post(
   "/__esbla-test-control/presentation-surface-personalization",
   async (request, reply) => {

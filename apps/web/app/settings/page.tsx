@@ -4,6 +4,7 @@ import {
   loadPresentationPreferenceCacheScope,
 } from "../../lib/presentation-preferences";
 import { loadOwnPresentationShortcuts } from "../../lib/presentation-shortcuts";
+import { loadTenantPresentationSurfaceBaseWorkspace } from "../../lib/presentation-surface-bases";
 import { loadOwnPresentationSurfaceLayout } from "../../lib/presentation-surfaces";
 import { UniversalSettings } from "../../theme/zen-theme/v1/settings/universal-settings";
 import { WorkspaceShell } from "../workspace-shell";
@@ -16,17 +17,24 @@ const surfaceDefinitions = [
 ] as const;
 
 export default async function UniversalSettingsPage() {
-  const preferences = await loadOwnPresentationPreferences().catch(() => undefined);
-  const shortcuts = await loadOwnPresentationShortcuts("hr").catch(() => undefined);
+  const [preferences, shortcuts, layoutResults, tenantBaseResults] = await Promise.all([
+    loadOwnPresentationPreferences().catch(() => undefined),
+    loadOwnPresentationShortcuts("hr").catch(() => undefined),
+    Promise.allSettled(
+      surfaceDefinitions.map(({ surfaceId }) => loadOwnPresentationSurfaceLayout(surfaceId)),
+    ),
+    Promise.allSettled(
+      surfaceDefinitions.map(({ surfaceId }) =>
+        loadTenantPresentationSurfaceBaseWorkspace(surfaceId),
+      ),
+    ),
+  ]);
   let cacheScope: string | null = null;
   try {
     cacheScope = loadPresentationPreferenceCacheScope();
   } catch {
     // Cross-tab messages stay disabled without an exact server-derived subject scope.
   }
-  const layoutResults = await Promise.allSettled(
-    surfaceDefinitions.map(({ surfaceId }) => loadOwnPresentationSurfaceLayout(surfaceId)),
-  );
   const layouts = surfaceDefinitions.map(({ label, surfaceId }, index) => ({
     label,
     layout:
@@ -34,6 +42,9 @@ export default async function UniversalSettingsPage() {
         ? (layoutResults[index].value as PresentationSurfaceLayout)
         : null,
     surfaceId,
+    tenantBaseEditable:
+      tenantBaseResults[index]?.status === "fulfilled" &&
+      tenantBaseResults[index].value.actions.canDraft,
   }));
 
   return (

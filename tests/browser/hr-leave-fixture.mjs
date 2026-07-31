@@ -535,7 +535,12 @@ export async function seedHrLeaveFixture() {
                 ($1, $5, 'hr.expense.configure_service'),
                 ($1, $5, 'hr.expense.deactivate_service'),
                 ($1, $5, 'hr.expense.view_service_control'),
-                ($1, $5, 'platform.presentation.tenant_defaults.write')`,
+                ($1, $5, 'platform.presentation.tenant_defaults.write'),
+                ($1, $5, 'platform.studio.surface_base.read'),
+                ($1, $5, 'platform.studio.surface_base.draft'),
+                ($1, $5, 'platform.studio.surface_base.validate'),
+                ($1, $5, 'platform.studio.surface_base.publish'),
+                ($1, $5, 'platform.studio.surface_base.rollback')`,
         [
           fixture.tenantId,
           fixture.employeePrincipalId,
