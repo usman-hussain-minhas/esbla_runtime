@@ -18,6 +18,7 @@ describe("Zen responsive chrome resolver", () => {
         availableInlineSize: 1_100,
         hasAppearance: true,
         hasContextualMenu: true,
+        hasNotifications: false,
         hasSettings: true,
         hasServiceGroups: true,
       }),
@@ -38,6 +39,7 @@ describe("Zen responsive chrome resolver", () => {
         controlGap: 20,
         hasAppearance: true,
         hasContextualMenu: true,
+        hasNotifications: false,
         hasSettings: true,
         hasServiceGroups: true,
       }),
@@ -60,6 +62,7 @@ describe("Zen responsive chrome resolver", () => {
         endInset: 20,
         hasAppearance: true,
         hasContextualMenu: true,
+        hasNotifications: false,
         hasSettings: true,
         hasServiceGroups: true,
         startInset: 20,
@@ -79,6 +82,7 @@ describe("Zen responsive chrome resolver", () => {
         availableInlineSize: 767,
         hasAppearance: false,
         hasContextualMenu: false,
+        hasNotifications: false,
         hasSettings: false,
         hasServiceGroups: false,
       }),
@@ -98,6 +102,7 @@ describe("Zen responsive chrome resolver", () => {
         buttonInlineSize: 88,
         hasAppearance: false,
         hasContextualMenu: true,
+        hasNotifications: false,
         hasSettings: false,
         hasServiceGroups: true,
       }),
@@ -114,6 +119,7 @@ describe("Zen responsive chrome resolver", () => {
       ...roomyGeometry,
       hasAppearance: true,
       hasContextualMenu: true,
+      hasNotifications: false,
       hasSettings: true,
       hasServiceGroups: true,
     };
@@ -138,6 +144,7 @@ describe("Zen responsive chrome resolver", () => {
         availableInlineSize: Number.NaN,
         hasAppearance: true,
         hasContextualMenu: true,
+        hasNotifications: false,
         hasSettings: true,
         hasServiceGroups: true,
       }),
@@ -146,6 +153,34 @@ describe("Zen responsive chrome resolver", () => {
       collapsed: ["appearance", "settings", "service-groups", "contextual"],
       direct: [],
       systemRequired: true,
+    });
+  });
+
+  it("shows backed Notifications directly on desktop and contains it first on smaller layouts", () => {
+    const input = {
+      ...roomyGeometry,
+      hasAppearance: true,
+      hasContextualMenu: true,
+      hasNotifications: true,
+      hasSettings: true,
+      hasServiceGroups: true,
+    };
+    expect(resolveZenResponsiveChrome({ ...input, availableInlineSize: 1_100 })).toMatchObject({
+      collapsed: [],
+      direct: ["contextual", "service-groups", "notifications", "appearance", "settings"],
+    });
+    expect(resolveZenResponsiveChrome({ ...input, availableInlineSize: 390 })).toMatchObject({
+      breakpoint: "phone",
+      collapsed: expect.arrayContaining(["notifications"]),
+    });
+    expect(
+      resolveZenResponsiveChrome({
+        ...input,
+        availableInlineSize: Number.NaN,
+      }),
+    ).toMatchObject({
+      collapsed: ["notifications", "appearance", "settings", "service-groups", "contextual"],
+      direct: [],
     });
   });
 });

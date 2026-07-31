@@ -19,6 +19,14 @@ describe("platformCoreManifest", () => {
       exposure: "internal",
       id: "platform.policy.evaluate",
     });
+    expect(platformCoreManifest.capabilities).toEqual(
+      expect.arrayContaining([
+        { exposure: "internal", id: "platform.notifications.list_own" },
+        { exposure: "internal", id: "platform.notifications.mark_read_own" },
+        { exposure: "internal", id: "platform.notifications.mark_all_read_own" },
+        { exposure: "internal", id: "platform.notifications.project_internal" },
+      ]),
+    );
   });
 
   it("denies by default and gives explicit deny precedence", () => {

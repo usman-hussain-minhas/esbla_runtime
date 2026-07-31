@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  appendNotificationIntent,
   completeWorkItem,
   createWorkItem,
   type OperationContext,
@@ -172,7 +173,7 @@ export async function submitLeaveRequest(
       subjectType: HR_LEAVE_SUBJECT_TYPE,
       workType: HR_LEAVE_APPROVAL_WORK_TYPE,
     });
-    await recordMutationProof(transaction, {
+    const proof = await recordMutationProof(transaction, {
       evidence: {
         eventType: "evidence.hr.leave_request.submitted",
         newState: "submitted",
@@ -196,6 +197,16 @@ export async function submitLeaveRequest(
           version: row.version,
         },
       },
+    });
+    await appendNotificationIntent(transaction, {
+      category: "hr.leave_request",
+      recipientPrincipalId: approverPrincipalId,
+      safeSummary: "Open the leave request for details.",
+      sourceEventId: proof.outboxEventId,
+      sourceServiceKey: "hr.leave_request",
+      targetKind: "hr.leave_request.detail",
+      targetResourceId: row.leave_request_id,
+      title: "A leave request needs your review",
     });
     return commandResult(row, false);
   });
@@ -336,7 +347,7 @@ async function decideLeaveRequest(
       throw new HrLeaveError("LEAVE_STATE_CONFLICT", "Approval work item is missing");
     }
     await completeWorkItem(transaction, workItemId);
-    await recordMutationProof(transaction, {
+    const proof = await recordMutationProof(transaction, {
       evidence: {
         eventType: evidenceEventType,
         newState: targetState,
@@ -355,6 +366,19 @@ async function decideLeaveRequest(
           version: decided.version,
         },
       },
+    });
+    await appendNotificationIntent(transaction, {
+      category: "hr.leave_request",
+      recipientPrincipalId: row.employee_principal_id,
+      safeSummary: "Open the leave request for details.",
+      sourceEventId: proof.outboxEventId,
+      sourceServiceKey: "hr.leave_request",
+      targetKind: "hr.leave_request.detail",
+      targetResourceId: row.leave_request_id,
+      title:
+        targetState === "approved"
+          ? "Your leave request was approved"
+          : "Your leave request was rejected",
     });
     return commandResult(decided, false);
   });

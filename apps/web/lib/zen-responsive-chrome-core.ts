@@ -2,6 +2,7 @@ export type ZenResponsiveBreakpoint = "desktop" | "phone" | "tablet";
 export type ZenResponsiveOptionalControl =
   | "appearance"
   | "contextual"
+  | "notifications"
   | "service-groups"
   | "settings";
 
@@ -13,6 +14,7 @@ export interface ZenResponsiveChromeInput {
   readonly endInset: number;
   readonly hasAppearance: boolean;
   readonly hasContextualMenu: boolean;
+  readonly hasNotifications: boolean;
   readonly hasSettings: boolean;
   readonly hasServiceGroups: boolean;
   readonly startInset: number;
@@ -25,8 +27,20 @@ export interface ZenResponsiveChromeResult {
   readonly systemRequired: boolean;
 }
 
-const canonicalDirectOrder = ["contextual", "service-groups", "appearance", "settings"] as const;
-const failClosedCollapseOrder = ["appearance", "settings", "service-groups", "contextual"] as const;
+const canonicalDirectOrder = [
+  "contextual",
+  "service-groups",
+  "notifications",
+  "appearance",
+  "settings",
+] as const;
+const failClosedCollapseOrder = [
+  "notifications",
+  "appearance",
+  "settings",
+  "service-groups",
+  "contextual",
+] as const;
 
 function isValidDimension(value: number): boolean {
   return Number.isFinite(value) && value >= 0;
@@ -46,7 +60,10 @@ function requiredInlineSize(
   const leftControlCount =
     1 + Number(direct.has("service-groups")) + Number(direct.has("contextual"));
   const rightControlCount =
-    Number(systemRequired) + Number(direct.has("appearance")) + Number(direct.has("settings"));
+    Number(systemRequired) +
+    Number(direct.has("notifications")) +
+    Number(direct.has("appearance")) +
+    Number(direct.has("settings"));
   const leftWidth =
     leftControlCount * input.buttonInlineSize +
     Math.max(0, leftControlCount - 1) * input.controlGap;
@@ -65,6 +82,7 @@ function presentControls(input: ZenResponsiveChromeInput): ZenResponsiveOptional
   return canonicalDirectOrder.filter((control) => {
     if (control === "appearance") return input.hasAppearance;
     if (control === "contextual") return input.hasContextualMenu;
+    if (control === "notifications") return input.hasNotifications;
     if (control === "settings") return input.hasSettings;
     return input.hasServiceGroups;
   });
@@ -101,7 +119,7 @@ export function resolveZenResponsiveChrome(
       breakpoint,
       collapsed: [],
       direct: present,
-      systemRequired: input.hasAppearance || input.hasSettings,
+      systemRequired: input.hasAppearance || input.hasNotifications || input.hasSettings,
     };
   }
 
@@ -109,13 +127,15 @@ export function resolveZenResponsiveChrome(
   const collapsed: ZenResponsiveOptionalControl[] = [];
   const collapseOrder: readonly ZenResponsiveOptionalControl[] =
     breakpoint === "phone"
-      ? ["appearance", "settings", "service-groups", "contextual"]
-      : ["appearance", "settings", "contextual", "service-groups"];
+      ? ["notifications", "appearance", "settings", "service-groups", "contextual"]
+      : ["notifications", "appearance", "settings", "contextual", "service-groups"];
 
+  if (breakpoint === "phone" && direct.delete("notifications")) collapsed.push("notifications");
   if (breakpoint === "phone" && direct.delete("appearance")) collapsed.push("appearance");
   if (breakpoint === "phone" && direct.delete("settings")) collapsed.push("settings");
 
-  let systemRequired = input.hasAppearance || input.hasSettings || collapsed.length > 0;
+  let systemRequired =
+    input.hasAppearance || input.hasNotifications || input.hasSettings || collapsed.length > 0;
   for (const control of collapseOrder) {
     if (requiredInlineSize(input, direct, systemRequired) <= input.availableInlineSize) break;
     if (!direct.delete(control)) continue;

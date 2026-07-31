@@ -3,6 +3,7 @@ import { defineModuleManifest } from "@esbla/contracts";
 export * from "./activation.js";
 export * from "./context.js";
 export * from "./errors.js";
+export * from "./notifications.js";
 export * from "./policy.js";
 export * from "./presentation.js";
 export * from "./presentation-setting.js";
@@ -15,6 +16,10 @@ export const platformCoreManifest = defineModuleManifest({
   capabilities: [
     { exposure: "internal", id: "platform.activation.set" },
     { exposure: "internal", id: "platform.evidence.append" },
+    { exposure: "internal", id: "platform.notifications.list_own" },
+    { exposure: "internal", id: "platform.notifications.mark_all_read_own" },
+    { exposure: "internal", id: "platform.notifications.mark_read_own" },
+    { exposure: "internal", id: "platform.notifications.project_internal" },
     { exposure: "internal", id: "platform.policy.evaluate" },
     { exposure: "internal", id: "platform.presentation.preferences.read_own" },
     { exposure: "internal", id: "platform.presentation.preferences.write_own" },

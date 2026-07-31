@@ -172,6 +172,7 @@ export {
   type ModuleActivation,
   type ModuleManifest,
 } from "./module-manifest.js";
+export * from "./platform-notification-api.js";
 export * from "./platform-presentation-api.js";
 export * from "./platform-presentation-service-group.js";
 export * from "./platform-presentation-setting.js";

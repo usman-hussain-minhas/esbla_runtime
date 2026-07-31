@@ -6,6 +6,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { createDevelopmentAuthenticator } from "../../apps/api/dist/auth.js";
 import { createServer } from "../../apps/api/dist/server.js";
+import { verifyHrNotificationTargets } from "../../modules/hr/dist/index.js";
+import { createNotificationProjector } from "../../modules/platform-core/dist/index.js";
 import { createDatabasePool } from "../../packages/db/dist/index.js";
 import {
   closePrivateNextRuntimeRoots,
@@ -63,6 +65,17 @@ const applicationPool = createDatabasePool(requiredEnvironment("DATABASE_URL"), 
 const migrationReadPool = createDatabasePool(requiredEnvironment("DATABASE_MIGRATION_URL"), {
   max: 2,
 });
+const notificationProjectorPool = createDatabasePool(
+  requiredEnvironment("DATABASE_NOTIFICATION_PROJECTOR_URL"),
+  { max: 2 },
+);
+const notificationProjector = createNotificationProjector(
+  notificationProjectorPool,
+  verifyHrNotificationTargets,
+  {
+    onDiagnostic: ({ code }) => process.stderr.write(`${code}\n`),
+  },
+);
 const server = createServer({
   authenticate: createDevelopmentAuthenticator({
     environment: "test",
@@ -70,12 +83,19 @@ const server = createServer({
   }),
   logger: false,
   migrationReadPool,
+  notificationProjectorWake: notificationProjector.wake,
   pool: applicationPool,
   runtimeEnvironment: "test",
 });
 server.addHook("onClose", async () => {
-  await Promise.all([applicationPool.end(), migrationReadPool.end()]);
+  await notificationProjector.stop();
+  await Promise.all([
+    applicationPool.end(),
+    migrationReadPool.end(),
+    notificationProjectorPool.end(),
+  ]);
 });
+notificationProjector.start();
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const webRoot = fileURLToPath(new URL("../../apps/web/", import.meta.url));
@@ -93,7 +113,14 @@ let playwrightRootPromise;
 async function closeApi() {
   if (listening) await listening.catch(() => undefined);
   if (server.server.listening) await server.close();
-  else await Promise.all([applicationPool.end(), migrationReadPool.end()]);
+  else {
+    await notificationProjector.stop();
+    await Promise.all([
+      applicationPool.end(),
+      migrationReadPool.end(),
+      notificationProjectorPool.end(),
+    ]);
+  }
 }
 
 async function close() {

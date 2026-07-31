@@ -392,6 +392,7 @@ try {
   const databaseName = "esbla_test";
   const migrationRole = "esbla_migrator";
   const applicationRole = "esbla_app";
+  const notificationProjectorRole = "esbla_notification_projector";
 
   await sanitizedStep("PostgreSQL socket initialization failed", () => mkdir(socketDirectory));
   await run(
@@ -434,7 +435,7 @@ try {
   ];
   await waitForDatabase(databaseProcess, executable, connectionArgs, dataDirectory);
 
-  for (const role of [migrationRole, applicationRole]) {
+  for (const role of [migrationRole, applicationRole, notificationProjectorRole]) {
     await run(
       executable("createuser"),
       [...connectionArgs, "--login", "--no-createdb", "--no-createrole", "--no-superuser", role],
@@ -462,8 +463,10 @@ try {
   const childEnvironment = {
     ...process.env,
     DATABASE_MIGRATION_URL: `postgresql://${migrationRole}@/${databaseName}?host=${encodeURIComponent(socketDirectory)}&port=${port}`,
+    DATABASE_NOTIFICATION_PROJECTOR_URL: `postgresql://${notificationProjectorRole}@/${databaseName}?host=${encodeURIComponent(socketDirectory)}&port=${port}`,
     DATABASE_URL: `postgresql://${applicationRole}@/${databaseName}?host=${encodeURIComponent(socketDirectory)}&port=${port}`,
     ESBLA_TEST_APPLICATION_ROLE: applicationRole,
+    ESBLA_TEST_NOTIFICATION_PROJECTOR_ROLE: notificationProjectorRole,
   };
   const firstResult = await runChild(
     command,

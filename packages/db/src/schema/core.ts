@@ -620,6 +620,7 @@ export const outboxEvents = pgTable(
     publishedAt: timestamp("published_at", { mode: "date", withTimezone: true }),
   },
   (table) => [
+    unique("outbox_events_tenant_event_uq").on(table.tenantId, table.eventId),
     unique("outbox_events_idempotency_uq").on(
       table.tenantId,
       table.eventType,
@@ -637,5 +638,351 @@ export const outboxEvents = pgTable(
       sql`char_length(trim(${table.aggregateType})) > 0`,
     ),
     check("outbox_events_aggregate_version_positive", sql`${table.aggregateVersion} > 0`),
+  ],
+).enableRLS();
+
+export const notificationIntents = pgTable(
+  "notification_intents",
+  {
+    intentId: uuid("intent_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    sourceEventId: uuid("source_event_id").notNull(),
+    recipientPrincipalId: uuid("recipient_principal_id").notNull(),
+    sourceServiceKey: text("source_service_key").notNull(),
+    state: text("state").default("pending").notNull(),
+    attemptCount: integer("attempt_count").default(0).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { mode: "date", withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    lastFailureCode: text("last_failure_code"),
+    intentPayload: jsonb("intent_payload").notNull(),
+    occurredAt: timestamp("occurred_at", { mode: "date", withTimezone: true }).notNull(),
+    terminalAt: timestamp("terminal_at", { mode: "date", withTimezone: true }),
+    payloadRedactedAt: timestamp("payload_redacted_at", {
+      mode: "date",
+      withTimezone: true,
+    }),
+    rowVersion: integer("row_version").default(1).notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique("notification_intents_tenant_intent_uq").on(table.tenantId, table.intentId),
+    unique("notification_intents_source_recipient_uq").on(
+      table.tenantId,
+      table.sourceEventId,
+      table.recipientPrincipalId,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.sourceEventId],
+      foreignColumns: [outboxEvents.tenantId, outboxEvents.eventId],
+      name: "notification_intents_source_event_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.recipientPrincipalId],
+      foreignColumns: [memberships.tenantId, memberships.principalId],
+      name: "notification_intents_recipient_same_tenant_fk",
+    }).onDelete("restrict"),
+    index("notification_intents_projector_idx")
+      .on(table.nextAttemptAt, table.occurredAt, table.sourceEventId, table.recipientPrincipalId)
+      .where(sql`${table.state} IN ('pending', 'retrying')`),
+    index("notification_intents_tenant_source_idx").on(
+      table.tenantId,
+      table.sourceEventId,
+      table.recipientPrincipalId,
+    ),
+    check(
+      "notification_intents_source_service_key_valid",
+      sql`${table.sourceServiceKey} ~ '^[a-z][a-z0-9_.-]{0,127}$'`,
+    ),
+    check(
+      "notification_intents_state_valid",
+      sql`${table.state} IN (
+        'pending',
+        'retrying',
+        'projected',
+        'withheld_membership',
+        'withheld_service_inactive',
+        'withheld_target_denied',
+        'withheld_target_missing',
+        'poisoned'
+      )`,
+    ),
+    check("notification_intents_attempt_count_valid", sql`${table.attemptCount} BETWEEN 0 AND 8`),
+    check(
+      "notification_intents_failure_code_valid",
+      sql`${table.lastFailureCode} IS NULL
+          OR ${table.lastFailureCode} ~ '^[A-Z][A-Z0-9_]{0,63}$'`,
+    ),
+    check(
+      "notification_intents_payload_object",
+      sql`jsonb_typeof(${table.intentPayload}) = 'object'`,
+    ),
+    check(
+      "notification_intents_terminal_shape",
+      sql`(
+        ${table.state} IN ('pending', 'retrying')
+        AND ${table.terminalAt} IS NULL
+        AND ${table.payloadRedactedAt} IS NULL
+      ) OR (
+        ${table.state} = 'poisoned'
+        AND ${table.terminalAt} IS NOT NULL
+        AND ${table.payloadRedactedAt} IS NULL
+      ) OR (
+        ${table.state} NOT IN ('pending', 'retrying', 'poisoned')
+        AND ${table.terminalAt} IS NOT NULL
+        AND ${table.payloadRedactedAt} IS NOT NULL
+      )`,
+    ),
+    check("notification_intents_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const notificationProjections = pgTable(
+  "notification_projections",
+  {
+    notificationId: uuid("notification_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    recipientPrincipalId: uuid("recipient_principal_id").notNull(),
+    intentId: uuid("intent_id").notNull(),
+    sourceEventId: uuid("source_event_id").notNull(),
+    sourceServiceKey: text("source_service_key").notNull(),
+    category: text("category").notNull(),
+    title: varchar("title", { length: 160 }).notNull(),
+    safeSummary: varchar("safe_summary", { length: 240 }).notNull(),
+    targetKind: text("target_kind").notNull(),
+    targetResourceId: uuid("target_resource_id"),
+    targetHref: text("target_href").notNull(),
+    targetReadCapabilityId: text("target_read_capability_id").notNull(),
+    occurredAt: timestamp("occurred_at", { mode: "date", withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+    readAt: timestamp("read_at", { mode: "date", withTimezone: true }),
+    retentionStatus: text("retention_status").default("active").notNull(),
+    rowVersion: integer("row_version").default(1).notNull(),
+  },
+  (table) => [
+    unique("notification_projections_tenant_notification_uq").on(
+      table.tenantId,
+      table.notificationId,
+    ),
+    unique("notification_projections_source_recipient_uq").on(
+      table.tenantId,
+      table.sourceEventId,
+      table.recipientPrincipalId,
+    ),
+    unique("notification_projections_intent_uq").on(table.tenantId, table.intentId),
+    foreignKey({
+      columns: [table.tenantId, table.recipientPrincipalId],
+      foreignColumns: [memberships.tenantId, memberships.principalId],
+      name: "notification_projections_recipient_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.intentId],
+      foreignColumns: [notificationIntents.tenantId, notificationIntents.intentId],
+      name: "notification_projections_intent_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.sourceEventId],
+      foreignColumns: [outboxEvents.tenantId, outboxEvents.eventId],
+      name: "notification_projections_source_event_same_tenant_fk",
+    }).onDelete("restrict"),
+    index("notification_projections_recipient_cursor_idx").on(
+      table.tenantId,
+      table.recipientPrincipalId,
+      table.occurredAt.desc(),
+      table.notificationId.desc(),
+    ),
+    index("notification_projections_recipient_unread_idx")
+      .on(
+        table.tenantId,
+        table.recipientPrincipalId,
+        table.occurredAt.desc(),
+        table.notificationId.desc(),
+      )
+      .where(sql`${table.readAt} IS NULL AND ${table.retentionStatus} = 'active'`),
+    index("notification_projections_retention_idx").on(
+      table.tenantId,
+      table.occurredAt,
+      table.notificationId,
+    ),
+    check(
+      "notification_projections_source_service_key_valid",
+      sql`${table.sourceServiceKey} ~ '^[a-z][a-z0-9_.-]{0,127}$'`,
+    ),
+    check(
+      "notification_projections_category_valid",
+      sql`${table.category} ~ '^[a-z][a-z0-9_.-]{0,127}$'`,
+    ),
+    check("notification_projections_title_not_blank", sql`char_length(trim(${table.title})) > 0`),
+    check(
+      "notification_projections_summary_not_blank",
+      sql`char_length(trim(${table.safeSummary})) > 0`,
+    ),
+    check(
+      "notification_projections_target_kind_valid",
+      sql`${table.targetKind} IN (
+        'hr.attendance.detail',
+        'hr.employment_record.detail',
+        'hr.expense_claim.detail',
+        'hr.leave_request.detail',
+        'hr.shift_assignment.detail',
+        'hr.shift_assignment.own_shifts',
+        'hr.timesheet.detail',
+        'hr.workforce_profile.detail',
+        'hr.workforce_profile.direct_reports'
+      )`,
+    ),
+    check(
+      "notification_projections_target_resource_shape",
+      sql`(${table.targetKind} IN (
+              'hr.shift_assignment.own_shifts',
+              'hr.workforce_profile.direct_reports'
+            )
+            AND ${table.targetResourceId} IS NULL)
+          OR (${table.targetKind} NOT IN (
+              'hr.shift_assignment.own_shifts',
+              'hr.workforce_profile.direct_reports'
+            )
+            AND ${table.targetResourceId} IS NOT NULL)`,
+    ),
+    check(
+      "notification_projections_target_href_valid",
+      sql`${table.targetHref} ~ '^/[^/[:space:]#][^[:space:]#]*([?][^#[:space:]]*)?$'`,
+    ),
+    check(
+      "notification_projections_target_capability_valid",
+      sql`${table.targetReadCapabilityId} ~ '^[a-z][a-z0-9_.-]{0,127}$'`,
+    ),
+    check(
+      "notification_projections_retention_status_valid",
+      sql`${table.retentionStatus} = 'active'`,
+    ),
+    check("notification_projections_row_version_positive", sql`${table.rowVersion} > 0`),
+  ],
+).enableRLS();
+
+export const notificationProjectionReceipts = pgTable(
+  "notification_projection_receipts",
+  {
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    consumerKey: text("consumer_key").notNull(),
+    consumerVersion: integer("consumer_version").notNull(),
+    sourceEventId: uuid("source_event_id").notNull(),
+    recipientPrincipalId: uuid("recipient_principal_id").notNull(),
+    intentId: uuid("intent_id").notNull(),
+    notificationId: uuid("notification_id"),
+    outcome: text("outcome").notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [
+        table.tenantId,
+        table.consumerKey,
+        table.consumerVersion,
+        table.sourceEventId,
+        table.recipientPrincipalId,
+      ],
+      name: "notification_projection_receipts_pk",
+    }),
+    unique("notification_projection_receipts_intent_uq").on(
+      table.tenantId,
+      table.consumerKey,
+      table.consumerVersion,
+      table.intentId,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.intentId],
+      foreignColumns: [notificationIntents.tenantId, notificationIntents.intentId],
+      name: "notification_projection_receipts_intent_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.sourceEventId],
+      foreignColumns: [outboxEvents.tenantId, outboxEvents.eventId],
+      name: "notification_projection_receipts_source_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.notificationId],
+      foreignColumns: [notificationProjections.tenantId, notificationProjections.notificationId],
+      name: "notification_projection_receipts_projection_same_tenant_fk",
+    }).onDelete("restrict"),
+    index("notification_projection_receipts_source_idx").on(
+      table.tenantId,
+      table.sourceEventId,
+      table.recipientPrincipalId,
+    ),
+    check(
+      "notification_projection_receipts_consumer_exact",
+      sql`${table.consumerKey} = 'platform.notifications.projector'
+          AND ${table.consumerVersion} = 1`,
+    ),
+    check(
+      "notification_projection_receipts_outcome_valid",
+      sql`${table.outcome} IN (
+        'projected',
+        'withheld_membership',
+        'withheld_service_inactive',
+        'withheld_target_denied',
+        'withheld_target_missing'
+      )`,
+    ),
+    check(
+      "notification_projection_receipts_projection_shape",
+      sql`(${table.outcome} = 'projected' AND ${table.notificationId} IS NOT NULL)
+          OR (${table.outcome} <> 'projected' AND ${table.notificationId} IS NULL)`,
+    ),
+  ],
+).enableRLS();
+
+export const notificationProjectorEvidence = pgTable(
+  "notification_projector_evidence",
+  {
+    evidenceEventId: uuid("evidence_event_id").defaultRandom().primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    intentId: uuid("intent_id").notNull(),
+    sourceEventId: uuid("source_event_id").notNull(),
+    eventType: text("event_type").notNull(),
+    resultCode: text("result_code").notNull(),
+    occurredAt: timestamp("occurred_at", { mode: "date", withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.intentId],
+      foreignColumns: [notificationIntents.tenantId, notificationIntents.intentId],
+      name: "notification_projector_evidence_intent_same_tenant_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.tenantId, table.sourceEventId],
+      foreignColumns: [outboxEvents.tenantId, outboxEvents.eventId],
+      name: "notification_projector_evidence_source_same_tenant_fk",
+    }).onDelete("restrict"),
+    index("notification_projector_evidence_tenant_source_idx").on(
+      table.tenantId,
+      table.sourceEventId,
+      table.occurredAt,
+    ),
+    check(
+      "notification_projector_evidence_event_type_valid",
+      sql`${table.eventType} IN (
+        'platform.notifications.projected',
+        'platform.notifications.withheld',
+        'platform.notifications.retry_scheduled',
+        'platform.notifications.poisoned'
+      )`,
+    ),
+    check(
+      "notification_projector_evidence_result_code_valid",
+      sql`${table.resultCode} ~ '^[A-Z][A-Z0-9_]{0,63}$'`,
+    ),
   ],
 ).enableRLS();

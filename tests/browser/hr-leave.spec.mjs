@@ -188,6 +188,35 @@ async function openAppearance(actor) {
   return panel;
 }
 
+async function openNotifications(actor) {
+  const directLauncher = actor.page.getByRole("button", {
+    name: /^Notifications(?:, \d+ unread)?$/,
+  });
+  if (await directLauncher.isVisible()) {
+    await directLauncher.focus();
+    await expect(directLauncher).toBeFocused();
+    await directLauncher.press("Enter");
+  } else {
+    const systemLauncher = actor.page.getByRole("button", {
+      exact: true,
+      name: "User and system",
+    });
+    await systemLauncher.focus();
+    await expect(systemLauncher).toBeFocused();
+    await systemLauncher.press("Enter");
+    const systemPanel = actor.page.getByRole("region", { name: "User and system" });
+    await expect(systemPanel).toBeVisible();
+    await expect(systemPanel.getByRole("heading", { name: "User and system" })).toBeFocused();
+    await systemPanel
+      .getByRole("button", { name: /^Notifications(?:, \d+ unread)?$/ })
+      .press("Enter");
+  }
+  const panel = actor.page.getByRole("region", { exact: true, name: "Notifications" });
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole("heading", { exact: true, name: "Notifications" })).toBeFocused();
+  return panel;
+}
+
 async function enableHighContrast(actor) {
   if ((await actor.page.locator("html").getAttribute("data-high-contrast")) === "true") return;
   const panel = await openAppearance(actor);
@@ -791,7 +820,10 @@ test("Mission Control reuses the real Leave widget and persists four independent
       document.documentElement.style.setProperty("--corner-button", "260px");
       document.documentElement.style.setProperty("--corner-gap", "20px");
     });
-    await expect(shellChrome).toHaveAttribute("data-collapsed-controls", "appearance settings");
+    await expect(shellChrome).toHaveAttribute(
+      "data-collapsed-controls",
+      "notifications appearance settings",
+    );
     await expect(directAppearanceLauncher).toBeHidden();
     await expect(appearancePanel).toBeVisible();
     await appearancePanel.getByRole("button", { name: "Close appearance settings" }).click();
@@ -889,7 +921,7 @@ test("Mission Control reuses the real Leave widget and persists four independent
     });
     await expect(shellChrome).toHaveAttribute(
       "data-collapsed-controls",
-      "appearance settings service-groups",
+      "notifications appearance settings service-groups",
     );
     await expect(serviceGroupsLauncher).toHaveCount(0);
     const collapsedServiceGroups = employee.page.getByRole("region", {
@@ -911,7 +943,10 @@ test("Mission Control reuses the real Leave widget and persists four independent
       document.documentElement.style.removeProperty("--chrome-cluster-gap");
       document.documentElement.style.removeProperty("--edge");
     });
-    await expect(shellChrome).toHaveAttribute("data-collapsed-controls", "appearance settings");
+    await expect(shellChrome).toHaveAttribute(
+      "data-collapsed-controls",
+      "notifications appearance settings",
+    );
     await expect(serviceGroupsLauncher).toBeVisible();
 
     await employee.page.goto(`${employee.origin}/workspace/hr`);
@@ -2512,6 +2547,7 @@ test("Universal Settings preserves Theme, exposes authority, and coordinates tab
 test("employee submits, manager approves, and employee reloads durable rendered history", async ({
   browser,
 }, testInfo) => {
+  test.setTimeout(60_000);
   const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
   const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
   try {
@@ -2609,6 +2645,87 @@ test("employee submits, manager approves, and employee reloads durable rendered 
     await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/leave`);
 
     await manager.page.goto(manager.origin);
+    const submittedNotifications = await openNotifications(manager);
+    const submittedNotification = submittedNotifications.locator("li").filter({
+      has: manager.page.locator(`a[href="/workspace/hr/leave/${leaveRequestId}"]`),
+    });
+    await expect(submittedNotification).toHaveCount(1);
+    await expect(
+      submittedNotification.getByRole("link", {
+        exact: true,
+        name: "A leave request needs your review",
+      }),
+    ).toHaveAttribute("href", `/workspace/hr/leave/${leaveRequestId}`);
+    const desktopPanelGeometry = await submittedNotifications.evaluate((panel) => {
+      const list = panel.querySelector("ol");
+      const source = list?.querySelector("li");
+      if (!(list instanceof HTMLOListElement) || !(source instanceof HTMLLIElement)) {
+        throw new Error("notification list is missing");
+      }
+      const clones = [];
+      for (let index = 0; index < 20; index += 1) {
+        const clone = source.cloneNode(true);
+        if (!(clone instanceof HTMLLIElement)) throw new Error("notification row clone failed");
+        clone.dataset.layoutProbe = String(index);
+        list.append(clone);
+        clones.push(clone);
+      }
+      const panelBox = panel.getBoundingClientRect();
+      const style = getComputedStyle(panel);
+      const geometry = {
+        bottom: panelBox.bottom,
+        clientHeight: panel.clientHeight,
+        overflowY: style.overflowY,
+        scrollHeight: panel.scrollHeight,
+        viewportHeight: innerHeight,
+      };
+      for (const clone of clones) clone.remove();
+      return geometry;
+    });
+    expect(desktopPanelGeometry.bottom).toBeLessThanOrEqual(
+      desktopPanelGeometry.viewportHeight + 1,
+    );
+    expect(desktopPanelGeometry.scrollHeight).toBeGreaterThan(desktopPanelGeometry.clientHeight);
+    expect(["auto", "scroll"]).toContain(desktopPanelGeometry.overflowY);
+    const managerNotificationEvidence = testInfo.outputPath(
+      "leave-submitted-manager-notification.png",
+    );
+    await manager.page.screenshot({ fullPage: false, path: managerNotificationEvidence });
+    await testInfo.attach("leave-submitted-manager-notification", {
+      contentType: "image/png",
+      path: managerNotificationEvidence,
+    });
+    const markReadResponse = manager.page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        /^\/platform\/notifications\/[0-9a-f-]{36}\/read$/.test(new URL(response.url()).pathname),
+    );
+    await submittedNotification
+      .getByRole("button", { name: "Mark “A leave request needs your review” as read" })
+      .press("Enter");
+    const markRead = await markReadResponse;
+    expect(markRead.status(), JSON.stringify(markRead.request().headers())).toBe(200);
+    await expect(submittedNotification.getByText("Read", { exact: true })).toBeVisible();
+    const managerNotificationLauncher = manager.page.getByRole("button", {
+      name: /^Notifications(?:, \d+ unread)?$/,
+    });
+    await manager.page.keyboard.press("Escape");
+    await expect(submittedNotifications).toHaveCount(0);
+    await expect(managerNotificationLauncher).toBeFocused();
+    const reopenedSubmittedNotifications = await openNotifications(manager);
+    const reopenedSubmittedNotification = reopenedSubmittedNotifications.locator("li").filter({
+      has: manager.page.locator(`a[href="/workspace/hr/leave/${leaveRequestId}"]`),
+    });
+    await expect(reopenedSubmittedNotification.getByText("Read", { exact: true })).toBeVisible();
+    await expect(
+      reopenedSubmittedNotification.getByRole("button", {
+        name: "Mark “A leave request needs your review” as read",
+      }),
+    ).toHaveCount(0);
+    await manager.page.keyboard.press("Escape");
+    await expect(reopenedSubmittedNotifications).toHaveCount(0);
+    await expect(managerNotificationLauncher).toBeFocused();
+
     const myWorkWidget = manager.page.locator(
       '[data-widget-definition="platform.my-work.queue"]:not([data-widget-state="loading"])',
     );
@@ -2623,16 +2740,44 @@ test("employee submits, manager approves, and employee reloads durable rendered 
       name: "Approve leave request",
     });
     await approve.focus();
-    await manager.page.keyboard.press("Enter");
+    await expect(approve).toBeFocused();
+    await approve.press("Enter");
     const confirm = assignedWidgetRow.getByRole("button", { name: "Confirm approval" });
     await expect(confirm).toBeFocused();
-    await manager.page.keyboard.press("Enter");
+    await confirm.press("Enter");
     await expect(manager.page).toHaveURL(
       `${fixture.managerOrigin}/workspace/hr/leave/${leaveRequestId}?returnContext=my-work`,
     );
     await expectHistory(manager, "Approved", ["Submitted", "Approved"]);
 
     await employee.page.reload();
+    await employee.page.setViewportSize({ height: 844, width: 390 });
+    await employee.page.reload();
+    const approvedNotifications = await openNotifications(employee);
+    const approvedNotification = approvedNotifications.locator("li").filter({
+      has: employee.page.locator(`a[href="/workspace/hr/leave/${leaveRequestId}"]`),
+    });
+    await expect(approvedNotification).toHaveCount(1);
+    await expect(
+      approvedNotification.getByRole("link", {
+        exact: true,
+        name: "Your leave request was approved",
+      }),
+    ).toHaveAttribute("href", `/workspace/hr/leave/${leaveRequestId}`);
+    expect(
+      await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+    const employeeNotificationEvidence = testInfo.outputPath(
+      "leave-approved-employee-notification-mobile.png",
+    );
+    await employee.page.screenshot({ fullPage: false, path: employeeNotificationEvidence });
+    await testInfo.attach("leave-approved-employee-notification-mobile", {
+      contentType: "image/png",
+      path: employeeNotificationEvidence,
+    });
+    await employee.page.keyboard.press("Escape");
+    await employee.page.keyboard.press("Escape");
+
     const employeeListRow = employee.page.locator("tbody tr").filter({
       has: employee.page.locator(
         `a[href="/workspace/hr/leave/${leaveRequestId}?returnContext=leave-list"]`,

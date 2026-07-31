@@ -1,6 +1,7 @@
 "use client";
 
 import type {
+  PlatformNotificationPage,
   PresentationNavigationDiscovery,
   PresentationShortcutDiscovery,
 } from "@esbla/contracts";
@@ -74,6 +75,7 @@ function publishVisualViewport(viewport: ZenVisualViewportResult): void {
 function initialResolution(
   model: ZenNavigationModel,
   appearanceAvailable: boolean,
+  notificationsAvailable: boolean,
   settingsAvailable: boolean,
 ): ZenResponsiveChromeResult {
   return {
@@ -82,10 +84,11 @@ function initialResolution(
     direct: [
       ...(model.contextualMenu ? (["contextual"] as const) : []),
       ...(model.serviceGroups.length > 0 ? (["service-groups"] as const) : []),
+      ...(notificationsAvailable ? (["notifications"] as const) : []),
       ...(appearanceAvailable ? (["appearance"] as const) : []),
       ...(settingsAvailable ? (["settings"] as const) : []),
     ],
-    systemRequired: appearanceAvailable || settingsAvailable,
+    systemRequired: appearanceAvailable || notificationsAvailable || settingsAvailable,
   };
 }
 
@@ -104,11 +107,13 @@ function sameResolution(
 export function ZenShellChrome({
   appearanceAvailable,
   discovery,
+  initialNotifications,
   settingsAvailable,
   shortcutDiscovery,
 }: Readonly<{
   appearanceAvailable: boolean;
   discovery: PresentationNavigationDiscovery;
+  initialNotifications: PlatformNotificationPage | undefined;
   settingsAvailable: boolean;
   shortcutDiscovery: PresentationShortcutDiscovery | undefined;
 }>) {
@@ -117,7 +122,7 @@ export function ZenShellChrome({
   const [layer, setLayer] = useState<ZenChromeLayer>();
   const activeLayer = useRef(layer);
   const [resolution, setResolution] = useState(() =>
-    initialResolution(model, appearanceAvailable, settingsAvailable),
+    initialResolution(model, appearanceAvailable, Boolean(initialNotifications), settingsAvailable),
   );
   const buttonProbe = useRef<HTMLSpanElement>(null);
   const clusterGapProbe = useRef<HTMLSpanElement>(null);
@@ -145,6 +150,7 @@ export function ZenShellChrome({
       endInset,
       hasAppearance: appearanceAvailable,
       hasContextualMenu: Boolean(model.contextualMenu),
+      hasNotifications: Boolean(initialNotifications),
       hasSettings: settingsAvailable,
       hasServiceGroups: model.serviceGroups.length > 0,
       startInset,
@@ -169,7 +175,13 @@ export function ZenShellChrome({
       }
       return current;
     });
-  }, [appearanceAvailable, model.contextualMenu, model.serviceGroups.length, settingsAvailable]);
+  }, [
+    appearanceAvailable,
+    initialNotifications,
+    model.contextualMenu,
+    model.serviceGroups.length,
+    settingsAvailable,
+  ]);
 
   useLayoutEffect(() => {
     const frame = requestAnimationFrame(measure);
@@ -446,9 +458,11 @@ export function ZenShellChrome({
           appearanceAvailable={appearanceAvailable}
           collapsedMenus={collapsedMenus}
           model={model}
+          notificationPage={initialNotifications}
           onOpenStateChange={onOpenSystemStateChange}
           openState={openSystemState}
           showAppearanceDirect={resolution.direct.includes("appearance")}
+          showNotificationsDirect={resolution.direct.includes("notifications")}
           showSettingsDirect={resolution.direct.includes("settings")}
           settingsAvailable={settingsAvailable}
           systemRequired={resolution.systemRequired}
