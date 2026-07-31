@@ -2106,6 +2106,14 @@ test("Universal Settings preserves Theme, exposes authority, and coordinates tab
   let secondPage;
   try {
     await employee.page.setViewportSize({ height: 900, width: 1_280 });
+    const speculativeSettingsRequest = employee.page
+      .waitForRequest((request) => new URL(request.url()).pathname === "/settings", {
+        timeout: 3_000,
+      })
+      .then(
+        () => true,
+        () => false,
+      );
     await employee.page.goto(employee.origin);
     await expect(
       employee.page.getByRole("button", { exact: true, name: "Appearance settings" }),
@@ -2116,6 +2124,10 @@ test("Universal Settings preserves Theme, exposes authority, and coordinates tab
     });
     await expect(settingsLauncher).toBeVisible();
     await expect(settingsLauncher).toHaveAttribute("href", "/settings");
+    expect(
+      await speculativeSettingsRequest,
+      "actor-bound Universal Settings data is not speculatively prefetched",
+    ).toBe(false);
     await settingsLauncher.press("Enter");
     await expect(employee.page).toHaveURL(`${employee.origin}/settings`);
     await expect(

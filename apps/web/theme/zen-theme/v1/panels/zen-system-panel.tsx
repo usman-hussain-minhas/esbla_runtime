@@ -316,6 +316,7 @@ export function UserSystemControl({
           data-tooltip="Universal Settings"
           href="/settings"
           onClick={activateSettings}
+          prefetch={false}
         >
           <SemanticIcon aria-hidden="true" semanticKey="settings" size={18} strokeWidth={1.75} />
         </Link>
@@ -423,6 +424,7 @@ export function UserSystemControl({
                   className="theme-choice theme-choice-wide"
                   href="/settings"
                   onClick={activateSettings}
+                  prefetch={false}
                 >
                   <SemanticIcon aria-hidden="true" semanticKey="settings" size={17} />
                   <span>Universal Settings</span>
