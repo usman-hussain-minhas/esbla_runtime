@@ -19,6 +19,9 @@ describe("presentation widget manifest", () => {
       "hr.employment.admin-queue",
       "hr.employment.current-facts",
       "hr.employment.history",
+      "hr.expense.assigned",
+      "hr.expense.corrections",
+      "hr.expense.draft",
       "hr.expense.mine",
       "hr.leave.assigned",
       "hr.leave.history",
@@ -27,6 +30,8 @@ describe("presentation widget manifest", () => {
       "hr.shift.my-published",
       "hr.shift.publish-queue",
       "hr.shift.roster-overview",
+      "hr.timesheet.assigned",
+      "hr.timesheet.corrections",
       "hr.timesheet.draft",
       "hr.timesheet.mine",
       "hr.workforce.admin-queue",
@@ -103,6 +108,63 @@ describe("presentation widget manifest", () => {
       ],
       widgetKind: "operational",
     });
+    expect(
+      PRESENTATION_WIDGET_DEFINITIONS.filter(({ id }) =>
+        [
+          "hr.expense.assigned",
+          "hr.expense.corrections",
+          "hr.expense.draft",
+          "hr.timesheet.assigned",
+          "hr.timesheet.corrections",
+        ].includes(id),
+      ),
+    ).toMatchObject([
+      {
+        allowedCommandIds: ["hr.expense.approve", "hr.expense.reject"],
+        fullScreenRoute: "/workspace/my-work",
+        id: "hr.expense.assigned",
+        inlineMutationEligible: false,
+        requiredCapabilityIds: ["hr.expense.list_assigned", "hr.expense.view_detail"],
+      },
+      {
+        allowedCommandIds: ["hr.expense.create_correction"],
+        fullScreenRoute: "/workspace/hr/expenses",
+        id: "hr.expense.corrections",
+        inlineMutationEligible: false,
+        requiredCapabilityIds: [
+          "hr.expense.list_own",
+          "hr.expense.view_detail",
+          "hr.expense.create_correction",
+        ],
+      },
+      {
+        allowedCommandIds: ["hr.expense.create", "hr.expense.edit_draft", "hr.expense.submit"],
+        fullScreenRoute: "/workspace/hr/expenses",
+        id: "hr.expense.draft",
+        inlineMutationEligible: false,
+        requiredCapabilityIds: [
+          "hr.expense.list_own",
+          "hr.expense.view_detail",
+          "hr.expense.create",
+          "hr.expense.edit_draft",
+          "hr.expense.submit",
+        ],
+      },
+      {
+        allowedCommandIds: ["hr.timesheet.approve", "hr.timesheet.reject"],
+        fullScreenRoute: "/workspace/my-work",
+        id: "hr.timesheet.assigned",
+        inlineMutationEligible: false,
+        requiredCapabilityIds: ["hr.timesheet.list_assigned", "hr.timesheet.view_detail"],
+      },
+      {
+        allowedCommandIds: ["hr.timesheet.create_correction"],
+        fullScreenRoute: "/workspace/hr/timesheets/admin/corrections",
+        id: "hr.timesheet.corrections",
+        inlineMutationEligible: false,
+        requiredCapabilityIds: ["hr.timesheet.view_detail", "hr.timesheet.create_correction"],
+      },
+    ]);
     expect(
       PRESENTATION_WIDGET_DEFINITIONS.filter(({ id }) =>
         ["hr.leave.assigned", "hr.leave.history", "hr.leave.request-form"].includes(id),

@@ -504,6 +504,89 @@ const HR_EMPLOYMENT_HISTORY_MANIFEST = {
   widgetKind: "detailed",
 } as const satisfies PresentationWidgetDefinitionWithoutHash;
 
+const HR_EXPENSE_ASSIGNED_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "expense_claim_boundary",
+  allowedCommandIds: ["hr.expense.approve", "hr.expense.reject"],
+  definitionVersion: 1,
+  displayName: "Assigned Expense Claims",
+  fullScreenRoute: "/workspace/my-work",
+  id: "hr.expense.assigned",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.expense.assigned.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.expense.assigned.read.v1",
+  requiredCapabilityIds: ["hr.expense.list_assigned", "hr.expense.view_detail"],
+  semanticIcon: "receipt-text",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "expense_claim_boundary",
+  widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const HR_EXPENSE_CORRECTIONS_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "expense_claim_boundary",
+  allowedCommandIds: ["hr.expense.create_correction"],
+  definitionVersion: 1,
+  displayName: "Expense Claim Corrections",
+  fullScreenRoute: "/workspace/hr/expenses",
+  id: "hr.expense.corrections",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.expense.corrections.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.expense.corrections.read.v1",
+  requiredCapabilityIds: [
+    "hr.expense.list_own",
+    "hr.expense.view_detail",
+    "hr.expense.create_correction",
+  ],
+  semanticIcon: "receipt-text",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "expense_claim_boundary",
+  widgetKind: "detailed",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const HR_EXPENSE_DRAFT_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "expense_claim_boundary",
+  allowedCommandIds: ["hr.expense.create", "hr.expense.edit_draft", "hr.expense.submit"],
+  definitionVersion: 1,
+  displayName: "Expense Claim Draft",
+  fullScreenRoute: "/workspace/hr/expenses",
+  id: "hr.expense.draft",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.expense.draft.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.expense.draft.read.v1",
+  requiredCapabilityIds: [
+    "hr.expense.list_own",
+    "hr.expense.view_detail",
+    "hr.expense.create",
+    "hr.expense.edit_draft",
+    "hr.expense.submit",
+  ],
+  semanticIcon: "receipt-text",
+  showMoreEligible: false,
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "expense_claim_boundary",
+  widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
 const HR_EXPENSE_MINE_MANIFEST = {
   ...COMMON_WIDGET_MANIFEST,
   activationPolicy: "exact_service",
@@ -731,6 +814,54 @@ const HR_TIMESHEET_MINE_MANIFEST = {
   sourceServiceGroup: "hr",
   sourceServiceKey: "timesheet",
   widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const HR_TIMESHEET_ASSIGNED_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "timesheet",
+  allowedCommandIds: ["hr.timesheet.approve", "hr.timesheet.reject"],
+  definitionVersion: 1,
+  displayName: "Assigned Timesheets",
+  fullScreenRoute: "/workspace/my-work",
+  id: "hr.timesheet.assigned",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.timesheet.assigned.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.timesheet.assigned.read.v1",
+  requiredCapabilityIds: ["hr.timesheet.list_assigned", "hr.timesheet.view_detail"],
+  semanticIcon: "list-checks",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "timesheet",
+  widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const HR_TIMESHEET_CORRECTIONS_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "timesheet",
+  allowedCommandIds: ["hr.timesheet.create_correction"],
+  definitionVersion: 1,
+  displayName: "Timesheet Corrections",
+  fullScreenRoute: "/workspace/hr/timesheets/admin/corrections",
+  id: "hr.timesheet.corrections",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.timesheet.corrections.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.timesheet.corrections.read.v1",
+  requiredCapabilityIds: ["hr.timesheet.view_detail", "hr.timesheet.create_correction"],
+  semanticIcon: "list-checks",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "timesheet",
+  widgetKind: "detailed",
 } as const satisfies PresentationWidgetDefinitionWithoutHash;
 
 const HR_TIMESHEET_DRAFT_MANIFEST = {
@@ -977,6 +1108,21 @@ export const HR_EXPENSE_MINE_WIDGET_DEFINITION = deepFreeze({
   canonicalHash: "770fe892c414c43f34fa49c2d81bf45b52d3876e539b4c8fc9b56eea47c9c3b8",
 }) satisfies PresentationWidgetDefinition;
 
+export const HR_EXPENSE_ASSIGNED_WIDGET_DEFINITION = deepFreeze({
+  ...HR_EXPENSE_ASSIGNED_MANIFEST,
+  canonicalHash: "9e0cee5c4af13abdd6a4c3c18f73243bd2ab4a5963de201b48572cf9b85360b9",
+}) satisfies PresentationWidgetDefinition;
+
+export const HR_EXPENSE_CORRECTIONS_WIDGET_DEFINITION = deepFreeze({
+  ...HR_EXPENSE_CORRECTIONS_MANIFEST,
+  canonicalHash: "f3142612a0561a56ee086b81fb95ada0cd43d5cd44ff8ef6a0a704566a269a38",
+}) satisfies PresentationWidgetDefinition;
+
+export const HR_EXPENSE_DRAFT_WIDGET_DEFINITION = deepFreeze({
+  ...HR_EXPENSE_DRAFT_MANIFEST,
+  canonicalHash: "f490503c73952b6d307f68a2195372ac1985b103ef76f2a3df63ff053b64e62c",
+}) satisfies PresentationWidgetDefinition;
+
 export const HR_LEAVE_ASSIGNED_WIDGET_DEFINITION = deepFreeze({
   ...HR_LEAVE_ASSIGNED_MANIFEST,
   canonicalHash: "0d2b506961d59ad127561a455ec9ccf7a2f21b720069023a3a333f090eb7bcac",
@@ -1015,6 +1161,16 @@ export const HR_SHIFT_ROSTER_OVERVIEW_WIDGET_DEFINITION = deepFreeze({
 export const HR_TIMESHEET_MINE_WIDGET_DEFINITION = deepFreeze({
   ...HR_TIMESHEET_MINE_MANIFEST,
   canonicalHash: "0694fe179f2b9d065ab03061ee65185ca683ea2e5d14a2e5d733365f639d1cae",
+}) satisfies PresentationWidgetDefinition;
+
+export const HR_TIMESHEET_ASSIGNED_WIDGET_DEFINITION = deepFreeze({
+  ...HR_TIMESHEET_ASSIGNED_MANIFEST,
+  canonicalHash: "f62ac530ae704af58963a19db23bc12b9b7253636a3a8d855c2675cd3380d3f3",
+}) satisfies PresentationWidgetDefinition;
+
+export const HR_TIMESHEET_CORRECTIONS_WIDGET_DEFINITION = deepFreeze({
+  ...HR_TIMESHEET_CORRECTIONS_MANIFEST,
+  canonicalHash: "29beb1cb644180a3398403deb3903132728a43bd58e76bf41f41520e2ba7e04b",
 }) satisfies PresentationWidgetDefinition;
 
 export const HR_TIMESHEET_DRAFT_WIDGET_DEFINITION = deepFreeze({
@@ -1059,6 +1215,9 @@ export const PRESENTATION_WIDGET_DEFINITIONS = deepFreeze([
   HR_EMPLOYMENT_ADMIN_QUEUE_WIDGET_DEFINITION,
   HR_EMPLOYMENT_CURRENT_FACTS_WIDGET_DEFINITION,
   HR_EMPLOYMENT_HISTORY_WIDGET_DEFINITION,
+  HR_EXPENSE_ASSIGNED_WIDGET_DEFINITION,
+  HR_EXPENSE_CORRECTIONS_WIDGET_DEFINITION,
+  HR_EXPENSE_DRAFT_WIDGET_DEFINITION,
   HR_EXPENSE_MINE_WIDGET_DEFINITION,
   HR_LEAVE_ASSIGNED_WIDGET_DEFINITION,
   HR_LEAVE_HISTORY_WIDGET_DEFINITION,
@@ -1067,6 +1226,8 @@ export const PRESENTATION_WIDGET_DEFINITIONS = deepFreeze([
   HR_SHIFT_MY_PUBLISHED_WIDGET_DEFINITION,
   HR_SHIFT_PUBLISH_QUEUE_WIDGET_DEFINITION,
   HR_SHIFT_ROSTER_OVERVIEW_WIDGET_DEFINITION,
+  HR_TIMESHEET_ASSIGNED_WIDGET_DEFINITION,
+  HR_TIMESHEET_CORRECTIONS_WIDGET_DEFINITION,
   HR_TIMESHEET_DRAFT_WIDGET_DEFINITION,
   HR_TIMESHEET_MINE_WIDGET_DEFINITION,
   HR_WORKFORCE_ADMIN_QUEUE_WIDGET_DEFINITION,

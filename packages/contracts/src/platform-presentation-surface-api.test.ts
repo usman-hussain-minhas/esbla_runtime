@@ -154,6 +154,12 @@ describe("platform presentation surface API contract", () => {
         "hr.leave.assigned",
         "hr.leave.history",
         "hr.leave.request-form",
+        "hr.timesheet.assigned",
+        "hr.timesheet.draft",
+        "hr.timesheet.corrections",
+        "hr.expense.assigned",
+        "hr.expense.draft",
+        "hr.expense.corrections",
       ],
       [
         "hr.employment.admin-queue",
@@ -167,6 +173,12 @@ describe("platform presentation surface API contract", () => {
         "hr.leave.assigned",
         "hr.leave.history",
         "hr.leave.request-form",
+        "hr.timesheet.assigned",
+        "hr.timesheet.draft",
+        "hr.timesheet.corrections",
+        "hr.expense.assigned",
+        "hr.expense.draft",
+        "hr.expense.corrections",
       ],
     ]);
     expect(ZEN_V1_SURFACE_CONTRACTS.map(({ defaultInstances }) => defaultInstances[0])).toEqual([
