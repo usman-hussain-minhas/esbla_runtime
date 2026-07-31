@@ -356,8 +356,8 @@ export async function recordWorkforceMutation(
   beforeVersion: number | null,
   priorState: WorkforceStatus | null,
   profile: WorkforceProfileView,
-): Promise<void> {
-  await recordMutationProof(transaction, {
+): Promise<string> {
+  const proof = await recordMutationProof(transaction, {
     evidence: {
       eventType: receipt.eventType,
       newState: profile.workforceStatus,
@@ -389,6 +389,7 @@ export async function recordWorkforceMutation(
     subjectType: RECEIPT_SUBJECT_TYPE,
   });
   if (binding.replayed) throw idempotencyConflict();
+  return proof.outboxEventId;
 }
 
 export interface WorkforceReportingRelationshipRow {
@@ -596,8 +597,8 @@ export async function recordWorkforceReportingMutation(
   priorRelationshipStatus: ReportingRelationshipStatus | null,
   priorRelationshipVersion: number | null,
   relationship: ReportingRelationshipView,
-): Promise<void> {
-  await recordMutationProof(transaction, {
+): Promise<string> {
+  const proof = await recordMutationProof(transaction, {
     evidence: {
       eventType: receipt.eventType,
       newState: relationship.relationshipStatus,
@@ -631,6 +632,7 @@ export async function recordWorkforceReportingMutation(
     subjectType: RECEIPT_SUBJECT_TYPE,
   });
   if (binding.replayed) throw idempotencyConflict();
+  return proof.outboxEventId;
 }
 
 export function commandResult(

@@ -225,6 +225,13 @@
       "when": 1785510285933,
       "tag": "0031_known_senator_kelly",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1785538849124,
+      "tag": "0032_notification_workforce_employment_targets",
+      "breakpoints": true
     }
   ]
 }

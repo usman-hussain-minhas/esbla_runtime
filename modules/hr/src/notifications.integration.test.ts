@@ -12,6 +12,10 @@ import type { Pool, QueryResultRow } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   approveLeaveRequest,
+  changeWorkforceStatus,
+  createEmploymentRecord,
+  createWorkforceProfile,
+  linkWorkforcePrincipal,
   rejectLeaveRequest,
   submitLeaveRequest,
   verifyHrNotificationTargets,
@@ -26,6 +30,8 @@ import {
 } from "./leave.integration-fixture.js";
 
 const notificationIds = {
+  employmentRecord: "30000000-0000-4000-8000-000000000082",
+  missingTarget: "30000000-0000-4000-8000-000000000083",
   requestApproved: "30000000-0000-4000-8000-000000000071",
   requestCapability: "30000000-0000-4000-8000-000000000075",
   requestDemoted: "30000000-0000-4000-8000-000000000073",
@@ -35,17 +41,24 @@ const notificationIds = {
   requestRetry: "30000000-0000-4000-8000-000000000077",
   requestStop: "30000000-0000-4000-8000-000000000079",
   requestSuspended: "30000000-0000-4000-8000-000000000074",
+  workforceEmployee: "30000000-0000-4000-8000-000000000080",
+  workforceManager: "30000000-0000-4000-8000-000000000081",
 } as const;
 
 const notificationCapabilities = [
+  "hr.employment.view_detail",
   "hr.leave.view",
+  "hr.workforce.list_authorized",
+  "hr.workforce.view_authorized_detail",
   "platform.notifications.list_own",
   "platform.notifications.mark_all_read_own",
   "platform.notifications.mark_read_own",
 ] as const;
 
 let projectorPool: Pool;
+let employmentTargetId: string;
 const intentIds = new Map<string, string>();
+let workforceEmployeeTargetId: string;
 
 async function seedCapabilities(tenantId: string, principalIds: readonly string[]): Promise<void> {
   const client = await migrationPool.connect();
@@ -139,8 +152,97 @@ beforeAll(async () => {
   const projectorUrl = process.env.DATABASE_NOTIFICATION_PROJECTOR_URL;
   if (!projectorUrl) throw new Error("Notification projector database URL is required");
   projectorPool = createDatabasePool(projectorUrl, { max: 2 });
+  const applicationRole = process.env.ESBLA_TEST_APPLICATION_ROLE;
+  if (!applicationRole || !/^[a-z_][a-z0-9_]*$/.test(applicationRole)) {
+    throw new Error("Application role is required for Workforce notification fixtures");
+  }
+  await migrationPool.query(
+    `GRANT SELECT ON tenant_settings,hr_workforce_profile_service_control,
+       hr_workforce_status_history,hr_employment_record_service_control TO ${applicationRole}`,
+  );
+  await migrationPool.query(
+    `GRANT SELECT,INSERT,UPDATE ON hr_worker_profiles,hr_employment_records TO ${applicationRole}`,
+  );
+  await migrationPool.query(
+    `GRANT SELECT,INSERT ON hr_reporting_relationships,hr_employment_record_versions
+     TO ${applicationRole}`,
+  );
   await seedCapabilities(ids.tenantA, [ids.employeeA, ids.employeeA2, ids.managerA, ids.managerA2]);
   await seedCapabilities(ids.tenantB, [ids.employeeB, ids.managerB]);
+  await mutateTenant(
+    ids.tenantA,
+    `INSERT INTO service_activations (tenant_id,service_key,state,version)
+     VALUES ($1,'workforce_profile','active',1),($1,'employment_record','active',1)`,
+    [ids.tenantA],
+  );
+  await mutateTenant(
+    ids.tenantA,
+    `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id) VALUES
+       ($1,$2,'hr.workforce.create_profile'),($1,$2,'hr.workforce.link_principal'),
+       ($1,$2,'hr.workforce.change_status'),($1,$2,'hr.employment.create_record'),
+       ($1,$3,'hr.workforce.create_profile'),($1,$3,'hr.workforce.link_principal'),
+       ($1,$3,'hr.workforce.change_status')
+     ON CONFLICT DO NOTHING`,
+    [ids.tenantA, ids.employeeA, ids.managerA],
+  );
+  const createFixtureProfile = async (principalId: string, finalRole: "employee" | "manager") => {
+    await mutateTenant(
+      ids.tenantA,
+      `UPDATE memberships SET role_key='hr_operator'
+       WHERE tenant_id=$1 AND principal_id=$2`,
+      [ids.tenantA, principalId],
+    );
+    const fixtureContext = context(ids.tenantA, principalId, randomUUID());
+    const created = await createWorkforceProfile(pool, fixtureContext, {
+      idempotencyKey: randomUUID(),
+    });
+    const linked = await linkWorkforcePrincipal(
+      pool,
+      context(ids.tenantA, principalId, randomUUID()),
+      {
+        expectedVersion: created.profile.version,
+        idempotencyKey: randomUUID(),
+        principalId,
+        workerProfileId: created.profile.workerProfileId,
+      },
+    );
+    const active = await changeWorkforceStatus(
+      pool,
+      context(ids.tenantA, principalId, randomUUID()),
+      {
+        expectedVersion: linked.profile.version,
+        idempotencyKey: randomUUID(),
+        status: "active",
+        workerProfileId: linked.profile.workerProfileId,
+      },
+    );
+    await mutateTenant(
+      ids.tenantA,
+      `UPDATE memberships SET role_key=$3 WHERE tenant_id=$1 AND principal_id=$2`,
+      [ids.tenantA, principalId, finalRole],
+    );
+    return active.profile.workerProfileId;
+  };
+  workforceEmployeeTargetId = await createFixtureProfile(ids.employeeA, "employee");
+  await createFixtureProfile(ids.managerA, "manager");
+  await mutateTenant(
+    ids.tenantA,
+    `UPDATE memberships SET role_key='hr_operator'
+     WHERE tenant_id=$1 AND principal_id=$2`,
+    [ids.tenantA, ids.employeeA],
+  );
+  const employment = await createEmploymentRecord(
+    pool,
+    context(ids.tenantA, ids.employeeA, randomUUID()),
+    { idempotencyKey: randomUUID(), workerProfileId: workforceEmployeeTargetId },
+  );
+  employmentTargetId = employment.mutation.employmentRecordId;
+  await mutateTenant(
+    ids.tenantA,
+    `UPDATE memberships SET role_key='employee'
+     WHERE tenant_id=$1 AND principal_id=$2`,
+    [ids.tenantA, ids.employeeA],
+  );
 });
 
 afterAll(async () => {
@@ -168,6 +270,80 @@ describe.sequential("HR notification Core and Leave slice", () => {
         },
       ),
     ).rejects.toMatchObject({ code: "42501" });
+  });
+
+  it("limits the projector to exact target-verification columns", async () => {
+    for (const query of [
+      "SELECT tenant_id,setting_key,value FROM tenant_settings LIMIT 0",
+      `SELECT tenant_id,worker_profile_id,principal_id,workforce_status,
+              current_reporting_relationship_id FROM hr_worker_profiles LIMIT 0`,
+      `SELECT tenant_id,reporting_relationship_id,worker_profile_id,
+              manager_worker_profile_id,relationship_status
+       FROM hr_reporting_relationships LIMIT 0`,
+      "SELECT tenant_id,employment_record_id,worker_profile_id FROM hr_employment_records LIMIT 0",
+    ]) {
+      await expect(projectorPool.query(query)).resolves.toBeDefined();
+    }
+    for (const query of [
+      "SELECT value_type FROM tenant_settings LIMIT 0",
+      "SELECT employee_number FROM hr_worker_profiles LIMIT 0",
+      "SELECT effective_at FROM hr_reporting_relationships LIMIT 0",
+      "SELECT status FROM hr_employment_records LIMIT 0",
+    ]) {
+      await expect(projectorPool.query(query)).rejects.toMatchObject({ code: "42501" });
+    }
+  });
+
+  it("fails closed through exact Workforce and Employment target authority", async () => {
+    const client = await projectorPool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('app.tenant_id',$1,true)", [ids.tenantA]);
+      expect(
+        await verifyHrNotificationTargets(client, ids.tenantA, [
+          {
+            recipientPrincipalId: ids.employeeA,
+            referenceId: notificationIds.workforceEmployee,
+            targetKind: "hr.workforce_profile.detail",
+            targetResourceId: workforceEmployeeTargetId,
+          },
+          {
+            recipientPrincipalId: ids.managerA,
+            referenceId: notificationIds.workforceManager,
+            targetKind: "hr.workforce_profile.direct_reports",
+            targetResourceId: null,
+          },
+          {
+            recipientPrincipalId: ids.employeeA,
+            referenceId: notificationIds.employmentRecord,
+            targetKind: "hr.employment_record.detail",
+            targetResourceId: employmentTargetId,
+          },
+          {
+            recipientPrincipalId: ids.employeeA2,
+            referenceId: notificationIds.requestRetry,
+            targetKind: "hr.workforce_profile.detail",
+            targetResourceId: workforceEmployeeTargetId,
+          },
+          {
+            recipientPrincipalId: ids.employeeA,
+            referenceId: notificationIds.requestPoisoned,
+            targetKind: "hr.employment_record.detail",
+            targetResourceId: notificationIds.missingTarget,
+          },
+        ]),
+      ).toEqual([
+        { outcome: "allowed", referenceId: notificationIds.workforceEmployee },
+        { outcome: "allowed", referenceId: notificationIds.workforceManager },
+        { outcome: "allowed", referenceId: notificationIds.employmentRecord },
+        { outcome: "denied", referenceId: notificationIds.requestRetry },
+        { outcome: "missing", referenceId: notificationIds.requestPoisoned },
+      ]);
+      await client.query("ROLLBACK");
+    } finally {
+      await client.query("ROLLBACK").catch(() => undefined);
+      client.release();
+    }
   });
 
   it("freezes, deduplicates, projects, lists and reads the exact Leave journey", async () => {
