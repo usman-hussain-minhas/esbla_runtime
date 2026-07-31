@@ -1,4 +1,8 @@
-import { HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION, ZEN_V1_SURFACE_CONTRACTS } from "@esbla/contracts";
+import {
+  getZenV1RegisteredSurfacePlacements,
+  HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION,
+  ZEN_V1_SURFACE_CONTRACTS,
+} from "@esbla/contracts";
 import { describe, expect, it } from "vitest";
 import {
   assertPresentationCompositionRegistriesCurrent,
@@ -136,6 +140,20 @@ describe("presentation preference core", () => {
       }),
     ]);
     expect(validatePersonalSurfacePlacements("surface.mission-control", [])).toEqual([]);
+    const cataloguePlacement = getZenV1RegisteredSurfacePlacements("surface.mission-control").find(
+      ({ instanceId }) => instanceId === "mission-control.my-tasks",
+    );
+    if (!cataloguePlacement) throw new Error("Catalogue placement fixture is missing");
+    expect(
+      validatePersonalSurfacePlacements("surface.mission-control", [
+        { ...cataloguePlacement, column: 1, row: 100 },
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        instanceId: "mission-control.my-tasks",
+        widgetDefinitionId: "workspace.tasks.mine",
+      }),
+    ]);
     expect(() =>
       validatePersonalSurfacePlacements(
         "surface.mission-control",

@@ -1,4 +1,4 @@
-import { getZenV1SurfaceContract } from "@esbla/contracts";
+import { getZenV1RegisteredSurfacePlacements, getZenV1SurfaceContract } from "@esbla/contracts";
 import { describe, expect, it } from "vitest";
 import {
   createPersonalSurfaceEditorState,
@@ -70,6 +70,36 @@ describe("personal surface editor core", () => {
     );
     expect(new Set(restored.placements.map(({ instanceId }) => instanceId)).size).toBe(
       restored.placements.length,
+    );
+  });
+
+  it("adds and removes a catalogue-only widget through the same bounded editor path", () => {
+    const registered = getZenV1RegisteredSurfacePlacements("surface.mission-control");
+    const initial = createPersonalSurfaceEditorState({
+      availablePlacements: registered,
+      effectivePlacements: available,
+      overlayVersion: 0,
+      surfaceId: "surface.mission-control",
+    });
+    const added = personalSurfaceEditorReducer(initial, {
+      instanceId: "mission-control.my-tasks",
+      type: "add",
+    });
+    expect(
+      added.placements.find(({ instanceId }) => instanceId === "mission-control.my-tasks"),
+    ).toMatchObject({
+      widgetDefinitionId: "workspace.tasks.mine",
+      widgetDefinitionVersion: 1,
+    });
+    expect(
+      isPersonalSurfaceWidgetRemovable("surface.mission-control", "mission-control.my-tasks"),
+    ).toBe(true);
+    const selected = personalSurfaceEditorReducer(added, {
+      instanceId: "mission-control.my-tasks",
+      type: "select",
+    });
+    expect(personalSurfaceEditorReducer(selected, { type: "remove_selected" }).placements).toEqual(
+      available,
     );
   });
 

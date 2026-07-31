@@ -83,6 +83,7 @@ describe("presentation surface web boundary", () => {
       decodePresentationPersonalSurfaceEditorWorkspaceResponse(
         Promise.resolve(
           Response.json({
+            availablePlacements: [],
             editable: false,
             layout: {
               baseDefinitionHash:

@@ -1,9 +1,11 @@
 import { PRESENTATION_BILLING_STATE } from "./platform-presentation-api.js";
 import {
+  getZenV1RegisteredSurfaceInstances,
   getZenV1SurfaceContract,
   type PresentationSurfaceLayout,
   type PresentationWidgetPlacement,
   parsePresentationSurfaceLayout,
+  parsePresentationSurfaceRegisteredPlacementTemplates,
   parsePresentationWidgetPlacements,
   presentationWidgetPlacementSchema,
   type ZenV1SurfaceId,
@@ -35,6 +37,7 @@ export interface PresentationSurfaceBaseActions {
 
 export interface PresentationSurfaceBaseWorkspace {
   readonly actions: PresentationSurfaceBaseActions;
+  readonly availablePlacements: readonly PresentationWidgetPlacement[];
   readonly currentBase: PresentationSurfaceBaseVersion;
   readonly draft: PresentationSurfaceDraft | null;
   readonly headRowVersion: number;
@@ -135,16 +138,25 @@ export function parseExactPresentationSurfacePlacementSet(
   const placements = parsePresentationWidgetPlacements(value);
   const contract = getZenV1SurfaceContract(surfaceId);
   const expected = new Map(
-    contract.basePlacements.map(({ instanceId, widgetDefinitionId, widgetDefinitionVersion }) => [
-      instanceId,
-      `${widgetDefinitionId}@${widgetDefinitionVersion}`,
-    ]),
+    getZenV1RegisteredSurfaceInstances(surfaceId).map(
+      ({ instanceId, widgetDefinitionId, widgetDefinitionVersion }) => [
+        instanceId,
+        `${widgetDefinitionId}@${widgetDefinitionVersion}`,
+      ],
+    ),
+  );
+  const requiredInstanceIds = new Set(
+    contract.defaultInstances
+      .filter(({ placementPolicy }) => placementPolicy === "default_required")
+      .map(({ instanceId }) => instanceId),
   );
   if (
-    placements.length !== expected.size ||
     placements.some(
       ({ instanceId, widgetDefinitionId, widgetDefinitionVersion }) =>
         expected.get(instanceId) !== `${widgetDefinitionId}@${widgetDefinitionVersion}`,
+    ) ||
+    [...requiredInstanceIds].some(
+      (instanceId) => !placements.some((placement) => placement.instanceId === instanceId),
     )
   ) {
     throw new Error("Invalid presentation surface instance set");
@@ -234,7 +246,14 @@ export function parsePresentationSurfaceBaseWorkspace(
   value: unknown,
 ): PresentationSurfaceBaseWorkspace {
   if (
-    !exactRecord(value, ["actions", "currentBase", "draft", "headRowVersion", "history"]) ||
+    !exactRecord(value, [
+      "actions",
+      "availablePlacements",
+      "currentBase",
+      "draft",
+      "headRowVersion",
+      "history",
+    ]) ||
     !exactRecord(value.actions, ["canDraft", "canPublish", "canRollback", "canValidate"]) ||
     typeof value.actions.canDraft !== "boolean" ||
     typeof value.actions.canPublish !== "boolean" ||
@@ -248,9 +267,16 @@ export function parsePresentationSurfaceBaseWorkspace(
     throw new Error("Invalid presentation surface base workspace");
   }
   const currentBase = parsePresentationSurfaceBaseVersion(value.currentBase);
+  const availablePlacements = parsePresentationSurfaceRegisteredPlacementTemplates(
+    currentBase.surfaceId,
+    value.availablePlacements,
+  );
   const draft = value.draft === null ? null : parsePresentationSurfaceDraft(value.draft);
   const history = value.history.map(parsePresentationSurfaceBaseVersion);
+  const availableInstanceIds = new Set(availablePlacements.map(({ instanceId }) => instanceId));
   if (
+    currentBase.placements.some(({ instanceId }) => !availableInstanceIds.has(instanceId)) ||
+    (draft?.placements.some(({ instanceId }) => !availableInstanceIds.has(instanceId)) ?? false) ||
     history[0]?.baseVersion !== currentBase.baseVersion ||
     history.some(
       (version, index) =>
@@ -270,6 +296,7 @@ export function parsePresentationSurfaceBaseWorkspace(
       canRollback: value.actions.canRollback,
       canValidate: value.actions.canValidate,
     },
+    availablePlacements,
     currentBase,
     draft,
     headRowVersion: value.headRowVersion,
@@ -548,6 +575,11 @@ export const presentationSurfaceBaseWorkspaceSchema = {
       required: ["canDraft", "canPublish", "canRollback", "canValidate"],
       type: "object",
     },
+    availablePlacements: {
+      items: presentationWidgetPlacementSchema,
+      maxItems: 100,
+      type: "array",
+    },
     currentBase: { $ref: "PresentationSurfaceBaseVersionV1#" },
     draft: {
       anyOf: [{ $ref: "PresentationSurfaceDraftV1#" }, { type: "null" }],
@@ -560,7 +592,7 @@ export const presentationSurfaceBaseWorkspaceSchema = {
       type: "array",
     },
   },
-  required: ["actions", "currentBase", "draft", "headRowVersion", "history"],
+  required: ["actions", "availablePlacements", "currentBase", "draft", "headRowVersion", "history"],
   type: "object",
 } as const;
 

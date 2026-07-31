@@ -134,7 +134,27 @@ describe("platform presentation surface API contract", () => {
           .digest("hex"),
       ).toBe(canonicalHash);
       expect(Object.isFrozen(contract.defaultInstances[0])).toBe(true);
+      expect(Object.isFrozen(contract.catalogueInstances[0])).toBe(true);
     }
+    expect(
+      ZEN_V1_SURFACE_CONTRACTS.map(({ catalogueInstances }) =>
+        catalogueInstances.map(({ widgetDefinitionId }) => widgetDefinitionId),
+      ),
+    ).toEqual([
+      [
+        "hr.employment.admin-queue",
+        "hr.employment.history",
+        "hr.workforce.admin-queue",
+        "hr.workforce.status-reporting",
+        "workspace.tasks.mine",
+      ],
+      [
+        "hr.employment.admin-queue",
+        "hr.employment.history",
+        "hr.workforce.admin-queue",
+        "hr.workforce.status-reporting",
+      ],
+    ]);
     expect(ZEN_V1_SURFACE_CONTRACTS.map(({ defaultInstances }) => defaultInstances[0])).toEqual([
       expect.objectContaining({
         instanceId: "mission-control.my-work",
@@ -299,6 +319,7 @@ describe("platform presentation surface API contract", () => {
     const base = ZEN_V1_SURFACE_CONTRACTS[0];
     expect(
       parsePresentationPersonalSurfaceEditorWorkspace({
+        availablePlacements: [],
         editable: false,
         layout: {
           baseDefinitionHash: base.definitionHash,

@@ -2,11 +2,11 @@ import {
   canonicalizePresentationWidgetDefinition,
   getPresentationSurfaceDefinition,
   getPresentationWidgetDefinition,
-  getZenV1SurfaceContract,
+  getZenV1RegisteredSurfaceInstances,
   PRESENTATION_SURFACE_DEFINITIONS,
   PRESENTATION_WIDGET_DEFINITIONS,
-  type PresentationSurfaceDefaultInstance,
   type PresentationSurfaceDefinition,
+  type PresentationSurfaceRegisteredInstance,
   type PresentationWidgetDefinition,
   type PresentationWidgetPlacement,
   ZEN_V1_SURFACE_CONTRACTS,
@@ -92,8 +92,8 @@ export const canonicalizeWidgetDefinition = canonicalizePresentationWidgetDefini
 export function getRegisteredSurfaceInstance(
   surfaceId: SurfaceDefinition["id"],
   instanceId: string,
-): PresentationSurfaceDefaultInstance {
-  const instance = getZenV1SurfaceContract(surfaceId).defaultInstances.find(
+): PresentationSurfaceRegisteredInstance {
+  const instance = getZenV1RegisteredSurfaceInstances(surfaceId).find(
     (candidate) => candidate.instanceId === instanceId,
   );
   if (!instance) throw new Error("Widget is not registered for this Zen surface");

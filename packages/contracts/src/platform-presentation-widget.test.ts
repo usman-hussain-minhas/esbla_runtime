@@ -14,15 +14,20 @@ describe("presentation widget manifest", () => {
   it("registers the default Mission Control Product shapes in canonical identity order", () => {
     expect(PRESENTATION_WIDGET_DEFINITIONS.map(({ id }) => id)).toEqual([
       "hr.attendance.my-observations",
+      "hr.employment.admin-queue",
       "hr.employment.current-facts",
+      "hr.employment.history",
       "hr.expense.mine",
       "hr.leave.my-requests",
       "hr.shift.my-published",
       "hr.timesheet.draft",
       "hr.timesheet.mine",
+      "hr.workforce.admin-queue",
       "hr.workforce.direct-reports",
       "hr.workforce.my-profile",
+      "hr.workforce.status-reporting",
       "platform.my-work.queue",
+      "workspace.tasks.mine",
     ]);
     expect(
       PRESENTATION_WIDGET_DEFINITIONS.filter(({ id }) =>
