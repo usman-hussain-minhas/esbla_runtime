@@ -296,6 +296,38 @@ describe("runtime probes", () => {
         })
       ).statusCode,
     ).toBe(401);
+    expect(
+      (
+        await server.inject({
+          method: "GET",
+          url: "/v1/platform/studio/surfaces/surface.mission-control/base",
+        })
+      ).statusCode,
+    ).toBe(401);
+    for (const [operation, body] of [
+      [
+        "draft",
+        {
+          expectedDraftVersion: 0,
+          expectedHeadRowVersion: 0,
+          placements: [],
+        },
+      ],
+      ["validate", { expectedDraftVersion: 1, expectedHeadRowVersion: 1 }],
+      ["publish", { expectedDraftVersion: 1, expectedHeadRowVersion: 1 }],
+      ["rollback", { expectedHeadRowVersion: 2, sourceBaseVersion: 1 }],
+    ] as const) {
+      expect(
+        (
+          await server.inject({
+            body,
+            headers: operation === "validate" ? {} : { "idempotency-key": randomUUID() },
+            method: "POST",
+            url: `/v1/platform/studio/surfaces/surface.mission-control/base/${operation}`,
+          })
+        ).statusCode,
+      ).toBe(401);
+    }
     expect(query).not.toHaveBeenCalled();
   });
 

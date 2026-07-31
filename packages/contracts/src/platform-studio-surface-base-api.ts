@@ -26,7 +26,15 @@ export interface PresentationSurfaceDraft {
   readonly surfaceId: ZenV1SurfaceId;
 }
 
+export interface PresentationSurfaceBaseActions {
+  readonly canDraft: boolean;
+  readonly canPublish: boolean;
+  readonly canRollback: boolean;
+  readonly canValidate: boolean;
+}
+
 export interface PresentationSurfaceBaseWorkspace {
+  readonly actions: PresentationSurfaceBaseActions;
   readonly currentBase: PresentationSurfaceBaseVersion;
   readonly draft: PresentationSurfaceDraft | null;
   readonly headRowVersion: number;
@@ -43,6 +51,7 @@ export interface UpsertPresentationSurfaceDraftResponse {
   readonly billingState: typeof PRESENTATION_BILLING_STATE;
   readonly draft: PresentationSurfaceDraft;
   readonly evidenceEventId: string;
+  readonly headRowVersion: number;
   readonly replayed: boolean;
 }
 
@@ -225,7 +234,12 @@ export function parsePresentationSurfaceBaseWorkspace(
   value: unknown,
 ): PresentationSurfaceBaseWorkspace {
   if (
-    !exactRecord(value, ["currentBase", "draft", "headRowVersion", "history"]) ||
+    !exactRecord(value, ["actions", "currentBase", "draft", "headRowVersion", "history"]) ||
+    !exactRecord(value.actions, ["canDraft", "canPublish", "canRollback", "canValidate"]) ||
+    typeof value.actions.canDraft !== "boolean" ||
+    typeof value.actions.canPublish !== "boolean" ||
+    typeof value.actions.canRollback !== "boolean" ||
+    typeof value.actions.canValidate !== "boolean" ||
     !safeInteger(value.headRowVersion, 0) ||
     !Array.isArray(value.history) ||
     value.history.length < 1 ||
@@ -249,7 +263,18 @@ export function parsePresentationSurfaceBaseWorkspace(
   ) {
     throw new Error("Presentation surface base workspace drift");
   }
-  return { currentBase, draft, headRowVersion: value.headRowVersion, history };
+  return {
+    actions: {
+      canDraft: value.actions.canDraft,
+      canPublish: value.actions.canPublish,
+      canRollback: value.actions.canRollback,
+      canValidate: value.actions.canValidate,
+    },
+    currentBase,
+    draft,
+    headRowVersion: value.headRowVersion,
+    history,
+  };
 }
 
 export function parseUpsertPresentationSurfaceDraftBody(
@@ -331,13 +356,23 @@ function parseEvidenceFields(value: Readonly<Record<string, unknown>>): {
 export function parseUpsertPresentationSurfaceDraftResponse(
   value: unknown,
 ): UpsertPresentationSurfaceDraftResponse {
-  if (!exactRecord(value, ["billingState", "draft", "evidenceEventId", "replayed"])) {
+  if (
+    !exactRecord(value, [
+      "billingState",
+      "draft",
+      "evidenceEventId",
+      "headRowVersion",
+      "replayed",
+    ]) ||
+    !safeInteger(value.headRowVersion, 1)
+  ) {
     throw new Error("Invalid presentation surface draft response");
   }
   return {
     billingState: PRESENTATION_BILLING_STATE,
     draft: parsePresentationSurfaceDraft(value.draft),
     ...parseEvidenceFields(value),
+    headRowVersion: value.headRowVersion,
   };
 }
 
@@ -444,6 +479,156 @@ export function parseResetPresentationSurfaceOverlayResponse(
     ...parseEvidenceFields(value),
   };
 }
+
+const presentationSurfaceIdSchema = {
+  enum: ["surface.hr.mission-control", "surface.mission-control"],
+  type: "string",
+} as const;
+
+export const presentationSurfaceBaseVersionSchema = {
+  $id: "PresentationSurfaceBaseVersionV1",
+  additionalProperties: false,
+  properties: {
+    basedOnVersion: {
+      anyOf: [{ maximum: maximumVersion - 1, minimum: 1, type: "integer" }, { type: "null" }],
+    },
+    baseVersion: { maximum: maximumVersion, minimum: 1, type: "integer" },
+    definitionHash: { pattern: sha256Pattern, type: "string" },
+    placements: {
+      items: presentationWidgetPlacementSchema,
+      maxItems: 100,
+      minItems: 1,
+      type: "array",
+    },
+    surfaceId: presentationSurfaceIdSchema,
+  },
+  required: ["basedOnVersion", "baseVersion", "definitionHash", "placements", "surfaceId"],
+  type: "object",
+} as const;
+
+export const presentationSurfaceDraftSchema = {
+  $id: "PresentationSurfaceDraftV1",
+  additionalProperties: false,
+  properties: {
+    basedOnVersion: { maximum: maximumVersion - 1, minimum: 1, type: "integer" },
+    candidateBaseVersion: { maximum: maximumVersion, minimum: 2, type: "integer" },
+    definitionHash: { pattern: sha256Pattern, type: "string" },
+    draftVersion: { maximum: maximumVersion, minimum: 1, type: "integer" },
+    placements: {
+      items: presentationWidgetPlacementSchema,
+      maxItems: 100,
+      minItems: 1,
+      type: "array",
+    },
+    surfaceId: presentationSurfaceIdSchema,
+  },
+  required: [
+    "basedOnVersion",
+    "candidateBaseVersion",
+    "definitionHash",
+    "draftVersion",
+    "placements",
+    "surfaceId",
+  ],
+  type: "object",
+} as const;
+
+export const presentationSurfaceBaseWorkspaceSchema = {
+  $id: "PresentationSurfaceBaseWorkspaceV1",
+  additionalProperties: false,
+  properties: {
+    actions: {
+      additionalProperties: false,
+      properties: {
+        canDraft: { type: "boolean" },
+        canPublish: { type: "boolean" },
+        canRollback: { type: "boolean" },
+        canValidate: { type: "boolean" },
+      },
+      required: ["canDraft", "canPublish", "canRollback", "canValidate"],
+      type: "object",
+    },
+    currentBase: { $ref: "PresentationSurfaceBaseVersionV1#" },
+    draft: {
+      anyOf: [{ $ref: "PresentationSurfaceDraftV1#" }, { type: "null" }],
+    },
+    headRowVersion: { maximum: maximumVersion, minimum: 0, type: "integer" },
+    history: {
+      items: { $ref: "PresentationSurfaceBaseVersionV1#" },
+      maxItems: 1_000,
+      minItems: 1,
+      type: "array",
+    },
+  },
+  required: ["actions", "currentBase", "draft", "headRowVersion", "history"],
+  type: "object",
+} as const;
+
+export const upsertPresentationSurfaceDraftResponseSchema = {
+  $id: "UpsertPresentationSurfaceDraftResponseV1",
+  additionalProperties: false,
+  properties: {
+    billingState: { const: PRESENTATION_BILLING_STATE, type: "string" },
+    draft: { $ref: "PresentationSurfaceDraftV1#" },
+    evidenceEventId: { pattern: uuidPattern, type: "string" },
+    headRowVersion: { maximum: maximumVersion, minimum: 1, type: "integer" },
+    replayed: { type: "boolean" },
+  },
+  required: ["billingState", "draft", "evidenceEventId", "headRowVersion", "replayed"],
+  type: "object",
+} as const;
+
+export const validatePresentationSurfaceDraftResponseSchema = {
+  $id: "ValidatePresentationSurfaceDraftResponseV1",
+  additionalProperties: false,
+  properties: {
+    billingState: { const: PRESENTATION_BILLING_STATE, type: "string" },
+    diagnostics: {
+      items: { maxLength: 160, minLength: 1, type: "string" },
+      maxItems: 100,
+      type: "array",
+    },
+    draftVersion: { maximum: maximumVersion, minimum: 1, type: "integer" },
+    headRowVersion: { maximum: maximumVersion, minimum: 1, type: "integer" },
+    preview: {
+      items: presentationWidgetPlacementSchema,
+      maxItems: 100,
+      minItems: 1,
+      type: "array",
+    },
+    valid: { type: "boolean" },
+  },
+  required: ["billingState", "diagnostics", "draftVersion", "headRowVersion", "preview", "valid"],
+  type: "object",
+} as const;
+
+export const presentationSurfaceBaseMutationResponseSchema = {
+  $id: "PresentationSurfaceBaseMutationResponseV1",
+  additionalProperties: false,
+  properties: {
+    basedOnVersion: presentationSurfaceBaseVersionSchema.properties.basedOnVersion,
+    baseVersion: presentationSurfaceBaseVersionSchema.properties.baseVersion,
+    billingState: { const: PRESENTATION_BILLING_STATE, type: "string" },
+    definitionHash: presentationSurfaceBaseVersionSchema.properties.definitionHash,
+    evidenceEventId: { pattern: uuidPattern, type: "string" },
+    headRowVersion: { maximum: maximumVersion, minimum: 1, type: "integer" },
+    placements: presentationSurfaceBaseVersionSchema.properties.placements,
+    replayed: { type: "boolean" },
+    surfaceId: presentationSurfaceIdSchema,
+  },
+  required: [
+    "basedOnVersion",
+    "baseVersion",
+    "billingState",
+    "definitionHash",
+    "evidenceEventId",
+    "headRowVersion",
+    "placements",
+    "replayed",
+    "surfaceId",
+  ],
+  type: "object",
+} as const;
 
 export const upsertPresentationSurfaceDraftBodySchema = {
   $id: "UpsertPresentationSurfaceDraftBodyV1",

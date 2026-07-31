@@ -20,6 +20,13 @@ let migrationPool: Pool;
 let pool: Pool;
 let server: FastifyInstance;
 
+type StudioSurfaceBaseCapability =
+  | "platform.studio.surface_base.draft"
+  | "platform.studio.surface_base.publish"
+  | "platform.studio.surface_base.read"
+  | "platform.studio.surface_base.rollback"
+  | "platform.studio.surface_base.validate";
+
 async function tenantTransaction<T>(client: PoolClient, operation: () => Promise<T>): Promise<T> {
   await client.query("BEGIN");
   try {
@@ -72,6 +79,28 @@ async function setEmployeeLayoutCapability(
           : `DELETE FROM membership_capabilities
              WHERE tenant_id=$1 AND principal_id=$2 AND capability_id=$3`,
         [ids.tenant, ids.employee, capabilityId],
+      );
+    });
+  } finally {
+    client.release();
+  }
+}
+
+async function setAdminStudioSurfaceCapability(
+  capabilityId: StudioSurfaceBaseCapability,
+  enabled: boolean,
+): Promise<void> {
+  const client = await migrationPool.connect();
+  try {
+    await tenantTransaction(client, async () => {
+      await client.query(
+        enabled
+          ? `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+             VALUES ($1,$2,$3)
+             ON CONFLICT DO NOTHING`
+          : `DELETE FROM membership_capabilities
+             WHERE tenant_id=$1 AND principal_id=$2 AND capability_id=$3`,
+        [ids.tenant, ids.admin, capabilityId],
       );
     });
   } finally {
@@ -175,8 +204,20 @@ beforeAll(async () => {
       );
       await client.query(
         `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
-         VALUES ($1,$2,'platform.presentation.tenant_defaults.write')`,
-        [ids.tenant, ids.admin],
+         SELECT $1,$2,capability_id
+         FROM unnest($3::text[]) AS capability(capability_id)`,
+        [
+          ids.tenant,
+          ids.admin,
+          [
+            "platform.presentation.tenant_defaults.write",
+            "platform.studio.surface_base.draft",
+            "platform.studio.surface_base.publish",
+            "platform.studio.surface_base.read",
+            "platform.studio.surface_base.rollback",
+            "platform.studio.surface_base.validate",
+          ],
+        ],
       );
       await client.query(
         `INSERT INTO service_activations (tenant_id,service_key,state,version)
@@ -432,6 +473,212 @@ describe("presentation preference API", () => {
       expect(state.rows[0]).toEqual({ evidence_count: 2, outbox_count: 0 });
     } finally {
       client.release();
+    }
+  });
+
+  it("exposes one capability-current tenant-base draft, validation, publish and rollback lifecycle", async () => {
+    const baseUrl = "/v1/platform/studio/surfaces/surface.mission-control/base";
+    const initial = await signedRequest({
+      method: "GET",
+      principalId: ids.admin,
+      url: baseUrl,
+    });
+    expect(initial.statusCode, initial.body).toBe(200);
+    expect(initial.json()).toMatchObject({
+      actions: {
+        canDraft: true,
+        canPublish: true,
+        canRollback: true,
+        canValidate: true,
+      },
+      currentBase: { basedOnVersion: null, baseVersion: 1 },
+      draft: null,
+      headRowVersion: 1,
+      history: [{ basedOnVersion: null, baseVersion: 1 }],
+    });
+    const placements = initial
+      .json()
+      .currentBase.placements.map((placement: { readonly row: number }) => ({
+        ...placement,
+        row: placement.row + 3,
+      }));
+    const draftBody = {
+      expectedDraftVersion: 0,
+      expectedHeadRowVersion: 1,
+      placements,
+    };
+    const draftKey = randomUUID();
+    const drafted = await signedRequest({
+      body: draftBody,
+      idempotencyKey: draftKey,
+      method: "POST",
+      principalId: ids.admin,
+      url: `${baseUrl}/draft`,
+    });
+    expect(drafted.statusCode, drafted.body).toBe(200);
+    expect(drafted.headers["idempotent-replayed"]).toBe("false");
+    expect(drafted.json()).toMatchObject({
+      billingState: "non_billable",
+      draft: {
+        basedOnVersion: 1,
+        candidateBaseVersion: 2,
+        draftVersion: 1,
+        placements,
+      },
+      headRowVersion: 1,
+      replayed: false,
+    });
+    const draftReplay = await signedRequest({
+      body: draftBody,
+      idempotencyKey: draftKey,
+      method: "POST",
+      principalId: ids.admin,
+      url: `${baseUrl}/draft`,
+    });
+    expect(draftReplay.statusCode, draftReplay.body).toBe(200);
+    expect(draftReplay.headers["idempotent-replayed"]).toBe("true");
+    expect(draftReplay.json()).toEqual({ ...drafted.json(), replayed: true });
+
+    const validated = await signedRequest({
+      body: { expectedDraftVersion: 1, expectedHeadRowVersion: 1 },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.admin,
+      url: `${baseUrl}/validate`,
+    });
+    expect(validated.statusCode, validated.body).toBe(200);
+    expect(validated.json()).toEqual({
+      billingState: "non_billable",
+      diagnostics: [],
+      draftVersion: 1,
+      headRowVersion: 1,
+      preview: placements,
+      valid: true,
+    });
+
+    await setAdminStudioSurfaceCapability("platform.studio.surface_base.publish", false);
+    try {
+      const capabilityCurrent = await signedRequest({
+        method: "GET",
+        principalId: ids.admin,
+        url: baseUrl,
+      });
+      expect(capabilityCurrent.statusCode, capabilityCurrent.body).toBe(200);
+      expect(capabilityCurrent.json().actions.canPublish).toBe(false);
+      const beforeDenied = await migrationPool.query(
+        `SELECT
+           (SELECT count(*)::integer FROM presentation_surface_versions WHERE tenant_id=$1)
+             AS version_count,
+           (SELECT count(*)::integer FROM presentation_surface_drafts WHERE tenant_id=$1)
+             AS draft_count,
+           (SELECT count(*)::integer FROM evidence_events
+            WHERE tenant_id=$1 AND subject_type='platform_presentation_surface_base')
+             AS evidence_count`,
+        [ids.tenant],
+      );
+      const denied = await signedRequest({
+        body: { expectedDraftVersion: 1, expectedHeadRowVersion: 1 },
+        idempotencyKey: randomUUID(),
+        method: "POST",
+        principalId: ids.admin,
+        url: `${baseUrl}/publish`,
+      });
+      expect([denied.statusCode, denied.json().code]).toEqual([403, "POLICY_DENIED"]);
+      expect(
+        await migrationPool.query(
+          `SELECT
+             (SELECT count(*)::integer FROM presentation_surface_versions WHERE tenant_id=$1)
+               AS version_count,
+             (SELECT count(*)::integer FROM presentation_surface_drafts WHERE tenant_id=$1)
+               AS draft_count,
+             (SELECT count(*)::integer FROM evidence_events
+              WHERE tenant_id=$1 AND subject_type='platform_presentation_surface_base')
+               AS evidence_count`,
+          [ids.tenant],
+        ),
+      ).toMatchObject({ rows: beforeDenied.rows });
+    } finally {
+      await setAdminStudioSurfaceCapability("platform.studio.surface_base.publish", true);
+    }
+
+    const published = await signedRequest({
+      body: { expectedDraftVersion: 1, expectedHeadRowVersion: 1 },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.admin,
+      url: `${baseUrl}/publish`,
+    });
+    expect(published.statusCode, published.body).toBe(200);
+    expect(published.json()).toMatchObject({
+      basedOnVersion: 1,
+      baseVersion: 2,
+      billingState: "non_billable",
+      headRowVersion: 2,
+      replayed: false,
+    });
+
+    const rolledBack = await signedRequest({
+      body: { expectedHeadRowVersion: 2, sourceBaseVersion: 1 },
+      idempotencyKey: randomUUID(),
+      method: "POST",
+      principalId: ids.admin,
+      url: `${baseUrl}/rollback`,
+    });
+    expect(rolledBack.statusCode, rolledBack.body).toBe(200);
+    expect(rolledBack.json()).toMatchObject({
+      basedOnVersion: 1,
+      baseVersion: 3,
+      billingState: "non_billable",
+      headRowVersion: 3,
+      replayed: false,
+    });
+
+    const final = await signedRequest({
+      method: "GET",
+      principalId: ids.admin,
+      url: baseUrl,
+    });
+    expect(final.statusCode, final.body).toBe(200);
+    expect(final.json()).toMatchObject({
+      currentBase: { basedOnVersion: 1, baseVersion: 3 },
+      draft: null,
+      headRowVersion: 3,
+      history: [
+        { basedOnVersion: 1, baseVersion: 3 },
+        { basedOnVersion: 1, baseVersion: 2 },
+        { basedOnVersion: null, baseVersion: 1 },
+      ],
+    });
+    const crossTenant = await signedRequest({
+      method: "GET",
+      principalId: ids.admin,
+      tenantId: ids.otherTenant,
+      url: baseUrl,
+    });
+    expect([crossTenant.statusCode, crossTenant.json().code]).toEqual([
+      403,
+      "ACTOR_NOT_ACTIVE_MEMBER",
+    ]);
+    const proofClient = await migrationPool.connect();
+    try {
+      const proof = await tenantTransaction(proofClient, async () =>
+        proofClient.query<{
+          evidence_count: number;
+          outbox_count: number;
+        }>(
+          `SELECT
+             (SELECT count(*)::integer FROM evidence_events
+              WHERE tenant_id=$1 AND subject_type='platform_presentation_surface_base')
+               AS evidence_count,
+             (SELECT count(*)::integer FROM outbox_events
+              WHERE tenant_id=$1 AND event_type LIKE 'platform.studio.surface_base.%')
+               AS outbox_count`,
+          [ids.tenant],
+        ),
+      );
+      expect(proof.rows[0]).toEqual({ evidence_count: 3, outbox_count: 0 });
+    } finally {
+      proofClient.release();
     }
   });
 

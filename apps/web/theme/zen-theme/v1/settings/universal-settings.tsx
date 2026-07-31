@@ -14,6 +14,7 @@ import {
   type ZenV1SurfaceId,
 } from "@esbla/contracts";
 import { Check, RefreshCw } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { replacePresentationShortcutSet } from "../../../../lib/presentation-shortcuts-core";
 import { writePresentationThemeCache } from "../../../../lib/presentation-theme-cache-core";
@@ -25,6 +26,7 @@ import {
   UNIVERSAL_SETTINGS_CHANNEL,
   type UniversalSettingsUpdateSubject,
 } from "../../../../lib/universal-settings-core";
+import { prepareRouteHeadingFocus } from "../chrome/zen-navigation-chrome";
 import { ZEN_THEME_CACHE_KEY } from "../identity";
 import { SemanticIcon } from "../semantic-icons";
 
@@ -39,6 +41,7 @@ interface SettingsLayout {
   readonly label: string;
   readonly layout: PresentationSurfaceLayout | null;
   readonly surfaceId: ZenV1SurfaceId;
+  readonly tenantBaseEditable: boolean;
 }
 
 class SettingsRequestError extends Error {
@@ -691,9 +694,37 @@ export function UniversalSettings({
                   >
                     Reset personal layout
                   </button>
+                  <div className="settings-layout-links">
+                    <Link
+                      href={`/studio/surfaces/${layout.surfaceId}/personal`}
+                      onClick={prepareRouteHeadingFocus}
+                    >
+                      Edit {layout.label} personal layout
+                    </Link>
+                    {layout.tenantBaseEditable ? (
+                      <Link
+                        href={`/studio/surfaces/${layout.surfaceId}/tenant`}
+                        onClick={prepareRouteHeadingFocus}
+                      >
+                        Edit {layout.label} tenant base
+                      </Link>
+                    ) : null}
+                  </div>
                 </>
               ) : (
-                <p className="settings-empty">This layout is currently unavailable.</p>
+                <>
+                  <p className="settings-empty">This personal layout is currently unavailable.</p>
+                  {layout.tenantBaseEditable ? (
+                    <div className="settings-layout-links">
+                      <Link
+                        href={`/studio/surfaces/${layout.surfaceId}/tenant`}
+                        onClick={prepareRouteHeadingFocus}
+                      >
+                        Edit {layout.label} tenant base
+                      </Link>
+                    </div>
+                  ) : null}
+                </>
               )}
             </article>
           ))}

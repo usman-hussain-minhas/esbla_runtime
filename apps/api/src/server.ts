@@ -61,6 +61,7 @@ import {
   hrWorkforceProfileSchema,
   type PresentationShortcutDiscoveryQuery,
   type PresentationSurfacePath,
+  type PublishPresentationSurfaceDraftBody,
   parseHrAttendanceCorrection,
   parseHrAttendanceCorrectionBody,
   parseHrAttendanceCorrectionPath,
@@ -86,27 +87,37 @@ import {
   parsePresentationSurfacePath,
   parseResetPresentationPreferencesBody,
   parseResetPresentationSurfaceOverlayBody,
+  parseRollbackPresentationSurfaceBaseBody,
   parseUpdatePresentationPreferencesBody,
   parseUpdatePresentationShortcutBody,
   parseUpdatePresentationSurfaceOverlayBody,
   parseUpdateTenantPresentationDefaultsBody,
+  parseUpsertPresentationSurfaceDraftBody,
+  parseValidatePresentationSurfaceDraftBody,
   presentationNavigationDiscoverySchema,
   presentationPersonalSurfaceEditorWorkspaceSchema,
   presentationPreferencesSchema,
   presentationServiceGroupDiscoverySchema,
   presentationShortcutDiscoveryQuerySchema,
   presentationShortcutDiscoverySchema,
+  presentationSurfaceBaseMutationResponseSchema,
+  presentationSurfaceBaseVersionSchema,
+  presentationSurfaceBaseWorkspaceSchema,
+  presentationSurfaceDraftSchema,
   presentationSurfaceLayoutSchema,
   presentationSurfacePathSchema,
   problemDetailsSchema,
   type ResetPresentationPreferencesBody,
   type ResetPresentationSurfaceOverlayBody,
+  type RollbackPresentationSurfaceBaseBody,
   resetPresentationPreferencesBodySchema,
   resetPresentationSurfaceOverlayBodySchema,
+  rollbackPresentationSurfaceBaseBodySchema,
   type UpdatePresentationPreferencesBody,
   type UpdatePresentationShortcutBody,
   type UpdatePresentationSurfaceOverlayBody,
   type UpdateTenantPresentationDefaultsBody,
+  type UpsertPresentationSurfaceDraftBody,
   updatePresentationPreferencesBodySchema,
   updatePresentationPreferencesResponseSchema,
   updatePresentationShortcutBodySchema,
@@ -114,6 +125,11 @@ import {
   updatePresentationSurfaceOverlayBodySchema,
   updatePresentationSurfaceOverlayResponseSchema,
   updateTenantPresentationDefaultsBodySchema,
+  upsertPresentationSurfaceDraftBodySchema,
+  upsertPresentationSurfaceDraftResponseSchema,
+  type ValidatePresentationSurfaceDraftBody,
+  validatePresentationSurfaceDraftBodySchema,
+  validatePresentationSurfaceDraftResponseSchema,
   type WorkspaceCompleteTaskBody,
   type WorkspaceCreateTaskBody,
   type WorkspaceTaskListQuery,
@@ -169,14 +185,19 @@ import {
   getOwnPresentationServiceGroups,
   getOwnPresentationShortcuts,
   getOwnPresentationSurfaceLayout,
+  getTenantPresentationSurfaceBaseWorkspace,
   type OperationContext,
+  publishTenantPresentationSurfaceDraft,
   resetOwnPresentationPreferences,
   resetOwnPresentationSurfaceOverlay,
   resetTenantPresentationDefaults,
+  rollbackTenantPresentationSurfaceBase,
   updateOwnPresentationPreferences,
   updateOwnPresentationShortcut,
   updateOwnPresentationSurfaceOverlay,
   updateTenantPresentationDefaults,
+  upsertTenantPresentationSurfaceDraft,
+  validateTenantPresentationSurfaceDraft,
 } from "@esbla/platform-core";
 import {
   completeWorkspaceTask,
@@ -366,10 +387,15 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     presentationShortcutDiscoveryQuerySchema,
     presentationShortcutDiscoverySchema,
     presentationServiceGroupDiscoverySchema,
+    presentationSurfaceBaseMutationResponseSchema,
+    presentationSurfaceBaseVersionSchema,
+    presentationSurfaceBaseWorkspaceSchema,
+    presentationSurfaceDraftSchema,
     presentationSurfaceLayoutSchema,
     presentationSurfacePathSchema,
     resetPresentationSurfaceOverlayBodySchema,
     resetPresentationPreferencesBodySchema,
+    rollbackPresentationSurfaceBaseBodySchema,
     updatePresentationPreferencesBodySchema,
     updatePresentationPreferencesResponseSchema,
     updateTenantPresentationDefaultsBodySchema,
@@ -377,6 +403,10 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     updatePresentationShortcutResponseSchema,
     updatePresentationSurfaceOverlayBodySchema,
     updatePresentationSurfaceOverlayResponseSchema,
+    upsertPresentationSurfaceDraftBodySchema,
+    upsertPresentationSurfaceDraftResponseSchema,
+    validatePresentationSurfaceDraftBodySchema,
+    validatePresentationSurfaceDraftResponseSchema,
     workspaceCreateTaskBodySchema,
     workspaceCompleteTaskBodySchema,
     workspaceTaskPathSchema,
@@ -754,6 +784,167 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
         },
         path.surfaceId,
         assertStrictRequest(parseResetPresentationSurfaceOverlayBody, request.body),
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return result;
+    },
+  });
+
+  server.get<{ Params: PresentationSurfacePath }>(
+    "/v1/platform/studio/surfaces/:surfaceId/base",
+    {
+      preHandler: authenticate,
+      schema: {
+        params: { $ref: "PresentationSurfacePathV1#" },
+        response: {
+          200: { $ref: "PresentationSurfaceBaseWorkspaceV1#" },
+          default: { $ref: "ProblemDetails#" },
+        },
+      },
+    },
+    async (request) => {
+      const path = assertStrictRequest(parsePresentationSurfacePath, request.params);
+      return await getTenantPresentationSurfaceBaseWorkspace(
+        options.pool,
+        operationContext(request),
+        path.surfaceId,
+      );
+    },
+  );
+
+  server.post<{
+    Body: UpsertPresentationSurfaceDraftBody;
+    Params: PresentationSurfacePath;
+  }>("/v1/platform/studio/surfaces/:surfaceId/base/draft", {
+    preValidation: [
+      authenticate,
+      async (request) => {
+        assertStrictMutationIdempotencyKey(request);
+        assertStrictRequest(parsePresentationSurfacePath, request.params);
+        assertStrictRequest(parseUpsertPresentationSurfaceDraftBody, request.body);
+      },
+    ],
+    schema: {
+      body: { $ref: "UpsertPresentationSurfaceDraftBodyV1#" },
+      params: { $ref: "PresentationSurfacePathV1#" },
+      response: {
+        200: { $ref: "UpsertPresentationSurfaceDraftResponseV1#" },
+        default: { $ref: "ProblemDetails#" },
+      },
+    },
+    handler: async (request, reply) => {
+      const path = assertStrictRequest(parsePresentationSurfacePath, request.params);
+      const result = await upsertTenantPresentationSurfaceDraft(
+        options.pool,
+        {
+          ...operationContext(request),
+          correlationId: idempotencyKey(request).toLowerCase(),
+        },
+        path.surfaceId,
+        assertStrictRequest(parseUpsertPresentationSurfaceDraftBody, request.body),
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return result;
+    },
+  });
+
+  server.post<{
+    Body: ValidatePresentationSurfaceDraftBody;
+    Params: PresentationSurfacePath;
+  }>("/v1/platform/studio/surfaces/:surfaceId/base/validate", {
+    preValidation: [
+      authenticate,
+      async (request) => {
+        assertStrictMutationIdempotencyKey(request);
+        assertStrictRequest(parsePresentationSurfacePath, request.params);
+        assertStrictRequest(parseValidatePresentationSurfaceDraftBody, request.body);
+      },
+    ],
+    schema: {
+      body: { $ref: "ValidatePresentationSurfaceDraftBodyV1#" },
+      params: { $ref: "PresentationSurfacePathV1#" },
+      response: {
+        200: { $ref: "ValidatePresentationSurfaceDraftResponseV1#" },
+        default: { $ref: "ProblemDetails#" },
+      },
+    },
+    handler: async (request) => {
+      const path = assertStrictRequest(parsePresentationSurfacePath, request.params);
+      return await validateTenantPresentationSurfaceDraft(
+        options.pool,
+        operationContext(request),
+        path.surfaceId,
+        assertStrictRequest(parseValidatePresentationSurfaceDraftBody, request.body),
+      );
+    },
+  });
+
+  server.post<{
+    Body: PublishPresentationSurfaceDraftBody;
+    Params: PresentationSurfacePath;
+  }>("/v1/platform/studio/surfaces/:surfaceId/base/publish", {
+    preValidation: [
+      authenticate,
+      async (request) => {
+        assertStrictMutationIdempotencyKey(request);
+        assertStrictRequest(parsePresentationSurfacePath, request.params);
+        assertStrictRequest(parseValidatePresentationSurfaceDraftBody, request.body);
+      },
+    ],
+    schema: {
+      body: { $ref: "ValidatePresentationSurfaceDraftBodyV1#" },
+      params: { $ref: "PresentationSurfacePathV1#" },
+      response: {
+        200: { $ref: "PresentationSurfaceBaseMutationResponseV1#" },
+        default: { $ref: "ProblemDetails#" },
+      },
+    },
+    handler: async (request, reply) => {
+      const path = assertStrictRequest(parsePresentationSurfacePath, request.params);
+      const result = await publishTenantPresentationSurfaceDraft(
+        options.pool,
+        {
+          ...operationContext(request),
+          correlationId: idempotencyKey(request).toLowerCase(),
+        },
+        path.surfaceId,
+        assertStrictRequest(parseValidatePresentationSurfaceDraftBody, request.body),
+      );
+      reply.header("idempotent-replayed", String(result.replayed));
+      return result;
+    },
+  });
+
+  server.post<{
+    Body: RollbackPresentationSurfaceBaseBody;
+    Params: PresentationSurfacePath;
+  }>("/v1/platform/studio/surfaces/:surfaceId/base/rollback", {
+    preValidation: [
+      authenticate,
+      async (request) => {
+        assertStrictMutationIdempotencyKey(request);
+        assertStrictRequest(parsePresentationSurfacePath, request.params);
+        assertStrictRequest(parseRollbackPresentationSurfaceBaseBody, request.body);
+      },
+    ],
+    schema: {
+      body: { $ref: "RollbackPresentationSurfaceBaseBodyV1#" },
+      params: { $ref: "PresentationSurfacePathV1#" },
+      response: {
+        200: { $ref: "PresentationSurfaceBaseMutationResponseV1#" },
+        default: { $ref: "ProblemDetails#" },
+      },
+    },
+    handler: async (request, reply) => {
+      const path = assertStrictRequest(parsePresentationSurfacePath, request.params);
+      const result = await rollbackTenantPresentationSurfaceBase(
+        options.pool,
+        {
+          ...operationContext(request),
+          correlationId: idempotencyKey(request).toLowerCase(),
+        },
+        path.surfaceId,
+        assertStrictRequest(parseRollbackPresentationSurfaceBaseBody, request.body),
       );
       reply.header("idempotent-replayed", String(result.replayed));
       return result;
