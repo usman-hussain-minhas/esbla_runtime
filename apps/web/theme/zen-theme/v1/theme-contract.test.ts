@@ -43,14 +43,29 @@ describe("Zen Theme v1 composition contract", () => {
         widgetDefinitionId: "hr.leave.my-requests",
       },
       {
+        id: "mission-control.my-attendance",
+        surfaceId: "surface.mission-control",
+        widgetDefinitionId: "hr.attendance.my-observations",
+      },
+      {
         id: "mission-control.my-timesheets",
         surfaceId: "surface.mission-control",
         widgetDefinitionId: "hr.timesheet.mine",
       },
       {
+        id: "mission-control.my-expenses",
+        surfaceId: "surface.mission-control",
+        widgetDefinitionId: "hr.expense.mine",
+      },
+      {
         id: "mission-control.my-profile",
         surfaceId: "surface.mission-control",
         widgetDefinitionId: "hr.workforce.my-profile",
+      },
+      {
+        id: "mission-control.direct-reports",
+        surfaceId: "surface.mission-control",
+        widgetDefinitionId: "hr.workforce.direct-reports",
       },
       {
         id: "hr-mission-control.my-profile",
@@ -73,6 +88,11 @@ describe("Zen Theme v1 composition contract", () => {
         widgetDefinitionId: "hr.shift.my-published",
       },
       {
+        id: "hr-mission-control.my-attendance",
+        surfaceId: "surface.hr.mission-control",
+        widgetDefinitionId: "hr.attendance.my-observations",
+      },
+      {
         id: "hr-mission-control.my-leave",
         surfaceId: "surface.hr.mission-control",
         widgetDefinitionId: "hr.leave.my-requests",
@@ -81,6 +101,11 @@ describe("Zen Theme v1 composition contract", () => {
         id: "hr-mission-control.my-timesheets",
         surfaceId: "surface.hr.mission-control",
         widgetDefinitionId: "hr.timesheet.mine",
+      },
+      {
+        id: "hr-mission-control.my-expenses",
+        surfaceId: "surface.hr.mission-control",
+        widgetDefinitionId: "hr.expense.mine",
       },
     ]);
     expect(

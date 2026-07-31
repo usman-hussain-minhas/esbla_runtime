@@ -351,6 +351,30 @@ const COMMON_WIDGET_MANIFEST = {
   supportedSurfaceTypes: presentationWidgetSurfaceTypes,
 } as const;
 
+const HR_ATTENDANCE_MY_OBSERVATIONS_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "attendance",
+  allowedCommandIds: [],
+  definitionVersion: 1,
+  displayName: "My Attendance Observations",
+  fullScreenRoute: "/workspace/hr/attendance",
+  id: "hr.attendance.my-observations",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.attendance.my-observations.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.attendance.my-observations.read.v1",
+  requiredCapabilityIds: ["hr.attendance.list_own", "hr.attendance.view_detail"],
+  semanticIcon: "clock-3",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "attendance",
+  widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
 const HR_EMPLOYMENT_CURRENT_FACTS_MANIFEST = {
   ...COMMON_WIDGET_MANIFEST,
   activationPolicy: "exact_service",
@@ -373,6 +397,30 @@ const HR_EMPLOYMENT_CURRENT_FACTS_MANIFEST = {
   sourceServiceGroup: "hr",
   sourceServiceKey: "employment_record",
   widgetKind: "detailed",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const HR_EXPENSE_MINE_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "expense_claim_boundary",
+  allowedCommandIds: [],
+  definitionVersion: 1,
+  displayName: "My Expense Claims",
+  fullScreenRoute: "/workspace/hr/expenses",
+  id: "hr.expense.mine",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.expense.mine.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.expense.mine.read.v1",
+  requiredCapabilityIds: ["hr.expense.list_own", "hr.expense.view_detail"],
+  semanticIcon: "receipt-text",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "expense_claim",
+  widgetKind: "operational",
 } as const satisfies PresentationWidgetDefinitionWithoutHash;
 
 const HR_LEAVE_MY_REQUESTS_MANIFEST = {
@@ -502,6 +550,30 @@ const HR_WORKFORCE_MY_PROFILE_MANIFEST = {
   widgetKind: "operational",
 } as const satisfies PresentationWidgetDefinitionWithoutHash;
 
+const HR_WORKFORCE_DIRECT_REPORTS_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "workforce_profile",
+  allowedCommandIds: [],
+  definitionVersion: 1,
+  displayName: "Direct Reports",
+  fullScreenRoute: "/workspace/hr/profile/direct-reports",
+  id: "hr.workforce.direct-reports",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.workforce.direct-reports.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.workforce.direct-reports.read.v1",
+  requiredCapabilityIds: ["hr.workforce.list_authorized", "hr.workforce.view_authorized_detail"],
+  semanticIcon: "user-round",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "workforce_profile",
+  widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
 const PLATFORM_MY_WORK_QUEUE_MANIFEST = {
   ...COMMON_WIDGET_MANIFEST,
   activationPolicy: "any_provider",
@@ -560,9 +632,19 @@ const PLATFORM_MY_WORK_QUEUE_MANIFEST = {
   widgetKind: "composite",
 } as const satisfies PresentationWidgetDefinitionWithoutHash;
 
+export const HR_ATTENDANCE_MY_OBSERVATIONS_WIDGET_DEFINITION = deepFreeze({
+  ...HR_ATTENDANCE_MY_OBSERVATIONS_MANIFEST,
+  canonicalHash: "93d4acd1c5e9facceaa8b6dc929d513a6832624ad7aef871ed8ff71d3b17cb28",
+}) satisfies PresentationWidgetDefinition;
+
 export const HR_EMPLOYMENT_CURRENT_FACTS_WIDGET_DEFINITION = deepFreeze({
   ...HR_EMPLOYMENT_CURRENT_FACTS_MANIFEST,
   canonicalHash: "a08e69a049cb21c05cb0337eb0c7b4957ef9f0129ef0f771161c41c6551524a4",
+}) satisfies PresentationWidgetDefinition;
+
+export const HR_EXPENSE_MINE_WIDGET_DEFINITION = deepFreeze({
+  ...HR_EXPENSE_MINE_MANIFEST,
+  canonicalHash: "770fe892c414c43f34fa49c2d81bf45b52d3876e539b4c8fc9b56eea47c9c3b8",
 }) satisfies PresentationWidgetDefinition;
 
 export const HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION = deepFreeze({
@@ -590,17 +672,25 @@ export const HR_WORKFORCE_MY_PROFILE_WIDGET_DEFINITION = deepFreeze({
   canonicalHash: "42bd72ff3eae15f449cb38811e7e26370a309c4083b4e89cba74ceaaf6b05ca5",
 }) satisfies PresentationWidgetDefinition;
 
+export const HR_WORKFORCE_DIRECT_REPORTS_WIDGET_DEFINITION = deepFreeze({
+  ...HR_WORKFORCE_DIRECT_REPORTS_MANIFEST,
+  canonicalHash: "e3494440830fc829aee752b03c0838d80b12d050e2ce21ac8bed2669bbec7cce",
+}) satisfies PresentationWidgetDefinition;
+
 export const PLATFORM_MY_WORK_QUEUE_WIDGET_DEFINITION = deepFreeze({
   ...PLATFORM_MY_WORK_QUEUE_MANIFEST,
   canonicalHash: "58870440fb4758c55b78e4ec3dde4037055f3903c5e0bfa4df28bf3851617828",
 }) satisfies PresentationWidgetDefinition;
 
 export const PRESENTATION_WIDGET_DEFINITIONS = deepFreeze([
+  HR_ATTENDANCE_MY_OBSERVATIONS_WIDGET_DEFINITION,
   HR_EMPLOYMENT_CURRENT_FACTS_WIDGET_DEFINITION,
+  HR_EXPENSE_MINE_WIDGET_DEFINITION,
   HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION,
   HR_SHIFT_MY_PUBLISHED_WIDGET_DEFINITION,
   HR_TIMESHEET_DRAFT_WIDGET_DEFINITION,
   HR_TIMESHEET_MINE_WIDGET_DEFINITION,
+  HR_WORKFORCE_DIRECT_REPORTS_WIDGET_DEFINITION,
   HR_WORKFORCE_MY_PROFILE_WIDGET_DEFINITION,
   PLATFORM_MY_WORK_QUEUE_WIDGET_DEFINITION,
 ] as const) satisfies readonly PresentationWidgetDefinition[];

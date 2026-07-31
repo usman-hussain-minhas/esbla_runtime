@@ -5,13 +5,15 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { LeaveApprovalAction } from "../../../../components/leave-approval-action";
 import { loadAssignedProviderWidgetView } from "../../../../lib/assigned-provider-core";
+import { loadOwnAttendance } from "../../../../lib/hr-attendance";
 import { loadEmploymentList } from "../../../../lib/hr-employment-record";
-import { getAssignedExpenseClaims } from "../../../../lib/hr-expense-claim";
+import { getAssignedExpenseClaims, loadOwnExpenseClaims } from "../../../../lib/hr-expense-claim";
 import { getAssignedLeaveRequests } from "../../../../lib/hr-leave-assigned-list";
 import { buildHrLeaveDetailHref } from "../../../../lib/hr-leave-navigation-core";
 import { loadOwnShifts } from "../../../../lib/hr-shift-assignment";
 import { getAssignedTimesheets, loadOwnTimesheets } from "../../../../lib/hr-timesheet";
 import { loadOwnWorkforceProfile } from "../../../../lib/hr-workforce-profile";
+import { loadAuthorizedWorkforceList } from "../../../../lib/hr-workforce-profile-list";
 import type { ResponsivePresentationWidgetPlacement } from "../../../../lib/presentation-layout-core";
 import { buildRouteBackedWidgetHref } from "../../../../lib/route-backed-widget-navigation-core";
 import { getAssignedWorkspaceTasks } from "../../../../lib/workspace-task-assigned-list";
@@ -252,6 +254,216 @@ export async function WorkforceProfileWidget({ placement, surfaceId }: Represent
           kind={result.status}
         />
       );
+  }
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
+}
+
+function formatObservationInstant(value: string): string {
+  try {
+    return new Intl.DateTimeFormat("en", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: "UTC",
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
+}
+
+export async function AttendanceObservationsWidget({
+  placement,
+  surfaceId,
+}: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(
+    surfaceId,
+    placement,
+    "hr.attendance.my-observations",
+  );
+  const result = await loadOwnAttendance({ pageSize: "5" });
+  const state =
+    result.status === "success"
+      ? result.page.items.length === 0
+        ? "empty"
+        : "populated"
+      : presentationStateForFailure(result.kind);
+  let content: ReactNode;
+  if (result.status !== "success") {
+    content = <FailureState content={result} definition={definition} kind={result.kind} />;
+  } else if (result.page.items.length === 0) {
+    content = (
+      <EmptyState
+        definition={definition}
+        description="Recent authorized attendance observations will appear here."
+        heading="No attendance observations"
+      />
+    );
+  } else {
+    content = (
+      <PresentationWidgetStateContent state="populated">
+        <ol aria-label="My attendance observations" className="zen-widget-list">
+          {result.page.items.slice(0, 5).map((observation) => (
+            <li key={observation.attendanceObservationId}>
+              <Link
+                className="zen-widget-row"
+                href={`/workspace/hr/attendance/by-id/${encodeURIComponent(
+                  observation.attendanceObservationId,
+                )}?returnTo=own`}
+              >
+                <span className="leave-status leave-status-active">
+                  {observation.observationKind === "presence_start" ? "Start" : "End"}
+                </span>
+                <span>
+                  <strong>{formatObservationInstant(observation.observedAt)}</strong>
+                  <p>
+                    {observation.sourceKind === "manual" ? "Manual observation" : "Observation"}
+                  </p>
+                </span>
+                <ArrowRight aria-hidden="true" size={15} />
+              </Link>
+            </li>
+          ))}
+        </ol>
+      </PresentationWidgetStateContent>
+    );
+  }
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
+}
+
+export async function ExpenseClaimsWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.expense.mine");
+  const result = await loadOwnExpenseClaims();
+  const state =
+    result.status === "success"
+      ? result.page.items.length === 0
+        ? "empty"
+        : "populated"
+      : presentationStateForFailure(result.kind);
+  let content: ReactNode;
+  if (result.status !== "success") {
+    content = <FailureState content={result} definition={definition} kind={result.kind} />;
+  } else if (result.page.items.length === 0) {
+    content = (
+      <EmptyState
+        definition={definition}
+        description="Draft and submitted expense claims will appear here."
+        heading="No expense claims"
+      />
+    );
+  } else {
+    content = (
+      <PresentationWidgetStateContent state="populated">
+        <ol aria-label="My expense claims" className="zen-widget-list">
+          {result.page.items.slice(0, 5).map((claim) => (
+            <li key={claim.expenseClaimId}>
+              <Link
+                className="zen-widget-row"
+                href={`/workspace/hr/expenses/by-id/${encodeURIComponent(
+                  claim.expenseClaimId,
+                )}?returnTo=own`}
+              >
+                <span className={`leave-status leave-status-${claim.status}`}>{claim.status}</span>
+                <span>
+                  <strong>
+                    {new Intl.NumberFormat("en").format(claim.totalAmountMinor)}{" "}
+                    {claim.currencyCode}
+                  </strong>
+                  <p>Minor units · version {claim.version}</p>
+                </span>
+                <ArrowRight aria-hidden="true" size={15} />
+              </Link>
+            </li>
+          ))}
+        </ol>
+      </PresentationWidgetStateContent>
+    );
+  }
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
+}
+
+export async function DirectReportsWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(
+    surfaceId,
+    placement,
+    "hr.workforce.direct-reports",
+  );
+  const result = await loadAuthorizedWorkforceList({}, "direct_reports");
+  const page =
+    result.status === "success" && result.page.kind === "direct_reports" ? result.page : undefined;
+  const state =
+    result.status === "success"
+      ? page === undefined
+        ? "operational_error"
+        : page.items.length === 0
+          ? "empty"
+          : "populated"
+      : presentationStateForFailure(result.status);
+  let content: ReactNode;
+  if (page === undefined) {
+    content =
+      result.status === "success" ? (
+        <FailureState
+          content={{
+            message: "The direct reports request could not be completed.",
+            title: "Direct reports unavailable",
+          }}
+          definition={definition}
+          kind="operational_error"
+        />
+      ) : (
+        <FailureState
+          content={{ message: result.message, title: result.title }}
+          definition={definition}
+          kind={result.status}
+        />
+      );
+  } else if (page.items.length === 0) {
+    content = (
+      <EmptyState
+        definition={definition}
+        description="Current authorized reporting relationships will appear here."
+        heading="No direct reports"
+      />
+    );
+  } else {
+    content = (
+      <PresentationWidgetStateContent state="populated">
+        <ol aria-label="Direct reports" className="zen-widget-list">
+          {page.items.slice(0, 5).map(({ profile }) => (
+            <li key={profile.workerProfileId}>
+              <Link
+                className="zen-widget-row"
+                href={`/workspace/hr/profile/by-id/${encodeURIComponent(
+                  profile.workerProfileId,
+                )}?returnContext=direct-reports`}
+              >
+                <span className={`leave-status leave-status-${profile.workforceStatus}`}>
+                  {profile.workforceStatus}
+                </span>
+                <span>
+                  <strong>{profile.employeeNumber ?? "Employee number not assigned"}</strong>
+                  <p>
+                    {profile.principalLinked ? "Principal connected" : "Principal not connected"}
+                  </p>
+                </span>
+                <ArrowRight aria-hidden="true" size={15} />
+              </Link>
+            </li>
+          ))}
+        </ol>
+      </PresentationWidgetStateContent>
+    );
   }
   return (
     <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>

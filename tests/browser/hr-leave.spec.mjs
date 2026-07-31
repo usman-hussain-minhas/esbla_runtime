@@ -3684,3 +3684,108 @@ test("Attendance renders manual facts and persistent correction history by curre
     await closeActors(employee, manager, operator);
   }
 });
+
+test("complete default HR widgets render real attendance, expense, and direct-report products", async ({
+  browser,
+}, testInfo) => {
+  const employee = await openActor(
+    browser,
+    fixture.employmentEmployeeOrigin,
+    fixture.employmentEmployeeLabel,
+  );
+  const admin = await openActor(browser, fixture.adminOrigin, fixture.adminLabel);
+  const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
+  const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
+  try {
+    await operator.page.goto(`${operator.origin}/workspace/hr/attendance/reports`);
+    await operator.page.getByLabel("Worker profile ID").fill(shiftEmployeeWorkerProfileId);
+    await operator.page.getByLabel("Observed instant").fill(new Date().toISOString());
+    await operator.page.getByRole("button", { name: "Record attendance" }).press("Enter");
+    await expect(operator.page).toHaveURL(/\/workspace\/hr\/attendance\/by-id\/[0-9a-f-]+$/);
+
+    await admin.page.goto(`${admin.origin}/workspace/hr/expenses/settings`);
+    const activationResponse = admin.page.waitForResponse(
+      (candidate) =>
+        candidate.request().method() === "POST" &&
+        new URL(candidate.url()).pathname === "/workspace/hr/expenses/action",
+    );
+    await admin.page.getByRole("button", { name: "Activate Expense Claim" }).press("Enter");
+    expect((await activationResponse).status()).toBe(303);
+    await expect(admin.page.locator(".leave-status")).toHaveText("Active");
+
+    await employee.page.setViewportSize({ height: 900, width: 1_280 });
+    await employee.page.goto(employee.origin);
+    const attendance = employee.page.locator(
+      '[data-surface-instance="mission-control.my-attendance"]:not([data-widget-state="loading"])',
+    );
+    await expect(attendance).toHaveAttribute(
+      "data-widget-definition",
+      "hr.attendance.my-observations",
+    );
+    await expect(attendance.getByText("Start", { exact: true })).toBeVisible();
+    await expect(
+      attendance.getByRole("link", { name: "Open My Attendance Observations" }),
+    ).toHaveAttribute(
+      "href",
+      "/workspace/hr/attendance?originFocusId=mission-control.my-attendance.full-screen&returnSurface=mission-control",
+    );
+
+    const expenses = employee.page.locator(
+      '[data-surface-instance="mission-control.my-expenses"]:not([data-widget-state="loading"])',
+    );
+    await expect(expenses).toHaveAttribute("data-widget-definition", "hr.expense.mine");
+    await expect(expenses).toHaveAttribute("data-widget-state", "populated");
+    await expect(expenses.getByText(/Minor units · version/).first()).toBeVisible();
+    await expect(expenses.getByRole("link", { name: "Open My Expense Claims" })).toHaveAttribute(
+      "href",
+      "/workspace/hr/expenses?originFocusId=mission-control.my-expenses.full-screen&returnSurface=mission-control",
+    );
+
+    await manager.page.setViewportSize({ height: 900, width: 1_280 });
+    await manager.page.goto(manager.origin);
+    await expect(
+      manager.page.locator('[data-surface-instance="mission-control.direct-reports"]'),
+    ).toHaveCount(0);
+
+    await admin.page.goto(`${admin.origin}/workspace/hr/profile/settings`);
+    await admin.page.getByLabel("Manager visibility").selectOption("minimized");
+    const workforceSettingsResponse = admin.page.waitForResponse(
+      (candidate) =>
+        candidate.request().method() === "POST" &&
+        new URL(candidate.url()).pathname === "/workspace/hr/profile/settings/action",
+    );
+    await admin.page.getByRole("button", { name: "Save Workforce settings" }).press("Enter");
+    expect((await workforceSettingsResponse).status()).toBe(200);
+    await expect(admin.page.getByLabel("Manager visibility")).toHaveValue("minimized");
+
+    await manager.page.reload();
+    const directReports = manager.page.locator(
+      '[data-surface-instance="mission-control.direct-reports"]:not([data-widget-state="loading"])',
+    );
+    await expect(directReports).toHaveAttribute(
+      "data-widget-definition",
+      "hr.workforce.direct-reports",
+    );
+    await expect(directReports.getByText("BROWSER-EMPLOYMENT-001", { exact: true })).toBeVisible();
+    await expect(directReports.getByRole("link", { name: "Open Direct Reports" })).toHaveAttribute(
+      "href",
+      "/workspace/hr/profile/direct-reports?originFocusId=mission-control.direct-reports.full-screen&returnSurface=mission-control",
+    );
+
+    await employee.page.setViewportSize({ height: 844, width: 390 });
+    await employee.page.reload();
+    expect(
+      await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+    await expect(attendance).toBeVisible();
+    await expect(expenses).toBeVisible();
+    const evidencePath = testInfo.outputPath("complete-default-hr-widgets-mobile.png");
+    await employee.page.screenshot({ fullPage: true, path: evidencePath });
+    await testInfo.attach("complete-default-hr-widgets-mobile", {
+      contentType: "image/png",
+      path: evidencePath,
+    });
+  } finally {
+    await closeActors(admin, employee, manager, operator);
+  }
+});

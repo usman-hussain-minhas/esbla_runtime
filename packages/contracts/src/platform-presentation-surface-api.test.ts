@@ -160,16 +160,21 @@ describe("platform presentation surface API contract", () => {
         "mission-control.my-work",
         "mission-control.my-published-shifts",
         "mission-control.my-leave",
+        "mission-control.my-attendance",
         "mission-control.my-timesheets",
+        "mission-control.my-expenses",
         "mission-control.my-profile",
+        "mission-control.direct-reports",
       ],
       [
         "hr-mission-control.my-profile",
         "hr-mission-control.current-employment",
         "hr-mission-control.my-work",
         "hr-mission-control.my-published-shifts",
+        "hr-mission-control.my-attendance",
         "hr-mission-control.my-leave",
         "hr-mission-control.my-timesheets",
+        "hr-mission-control.my-expenses",
       ],
     ]);
     const universalFirstPlacement = ZEN_V1_SURFACE_CONTRACTS[0].basePlacements[0];

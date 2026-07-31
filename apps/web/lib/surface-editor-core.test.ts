@@ -85,17 +85,17 @@ describe("personal surface editor core", () => {
       type: "select",
     });
     const resized = surfaceEditorKeyboardAction(staleSelection, {
-      instanceId: "mission-control.my-timesheets",
+      instanceId: "mission-control.my-expenses",
       key: "ArrowDown",
       shiftKey: true,
     });
     expect(
-      resized.placements.find(({ instanceId }) => instanceId === "mission-control.my-timesheets"),
+      resized.placements.find(({ instanceId }) => instanceId === "mission-control.my-expenses"),
     ).toMatchObject({ rowSpan: 4 });
     expect(
       resized.placements.find(({ instanceId }) => instanceId === "mission-control.my-profile"),
     ).toMatchObject({ rowSpan: 3 });
-    expect(resized.announcement).toBe("My Timesheets resized to 4 columns by 4 rows.");
+    expect(resized.announcement).toBe("My Expense Claims resized to 4 columns by 4 rows.");
 
     const collisionSelected = personalSurfaceEditorReducer(initial, {
       instanceId: "mission-control.my-work",

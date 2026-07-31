@@ -267,6 +267,39 @@ async function setWorkforcePresentationEligibility(
   }
 }
 
+async function setWorkforceManagerVisibility(
+  tenantId: string,
+  value: "minimized" | "none" | null,
+): Promise<void> {
+  const client = await migrationPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
+    if (value === null) {
+      await client.query(
+        `DELETE FROM tenant_settings
+         WHERE tenant_id = $1 AND setting_key = 'hr.workforce_profile.manager_visibility'`,
+        [tenantId],
+      );
+    } else {
+      await client.query(
+        `INSERT INTO tenant_settings (tenant_id, setting_key, value_type, value, version)
+         VALUES ($1, 'hr.workforce_profile.manager_visibility', 'enum', $2::jsonb, 1)
+         ON CONFLICT (tenant_id, setting_key)
+         DO UPDATE SET value_type = EXCLUDED.value_type, value = EXCLUDED.value,
+                       version = tenant_settings.version + 1`,
+        [tenantId, JSON.stringify(value)],
+      );
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function setPresentationActorRole(
   tenantId: string,
   principalId: string,
@@ -1372,6 +1405,83 @@ describe("presentation preference persistence", () => {
       active: true,
       capabilities: ["hr.leave.list_own", "hr.leave.view"],
     });
+  });
+
+  it("filters the direct-reports widget by current manager role and exact capabilities", async () => {
+    await setPresentationActorRole(ids.tenantA, ids.actorA, "manager");
+    await setPresentationCapability(ids.tenantA, ids.actorA, "hr.workforce.list_authorized", true);
+    await setPresentationCapability(
+      ids.tenantA,
+      ids.actorA,
+      "hr.workforce.view_authorized_detail",
+      true,
+    );
+    try {
+      expect(
+        (
+          await getOwnPresentationSurfaceLayout(
+            pool,
+            context(ids.tenantA, ids.actorA),
+            "surface.mission-control",
+          )
+        ).basePlacements.map(({ instanceId }) => instanceId),
+      ).toContain("mission-control.direct-reports");
+
+      await setWorkforceManagerVisibility(ids.tenantA, "none");
+      expect(
+        (
+          await getOwnPresentationSurfaceLayout(
+            pool,
+            context(ids.tenantA, ids.actorA),
+            "surface.mission-control",
+          )
+        ).basePlacements.map(({ instanceId }) => instanceId),
+      ).not.toContain("mission-control.direct-reports");
+      await setWorkforceManagerVisibility(ids.tenantA, null);
+
+      await setPresentationActorRole(ids.tenantA, ids.actorA, "hr_operator");
+      expect(
+        (
+          await getOwnPresentationSurfaceLayout(
+            pool,
+            context(ids.tenantA, ids.actorA),
+            "surface.mission-control",
+          )
+        ).basePlacements.map(({ instanceId }) => instanceId),
+      ).not.toContain("mission-control.direct-reports");
+
+      await setPresentationActorRole(ids.tenantA, ids.actorA, "manager");
+      await setPresentationCapability(
+        ids.tenantA,
+        ids.actorA,
+        "hr.workforce.view_authorized_detail",
+        false,
+      );
+      expect(
+        (
+          await getOwnPresentationSurfaceLayout(
+            pool,
+            context(ids.tenantA, ids.actorA),
+            "surface.mission-control",
+          )
+        ).basePlacements.map(({ instanceId }) => instanceId),
+      ).not.toContain("mission-control.direct-reports");
+    } finally {
+      await setWorkforceManagerVisibility(ids.tenantA, null);
+      await setPresentationCapability(
+        ids.tenantA,
+        ids.actorA,
+        "hr.workforce.list_authorized",
+        false,
+      );
+      await setPresentationCapability(
+        ids.tenantA,
+        ids.actorA,
+        "hr.workforce.view_authorized_detail",
+        false,
+      );
+      await setPresentationActorRole(ids.tenantA, ids.actorA, "employee");
+    }
   });
 
   it("discovers HR from any active actor-eligible included service without loading service data", async () => {

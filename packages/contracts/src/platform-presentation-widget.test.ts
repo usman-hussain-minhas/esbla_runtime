@@ -11,16 +11,69 @@ import {
 } from "./platform-presentation-widget.js";
 
 describe("presentation widget manifest", () => {
-  it("registers the representative T5 Product shapes in canonical identity order", () => {
+  it("registers the default Mission Control Product shapes in canonical identity order", () => {
     expect(PRESENTATION_WIDGET_DEFINITIONS.map(({ id }) => id)).toEqual([
+      "hr.attendance.my-observations",
       "hr.employment.current-facts",
+      "hr.expense.mine",
       "hr.leave.my-requests",
       "hr.shift.my-published",
       "hr.timesheet.draft",
       "hr.timesheet.mine",
+      "hr.workforce.direct-reports",
       "hr.workforce.my-profile",
       "platform.my-work.queue",
     ]);
+    expect(
+      PRESENTATION_WIDGET_DEFINITIONS.filter(({ id }) =>
+        [
+          "hr.attendance.my-observations",
+          "hr.expense.mine",
+          "hr.workforce.direct-reports",
+        ].includes(id),
+      ),
+    ).toMatchObject([
+      {
+        activationServiceKey: "attendance",
+        allowedCommandIds: [],
+        fullScreenRoute: "/workspace/hr/attendance",
+        id: "hr.attendance.my-observations",
+        inlineMutationEligible: false,
+        readModelId: "hr.attendance.my-observations.read.v1",
+        requiredCapabilityIds: ["hr.attendance.list_own", "hr.attendance.view_detail"],
+        semanticIcon: "clock-3",
+      },
+      {
+        activationServiceKey: "expense_claim_boundary",
+        allowedCommandIds: [],
+        fullScreenRoute: "/workspace/hr/expenses",
+        id: "hr.expense.mine",
+        inlineMutationEligible: false,
+        readModelId: "hr.expense.mine.read.v1",
+        requiredCapabilityIds: ["hr.expense.list_own", "hr.expense.view_detail"],
+        semanticIcon: "receipt-text",
+      },
+      {
+        activationServiceKey: "workforce_profile",
+        allowedCommandIds: [],
+        fullScreenRoute: "/workspace/hr/profile/direct-reports",
+        id: "hr.workforce.direct-reports",
+        inlineMutationEligible: false,
+        readModelId: "hr.workforce.direct-reports.read.v1",
+        requiredCapabilityIds: [
+          "hr.workforce.list_authorized",
+          "hr.workforce.view_authorized_detail",
+        ],
+        semanticIcon: "user-round",
+      },
+    ]);
+    expect(
+      PRESENTATION_WIDGET_DEFINITIONS.flatMap(({ requiredCapabilityIds }) =>
+        (requiredCapabilityIds as readonly string[]).filter(
+          (capabilityId) => capabilityId === "hr.attendance.record_synthetic_test",
+        ),
+      ),
+    ).toEqual([]);
     expect(
       PRESENTATION_WIDGET_DEFINITIONS.find(({ id }) => id === "hr.timesheet.draft"),
     ).toMatchObject({
