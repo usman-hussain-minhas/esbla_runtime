@@ -1461,6 +1461,132 @@ test("eligible catalogue faces add through Surface Editor and render from real s
   }
 });
 
+test("Timesheet and Expense catalogue faces add through Surface Editor and render from current service authority", async ({
+  browser,
+}, testInfo) => {
+  const admin = await openActor(browser, fixture.adminOrigin, fixture.adminLabel);
+  const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
+  const employee = await openActor(
+    browser,
+    fixture.employmentEmployeeOrigin,
+    fixture.employmentEmployeeLabel,
+  );
+  const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
+  const actors = [admin, manager, employee, operator];
+  let expenseReactivated = false;
+  const runExpenseServiceAction = async (buttonName) => {
+    const button = admin.page.getByRole("button", { exact: true, name: buttonName });
+    const [response] = await Promise.all([
+      admin.page.waitForResponse(
+        (candidate) =>
+          candidate.request().method() === "POST" &&
+          new URL(candidate.url()).pathname === "/workspace/hr/expenses/action",
+      ),
+      admin.page.waitForNavigation({ waitUntil: "domcontentloaded" }),
+      button.click(),
+    ]);
+    expect(response.status()).toBe(303);
+  };
+  const addAndSave = async (actor, displayNames) => {
+    await actor.page.setViewportSize({ height: 900, width: 1_280 });
+    await actor.page.goto(`${actor.origin}/studio/surfaces/surface.mission-control/personal`);
+    for (const displayName of displayNames) {
+      const add = actor.page.getByRole("button", { name: `Add ${displayName}` });
+      await expect(add).toBeVisible();
+      await add.click();
+    }
+    const saveResponse = actor.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/presentation/surfaces/surface.mission-control",
+    );
+    await actor.page.getByRole("button", { name: "Save personal layout" }).click();
+    expect((await saveResponse).status()).toBe(200);
+    await actor.page.goto(actor.origin);
+  };
+  try {
+    await admin.page.goto(`${admin.origin}/workspace/hr/expenses/settings`);
+    const activateExpense = admin.page.getByRole("button", {
+      exact: true,
+      name: "Activate Expense Claim",
+    });
+    if (await activateExpense.isVisible()) {
+      await runExpenseServiceAction("Activate Expense Claim");
+      expenseReactivated = true;
+      await expect(admin.page.locator(".leave-status")).toHaveText("Active");
+    }
+
+    await addAndSave(manager, ["Assigned Timesheets", "Assigned Expense Claims"]);
+    for (const definitionId of ["hr.timesheet.assigned", "hr.expense.assigned"]) {
+      const widget = manager.page.locator(`[data-widget-definition="${definitionId}"]`);
+      await expect(widget).toHaveCount(1);
+      await expect(widget).toHaveAttribute("data-widget-state", /^(empty|populated)$/);
+      await expect(widget.getByRole("link", { name: /^Open / })).toHaveAttribute(
+        "href",
+        /\/workspace\/my-work\?/,
+      );
+    }
+
+    await addAndSave(employee, [
+      "Timesheet Draft",
+      "Expense Claim Draft",
+      "Expense Claim Corrections",
+    ]);
+    for (const definitionId of [
+      "hr.timesheet.draft",
+      "hr.expense.draft",
+      "hr.expense.corrections",
+    ]) {
+      const widget = employee.page.locator(`[data-widget-definition="${definitionId}"]`);
+      await expect(widget).toHaveCount(1);
+      await expect(widget).toHaveAttribute("data-widget-state", /^(empty|populated)$/);
+    }
+
+    await addAndSave(operator, ["Timesheet Corrections"]);
+    const corrections = operator.page.locator(
+      '[data-widget-definition="hr.timesheet.corrections"]',
+    );
+    await expect(corrections).toHaveCount(1);
+    await expect(corrections).toHaveAttribute("data-widget-state", "populated");
+    await expect(
+      corrections.getByRole("link", { exact: true, name: "Open Timesheet corrections" }),
+    ).toHaveAttribute("href", "/workspace/hr/timesheets/admin/corrections");
+
+    for (const [actor, name] of [
+      [manager, "catalogue-timesheet-expense-manager.png"],
+      [employee, "catalogue-timesheet-expense-employee.png"],
+      [operator, "catalogue-timesheet-expense-operator.png"],
+    ]) {
+      const evidencePath = testInfo.outputPath(name);
+      await actor.page.screenshot({ fullPage: false, path: evidencePath });
+      await testInfo.attach(name.replace(/\.png$/, ""), {
+        contentType: "image/png",
+        path: evidencePath,
+      });
+      expect(actor.diagnostics.external).toEqual([]);
+      expect(actor.diagnostics.page).toEqual([]);
+      expect(actor.diagnostics.server).toEqual([]);
+      expect(actor.diagnostics.console).toEqual([]);
+    }
+  } finally {
+    for (const actor of [manager, employee, operator]) {
+      await actor.page
+        .goto(`${actor.origin}/studio/surfaces/surface.mission-control/personal`)
+        .catch(() => undefined);
+      const reset = actor.page.getByRole("button", { name: "Restore tenant layout" });
+      if (await reset.isEnabled().catch(() => false)) {
+        actor.page.once("dialog", (dialog) => dialog.accept());
+        await reset.click().catch(() => undefined);
+      }
+    }
+    if (expenseReactivated) {
+      await admin.page.goto(`${admin.origin}/workspace/hr/expenses/settings`);
+      await runExpenseServiceAction("Deactivate Expense Claim");
+      await expect(admin.page.locator(".leave-status")).toHaveText("Inactive");
+    }
+    await closeActors(...actors);
+  }
+});
+
 test("tenant appearance floors render locked while stale browser tabs fail closed", async ({
   browser,
 }, testInfo) => {

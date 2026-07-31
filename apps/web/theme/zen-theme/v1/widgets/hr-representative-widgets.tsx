@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { LeaveApprovalAction } from "../../../../components/leave-approval-action";
 import {
+  type AssignedProvider,
   AssignedProviderUnavailableError,
   loadAssignedProviderWidgetView,
 } from "../../../../lib/assigned-provider-core";
@@ -12,12 +13,14 @@ import { loadOwnAttendance, loadReportAttendance } from "../../../../lib/hr-atte
 import { hasAttendanceAction } from "../../../../lib/hr-attendance-core";
 import { loadEmploymentList } from "../../../../lib/hr-employment-record";
 import { getAssignedExpenseClaims, loadOwnExpenseClaims } from "../../../../lib/hr-expense-claim";
+import { hasExpenseAction } from "../../../../lib/hr-expense-claim-core";
 import { getAssignedLeaveRequests } from "../../../../lib/hr-leave-assigned-list";
 import { getOwnLeaveRequests } from "../../../../lib/hr-leave-list";
 import { buildHrLeaveDetailHref } from "../../../../lib/hr-leave-navigation-core";
 import { loadOwnShifts, loadRosterShifts } from "../../../../lib/hr-shift-assignment";
 import { hasShiftAction } from "../../../../lib/hr-shift-assignment-core";
 import { getAssignedTimesheets, loadOwnTimesheets } from "../../../../lib/hr-timesheet";
+import { hasTimesheetAction } from "../../../../lib/hr-timesheet-core";
 import { loadOwnWorkforceProfile } from "../../../../lib/hr-workforce-profile";
 import { loadAuthorizedWorkforceList } from "../../../../lib/hr-workforce-profile-list";
 import type { ResponsivePresentationWidgetPlacement } from "../../../../lib/presentation-layout-core";
@@ -274,27 +277,34 @@ export async function WorkforceProfileWidget({ placement, surfaceId }: Represent
   );
 }
 
-interface AssignedLeaveWidgetFailure {
+interface AssignedWidgetFailure {
   readonly kind: "inactive" | "ineligible" | "unavailable";
 }
 
-function assignedLeaveFailure(error: unknown): AssignedLeaveWidgetFailure {
-  if (error instanceof AssignedProviderUnavailableError && error.provider === "hr_leave_assigned") {
+function assignedProviderFailure(
+  error: unknown,
+  expectedProvider: AssignedProvider,
+): AssignedWidgetFailure {
+  if (error instanceof AssignedProviderUnavailableError && error.provider === expectedProvider) {
     return { kind: error.reason };
   }
   return { kind: "unavailable" };
 }
 
-function assignedLeaveFailureContent(
+function assignedProviderFailureContent(
   definition: PresentationWidgetDefinition,
-  failure: AssignedLeaveWidgetFailure,
+  failure: AssignedWidgetFailure,
+  copy: Readonly<{
+    assignedName: string;
+    serviceName: string;
+  }>,
 ): ReactNode {
   if (failure.kind === "inactive") {
     return (
       <FailureState
         content={{
-          message: "Leave Request is not active for this tenant.",
-          title: "Leave service is inactive",
+          message: `${copy.serviceName} is not active for this tenant.`,
+          title: `${copy.serviceName} is inactive`,
         }}
         definition={definition}
         kind="inactive"
@@ -305,8 +315,8 @@ function assignedLeaveFailureContent(
     return (
       <FailureState
         content={{
-          message: "Your current authority does not permit assigned Leave approvals.",
-          title: "Assigned Leave is hidden",
+          message: `Your current authority does not permit ${copy.assignedName}.`,
+          title: `${copy.assignedName} is hidden`,
         }}
         definition={definition}
         kind="denied"
@@ -316,8 +326,8 @@ function assignedLeaveFailureContent(
   return (
     <FailureState
       content={{
-        message: "Assigned Leave could not be loaded. No private error detail is shown.",
-        title: "Assigned Leave unavailable",
+        message: `${copy.assignedName} could not be loaded. No private error detail is shown.`,
+        title: `${copy.assignedName} unavailable`,
       }}
       definition={definition}
       kind="dependency_unavailable"
@@ -332,7 +342,7 @@ export async function LeaveAssignedWidget({ placement, surfaceId }: Representati
         ReturnType<
           typeof settlePresentationWidgetProviders<
             Awaited<ReturnType<typeof getAssignedLeaveRequests>>,
-            AssignedLeaveWidgetFailure
+            AssignedWidgetFailure
           >
         >
       >[number]
@@ -340,13 +350,13 @@ export async function LeaveAssignedWidget({ placement, surfaceId }: Representati
   try {
     [settled] = await settlePresentationWidgetProviders<
       Awaited<ReturnType<typeof getAssignedLeaveRequests>>,
-      AssignedLeaveWidgetFailure
+      AssignedWidgetFailure
     >(
       [
         {
           classifyFailure: (error) => ({
             scope: "provider",
-            value: assignedLeaveFailure(error),
+            value: assignedProviderFailure(error, "hr_leave_assigned"),
           }),
           eligible: true,
           id: "hr.leave.assigned",
@@ -364,7 +374,7 @@ export async function LeaveAssignedWidget({ placement, surfaceId }: Representati
     const failure =
       settled && (settled.status === "rejected" || settled.status === "timed_out")
         ? settled.failure
-        : ({ kind: "unavailable" } satisfies AssignedLeaveWidgetFailure);
+        : ({ kind: "unavailable" } satisfies AssignedWidgetFailure);
     const state =
       failure.kind === "inactive"
         ? "service_inactive"
@@ -378,7 +388,10 @@ export async function LeaveAssignedWidget({ placement, surfaceId }: Representati
         state={state}
         surfaceId={surfaceId}
       >
-        {assignedLeaveFailureContent(definition, failure)}
+        {assignedProviderFailureContent(definition, failure, {
+          assignedName: "Assigned Leave",
+          serviceName: "Leave Request",
+        })}
       </WidgetFrame>
     );
   }
@@ -719,6 +732,238 @@ export async function ExpenseClaimsWidget({ placement, surfaceId }: Representati
       </PresentationWidgetStateContent>
     );
   }
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
+}
+
+export async function AssignedExpenseClaimsWidget({
+  placement,
+  surfaceId,
+}: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.expense.assigned");
+  let settled:
+    | Awaited<
+        ReturnType<
+          typeof settlePresentationWidgetProviders<
+            Awaited<ReturnType<typeof getAssignedExpenseClaims>>,
+            AssignedWidgetFailure
+          >
+        >
+      >[number]
+    | undefined;
+  try {
+    [settled] = await settlePresentationWidgetProviders<
+      Awaited<ReturnType<typeof getAssignedExpenseClaims>>,
+      AssignedWidgetFailure
+    >(
+      [
+        {
+          classifyFailure: (error) => ({
+            scope: "provider",
+            value: assignedProviderFailure(error, "hr_expense_assigned"),
+          }),
+          eligible: true,
+          id: "hr.expense.assigned",
+          load: (signal) => getAssignedExpenseClaims(undefined, signal),
+          timeoutFailure: { scope: "provider", value: { kind: "unavailable" } },
+        },
+      ],
+      { concurrency: 1, timeoutMs: 8_000 },
+    );
+  } catch {
+    settled = undefined;
+  }
+
+  if (settled?.status !== "fulfilled") {
+    const failure =
+      settled && (settled.status === "rejected" || settled.status === "timed_out")
+        ? settled.failure
+        : ({ kind: "unavailable" } satisfies AssignedWidgetFailure);
+    const state =
+      failure.kind === "inactive"
+        ? "service_inactive"
+        : failure.kind === "ineligible"
+          ? "permission_denied"
+          : "unavailable";
+    return (
+      <WidgetFrame
+        definition={definition}
+        placement={placement}
+        state={state}
+        surfaceId={surfaceId}
+      >
+        {assignedProviderFailureContent(definition, failure, {
+          assignedName: "Assigned Expense Claims",
+          serviceName: "Expense Claim",
+        })}
+      </WidgetFrame>
+    );
+  }
+
+  const items = settled.value.items.slice(0, 5);
+  return (
+    <WidgetFrame
+      definition={definition}
+      placement={placement}
+      state={items.length === 0 ? "empty" : "populated"}
+      surfaceId={surfaceId}
+    >
+      {items.length === 0 ? (
+        <EmptyState
+          definition={definition}
+          description="Submitted Expense Claims assigned to your current manager role will appear here."
+          heading="No assigned Expense Claims"
+        />
+      ) : (
+        <PresentationWidgetStateContent state="populated">
+          <ol aria-label="Assigned Expense Claims" className="zen-widget-list">
+            {items.map((claim) => (
+              <li key={claim.workItemId}>
+                <Link
+                  className="zen-widget-row"
+                  href={`/workspace/hr/expenses/by-id/${encodeURIComponent(
+                    claim.expenseClaimId,
+                  )}?returnContext=my-work`}
+                >
+                  <span className="leave-status leave-status-submitted">Submitted</span>
+                  <span>
+                    <strong>
+                      {new Intl.NumberFormat("en").format(claim.totalAmountMinor)}{" "}
+                      {claim.currencyCode}
+                    </strong>
+                    <p>Minor units · version {claim.version}</p>
+                  </span>
+                  <ArrowRight aria-hidden="true" size={15} />
+                </Link>
+              </li>
+            ))}
+          </ol>
+        </PresentationWidgetStateContent>
+      )}
+    </WidgetFrame>
+  );
+}
+
+async function expenseClaimModeWidget(
+  definition: PresentationWidgetDefinition,
+  mode: "corrections" | "draft",
+): Promise<Readonly<{ content: ReactNode; state: PresentationWidgetState }>> {
+  const result = await loadOwnExpenseClaims({ pageSize: "5" });
+  const requiredActions =
+    mode === "draft"
+      ? (["list_own", "view_detail", "create", "edit_draft", "submit"] as const)
+      : (["list_own", "view_detail", "create_correction"] as const);
+  if (
+    result.status !== "success" ||
+    requiredActions.some((action) => !hasExpenseAction(result.authorizedActions, action))
+  ) {
+    const kind = result.status === "success" ? "denied" : result.kind;
+    return {
+      content: (
+        <FailureState
+          content={
+            result.status === "success"
+              ? {
+                  message: `Your current authority does not permit this Expense Claim ${mode} view.`,
+                  title: "Expense Claim unavailable",
+                }
+              : result
+          }
+          definition={definition}
+          kind={kind}
+        />
+      ),
+      state: presentationStateForFailure(kind),
+    };
+  }
+
+  const items = result.page.items
+    .filter((claim) =>
+      mode === "draft" ? claim.status === "draft" : ["approved", "rejected"].includes(claim.status),
+    )
+    .slice(0, 5);
+  if (items.length === 0) {
+    return {
+      content: (
+        <EmptyState
+          definition={definition}
+          description={
+            mode === "draft"
+              ? result.page.nextCursor
+                ? "No draft appears in this first bounded page. Open the full-screen Expense Claim workspace to inspect remaining history or create one."
+                : "Create a draft in the full-screen Expense Claim workspace."
+              : result.page.nextCursor
+                ? "No approved or rejected claim appears in this first bounded page. Open the full-screen workspace to inspect remaining history."
+                : "Approved or rejected Expense Claims eligible for a sole correction successor will appear here."
+          }
+          heading={
+            mode === "draft"
+              ? "No Expense Claim drafts in this view"
+              : "No correctable Expense Claims in this view"
+          }
+        />
+      ),
+      state: "empty",
+    };
+  }
+
+  return {
+    content: (
+      <PresentationWidgetStateContent state="populated">
+        <ol
+          aria-label={mode === "draft" ? "Expense Claim drafts" : "Correctable Expense Claims"}
+          className="zen-widget-list"
+        >
+          {items.map((claim) => (
+            <li key={claim.expenseClaimId}>
+              <Link
+                className="zen-widget-row"
+                href={`/workspace/hr/expenses/by-id/${encodeURIComponent(
+                  claim.expenseClaimId,
+                )}?returnTo=own`}
+              >
+                <span className={`leave-status leave-status-${claim.status}`}>{claim.status}</span>
+                <span>
+                  <strong>
+                    {new Intl.NumberFormat("en").format(claim.totalAmountMinor)}{" "}
+                    {claim.currencyCode}
+                  </strong>
+                  <p>
+                    {mode === "draft"
+                      ? `Draft version ${claim.version}`
+                      : "Open evidence-backed history and correction action"}
+                  </p>
+                </span>
+                <ArrowRight aria-hidden="true" size={15} />
+              </Link>
+            </li>
+          ))}
+        </ol>
+      </PresentationWidgetStateContent>
+    ),
+    state: "populated",
+  };
+}
+
+export async function ExpenseDraftWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.expense.draft");
+  const { content, state } = await expenseClaimModeWidget(definition, "draft");
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
+}
+
+export async function ExpenseCorrectionsWidget({
+  placement,
+  surfaceId,
+}: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.expense.corrections");
+  const { content, state } = await expenseClaimModeWidget(definition, "corrections");
   return (
     <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
       {content}
@@ -1546,6 +1791,243 @@ export async function TimesheetsWidget({ placement, surfaceId }: RepresentativeW
             </li>
           ))}
         </ol>
+      </PresentationWidgetStateContent>
+    );
+  }
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
+}
+
+export async function AssignedTimesheetsWidget({
+  placement,
+  surfaceId,
+}: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.timesheet.assigned");
+  let settled:
+    | Awaited<
+        ReturnType<
+          typeof settlePresentationWidgetProviders<
+            Awaited<ReturnType<typeof getAssignedTimesheets>>,
+            AssignedWidgetFailure
+          >
+        >
+      >[number]
+    | undefined;
+  try {
+    [settled] = await settlePresentationWidgetProviders<
+      Awaited<ReturnType<typeof getAssignedTimesheets>>,
+      AssignedWidgetFailure
+    >(
+      [
+        {
+          classifyFailure: (error) => ({
+            scope: "provider",
+            value: assignedProviderFailure(error, "hr_timesheet_assigned"),
+          }),
+          eligible: true,
+          id: "hr.timesheet.assigned",
+          load: (signal) => getAssignedTimesheets(undefined, signal),
+          timeoutFailure: { scope: "provider", value: { kind: "unavailable" } },
+        },
+      ],
+      { concurrency: 1, timeoutMs: 8_000 },
+    );
+  } catch {
+    settled = undefined;
+  }
+
+  if (settled?.status !== "fulfilled") {
+    const failure =
+      settled && (settled.status === "rejected" || settled.status === "timed_out")
+        ? settled.failure
+        : ({ kind: "unavailable" } satisfies AssignedWidgetFailure);
+    const state =
+      failure.kind === "inactive"
+        ? "service_inactive"
+        : failure.kind === "ineligible"
+          ? "permission_denied"
+          : "unavailable";
+    return (
+      <WidgetFrame
+        definition={definition}
+        placement={placement}
+        state={state}
+        surfaceId={surfaceId}
+      >
+        {assignedProviderFailureContent(definition, failure, {
+          assignedName: "Assigned Timesheets",
+          serviceName: "Timesheet",
+        })}
+      </WidgetFrame>
+    );
+  }
+
+  const items = settled.value.items.slice(0, 5);
+  return (
+    <WidgetFrame
+      definition={definition}
+      placement={placement}
+      state={items.length === 0 ? "empty" : "populated"}
+      surfaceId={surfaceId}
+    >
+      {items.length === 0 ? (
+        <EmptyState
+          definition={definition}
+          description="Submitted Timesheets assigned to your current manager role will appear here."
+          heading="No assigned Timesheets"
+        />
+      ) : (
+        <PresentationWidgetStateContent state="populated">
+          <ol aria-label="Assigned Timesheets" className="zen-widget-list">
+            {items.map((timesheet) => (
+              <li key={timesheet.timesheetId}>
+                <Link
+                  className="zen-widget-row"
+                  href={`/workspace/hr/timesheets/by-id/${encodeURIComponent(
+                    timesheet.timesheetId,
+                  )}?returnContext=my-work`}
+                >
+                  <span className="leave-status leave-status-submitted">Submitted</span>
+                  <span>
+                    <strong>
+                      {timesheet.periodStart}–{timesheet.periodEnd}
+                    </strong>
+                    <p>{formatMinutes(timesheet.totalMinutes)}</p>
+                  </span>
+                  <ArrowRight aria-hidden="true" size={15} />
+                </Link>
+              </li>
+            ))}
+          </ol>
+        </PresentationWidgetStateContent>
+      )}
+    </WidgetFrame>
+  );
+}
+
+export async function TimesheetDraftWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.timesheet.draft");
+  const result = await loadOwnTimesheets({ pageSize: "5" });
+  const requiredActions = ["list_own", "view_detail", "create", "edit_draft", "submit"] as const;
+  const denied =
+    result.status === "success" &&
+    requiredActions.some((action) => !hasTimesheetAction(result.authorizedActions, action));
+  const state =
+    result.status === "success"
+      ? denied
+        ? "permission_denied"
+        : result.page.items.some(({ status }) => status === "draft")
+          ? "populated"
+          : "empty"
+      : presentationStateForFailure(result.kind);
+  let content: ReactNode;
+  if (result.status !== "success") {
+    content = <FailureState content={result} definition={definition} kind={result.kind} />;
+  } else if (denied) {
+    content = (
+      <FailureState
+        content={{
+          message: "Your current authority does not permit the Timesheet draft workflow.",
+          title: "Timesheet drafts unavailable",
+        }}
+        definition={definition}
+        kind="denied"
+      />
+    );
+  } else {
+    const drafts = result.page.items.filter(({ status }) => status === "draft").slice(0, 5);
+    content =
+      drafts.length === 0 ? (
+        <EmptyState
+          definition={definition}
+          description={
+            result.page.nextCursor
+              ? "No draft appears in this first bounded page. Open the full-screen Timesheet workspace to inspect remaining history or create one."
+              : "Create a weekly draft in the full-screen Timesheet workspace."
+          }
+          heading="No Timesheet drafts in this view"
+        />
+      ) : (
+        <PresentationWidgetStateContent state="populated">
+          <ol aria-label="Timesheet drafts" className="zen-widget-list">
+            {drafts.map((timesheet) => (
+              <li key={timesheet.timesheetId}>
+                <Link
+                  className="zen-widget-row"
+                  href={`/workspace/hr/timesheets/by-id/${encodeURIComponent(
+                    timesheet.timesheetId,
+                  )}?returnTo=own`}
+                >
+                  <span className="leave-status leave-status-draft">draft</span>
+                  <span>
+                    <strong>
+                      {timesheet.periodStart}–{timesheet.periodEnd}
+                    </strong>
+                    <p>{formatMinutes(timesheet.totalMinutes)} · open to edit or submit</p>
+                  </span>
+                  <ArrowRight aria-hidden="true" size={15} />
+                </Link>
+              </li>
+            ))}
+          </ol>
+        </PresentationWidgetStateContent>
+      );
+  }
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
+}
+
+export async function TimesheetCorrectionsWidget({
+  placement,
+  surfaceId,
+}: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.timesheet.corrections");
+  const result = await loadOwnTimesheets({ pageSize: "1" });
+  const serviceAvailable =
+    result.status === "success" || (result.status === "error" && result.kind === "denied");
+  const canCreateCorrection =
+    serviceAvailable && hasTimesheetAction(result.authorizedActions, "create_correction");
+  const state =
+    result.status === "error" && result.kind !== "denied"
+      ? presentationStateForFailure(result.kind)
+      : canCreateCorrection
+        ? "populated"
+        : "permission_denied";
+  let content: ReactNode;
+  if (result.status === "error" && result.kind !== "denied") {
+    content = <FailureState content={result} definition={definition} kind={result.kind} />;
+  } else if (!canCreateCorrection) {
+    content = (
+      <FailureState
+        content={{
+          message: "Your current authority does not permit Timesheet corrections.",
+          title: "Timesheet corrections unavailable",
+        }}
+        definition={definition}
+        kind="denied"
+      />
+    );
+  } else {
+    content = (
+      <PresentationWidgetStateContent state="populated">
+        <div className="zen-widget-summary">
+          <span className="leave-status leave-status-active">Exact-ID workflow</span>
+          <strong>Create one correction successor</strong>
+          <p>
+            Open an approved or rejected Timesheet by its exact identifier. This face does not
+            expose a tenant-wide Timesheet list.
+          </p>
+          <Link className="text-command" href="/workspace/hr/timesheets/admin/corrections">
+            Open Timesheet corrections
+            <ArrowRight aria-hidden="true" size={15} />
+          </Link>
+        </div>
       </PresentationWidgetStateContent>
     );
   }
