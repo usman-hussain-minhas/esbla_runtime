@@ -12,13 +12,18 @@ import {
 import {
   AttendanceObservationsWidget,
   DirectReportsWidget,
+  EmploymentAdminQueueWidget,
   EmploymentFactsWidget,
+  EmploymentHistoryWidget,
   ExpenseClaimsWidget,
   MyWorkWidget,
   PublishedShiftsWidget,
   RepresentativeWidgetLoading,
   TimesheetsWidget,
+  WorkforceAdminQueueWidget,
   WorkforceProfileWidget,
+  WorkforceStatusReportingWidget,
+  WorkspaceTasksWidget,
 } from "../widgets/hr-representative-widgets";
 
 interface ZenSurfaceWidgetProps {
@@ -28,14 +33,19 @@ interface ZenSurfaceWidgetProps {
 
 const COMPONENTS = Object.freeze({
   "hr.attendance.my-observations": AttendanceObservationsWidget,
+  "hr.employment.admin-queue": EmploymentAdminQueueWidget,
   "hr.employment.current-facts": EmploymentFactsWidget,
+  "hr.employment.history": EmploymentHistoryWidget,
   "hr.expense.mine": ExpenseClaimsWidget,
   "hr.leave.my-requests": HrLeaveMyRequestsWidget,
   "hr.shift.my-published": PublishedShiftsWidget,
   "hr.timesheet.mine": TimesheetsWidget,
+  "hr.workforce.admin-queue": WorkforceAdminQueueWidget,
   "hr.workforce.direct-reports": DirectReportsWidget,
   "hr.workforce.my-profile": WorkforceProfileWidget,
+  "hr.workforce.status-reporting": WorkforceStatusReportingWidget,
   "platform.my-work.queue": MyWorkWidget,
+  "workspace.tasks.mine": WorkspaceTasksWidget,
 }) satisfies Readonly<Record<string, ComponentType<ZenSurfaceWidgetProps>>>;
 
 export function ZenSurfaceWidgets({

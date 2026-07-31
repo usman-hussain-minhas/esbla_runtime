@@ -38,6 +38,7 @@ const workspace: PresentationSurfaceBaseWorkspace = {
     canRollback: true,
     canValidate: true,
   },
+  availablePlacements: [firstPlacement],
   currentBase,
   draft: null,
   headRowVersion: 0,

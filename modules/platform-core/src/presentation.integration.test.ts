@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { getZenV1RegisteredSurfacePlacements } from "@esbla/contracts";
 import { createDatabase, createDatabasePool, migrateDatabase } from "@esbla/db";
 import type { Pool, PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -220,6 +221,44 @@ async function setLeavePresentationEligibility(
         [tenantId, principalId, input.capabilities],
       );
     }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function setExactServicePresentationEligibility(
+  tenantId: string,
+  principalId: string,
+  serviceKey: string,
+  capabilities: readonly string[],
+): Promise<void> {
+  const client = await migrationPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
+    await client.query(
+      `INSERT INTO service_activations (tenant_id, service_key, state, version)
+       VALUES ($1, $2, 'active', 1)
+       ON CONFLICT (tenant_id, service_key)
+       DO UPDATE SET state = 'active', version = service_activations.version + 1`,
+      [tenantId, serviceKey],
+    );
+    await client.query(
+      `DELETE FROM membership_capabilities
+       WHERE tenant_id = $1 AND principal_id = $2
+         AND capability_id = ANY($3::text[])`,
+      [tenantId, principalId, capabilities],
+    );
+    await client.query(
+      `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+       SELECT $1, $2, capability_id
+       FROM unnest($3::text[]) AS capability(capability_id)`,
+      [tenantId, principalId, capabilities],
+    );
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -2801,6 +2840,103 @@ describe("presentation preference persistence", () => {
       "platform.presentation.tenant_defaults.write",
       false,
     );
+  });
+
+  it("admits one active catalogue face and preserves its personal geometry across tenant publication", async () => {
+    const surfaceId = "surface.mission-control" as const;
+    await setExactServicePresentationEligibility(ids.tenantB, ids.actorB, "workspace.task", [
+      "workspace.task.list_assigned",
+    ]);
+    await setPresentationCapability(
+      ids.tenantB,
+      ids.actorB,
+      "platform.presentation.layouts.read_own",
+      true,
+    );
+    await setPresentationCapability(
+      ids.tenantB,
+      ids.actorB,
+      "platform.presentation.layouts.write_own",
+      true,
+    );
+    await setStudioSurfaceBaseCapabilities(ids.tenantB, ids.actorB, studioSurfaceBaseCapabilities);
+
+    const workspace = await getOwnPresentationPersonalSurfaceEditorWorkspace(
+      pool,
+      context(ids.tenantB, ids.actorB),
+      surfaceId,
+    );
+    const taskTemplate = workspace.availablePlacements.find(
+      ({ instanceId }) => instanceId === "mission-control.my-tasks",
+    );
+    expect(taskTemplate).toEqual(
+      getZenV1RegisteredSurfacePlacements(surfaceId).find(
+        ({ instanceId }) => instanceId === "mission-control.my-tasks",
+      ),
+    );
+    if (!taskTemplate) throw new Error("Workspace task catalogue template is unavailable");
+    expect(
+      workspace.layout.basePlacements.some(
+        ({ instanceId }) => instanceId === taskTemplate.instanceId,
+      ),
+    ).toBe(false);
+
+    const personalTask = { ...taskTemplate, column: 1, row: 100 };
+    const personalized = await updateOwnPresentationSurfaceOverlay(
+      pool,
+      context(ids.tenantB, ids.actorB),
+      surfaceId,
+      {
+        expectedVersion: workspace.layout.overlayVersion,
+        placements: [...workspace.layout.effectivePlacements, personalTask],
+      },
+    );
+    expect(
+      personalized.effectivePlacements.find(
+        ({ instanceId }) => instanceId === taskTemplate.instanceId,
+      ),
+    ).toEqual(personalTask);
+
+    const tenantWorkspace = await getTenantPresentationSurfaceBaseWorkspace(
+      pool,
+      context(ids.tenantB, ids.actorB),
+      surfaceId,
+    );
+    expect(
+      tenantWorkspace.availablePlacements.some(
+        ({ instanceId }) => instanceId === taskTemplate.instanceId,
+      ),
+    ).toBe(true);
+    const tenantTask = { ...taskTemplate, column: 5, row: 100 };
+    const drafted = await upsertTenantPresentationSurfaceDraft(
+      pool,
+      context(ids.tenantB, ids.actorB),
+      surfaceId,
+      {
+        expectedDraftVersion: 0,
+        expectedHeadRowVersion: tenantWorkspace.headRowVersion,
+        placements: [...tenantWorkspace.currentBase.placements, tenantTask],
+      },
+    );
+    await expect(
+      validateTenantPresentationSurfaceDraft(pool, context(ids.tenantB, ids.actorB), surfaceId, {
+        expectedDraftVersion: drafted.draft.draftVersion,
+        expectedHeadRowVersion: drafted.headRowVersion,
+      }),
+    ).resolves.toMatchObject({ diagnostics: [], valid: true });
+    await publishTenantPresentationSurfaceDraft(pool, context(ids.tenantB, ids.actorB), surfaceId, {
+      expectedDraftVersion: drafted.draft.draftVersion,
+      expectedHeadRowVersion: drafted.headRowVersion,
+    });
+
+    const rebased = await getOwnPresentationSurfaceLayout(
+      pool,
+      context(ids.tenantB, ids.actorB),
+      surfaceId,
+    );
+    expect(
+      rebased.effectivePlacements.find(({ instanceId }) => instanceId === taskTemplate.instanceId),
+    ).toEqual(personalTask);
   });
 
   it("fails closed across tenants, suspended actors, and stale CAS writers", async () => {

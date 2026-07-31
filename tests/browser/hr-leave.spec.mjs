@@ -1381,6 +1381,86 @@ test("personal Surface Editor saves pointer and keyboard layout changes and fail
   }
 });
 
+test("eligible catalogue faces add through Surface Editor and render from real service reads", async ({
+  browser,
+}, testInfo) => {
+  const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
+  const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
+  const actors = [operator, manager];
+  try {
+    await operator.page.setViewportSize({ height: 900, width: 1_280 });
+    await operator.page.goto(`${operator.origin}/studio/surfaces/surface.mission-control/personal`);
+    for (const displayName of [
+      "Employment Administration Queue",
+      "Employment History",
+      "Workforce Administration Queue",
+      "Workforce Status Reporting",
+    ]) {
+      const add = operator.page.getByRole("button", { name: `Add ${displayName}` });
+      await expect(add).toBeVisible();
+      await add.click();
+    }
+    const operatorSaveResponse = operator.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/presentation/surfaces/surface.mission-control",
+    );
+    await operator.page.getByRole("button", { name: "Save personal layout" }).click();
+    expect((await operatorSaveResponse).status()).toBe(200);
+    await operator.page.goto(operator.origin);
+    for (const widgetDefinition of [
+      "hr.employment.admin-queue",
+      "hr.employment.history",
+      "hr.workforce.admin-queue",
+      "hr.workforce.status-reporting",
+    ]) {
+      await expect(
+        operator.page.locator(`[data-widget-definition="${widgetDefinition}"]`),
+      ).toHaveCount(1);
+    }
+    const operatorEvidencePath = testInfo.outputPath("catalogue-hr-operator-widgets.png");
+    await operator.page.screenshot({ fullPage: false, path: operatorEvidencePath });
+    await testInfo.attach("catalogue-hr-operator-widgets", {
+      contentType: "image/png",
+      path: operatorEvidencePath,
+    });
+
+    await manager.page.setViewportSize({ height: 900, width: 1_280 });
+    await manager.page.goto(`${manager.origin}/studio/surfaces/surface.mission-control/personal`);
+    const addTasks = manager.page.getByRole("button", { name: "Add My Tasks" });
+    await expect(addTasks).toBeVisible();
+    await addTasks.click();
+    const managerSaveResponse = manager.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/presentation/surfaces/surface.mission-control",
+    );
+    await manager.page.getByRole("button", { name: "Save personal layout" }).click();
+    expect((await managerSaveResponse).status()).toBe(200);
+    await manager.page.goto(manager.origin);
+    await expect(
+      manager.page.locator('[data-widget-definition="workspace.tasks.mine"]'),
+    ).toHaveCount(1);
+
+    for (const actor of actors) {
+      expect(actor.diagnostics.external).toEqual([]);
+      expect(actor.diagnostics.page).toEqual([]);
+      expect(actor.diagnostics.server).toEqual([]);
+      expect(actor.diagnostics.console).toEqual([]);
+    }
+  } finally {
+    for (const actor of actors) {
+      await actor.page
+        .goto(`${actor.origin}/studio/surfaces/surface.mission-control/personal`)
+        .catch(() => undefined);
+      const reset = actor.page.getByRole("button", { name: "Restore tenant layout" });
+      if (await reset.isEnabled().catch(() => false)) {
+        actor.page.once("dialog", (dialog) => dialog.accept());
+        await reset.click().catch(() => undefined);
+      }
+    }
+    await closeActors(...actors);
+  }
+});
+
 test("tenant appearance floors render locked while stale browser tabs fail closed", async ({
   browser,
 }, testInfo) => {

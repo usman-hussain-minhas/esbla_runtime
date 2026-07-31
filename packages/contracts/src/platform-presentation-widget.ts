@@ -399,6 +399,58 @@ const HR_EMPLOYMENT_CURRENT_FACTS_MANIFEST = {
   widgetKind: "detailed",
 } as const satisfies PresentationWidgetDefinitionWithoutHash;
 
+const HR_EMPLOYMENT_ADMIN_QUEUE_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "employment_record",
+  allowedCommandIds: [],
+  definitionVersion: 1,
+  displayName: "Employment Administration Queue",
+  fullScreenRoute: "/workspace/hr/employment/admin",
+  id: "hr.employment.admin-queue",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.employment.admin-queue.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.employment.admin-queue.read.v1",
+  requiredCapabilityIds: [
+    "hr.employment.create_record",
+    "hr.employment.list_authorized",
+    "hr.employment.view_detail",
+  ],
+  semanticIcon: "briefcase-business",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "employment_record",
+  widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const HR_EMPLOYMENT_HISTORY_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "employment_record",
+  allowedCommandIds: [],
+  definitionVersion: 1,
+  displayName: "Employment History",
+  fullScreenRoute: "/workspace/hr/employment",
+  id: "hr.employment.history",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.employment.history.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.employment.history.read.v1",
+  requiredCapabilityIds: ["hr.employment.list_authorized", "hr.employment.view_detail"],
+  semanticIcon: "briefcase-business",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "employment_record",
+  widgetKind: "detailed",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
 const HR_EXPENSE_MINE_MANIFEST = {
   ...COMMON_WIDGET_MANIFEST,
   activationPolicy: "exact_service",
@@ -574,6 +626,78 @@ const HR_WORKFORCE_DIRECT_REPORTS_MANIFEST = {
   widgetKind: "operational",
 } as const satisfies PresentationWidgetDefinitionWithoutHash;
 
+const HR_WORKFORCE_ADMIN_QUEUE_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "workforce_profile",
+  allowedCommandIds: [],
+  definitionVersion: 1,
+  displayName: "Workforce Administration Queue",
+  fullScreenRoute: "/workspace/hr/profile/admin",
+  id: "hr.workforce.admin-queue",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.workforce.admin-queue.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.workforce.admin-queue.read.v1",
+  requiredCapabilityIds: ["hr.workforce.list_authorized", "hr.workforce.view_authorized_detail"],
+  semanticIcon: "users-round",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "workforce_profile",
+  widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const HR_WORKFORCE_STATUS_REPORTING_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "workforce_profile",
+  allowedCommandIds: [],
+  definitionVersion: 1,
+  displayName: "Workforce Status Reporting",
+  fullScreenRoute: "/workspace/hr/profile/admin",
+  id: "hr.workforce.status-reporting",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.workforce.status-reporting.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.workforce.status-reporting.read.v1",
+  requiredCapabilityIds: ["hr.workforce.list_authorized", "hr.workforce.view_authorized_detail"],
+  semanticIcon: "users-round",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "workforce_profile",
+  widgetKind: "detailed",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const WORKSPACE_TASKS_MINE_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "workspace.task",
+  allowedCommandIds: [],
+  definitionVersion: 1,
+  displayName: "My Tasks",
+  fullScreenRoute: "/workspace/tasks",
+  id: "workspace.tasks.mine",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.workspace.tasks.mine.v1",
+  },
+  providerEligibility: [],
+  readModelId: "workspace.tasks.mine.read.v1",
+  requiredCapabilityIds: ["workspace.task.list_assigned"],
+  semanticIcon: "check-square",
+  sourceServiceGroup: "workspace",
+  sourceServiceKey: "task",
+  widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
 const PLATFORM_MY_WORK_QUEUE_MANIFEST = {
   ...COMMON_WIDGET_MANIFEST,
   activationPolicy: "any_provider",
@@ -642,6 +766,16 @@ export const HR_EMPLOYMENT_CURRENT_FACTS_WIDGET_DEFINITION = deepFreeze({
   canonicalHash: "a08e69a049cb21c05cb0337eb0c7b4957ef9f0129ef0f771161c41c6551524a4",
 }) satisfies PresentationWidgetDefinition;
 
+export const HR_EMPLOYMENT_ADMIN_QUEUE_WIDGET_DEFINITION = deepFreeze({
+  ...HR_EMPLOYMENT_ADMIN_QUEUE_MANIFEST,
+  canonicalHash: "cb552a12b4e7f948598e90edd6d6809dc13e39261a693a21b89a29bcfb2eefa2",
+}) satisfies PresentationWidgetDefinition;
+
+export const HR_EMPLOYMENT_HISTORY_WIDGET_DEFINITION = deepFreeze({
+  ...HR_EMPLOYMENT_HISTORY_MANIFEST,
+  canonicalHash: "1f281aab407ca6b459fa2527504c88324cab7d342ea594e99e0d72c494b668e5",
+}) satisfies PresentationWidgetDefinition;
+
 export const HR_EXPENSE_MINE_WIDGET_DEFINITION = deepFreeze({
   ...HR_EXPENSE_MINE_MANIFEST,
   canonicalHash: "770fe892c414c43f34fa49c2d81bf45b52d3876e539b4c8fc9b56eea47c9c3b8",
@@ -677,22 +811,42 @@ export const HR_WORKFORCE_DIRECT_REPORTS_WIDGET_DEFINITION = deepFreeze({
   canonicalHash: "e3494440830fc829aee752b03c0838d80b12d050e2ce21ac8bed2669bbec7cce",
 }) satisfies PresentationWidgetDefinition;
 
+export const HR_WORKFORCE_ADMIN_QUEUE_WIDGET_DEFINITION = deepFreeze({
+  ...HR_WORKFORCE_ADMIN_QUEUE_MANIFEST,
+  canonicalHash: "6f3a275d52531d784f716d1ca145946f050e13f72eb77763e876dc62b6fc677a",
+}) satisfies PresentationWidgetDefinition;
+
 export const PLATFORM_MY_WORK_QUEUE_WIDGET_DEFINITION = deepFreeze({
   ...PLATFORM_MY_WORK_QUEUE_MANIFEST,
   canonicalHash: "58870440fb4758c55b78e4ec3dde4037055f3903c5e0bfa4df28bf3851617828",
 }) satisfies PresentationWidgetDefinition;
 
+export const HR_WORKFORCE_STATUS_REPORTING_WIDGET_DEFINITION = deepFreeze({
+  ...HR_WORKFORCE_STATUS_REPORTING_MANIFEST,
+  canonicalHash: "8461490e5757cd6c5abd6b8404b27169ea158590f68aa39d31b36b1ce8b835d9",
+}) satisfies PresentationWidgetDefinition;
+
+export const WORKSPACE_TASKS_MINE_WIDGET_DEFINITION = deepFreeze({
+  ...WORKSPACE_TASKS_MINE_MANIFEST,
+  canonicalHash: "bd611175bd805f80eb2edd161a530e1835576f71f42364efbe863c1f3f1db2cc",
+}) satisfies PresentationWidgetDefinition;
+
 export const PRESENTATION_WIDGET_DEFINITIONS = deepFreeze([
   HR_ATTENDANCE_MY_OBSERVATIONS_WIDGET_DEFINITION,
+  HR_EMPLOYMENT_ADMIN_QUEUE_WIDGET_DEFINITION,
   HR_EMPLOYMENT_CURRENT_FACTS_WIDGET_DEFINITION,
+  HR_EMPLOYMENT_HISTORY_WIDGET_DEFINITION,
   HR_EXPENSE_MINE_WIDGET_DEFINITION,
   HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION,
   HR_SHIFT_MY_PUBLISHED_WIDGET_DEFINITION,
   HR_TIMESHEET_DRAFT_WIDGET_DEFINITION,
   HR_TIMESHEET_MINE_WIDGET_DEFINITION,
+  HR_WORKFORCE_ADMIN_QUEUE_WIDGET_DEFINITION,
   HR_WORKFORCE_DIRECT_REPORTS_WIDGET_DEFINITION,
   HR_WORKFORCE_MY_PROFILE_WIDGET_DEFINITION,
+  HR_WORKFORCE_STATUS_REPORTING_WIDGET_DEFINITION,
   PLATFORM_MY_WORK_QUEUE_WIDGET_DEFINITION,
+  WORKSPACE_TASKS_MINE_WIDGET_DEFINITION,
 ] as const) satisfies readonly PresentationWidgetDefinition[];
 
 export function parsePresentationWidgetDefinition(value: unknown): PresentationWidgetDefinition {

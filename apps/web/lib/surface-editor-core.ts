@@ -85,10 +85,12 @@ export function isPersonalSurfaceWidgetRemovable(
   surfaceId: ZenV1SurfaceId,
   instanceId: string,
 ): boolean {
+  const contract = getZenV1SurfaceContract(surfaceId);
   return (
-    getZenV1SurfaceContract(surfaceId).defaultInstances.find(
-      (instance) => instance.instanceId === instanceId,
-    )?.placementPolicy === "default_optional"
+    contract.defaultInstances.some(
+      (instance) =>
+        instance.instanceId === instanceId && instance.placementPolicy === "default_optional",
+    ) || contract.catalogueInstances.some((instance) => instance.instanceId === instanceId)
   );
 }
 

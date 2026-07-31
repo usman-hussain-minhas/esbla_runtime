@@ -40,6 +40,16 @@ export interface PresentationSurfaceDefaultInstance extends PresentationWidgetPl
   readonly sourceOrder: number;
 }
 
+export interface PresentationSurfaceCatalogueInstance extends PresentationWidgetPlacement {
+  readonly placementPolicy: "catalogue_optional";
+  readonly sectionId: "overview";
+  readonly sourceOrder: number;
+}
+
+export type PresentationSurfaceRegisteredInstance =
+  | PresentationSurfaceCatalogueInstance
+  | PresentationSurfaceDefaultInstance;
+
 export interface PresentationSurfaceBreakpointPlacements {
   readonly desktop: readonly PresentationWidgetPlacement[];
   readonly phone: readonly PresentationWidgetPlacement[];
@@ -51,6 +61,7 @@ export interface ZenV1SurfaceContract {
   readonly basePlacementsByBreakpoint: PresentationSurfaceBreakpointPlacements;
   readonly baseVersion: 1;
   readonly canonicalHash: string;
+  readonly catalogueInstances: readonly PresentationSurfaceCatalogueInstance[];
   readonly defaultInstances: readonly PresentationSurfaceDefaultInstance[];
   readonly definitionHash: string;
   readonly surfaceId: ZenV1SurfaceId;
@@ -321,6 +332,120 @@ const HR_MISSION_CONTROL_DEFAULT_INSTANCES = deepFreeze([
   },
 ] as const) satisfies readonly PresentationSurfaceDefaultInstance[];
 
+const UNIVERSAL_MISSION_CONTROL_CATALOGUE_INSTANCES = deepFreeze([
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "mission-control.employment-admin",
+    placementPolicy: "catalogue_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 9,
+    widgetDefinitionId: "hr.employment.admin-queue",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "mission-control.employment-history",
+    placementPolicy: "catalogue_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 10,
+    widgetDefinitionId: "hr.employment.history",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "mission-control.workforce-admin",
+    placementPolicy: "catalogue_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 11,
+    widgetDefinitionId: "hr.workforce.admin-queue",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "mission-control.workforce-status",
+    placementPolicy: "catalogue_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 12,
+    widgetDefinitionId: "hr.workforce.status-reporting",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "mission-control.my-tasks",
+    placementPolicy: "catalogue_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 13,
+    widgetDefinitionId: "workspace.tasks.mine",
+    widgetDefinitionVersion: 1,
+  },
+] as const) satisfies readonly PresentationSurfaceCatalogueInstance[];
+
+const HR_MISSION_CONTROL_CATALOGUE_INSTANCES = deepFreeze([
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "hr-mission-control.employment-admin",
+    placementPolicy: "catalogue_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 9,
+    widgetDefinitionId: "hr.employment.admin-queue",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "hr-mission-control.employment-history",
+    placementPolicy: "catalogue_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 10,
+    widgetDefinitionId: "hr.employment.history",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "hr-mission-control.workforce-admin",
+    placementPolicy: "catalogue_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 11,
+    widgetDefinitionId: "hr.workforce.admin-queue",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "hr-mission-control.workforce-status",
+    placementPolicy: "catalogue_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 12,
+    widgetDefinitionId: "hr.workforce.status-reporting",
+    widgetDefinitionVersion: 1,
+  },
+] as const) satisfies readonly PresentationSurfaceCatalogueInstance[];
+
 function placementFromDefaultInstance({
   column,
   columnSpan,
@@ -329,7 +454,7 @@ function placementFromDefaultInstance({
   rowSpan,
   widgetDefinitionId,
   widgetDefinitionVersion,
-}: PresentationSurfaceDefaultInstance): PresentationWidgetPlacement {
+}: PresentationSurfaceRegisteredInstance): PresentationWidgetPlacement {
   return {
     column,
     columnSpan,
@@ -365,6 +490,7 @@ const UNIVERSAL_MISSION_CONTROL_CONTRACT = {
     tablet: compactPlacements(UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES, 8),
   },
   baseVersion: 1,
+  catalogueInstances: UNIVERSAL_MISSION_CONTROL_CATALOGUE_INSTANCES,
   defaultInstances: UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES,
   definitionHash: "c75bac3fed1b604fe9ebc9f39e1ccef45b2ad34570f5200ada0e8b77ab8b71fb",
   surfaceId: "surface.mission-control",
@@ -378,6 +504,7 @@ const HR_MISSION_CONTROL_CONTRACT = {
     tablet: compactPlacements(HR_MISSION_CONTROL_DEFAULT_INSTANCES, 8),
   },
   baseVersion: 1,
+  catalogueInstances: HR_MISSION_CONTROL_CATALOGUE_INSTANCES,
   defaultInstances: HR_MISSION_CONTROL_DEFAULT_INSTANCES,
   definitionHash: "12e135cb9be3deeef974ec5af2362d7a8e68057bdba904976a29709afe601c36",
   surfaceId: "surface.hr.mission-control",
@@ -386,11 +513,11 @@ const HR_MISSION_CONTROL_CONTRACT = {
 export const ZEN_V1_SURFACE_CONTRACTS = deepFreeze([
   {
     ...UNIVERSAL_MISSION_CONTROL_CONTRACT,
-    canonicalHash: "d52358f33176620a8d21479732150b09673e3b177308a2d976d4dc287bd06b1c",
+    canonicalHash: "96d415157e086ded744fe6ccbb73f9e86821fbd177682435eaa1a07f6e075bd6",
   },
   {
     ...HR_MISSION_CONTROL_CONTRACT,
-    canonicalHash: "1a0c13e923f277cc37dfae449db024e40c7bd7d0f5563bbf50ef82cdb8d507db",
+    canonicalHash: "aa18901295a814490e96e7cf3055a435c4259ae70754534b611b3365b364c219",
   },
 ] as const) satisfies readonly ZenV1SurfaceContract[];
 
@@ -416,6 +543,7 @@ export type PresentationPersonalizationLockReason =
   | "tenant_personalization_disabled";
 
 export interface PresentationPersonalSurfaceEditorWorkspace {
+  readonly availablePlacements: readonly PresentationWidgetPlacement[];
   readonly editable: boolean;
   readonly layout: PresentationSurfaceLayout;
   readonly lockReason: PresentationPersonalizationLockReason | null;
@@ -515,6 +643,11 @@ export const presentationPersonalSurfaceEditorWorkspaceSchema = {
   $id: "PresentationPersonalSurfaceEditorWorkspaceV1",
   additionalProperties: false,
   properties: {
+    availablePlacements: {
+      items: presentationWidgetPlacementSchema,
+      maxItems: 100,
+      type: "array",
+    },
     editable: { type: "boolean" },
     layout: { $ref: "PresentationSurfaceLayoutV1#" },
     lockReason: {
@@ -528,7 +661,7 @@ export const presentationPersonalSurfaceEditorWorkspaceSchema = {
     },
     resettable: { type: "boolean" },
   },
-  required: ["editable", "layout", "lockReason", "resettable"],
+  required: ["availablePlacements", "editable", "layout", "lockReason", "resettable"],
   type: "object",
 } as const;
 
@@ -697,6 +830,44 @@ function parseDefaultInstance(value: unknown): PresentationSurfaceDefaultInstanc
   };
 }
 
+function parseCatalogueInstance(value: unknown): PresentationSurfaceCatalogueInstance {
+  if (
+    !exactRecord(value, [
+      "column",
+      "columnSpan",
+      "instanceId",
+      "placementPolicy",
+      "row",
+      "rowSpan",
+      "sectionId",
+      "sourceOrder",
+      "widgetDefinitionId",
+      "widgetDefinitionVersion",
+    ]) ||
+    value.placementPolicy !== "catalogue_optional" ||
+    value.sectionId !== "overview" ||
+    !safeInteger(value.sourceOrder, 1, 10_000) ||
+    !safeInteger(value.widgetDefinitionVersion, 1, 2_147_483_647)
+  ) {
+    throw new Error("Invalid presentation surface catalogue instance");
+  }
+  const placement = parsePlacement({
+    column: value.column,
+    columnSpan: value.columnSpan,
+    instanceId: value.instanceId,
+    row: value.row,
+    rowSpan: value.rowSpan,
+    widgetDefinitionId: value.widgetDefinitionId,
+    widgetDefinitionVersion: value.widgetDefinitionVersion,
+  });
+  return {
+    ...placement,
+    placementPolicy: value.placementPolicy,
+    sectionId: value.sectionId,
+    sourceOrder: value.sourceOrder,
+  };
+}
+
 function parsePlacements(value: unknown): readonly PresentationWidgetPlacement[] {
   if (!Array.isArray(value) || value.length > 100) {
     throw new Error("Invalid presentation widget placements");
@@ -728,6 +899,36 @@ export function parsePresentationWidgetPlacements(
   value: unknown,
 ): readonly PresentationWidgetPlacement[] {
   return parsePlacements(value);
+}
+
+export function parsePresentationSurfaceRegisteredPlacementTemplates(
+  surfaceId: ZenV1SurfaceId,
+  value: unknown,
+): readonly PresentationWidgetPlacement[] {
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new Error("Invalid presentation surface catalogue");
+  }
+  const placements = value.map(parsePlacement);
+  if (new Set(placements.map(({ instanceId }) => instanceId)).size !== placements.length) {
+    throw new Error("Invalid presentation surface catalogue");
+  }
+  const registered = new Map(
+    getZenV1RegisteredSurfaceInstances(surfaceId).map(
+      ({ instanceId, widgetDefinitionId, widgetDefinitionVersion }) => [
+        instanceId,
+        `${widgetDefinitionId}@${widgetDefinitionVersion}`,
+      ],
+    ),
+  );
+  if (
+    placements.some(
+      ({ instanceId, widgetDefinitionId, widgetDefinitionVersion }) =>
+        registered.get(instanceId) !== `${widgetDefinitionId}@${widgetDefinitionVersion}`,
+    )
+  ) {
+    throw new Error("Presentation surface catalogue drift");
+  }
+  return Object.freeze(placements);
 }
 
 export function validatePresentationCompositionRegistries(
@@ -790,6 +991,7 @@ export function validatePresentationCompositionRegistries(
     contractSurfaceIds.add(contract.surfaceId);
 
     const instances = contract.defaultInstances.map(parseDefaultInstance);
+    const catalogueInstances = contract.catalogueInstances.map(parseCatalogueInstance);
     if (
       new Set(instances.map(({ sourceOrder }) => sourceOrder)).size !== instances.length ||
       instances.some(
@@ -801,9 +1003,20 @@ export function validatePresentationCompositionRegistries(
     ) {
       throw new Error("Invalid presentation surface default registry");
     }
+    const registeredInstances = [...instances, ...catalogueInstances];
+    if (
+      new Set(registeredInstances.map(({ sourceOrder }) => sourceOrder)).size !==
+        registeredInstances.length ||
+      registeredInstances.some(
+        ({ sourceOrder }, index) =>
+          index > 0 && sourceOrder <= (registeredInstances[index - 1]?.sourceOrder ?? 0),
+      )
+    ) {
+      throw new Error("Invalid presentation surface catalogue registry");
+    }
     const surfaceType: PresentationWidgetSurfaceType =
       surface.serviceGroup === "universal" ? "mission_control" : "service_group_mission_control";
-    for (const instance of instances) {
+    for (const instance of registeredInstances) {
       if (globalInstanceIds.has(instance.instanceId)) {
         throw new Error("Duplicate presentation surface instance");
       }
@@ -926,6 +1139,23 @@ export function getZenV1SurfaceContract(surfaceId: ZenV1SurfaceId): ZenV1Surface
   return contract;
 }
 
+export function getZenV1RegisteredSurfaceInstances(
+  surfaceId: ZenV1SurfaceId,
+): readonly PresentationSurfaceRegisteredInstance[] {
+  const contract = getZenV1SurfaceContract(surfaceId);
+  return Object.freeze([...contract.defaultInstances, ...contract.catalogueInstances]);
+}
+
+export function getZenV1RegisteredSurfacePlacements(
+  surfaceId: ZenV1SurfaceId,
+): readonly PresentationWidgetPlacement[] {
+  return Object.freeze(
+    getZenV1RegisteredSurfaceInstances(surfaceId).map((instance) =>
+      Object.freeze(placementFromDefaultInstance(instance)),
+    ),
+  );
+}
+
 export function parseUpdatePresentationSurfaceOverlayBody(
   value: unknown,
 ): UpdatePresentationSurfaceOverlayBody {
@@ -974,26 +1204,23 @@ export function parsePresentationSurfaceLayout(value: unknown): PresentationSurf
   const expectedEligibleBase = contract.basePlacements.filter(({ instanceId }) =>
     baseInstanceIds.has(instanceId),
   );
+  const registeredInstances = new Map(
+    getZenV1RegisteredSurfaceInstances(surfaceId).map(
+      ({ instanceId, widgetDefinitionId, widgetDefinitionVersion }) => [
+        instanceId,
+        `${widgetDefinitionId}@${widgetDefinitionVersion}`,
+      ],
+    ),
+  );
   if (
-    basePlacements.length !== expectedEligibleBase.length ||
     basePlacements.some(({ instanceId, widgetDefinitionId, widgetDefinitionVersion }) => {
-      const expected = expectedEligibleBase.find(
-        (candidate) => candidate.instanceId === instanceId,
-      );
       return (
-        expected?.widgetDefinitionId !== widgetDefinitionId ||
-        expected.widgetDefinitionVersion !== widgetDefinitionVersion
+        registeredInstances.get(instanceId) !== `${widgetDefinitionId}@${widgetDefinitionVersion}`
       );
     })
   ) {
     throw new Error("Presentation surface base drift");
   }
-  const expectedInstances = new Map(
-    basePlacements.map(({ instanceId, widgetDefinitionId, widgetDefinitionVersion }) => [
-      instanceId,
-      `${widgetDefinitionId}@${widgetDefinitionVersion}`,
-    ]),
-  );
   if (!Array.isArray(value.diagnostics) || value.diagnostics.length > 100) {
     throw new Error("Invalid presentation surface diagnostics");
   }
@@ -1003,7 +1230,7 @@ export function parsePresentationSurfaceLayout(value: unknown): PresentationSurf
       !exactRecord(diagnostic, ["code", "instanceId"]) ||
       diagnostic.code !== "overlay_placement_conflict" ||
       typeof diagnostic.instanceId !== "string" ||
-      !expectedInstances.has(diagnostic.instanceId) ||
+      !registeredInstances.has(diagnostic.instanceId) ||
       diagnosticIds.has(diagnostic.instanceId)
     ) {
       throw new Error("Invalid presentation surface diagnostics");
@@ -1017,10 +1244,11 @@ export function parsePresentationSurfaceLayout(value: unknown): PresentationSurf
   if (
     effectivePlacements.some(
       ({ instanceId, widgetDefinitionId, widgetDefinitionVersion }) =>
-        expectedInstances.get(instanceId) !== `${widgetDefinitionId}@${widgetDefinitionVersion}`,
+        registeredInstances.get(instanceId) !== `${widgetDefinitionId}@${widgetDefinitionVersion}`,
     ) ||
     (value.source === "code_default" &&
       (effectivePlacements.length !== basePlacements.length ||
+        basePlacements.length !== expectedEligibleBase.length ||
         value.baseVersion !== contract.baseVersion ||
         canonicalPlacements(basePlacements) !== canonicalPlacements(expectedEligibleBase) ||
         value.overlayVersion !== 0 ||
@@ -1050,7 +1278,13 @@ export function parsePresentationPersonalSurfaceEditorWorkspace(
   value: unknown,
 ): PresentationPersonalSurfaceEditorWorkspace {
   if (
-    !exactRecord(value, ["editable", "layout", "lockReason", "resettable"]) ||
+    !exactRecord(value, [
+      "availablePlacements",
+      "editable",
+      "layout",
+      "lockReason",
+      "resettable",
+    ]) ||
     typeof value.editable !== "boolean" ||
     typeof value.resettable !== "boolean" ||
     (value.lockReason !== null &&
@@ -1061,9 +1295,22 @@ export function parsePresentationPersonalSurfaceEditorWorkspace(
   ) {
     throw new Error("Invalid personal surface editor workspace");
   }
+  const layout = parsePresentationSurfaceLayout(value.layout);
+  const availablePlacements = parsePresentationSurfaceRegisteredPlacementTemplates(
+    layout.surfaceId,
+    value.availablePlacements,
+  );
+  const availableInstances = new Set(availablePlacements.map(({ instanceId }) => instanceId));
+  if (
+    layout.effectivePlacements.some(({ instanceId }) => !availableInstances.has(instanceId)) ||
+    layout.basePlacements.some(({ instanceId }) => !availableInstances.has(instanceId))
+  ) {
+    throw new Error("Personal surface editor catalogue drift");
+  }
   return {
+    availablePlacements,
     editable: value.editable,
-    layout: parsePresentationSurfaceLayout(value.layout),
+    layout,
     lockReason: value.lockReason,
     resettable: value.resettable,
   };

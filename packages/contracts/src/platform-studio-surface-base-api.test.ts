@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { PRESENTATION_BILLING_STATE } from "./platform-presentation-api.js";
-import { ZEN_V1_SURFACE_CONTRACTS } from "./platform-presentation-surface-api.js";
+import {
+  getZenV1RegisteredSurfacePlacements,
+  ZEN_V1_SURFACE_CONTRACTS,
+} from "./platform-presentation-surface-api.js";
 import {
   parsePresentationSurfaceBaseMutationResponse,
   parsePresentationSurfaceBaseVersion,
@@ -64,6 +67,7 @@ describe("platform Studio surface-base API contract", () => {
           canRollback: true,
           canValidate: true,
         },
+        availablePlacements: getZenV1RegisteredSurfacePlacements(surface.surfaceId),
         currentBase: {
           basedOnVersion: 1,
           baseVersion: 2,
@@ -107,6 +111,7 @@ describe("platform Studio surface-base API contract", () => {
           canRollback: true,
           canValidate: true,
         },
+        availablePlacements: getZenV1RegisteredSurfacePlacements(surface.surfaceId),
         currentBase: {
           basedOnVersion: 1,
           baseVersion: 2,
@@ -127,6 +132,7 @@ describe("platform Studio surface-base API contract", () => {
           canRollback: true,
           canValidate: true,
         },
+        availablePlacements: getZenV1RegisteredSurfacePlacements(surface.surfaceId),
         currentBase: {
           basedOnVersion: null,
           baseVersion: 1,

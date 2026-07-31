@@ -1,5 +1,6 @@
 import {
   getPresentationSurfaceDefinition,
+  getZenV1RegisteredSurfaceInstances,
   getZenV1SurfaceContract,
   type PresentationSurfaceDefinition,
   type ZenV1SurfaceId,
@@ -103,11 +104,15 @@ export const ZEN_SURFACE_SECTION_REGISTRY = deepFreeze({
           "hr-mission-control.my-leave",
           "hr-mission-control.my-timesheets",
           "hr-mission-control.my-expenses",
+          "hr-mission-control.employment-admin",
+          "hr-mission-control.employment-history",
+          "hr-mission-control.workforce-admin",
+          "hr-mission-control.workforce-status",
         ],
       },
     ],
     surfaceBaseVersion: 1,
-    surfaceCanonicalHash: "1a0c13e923f277cc37dfae449db024e40c7bd7d0f5563bbf50ef82cdb8d507db",
+    surfaceCanonicalHash: "aa18901295a814490e96e7cf3055a435c4259ae70754534b611b3365b364c219",
     surfaceDefinitionHash: "12e135cb9be3deeef974ec5af2362d7a8e68057bdba904976a29709afe601c36",
   },
   "surface.mission-control": {
@@ -127,11 +132,16 @@ export const ZEN_SURFACE_SECTION_REGISTRY = deepFreeze({
           "mission-control.my-expenses",
           "mission-control.my-profile",
           "mission-control.direct-reports",
+          "mission-control.employment-admin",
+          "mission-control.employment-history",
+          "mission-control.workforce-admin",
+          "mission-control.workforce-status",
+          "mission-control.my-tasks",
         ],
       },
     ],
     surfaceBaseVersion: 1,
-    surfaceCanonicalHash: "d52358f33176620a8d21479732150b09673e3b177308a2d976d4dc287bd06b1c",
+    surfaceCanonicalHash: "96d415157e086ded744fe6ccbb73f9e86821fbd177682435eaa1a07f6e075bd6",
     surfaceDefinitionHash: "c75bac3fed1b604fe9ebc9f39e1ccef45b2ad34570f5200ada0e8b77ab8b71fb",
   },
 } as const satisfies Readonly<Record<ZenV1SurfaceId, ZenSurfaceSectionDefinition>>);
@@ -156,9 +166,8 @@ function assertSurfaceBinding(
   ) {
     throw new Error("Invalid Zen surface section binding");
   }
-  const expectedSectionIds = [
-    ...new Set(contract.defaultInstances.map(({ sectionId }) => sectionId)),
-  ];
+  const registeredInstances = getZenV1RegisteredSurfaceInstances(surface.id);
+  const expectedSectionIds = [...new Set(registeredInstances.map(({ sectionId }) => sectionId))];
   if (
     JSON.stringify(registration.sections.map(({ id }) => id)) !== JSON.stringify(expectedSectionIds)
   ) {
@@ -167,9 +176,7 @@ function assertSurfaceBinding(
   const registeredWidgetInstances = new Set<string>();
   for (const section of registration.sections) {
     for (const instanceId of section.widgetInstanceIds) {
-      const instance = contract.defaultInstances.find(
-        (candidate) => candidate.instanceId === instanceId,
-      );
+      const instance = registeredInstances.find((candidate) => candidate.instanceId === instanceId);
       if (
         !instance ||
         instance.sectionId !== section.id ||
@@ -180,7 +187,7 @@ function assertSurfaceBinding(
       registeredWidgetInstances.add(instanceId);
     }
   }
-  if (registeredWidgetInstances.size !== contract.defaultInstances.length) {
+  if (registeredWidgetInstances.size !== registeredInstances.length) {
     throw new Error("Invalid Zen surface section binding");
   }
 }

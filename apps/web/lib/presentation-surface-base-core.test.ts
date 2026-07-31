@@ -1,4 +1,8 @@
-import { PRESENTATION_BILLING_STATE, ZEN_V1_SURFACE_CONTRACTS } from "@esbla/contracts";
+import {
+  getZenV1RegisteredSurfacePlacements,
+  PRESENTATION_BILLING_STATE,
+  ZEN_V1_SURFACE_CONTRACTS,
+} from "@esbla/contracts";
 import { describe, expect, it } from "vitest";
 import {
   decodePresentationSurfaceBaseMutationResponse,
@@ -41,6 +45,7 @@ describe("presentation tenant-base web boundary", () => {
             canRollback: true,
             canValidate: true,
           },
+          availablePlacements: getZenV1RegisteredSurfacePlacements(surface.surfaceId),
           currentBase: versionOne,
           draft: null,
           headRowVersion: 1,

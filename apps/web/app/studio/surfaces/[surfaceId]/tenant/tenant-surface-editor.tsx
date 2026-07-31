@@ -95,7 +95,7 @@ export function TenantSurfaceEditor({
   const [state, dispatch] = useReducer(
     personalSurfaceEditorReducer,
     {
-      availablePlacements: initialWorkspace.currentBase.placements,
+      availablePlacements: initialWorkspace.availablePlacements,
       effectivePlacements:
         initialWorkspace.draft?.placements ?? initialWorkspace.currentBase.placements,
       overlayVersion: initialWorkspace.draft?.draftVersion ?? 0,
@@ -208,7 +208,7 @@ export function TenantSurfaceEditor({
       const saved = parseUpsertPresentationSurfaceDraftResponse(await response.json());
       setModel((current) => applyTenantSurfaceDraftSave(current, saved));
       dispatch({
-        availablePlacements: model.currentBase.placements,
+        availablePlacements: state.availablePlacements,
         overlayVersion: saved.draft.draftVersion,
         placements: saved.draft.placements,
         type: "replace_saved",
@@ -256,7 +256,7 @@ export function TenantSurfaceEditor({
       const published = parsePresentationSurfaceBaseMutationResponse(await response.json());
       setModel((current) => applyTenantSurfaceBaseMutation(current, published));
       dispatch({
-        availablePlacements: published.placements,
+        availablePlacements: state.availablePlacements,
         overlayVersion: 0,
         placements: published.placements,
         type: "replace_saved",
@@ -285,7 +285,7 @@ export function TenantSurfaceEditor({
       const rolledBack = parsePresentationSurfaceBaseMutationResponse(await response.json());
       setModel((current) => applyTenantSurfaceBaseMutation(current, rolledBack));
       dispatch({
-        availablePlacements: rolledBack.placements,
+        availablePlacements: state.availablePlacements,
         overlayVersion: 0,
         placements: rolledBack.placements,
         type: "replace_saved",

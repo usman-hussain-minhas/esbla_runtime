@@ -49,6 +49,8 @@ import {
   getPresentationShortcutTargetDefinition,
   getPresentationShortcutTargetServiceGroupId,
   getPresentationWidgetDefinition,
+  getZenV1RegisteredSurfaceInstances,
+  getZenV1RegisteredSurfacePlacements,
   getZenV1SurfaceContract,
   PRESENTATION_BILLING_STATE,
   PRESENTATION_SERVICE_GROUP_DEFINITIONS,
@@ -1878,13 +1880,13 @@ function validateRegisteredSurfacePlacementSubset(
   surfaceId: ZenV1SurfaceId,
   untrustedPlacements: unknown,
 ): readonly PresentationWidgetPlacement[] {
-  const contract = getZenV1SurfaceContract(surfaceId);
   const placements = parseSurfacePlacements(untrustedPlacements);
-  if (placements.length > contract.basePlacements.length) {
+  const registeredPlacements = getZenV1RegisteredSurfacePlacements(surfaceId);
+  if (placements.length > registeredPlacements.length) {
     throw new PlatformError("SETTING_INVALID", "Presentation surface instance set is invalid");
   }
   const expected = new Map(
-    contract.basePlacements.map((placement) => [
+    registeredPlacements.map((placement) => [
       placement.instanceId,
       `${placement.widgetDefinitionId}@${placement.widgetDefinitionVersion}`,
     ]),
@@ -1911,7 +1913,7 @@ function validateEligiblePersonalSurfacePlacements(
 ): readonly PresentationWidgetPlacement[] {
   const placements = validateRegisteredSurfacePlacementSubset(surfaceId, untrustedPlacements);
   const expected = new Map(
-    basePlacements
+    getZenV1RegisteredSurfacePlacements(surfaceId)
       .filter(({ widgetDefinitionId }) => eligibleWidgetDefinitionIds.has(widgetDefinitionId))
       .map((placement) => [
         placement.instanceId,
@@ -1933,7 +1935,9 @@ function validateEligiblePersonalSurfacePlacements(
     getZenV1SurfaceContract(surfaceId)
       .defaultInstances.filter(
         ({ instanceId, placementPolicy }) =>
-          placementPolicy === "default_required" && expected.has(instanceId),
+          placementPolicy === "default_required" &&
+          expected.has(instanceId) &&
+          basePlacements.some((placement) => placement.instanceId === instanceId),
       )
       .map(({ instanceId }) => instanceId),
   );
@@ -2170,12 +2174,33 @@ async function rebaseSurfaceOverlay(
   const currentByInstance = new Map(
     base.basePlacements.map((placement) => [placement.instanceId, placement]),
   );
+  const registeredByInstance = new Map(
+    getZenV1RegisteredSurfacePlacements(surfaceId).map((placement) => [
+      placement.instanceId,
+      placement,
+    ]),
+  );
   const rebased = overlay.placements.map((personal) => {
     const historicalPlacement = historicalByInstance.get(personal.instanceId);
     const current = currentByInstance.get(personal.instanceId);
+    const registered = registeredByInstance.get(personal.instanceId);
+    if (!historicalPlacement || !current) {
+      if (
+        !registered ||
+        personal.widgetDefinitionId !== registered.widgetDefinitionId ||
+        personal.widgetDefinitionVersion !== registered.widgetDefinitionVersion
+      ) {
+        throw new PlatformError(
+          "SETTING_INVALID",
+          "Presentation surface overlay rebase conflicted",
+          {
+            conflict: "instance_binding_changed",
+          },
+        );
+      }
+      return personal;
+    }
     if (
-      !historicalPlacement ||
-      !current ||
       historicalPlacement.widgetDefinitionId !== current.widgetDefinitionId ||
       personal.widgetDefinitionId !== current.widgetDefinitionId ||
       historicalPlacement.widgetDefinitionVersion !== current.widgetDefinitionVersion ||
@@ -2504,7 +2529,7 @@ async function loadEligibleWidgetDefinitionIds(
 ): Promise<ReadonlySet<string>> {
   const definitions = [
     ...new Map(
-      getZenV1SurfaceContract(surfaceId).basePlacements.map(
+      getZenV1RegisteredSurfaceInstances(surfaceId).map(
         ({ widgetDefinitionId, widgetDefinitionVersion }) => [
           `${widgetDefinitionId}@${widgetDefinitionVersion}`,
           { widgetDefinitionId, widgetDefinitionVersion },
@@ -2611,10 +2636,82 @@ async function loadEligibleWidgetDefinitionIds(
   return eligible;
 }
 
-async function loadOwnPresentationSurfaceLayout(
+function eligibleRegisteredSurfacePlacements(
+  surfaceId: ZenV1SurfaceId,
+  eligibleWidgetDefinitionIds: ReadonlySet<string>,
+): readonly PresentationWidgetPlacement[] {
+  return getZenV1RegisteredSurfacePlacements(surfaceId).filter(({ widgetDefinitionId }) =>
+    eligibleWidgetDefinitionIds.has(widgetDefinitionId),
+  );
+}
+
+async function loadTenantEligibleWidgetDefinitionIds(
   transaction: TenantTransaction,
   surfaceId: ZenV1SurfaceId,
-): Promise<PresentationSurfaceLayout> {
+  authorityLock: "none" | "share" = "none",
+): Promise<ReadonlySet<string>> {
+  const definitions = [
+    ...new Map(
+      getZenV1RegisteredSurfaceInstances(surfaceId).map(
+        ({ widgetDefinitionId, widgetDefinitionVersion }) => [
+          `${widgetDefinitionId}@${widgetDefinitionVersion}`,
+          getPresentationWidgetDefinition(widgetDefinitionId, widgetDefinitionVersion),
+        ],
+      ),
+    ).values(),
+  ];
+  const serviceKeys = [
+    ...new Set(
+      definitions.flatMap((definition) =>
+        definition.activationPolicy === "any_provider"
+          ? definition.providerEligibility.map(({ activationServiceKey }) => activationServiceKey)
+          : [definition.activationServiceKey],
+      ),
+    ),
+  ].sort();
+  const activeServiceKeys = new Set<string>();
+  if (authorityLock === "share") {
+    for (const serviceKey of serviceKeys) {
+      const activation = await transaction.client.query<{ activation_state: string | null }>(
+        `SELECT public.esbla_lock_service_activation($1, $2, $3) AS activation_state`,
+        [transaction.context.tenantId, transaction.context.actorPrincipalId, serviceKey],
+      );
+      if (activation.rows[0]?.activation_state === "active") activeServiceKeys.add(serviceKey);
+    }
+  } else if (serviceKeys.length > 0) {
+    const activations = await transaction.client.query<{ service_key: string }>(
+      `SELECT service_key
+       FROM service_activations
+       WHERE tenant_id = $1 AND service_key = ANY($2::text[]) AND state = 'active'
+       ORDER BY service_key`,
+      [transaction.context.tenantId, serviceKeys],
+    );
+    for (const { service_key: serviceKey } of activations.rows) {
+      activeServiceKeys.add(serviceKey);
+    }
+  }
+  return new Set(
+    definitions
+      .filter((definition) =>
+        definition.activationPolicy === "any_provider"
+          ? definition.providerEligibility.some(({ activationServiceKey }) =>
+              activeServiceKeys.has(activationServiceKey),
+            )
+          : activeServiceKeys.has(definition.activationServiceKey),
+      )
+      .map(({ id }) => id),
+  );
+}
+
+async function loadOwnPresentationSurfaceState(
+  transaction: TenantTransaction,
+  surfaceId: ZenV1SurfaceId,
+): Promise<
+  Readonly<{
+    eligibleWidgetDefinitionIds: ReadonlySet<string>;
+    layout: PresentationSurfaceLayout;
+  }>
+> {
   assertOwnPresentationPolicy(
     transaction,
     "platform.presentation.layouts.read_own",
@@ -2637,7 +2734,17 @@ async function loadOwnPresentationSurfaceLayout(
   if (surfaceId === "surface.hr.mission-control" && eligibleWidgetDefinitionIds.size === 0) {
     throw new PlatformError("POLICY_DENIED", "Presentation surface is not currently eligible");
   }
-  return surfaceLayoutResponse(surfaceId, base, overlay, eligibleWidgetDefinitionIds);
+  return {
+    eligibleWidgetDefinitionIds,
+    layout: surfaceLayoutResponse(surfaceId, base, overlay, eligibleWidgetDefinitionIds),
+  };
+}
+
+async function loadOwnPresentationSurfaceLayout(
+  transaction: TenantTransaction,
+  surfaceId: ZenV1SurfaceId,
+): Promise<PresentationSurfaceLayout> {
+  return (await loadOwnPresentationSurfaceState(transaction, surfaceId)).layout;
 }
 
 export async function getOwnPresentationSurfaceLayout(
@@ -2662,7 +2769,10 @@ export async function getOwnPresentationPersonalSurfaceEditorWorkspace(
     pool,
     context,
     async (transaction) => {
-      const layout = await loadOwnPresentationSurfaceLayout(transaction, surfaceId);
+      const { eligibleWidgetDefinitionIds, layout } = await loadOwnPresentationSurfaceState(
+        transaction,
+        surfaceId,
+      );
       const personalization = await loadSurfacePersonalizationSetting(
         transaction,
         surfaceId,
@@ -2678,6 +2788,10 @@ export async function getOwnPresentationPersonalSurfaceEditorWorkspace(
       );
       const editable = personalization.enabled && writeCapable;
       return {
+        availablePlacements: eligibleRegisteredSurfacePlacements(
+          surfaceId,
+          eligibleWidgetDefinitionIds,
+        ),
         editable,
         layout,
         lockReason: editable
@@ -3292,6 +3406,25 @@ function parseTenantBasePlacements(
   }
 }
 
+function assertTenantEligibleSurfacePlacements(
+  placements: readonly PresentationWidgetPlacement[],
+  eligibleWidgetDefinitionIds: ReadonlySet<string>,
+  retainedInstanceIds: ReadonlySet<string> = new Set(),
+): void {
+  if (
+    placements.some(
+      ({ instanceId, widgetDefinitionId }) =>
+        !retainedInstanceIds.has(instanceId) &&
+        !eligibleWidgetDefinitionIds.has(widgetDefinitionId),
+    )
+  ) {
+    throw new PlatformError(
+      "POLICY_DENIED",
+      "Presentation surface contains an inactive service widget",
+    );
+  }
+}
+
 export async function getTenantPresentationSurfaceBaseWorkspace(
   pool: Pool,
   context: OperationContext,
@@ -3309,13 +3442,32 @@ export async function getTenantPresentationSurfaceBaseWorkspace(
       const actions = await currentStudioSurfaceBaseActions(transaction);
       const stored = await loadStoredSurfaceBase(transaction, surfaceId);
       const current = stored ?? codeDefaultSurfaceBase(surfaceId);
+      const eligibleWidgetDefinitionIds = await loadTenantEligibleWidgetDefinitionIds(
+        transaction,
+        surfaceId,
+      );
+      const draft = (await loadSurfaceDraft(transaction, surfaceId)) ?? null;
+      const retainedInstanceIds = new Set(
+        [...current.basePlacements, ...(draft?.placements ?? [])].map(
+          ({ instanceId }) => instanceId,
+        ),
+      );
       const history = stored
         ? await loadSurfaceHistory(transaction, surfaceId)
         : [surfaceBaseVersion(surfaceId, current)];
       return {
         actions,
+        availablePlacements: eligibleRegisteredSurfacePlacements(
+          surfaceId,
+          new Set([
+            ...eligibleWidgetDefinitionIds,
+            ...getZenV1RegisteredSurfacePlacements(surfaceId)
+              .filter(({ instanceId }) => retainedInstanceIds.has(instanceId))
+              .map(({ widgetDefinitionId }) => widgetDefinitionId),
+          ]),
+        ),
         currentBase: surfaceBaseVersion(surfaceId, current),
-        draft: (await loadSurfaceDraft(transaction, surfaceId)) ?? null,
+        draft,
         headRowVersion: current.headRowVersion,
         history,
       };
@@ -3347,6 +3499,11 @@ export async function upsertTenantPresentationSurfaceDraft(
         transaction,
         "platform.studio.surface_base.draft",
         surfaceId,
+      );
+      const eligibleWidgetDefinitionIds = await loadTenantEligibleWidgetDefinitionIds(
+        transaction,
+        surfaceId,
+        "share",
       );
       const subjectId = surfaceBaseSubjectId(context, surfaceId);
       const replay = await loadPresentationMutationReplay(transaction, {
@@ -3387,6 +3544,11 @@ export async function upsertTenantPresentationSurfaceDraft(
         transaction,
         surfaceId,
         input.expectedHeadRowVersion,
+      );
+      assertTenantEligibleSurfacePlacements(
+        placements,
+        eligibleWidgetDefinitionIds,
+        new Set(base.basePlacements.map(({ instanceId }) => instanceId)),
       );
       const current = await loadSurfaceDraft(transaction, surfaceId, "update");
       const currentVersion = current?.draftVersion ?? 0;
@@ -3512,14 +3674,25 @@ export async function validateTenantPresentationSurfaceDraft(
         "platform.studio.surface_base.validate",
         surfaceId,
       );
+      const eligibleWidgetDefinitionIds = await loadTenantEligibleWidgetDefinitionIds(
+        transaction,
+        surfaceId,
+        "share",
+      );
       const { base, draft } = await loadExactDraftAndHead(transaction, surfaceId, input, "share");
+      const retainedInstanceIds = new Set(base.basePlacements.map(({ instanceId }) => instanceId));
+      const inactiveServiceWidget = draft.placements.some(
+        ({ instanceId, widgetDefinitionId }) =>
+          !retainedInstanceIds.has(instanceId) &&
+          !eligibleWidgetDefinitionIds.has(widgetDefinitionId),
+      );
       return {
         billingState: PRESENTATION_BILLING_STATE,
-        diagnostics: [],
+        diagnostics: inactiveServiceWidget ? ["inactive_service_widget"] : [],
         draftVersion: draft.draftVersion,
         headRowVersion: base.headRowVersion,
         preview: draft.placements,
-        valid: true,
+        valid: !inactiveServiceWidget,
       };
     },
     { migrationBarrier: "shared" },
@@ -3579,7 +3752,17 @@ export async function publishTenantPresentationSurfaceDraft(
       });
       if (replay) return parseReplayBaseMutation(replay, surfaceId);
 
+      const eligibleWidgetDefinitionIds = await loadTenantEligibleWidgetDefinitionIds(
+        transaction,
+        surfaceId,
+        "share",
+      );
       const { base, draft } = await loadExactDraftAndHead(transaction, surfaceId, input, "update");
+      assertTenantEligibleSurfacePlacements(
+        draft.placements,
+        eligibleWidgetDefinitionIds,
+        new Set(base.basePlacements.map(({ instanceId }) => instanceId)),
+      );
       const nextBaseVersion = base.baseVersion + 1;
       const nextHeadRowVersion = base.headRowVersion + 1;
       await transaction.client.query(
@@ -3681,6 +3864,11 @@ export async function rollbackTenantPresentationSurfaceBase(
       });
       if (replay) return parseReplayBaseMutation(replay, surfaceId);
 
+      const eligibleWidgetDefinitionIds = await loadTenantEligibleWidgetDefinitionIds(
+        transaction,
+        surfaceId,
+        "share",
+      );
       const base = await loadStoredSurfaceBase(transaction, surfaceId, "update");
       if (!base || base.headRowVersion !== input.expectedHeadRowVersion) {
         throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface base head has changed", {
@@ -3709,6 +3897,11 @@ export async function rollbackTenantPresentationSurfaceBase(
         throw new PlatformError("IDEMPOTENCY_CONFLICT", "Surface rollback source is unavailable");
       }
       parseTenantBasePlacements(surfaceId, source.placements);
+      assertTenantEligibleSurfacePlacements(
+        source.placements,
+        eligibleWidgetDefinitionIds,
+        new Set(base.basePlacements.map(({ instanceId }) => instanceId)),
+      );
       const nextBaseVersion = base.baseVersion + 1;
       const nextHeadRowVersion = base.headRowVersion + 1;
       await transaction.client.query(

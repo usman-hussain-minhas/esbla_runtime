@@ -81,7 +81,7 @@ export function PersonalSurfaceEditor({
   const [state, dispatch] = useReducer(
     personalSurfaceEditorReducer,
     {
-      availablePlacements: initialWorkspace.layout.basePlacements,
+      availablePlacements: initialWorkspace.availablePlacements,
       effectivePlacements: initialWorkspace.layout.effectivePlacements,
       overlayVersion: initialWorkspace.layout.overlayVersion,
       surfaceId: initialWorkspace.layout.surfaceId,
@@ -175,7 +175,7 @@ export function PersonalSurfaceEditor({
       }
       const saved = parseUpdatePresentationSurfaceOverlayResponse(await response.json());
       dispatch({
-        availablePlacements: saved.basePlacements,
+        availablePlacements: state.availablePlacements,
         overlayVersion: saved.overlayVersion,
         placements: saved.effectivePlacements,
         type: "replace_saved",
@@ -216,7 +216,7 @@ export function PersonalSurfaceEditor({
       }
       const restored = parseResetPresentationSurfaceOverlayResponse(await response.json());
       dispatch({
-        availablePlacements: restored.basePlacements,
+        availablePlacements: state.availablePlacements,
         overlayVersion: restored.overlayVersion,
         placements: restored.effectivePlacements,
         type: "replace_saved",

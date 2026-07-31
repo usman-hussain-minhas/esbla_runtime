@@ -4,7 +4,10 @@ import { ArrowRight, List, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { LeaveApprovalAction } from "../../../../components/leave-approval-action";
-import { loadAssignedProviderWidgetView } from "../../../../lib/assigned-provider-core";
+import {
+  AssignedProviderUnavailableError,
+  loadAssignedProviderWidgetView,
+} from "../../../../lib/assigned-provider-core";
 import { loadOwnAttendance } from "../../../../lib/hr-attendance";
 import { loadEmploymentList } from "../../../../lib/hr-employment-record";
 import { getAssignedExpenseClaims, loadOwnExpenseClaims } from "../../../../lib/hr-expense-claim";
@@ -532,6 +535,336 @@ export async function EmploymentFactsWidget({ placement, surfaceId }: Representa
   return (
     <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
       {content}
+    </WidgetFrame>
+  );
+}
+
+async function workforceQueueContent(
+  definition: PresentationWidgetDefinition,
+  status: "active" | "draft" | "terminated",
+): Promise<Readonly<{ content: ReactNode; state: PresentationWidgetState }>> {
+  const result = await loadAuthorizedWorkforceList({ status }, "workforce");
+  const page =
+    result.status === "success" && result.page.kind === "workforce" ? result.page : undefined;
+  if (!page) {
+    return {
+      content:
+        result.status === "success" ? (
+          <FailureState
+            content={{
+              message: "The workforce queue could not be completed.",
+              title: "Workforce queue unavailable",
+            }}
+            definition={definition}
+            kind="operational_error"
+          />
+        ) : (
+          <FailureState
+            content={{ message: result.message, title: result.title }}
+            definition={definition}
+            kind={result.status}
+          />
+        ),
+      state:
+        result.status === "success"
+          ? "operational_error"
+          : presentationStateForFailure(result.status),
+    };
+  }
+  if (page.items.length === 0) {
+    return {
+      content: (
+        <EmptyState
+          definition={definition}
+          description={`No ${status} workforce profiles require attention.`}
+          heading={`No ${status} profiles`}
+        />
+      ),
+      state: "empty",
+    };
+  }
+  return {
+    content: (
+      <PresentationWidgetStateContent state="populated">
+        <ol aria-label={`${status} workforce profiles`} className="zen-widget-list">
+          {page.items.slice(0, 5).map((profile) => (
+            <li key={profile.workerProfileId}>
+              <Link
+                className="zen-widget-row"
+                href={`/workspace/hr/profile/by-id/${encodeURIComponent(
+                  profile.workerProfileId,
+                )}?returnContext=admin`}
+              >
+                <span className={`leave-status leave-status-${profile.workforceStatus}`}>
+                  {profile.workforceStatus}
+                </span>
+                <span>
+                  <strong>{profile.employeeNumber ?? "Employee number not assigned"}</strong>
+                  <p>
+                    {profile.principalLinked ? "Principal connected" : "Principal not connected"}
+                  </p>
+                </span>
+                <ArrowRight aria-hidden="true" size={15} />
+              </Link>
+            </li>
+          ))}
+        </ol>
+      </PresentationWidgetStateContent>
+    ),
+    state: "populated",
+  };
+}
+
+export async function WorkforceAdminQueueWidget({
+  placement,
+  surfaceId,
+}: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.workforce.admin-queue");
+  const { content, state } = await workforceQueueContent(definition, "draft");
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
+}
+
+export async function WorkforceStatusReportingWidget({
+  placement,
+  surfaceId,
+}: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(
+    surfaceId,
+    placement,
+    "hr.workforce.status-reporting",
+  );
+  const results = await Promise.all(
+    (["active", "draft", "terminated"] as const).map(async (status) => ({
+      result: await loadAuthorizedWorkforceList({ status }, "workforce"),
+      status,
+    })),
+  );
+  const failure = results.find(
+    ({ result }) => result.status !== "success" || result.page.kind !== "workforce",
+  );
+  if (failure) {
+    const result = failure.result;
+    const kind = result.status === "success" ? "operational_error" : result.status;
+    return (
+      <WidgetFrame
+        definition={definition}
+        placement={placement}
+        state={presentationStateForFailure(kind)}
+        surfaceId={surfaceId}
+      >
+        <FailureState
+          content={
+            result.status === "success"
+              ? {
+                  message: "The bounded workforce status snapshot could not be completed.",
+                  title: "Workforce status unavailable",
+                }
+              : { message: result.message, title: result.title }
+          }
+          definition={definition}
+          kind={kind}
+        />
+      </WidgetFrame>
+    );
+  }
+  const summaries = results.map(({ result, status }) => {
+    if (result.status !== "success" || result.page.kind !== "workforce") {
+      throw new Error("Workforce status registry binding is invalid");
+    }
+    return {
+      count: result.page.items.length,
+      hasMore: result.page.nextCursor !== null,
+      status,
+    };
+  });
+  const empty = summaries.every(({ count }) => count === 0);
+  return (
+    <WidgetFrame
+      definition={definition}
+      placement={placement}
+      state={empty ? "empty" : "populated"}
+      surfaceId={surfaceId}
+    >
+      {empty ? (
+        <EmptyState
+          definition={definition}
+          description="No workforce profiles are available through the current authorized view."
+          heading="No workforce status data"
+        />
+      ) : (
+        <PresentationWidgetStateContent state="populated">
+          <dl className="zen-widget-summary">
+            {summaries.map(({ count, hasMore, status }) => (
+              <div key={status}>
+                <dt>{status}</dt>
+                <dd>{hasMore ? `${count}+` : count}</dd>
+              </div>
+            ))}
+          </dl>
+        </PresentationWidgetStateContent>
+      )}
+    </WidgetFrame>
+  );
+}
+
+async function employmentListWidget(
+  definition: PresentationWidgetDefinition,
+  mode: "admin" | "history",
+): Promise<Readonly<{ content: ReactNode; state: PresentationWidgetState }>> {
+  const result = await loadEmploymentList({ pageSize: "5" });
+  if (result.status !== "success") {
+    return {
+      content: <FailureState content={result} definition={definition} kind={result.kind} />,
+      state: presentationStateForFailure(result.kind),
+    };
+  }
+  if (result.page.items.length === 0) {
+    return {
+      content: (
+        <EmptyState
+          definition={definition}
+          description={
+            mode === "admin"
+              ? "No employment records are available for administration."
+              : "Employment history will appear after an authorized record exists."
+          }
+          heading={
+            mode === "admin" ? "No employment administration queue" : "No employment history"
+          }
+        />
+      ),
+      state: "empty",
+    };
+  }
+  return {
+    content: (
+      <PresentationWidgetStateContent state="populated">
+        <ol
+          aria-label={mode === "admin" ? "Employment administration queue" : "Employment history"}
+          className="zen-widget-list"
+        >
+          {result.page.items.slice(0, 5).map((record) => (
+            <li key={record.employmentRecordId}>
+              <Link
+                className="zen-widget-row"
+                href={
+                  mode === "admin"
+                    ? "/workspace/hr/employment/admin"
+                    : `/workspace/hr/employment/by-id/${encodeURIComponent(
+                        record.employmentRecordId,
+                      )}`
+                }
+              >
+                <span className={`leave-status leave-status-${record.status}`}>
+                  {record.status}
+                </span>
+                <span>
+                  <strong>{record.currentVersion?.positionReference ?? "Employment record"}</strong>
+                  <p>
+                    {record.currentVersion
+                      ? `${record.currentVersion.effectiveFrom}–${
+                          record.currentVersion.effectiveTo ?? "present"
+                        }`
+                      : "No effective version"}
+                  </p>
+                </span>
+                <ArrowRight aria-hidden="true" size={15} />
+              </Link>
+            </li>
+          ))}
+        </ol>
+      </PresentationWidgetStateContent>
+    ),
+    state: "populated",
+  };
+}
+
+export async function EmploymentAdminQueueWidget({
+  placement,
+  surfaceId,
+}: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.employment.admin-queue");
+  const { content, state } = await employmentListWidget(definition, "admin");
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
+}
+
+export async function EmploymentHistoryWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.employment.history");
+  const { content, state } = await employmentListWidget(definition, "history");
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
+}
+
+export async function WorkspaceTasksWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "workspace.tasks.mine");
+  let page: Awaited<ReturnType<typeof getAssignedWorkspaceTasks>>;
+  try {
+    page = await getAssignedWorkspaceTasks();
+  } catch (error) {
+    const inactive = error instanceof AssignedProviderUnavailableError;
+    return (
+      <WidgetFrame
+        definition={definition}
+        placement={placement}
+        state={inactive ? "service_inactive" : "unavailable"}
+        surfaceId={surfaceId}
+      >
+        <FailureState
+          content={{
+            message: inactive
+              ? "Workspace Tasks is not active for this tenant."
+              : "Assigned tasks could not be loaded. No private error detail is shown.",
+            title: inactive ? "Workspace Tasks inactive" : "Tasks unavailable",
+          }}
+          definition={definition}
+          kind={inactive ? "inactive" : "dependency_unavailable"}
+        />
+      </WidgetFrame>
+    );
+  }
+  const items = page.items.slice(0, 5);
+  return (
+    <WidgetFrame
+      definition={definition}
+      placement={placement}
+      state={items.length === 0 ? "empty" : "populated"}
+      surfaceId={surfaceId}
+    >
+      {items.length === 0 ? (
+        <EmptyState
+          definition={definition}
+          description="Tasks assigned to you will appear here."
+          heading="No assigned tasks"
+        />
+      ) : (
+        <PresentationWidgetStateContent state="populated">
+          <ol aria-label="My assigned tasks" className="zen-widget-list">
+            {items.map((item) => (
+              <li key={item.workItemId}>
+                <Link className="zen-widget-row" href="/workspace/tasks">
+                  <span className="leave-status leave-status-submitted">Task</span>
+                  <span>
+                    <strong>{item.title}</strong>
+                    <p>{item.dueOn ? `Due ${item.dueOn}` : item.createdByDisplayName}</p>
+                  </span>
+                  <ArrowRight aria-hidden="true" size={15} />
+                </Link>
+              </li>
+            ))}
+          </ol>
+        </PresentationWidgetStateContent>
+      )}
     </WidgetFrame>
   );
 }
