@@ -8,12 +8,14 @@ import {
   AssignedProviderUnavailableError,
   loadAssignedProviderWidgetView,
 } from "../../../../lib/assigned-provider-core";
-import { loadOwnAttendance } from "../../../../lib/hr-attendance";
+import { loadOwnAttendance, loadReportAttendance } from "../../../../lib/hr-attendance";
+import { hasAttendanceAction } from "../../../../lib/hr-attendance-core";
 import { loadEmploymentList } from "../../../../lib/hr-employment-record";
 import { getAssignedExpenseClaims, loadOwnExpenseClaims } from "../../../../lib/hr-expense-claim";
 import { getAssignedLeaveRequests } from "../../../../lib/hr-leave-assigned-list";
 import { buildHrLeaveDetailHref } from "../../../../lib/hr-leave-navigation-core";
-import { loadOwnShifts } from "../../../../lib/hr-shift-assignment";
+import { loadOwnShifts, loadRosterShifts } from "../../../../lib/hr-shift-assignment";
+import { hasShiftAction } from "../../../../lib/hr-shift-assignment-core";
 import { getAssignedTimesheets, loadOwnTimesheets } from "../../../../lib/hr-timesheet";
 import { loadOwnWorkforceProfile } from "../../../../lib/hr-workforce-profile";
 import { loadAuthorizedWorkforceList } from "../../../../lib/hr-workforce-profile-list";
@@ -882,6 +884,235 @@ function formatShiftInstant(value: string, timeZone: string): string {
   } catch {
     return value;
   }
+}
+
+const DISCOVERY_ROSTER_VERSION_ID = "00000000-0000-4000-8000-000000000000";
+
+function missingCurrentShiftAuthority(
+  actions: Parameters<typeof hasShiftAction>[0],
+  required: readonly Parameters<typeof hasShiftAction>[1][],
+): boolean {
+  return required.some((action) => !hasShiftAction(actions, action));
+}
+
+async function rosterWidgetAuthority(
+  definition: PresentationWidgetDefinition,
+  mode: "overview" | "publish",
+): Promise<Readonly<{ content: ReactNode; state: PresentationWidgetState }>> {
+  const result = await loadRosterShifts({
+    rosterVersionId: DISCOVERY_ROSTER_VERSION_ID,
+    status: "active",
+  });
+  const required =
+    mode === "publish"
+      ? (["list_roster", "view_detail", "create_roster", "assign", "cancel", "publish"] as const)
+      : (["list_roster", "view_detail"] as const);
+  // The exact zero roster is a non-disclosing authority probe; only its expected miss is usable.
+  const unexpectedReadFailure = result.status === "error" && result.kind !== "not_found";
+  if (unexpectedReadFailure || missingCurrentShiftAuthority(result.authorizedActions, required)) {
+    const kind = unexpectedReadFailure && result.status === "error" ? result.kind : "denied";
+    return {
+      content: (
+        <FailureState
+          content={
+            unexpectedReadFailure && result.status === "error"
+              ? { message: result.message, title: result.title }
+              : {
+                  message: "Your current authority does not permit this roster view.",
+                  title: "Roster unavailable",
+                }
+          }
+          definition={definition}
+          kind={kind}
+        />
+      ),
+      state: presentationStateForFailure(kind),
+    };
+  }
+  if (mode === "overview") {
+    return {
+      content: (
+        <EmptyState
+          definition={definition}
+          description="Open the roster workspace and select an exact roster version to inspect its bounded assignments."
+          heading="Select an exact roster"
+        />
+      ),
+      state: "empty",
+    };
+  }
+  const commands = [
+    ["create_roster", "Create draft roster"],
+    ["assign", "Assign worker"],
+    ["publish", "Publish exact roster"],
+    ["cancel", "Cancel assignment"],
+  ] as const;
+  return {
+    content: (
+      <PresentationWidgetStateContent state="populated">
+        <ol aria-label="Available roster commands" className="zen-widget-list">
+          {commands.map(([action, label]) => (
+            <li key={action}>
+              <Link className="zen-widget-row" href="/workspace/hr/shifts/reports">
+                <span className="leave-status leave-status-active">Available</span>
+                <span>
+                  <strong>{label}</strong>
+                  <p>Opens the exact roster workspace</p>
+                </span>
+                <ArrowRight aria-hidden="true" size={15} />
+              </Link>
+            </li>
+          ))}
+        </ol>
+      </PresentationWidgetStateContent>
+    ),
+    state: "populated",
+  };
+}
+
+export async function RosterOverviewWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.shift.roster-overview");
+  const { content, state } = await rosterWidgetAuthority(definition, "overview");
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
+}
+
+export async function RosterPublishQueueWidget({
+  placement,
+  surfaceId,
+}: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.shift.publish-queue");
+  const { content, state } = await rosterWidgetAuthority(definition, "publish");
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
+}
+
+function missingCurrentAttendanceAuthority(
+  actions: Parameters<typeof hasAttendanceAction>[0],
+  required: readonly Parameters<typeof hasAttendanceAction>[1][],
+): boolean {
+  return required.some((action) => !hasAttendanceAction(actions, action));
+}
+
+async function attendanceReportWidget(
+  definition: PresentationWidgetDefinition,
+  mode: "corrections" | "reports",
+): Promise<Readonly<{ content: ReactNode; state: PresentationWidgetState }>> {
+  const result = await loadReportAttendance({ pageSize: "5" });
+  const required =
+    mode === "corrections"
+      ? (["list_reports", "view_detail", "record_manual", "correct"] as const)
+      : (["list_reports", "view_detail"] as const);
+  if (
+    result.status === "error" ||
+    missingCurrentAttendanceAuthority(result.authorizedActions, required)
+  ) {
+    const kind =
+      result.status === "error"
+        ? result.kind
+        : ("denied" satisfies Parameters<typeof presentationStateForFailure>[0]);
+    return {
+      content: (
+        <FailureState
+          content={
+            result.status === "error"
+              ? { message: result.message, title: result.title }
+              : {
+                  message: "Your current authority does not permit this Attendance view.",
+                  title: "Attendance unavailable",
+                }
+          }
+          definition={definition}
+          kind={kind}
+        />
+      ),
+      state: presentationStateForFailure(kind),
+    };
+  }
+  if (result.page.items.length === 0) {
+    return {
+      content: (
+        <EmptyState
+          definition={definition}
+          description={
+            mode === "corrections"
+              ? "Authorized Attendance facts that can receive evidence-backed corrections will appear here."
+              : "Authorized report Attendance facts will appear here."
+          }
+          heading={mode === "corrections" ? "No correction queue" : "No report Attendance"}
+        />
+      ),
+      state: "empty",
+    };
+  }
+  return {
+    content: (
+      <PresentationWidgetStateContent state="populated">
+        <ol
+          aria-label={mode === "corrections" ? "Attendance correction queue" : "Attendance reports"}
+          className="zen-widget-list"
+        >
+          {result.page.items.slice(0, 5).map((observation) => (
+            <li key={observation.attendanceObservationId}>
+              <Link
+                className="zen-widget-row"
+                href={`/workspace/hr/attendance/by-id/${encodeURIComponent(
+                  observation.attendanceObservationId,
+                )}?returnTo=reports`}
+              >
+                <span className="leave-status leave-status-active">
+                  {observation.observationKind === "presence_start" ? "Start" : "End"}
+                </span>
+                <span>
+                  <strong>{new Date(observation.observedAt).toLocaleString("en")}</strong>
+                  <p>
+                    {mode === "corrections"
+                      ? "Open immutable correction history"
+                      : `Worker ${observation.workerProfileId}`}
+                  </p>
+                </span>
+                <ArrowRight aria-hidden="true" size={15} />
+              </Link>
+            </li>
+          ))}
+        </ol>
+      </PresentationWidgetStateContent>
+    ),
+    state: "populated",
+  };
+}
+
+export async function AttendanceReportsWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.attendance.reports");
+  const { content, state } = await attendanceReportWidget(definition, "reports");
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
+}
+
+export async function AttendanceCorrectionQueueWidget({
+  placement,
+  surfaceId,
+}: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(
+    surfaceId,
+    placement,
+    "hr.attendance.correction-queue",
+  );
+  const { content, state } = await attendanceReportWidget(definition, "corrections");
+  return (
+    <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
+      {content}
+    </WidgetFrame>
+  );
 }
 
 export async function PublishedShiftsWidget({ placement, surfaceId }: RepresentativeWidgetProps) {

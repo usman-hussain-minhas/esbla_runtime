@@ -10,7 +10,9 @@ import {
   HrLeaveMyRequestsWidgetLoading,
 } from "../widgets/hr-leave-my-requests-widget";
 import {
+  AttendanceCorrectionQueueWidget,
   AttendanceObservationsWidget,
+  AttendanceReportsWidget,
   DirectReportsWidget,
   EmploymentAdminQueueWidget,
   EmploymentFactsWidget,
@@ -19,6 +21,8 @@ import {
   MyWorkWidget,
   PublishedShiftsWidget,
   RepresentativeWidgetLoading,
+  RosterOverviewWidget,
+  RosterPublishQueueWidget,
   TimesheetsWidget,
   WorkforceAdminQueueWidget,
   WorkforceProfileWidget,
@@ -32,13 +36,17 @@ interface ZenSurfaceWidgetProps {
 }
 
 const COMPONENTS = Object.freeze({
+  "hr.attendance.correction-queue": AttendanceCorrectionQueueWidget,
   "hr.attendance.my-observations": AttendanceObservationsWidget,
+  "hr.attendance.reports": AttendanceReportsWidget,
   "hr.employment.admin-queue": EmploymentAdminQueueWidget,
   "hr.employment.current-facts": EmploymentFactsWidget,
   "hr.employment.history": EmploymentHistoryWidget,
   "hr.expense.mine": ExpenseClaimsWidget,
   "hr.leave.my-requests": HrLeaveMyRequestsWidget,
   "hr.shift.my-published": PublishedShiftsWidget,
+  "hr.shift.publish-queue": RosterPublishQueueWidget,
+  "hr.shift.roster-overview": RosterOverviewWidget,
   "hr.timesheet.mine": TimesheetsWidget,
   "hr.workforce.admin-queue": WorkforceAdminQueueWidget,
   "hr.workforce.direct-reports": DirectReportsWidget,

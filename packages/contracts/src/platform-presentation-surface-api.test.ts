@@ -147,12 +147,20 @@ describe("platform presentation surface API contract", () => {
         "hr.workforce.admin-queue",
         "hr.workforce.status-reporting",
         "workspace.tasks.mine",
+        "hr.shift.roster-overview",
+        "hr.shift.publish-queue",
+        "hr.attendance.reports",
+        "hr.attendance.correction-queue",
       ],
       [
         "hr.employment.admin-queue",
         "hr.employment.history",
         "hr.workforce.admin-queue",
         "hr.workforce.status-reporting",
+        "hr.shift.roster-overview",
+        "hr.shift.publish-queue",
+        "hr.attendance.reports",
+        "hr.attendance.correction-queue",
       ],
     ]);
     expect(ZEN_V1_SURFACE_CONTRACTS.map(({ defaultInstances }) => defaultInstances[0])).toEqual([
