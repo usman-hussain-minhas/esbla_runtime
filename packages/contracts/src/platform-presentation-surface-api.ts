@@ -161,6 +161,18 @@ const UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES = deepFreeze([
     widgetDefinitionVersion: 1,
   },
   {
+    column: 5,
+    columnSpan: 4,
+    instanceId: "mission-control.my-attendance",
+    placementPolicy: "default_optional",
+    row: 4,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 4,
+    widgetDefinitionId: "hr.attendance.my-observations",
+    widgetDefinitionVersion: 1,
+  },
+  {
     column: 9,
     columnSpan: 4,
     instanceId: "mission-control.my-timesheets",
@@ -173,6 +185,18 @@ const UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES = deepFreeze([
     widgetDefinitionVersion: 1,
   },
   {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "mission-control.my-expenses",
+    placementPolicy: "default_optional",
+    row: 7,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 6,
+    widgetDefinitionId: "hr.expense.mine",
+    widgetDefinitionVersion: 1,
+  },
+  {
     column: 5,
     columnSpan: 4,
     instanceId: "mission-control.my-profile",
@@ -182,6 +206,18 @@ const UNIVERSAL_MISSION_CONTROL_DEFAULT_INSTANCES = deepFreeze([
     sectionId: "overview",
     sourceOrder: 7,
     widgetDefinitionId: "hr.workforce.my-profile",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 9,
+    columnSpan: 4,
+    instanceId: "mission-control.direct-reports",
+    placementPolicy: "default_optional",
+    row: 7,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 8,
+    widgetDefinitionId: "hr.workforce.direct-reports",
     widgetDefinitionVersion: 1,
   },
 ] as const) satisfies readonly PresentationSurfaceDefaultInstance[];
@@ -236,6 +272,18 @@ const HR_MISSION_CONTROL_DEFAULT_INSTANCES = deepFreeze([
     widgetDefinitionVersion: 1,
   },
   {
+    column: 5,
+    columnSpan: 4,
+    instanceId: "hr-mission-control.my-attendance",
+    placementPolicy: "default_optional",
+    row: 4,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 5,
+    widgetDefinitionId: "hr.attendance.my-observations",
+    widgetDefinitionVersion: 1,
+  },
+  {
     column: 9,
     columnSpan: 4,
     instanceId: "hr-mission-control.my-leave",
@@ -257,6 +305,18 @@ const HR_MISSION_CONTROL_DEFAULT_INSTANCES = deepFreeze([
     sectionId: "overview",
     sourceOrder: 7,
     widgetDefinitionId: "hr.timesheet.mine",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 7,
+    columnSpan: 6,
+    instanceId: "hr-mission-control.my-expenses",
+    placementPolicy: "default_optional",
+    row: 7,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 8,
+    widgetDefinitionId: "hr.expense.mine",
     widgetDefinitionVersion: 1,
   },
 ] as const) satisfies readonly PresentationSurfaceDefaultInstance[];
@@ -326,11 +386,11 @@ const HR_MISSION_CONTROL_CONTRACT = {
 export const ZEN_V1_SURFACE_CONTRACTS = deepFreeze([
   {
     ...UNIVERSAL_MISSION_CONTROL_CONTRACT,
-    canonicalHash: "729e49237470fcfc396f277f5e3b9ed5b12e0894f71aba6af604a055d03a66f1",
+    canonicalHash: "d52358f33176620a8d21479732150b09673e3b177308a2d976d4dc287bd06b1c",
   },
   {
     ...HR_MISSION_CONTROL_CONTRACT,
-    canonicalHash: "ba52533dc6f7ceff2c12f6821c302f69ccc732b1e0e4b356c68f2c62ee1b67b6",
+    canonicalHash: "1a0c13e923f277cc37dfae449db024e40c7bd7d0f5563bbf50ef82cdb8d507db",
   },
 ] as const) satisfies readonly ZenV1SurfaceContract[];
 

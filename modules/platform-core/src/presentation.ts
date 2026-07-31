@@ -2452,6 +2452,51 @@ async function assertSurfacePersonalizationEnabled(
   }
 }
 
+async function widgetIsActorRelevant(
+  transaction: TenantTransaction,
+  definition: PresentationWidgetDefinition,
+): Promise<boolean> {
+  const routeDestinations =
+    definition.fullScreenRoute === null
+      ? []
+      : PRESENTATION_SERVICE_GROUP_DEFINITIONS.flatMap(({ services }) =>
+          services.flatMap(({ destinations }) =>
+            destinations.filter(({ href }) => href === definition.fullScreenRoute),
+          ),
+        );
+  if (
+    routeDestinations.length > 0 &&
+    !routeDestinations.some(({ allowedRoleKeys }) =>
+      allowedRoleKeys.includes(transaction.actor.roleKey),
+    )
+  ) {
+    return false;
+  }
+  if (definition.id !== "hr.workforce.direct-reports") return true;
+  const result = await transaction.client.query<{
+    value: unknown;
+    value_type: string;
+    version: number;
+  }>(
+    `SELECT value, value_type, version
+     FROM tenant_settings
+     WHERE tenant_id = $1 AND setting_key = 'hr.workforce_profile.manager_visibility'`,
+    [transaction.context.tenantId],
+  );
+  const setting = result.rows[0];
+  if (!setting) return true;
+  if (
+    result.rows.length !== 1 ||
+    setting.value_type !== "enum" ||
+    (setting.value !== "minimized" && setting.value !== "none") ||
+    !Number.isSafeInteger(setting.version) ||
+    setting.version < 1
+  ) {
+    throw new PlatformError("SETTING_INVALID", "Widget actor relevance setting is invalid");
+  }
+  return setting.value === "minimized";
+}
+
 async function loadEligibleWidgetDefinitionIds(
   transaction: TenantTransaction,
   surfaceId: ZenV1SurfaceId,
@@ -2541,14 +2586,17 @@ async function loadEligibleWidgetDefinitionIds(
 
   const eligible = new Set<string>();
   for (const definition of definitions) {
+    const actorRelevant = await widgetIsActorRelevant(transaction, definition);
     const exactServiceEligible =
       definition.activationPolicy === "exact_service" &&
+      actorRelevant &&
       activeServiceKeys.has(definition.activationServiceKey) &&
       definition.requiredCapabilityIds.every((capabilityId) =>
         currentCapabilityIds.has(capabilityId),
       );
     const providerEligible =
       definition.activationPolicy === "any_provider" &&
+      actorRelevant &&
       definition.providerEligibility.some(
         (provider) =>
           activeServiceKeys.has(provider.activationServiceKey) &&

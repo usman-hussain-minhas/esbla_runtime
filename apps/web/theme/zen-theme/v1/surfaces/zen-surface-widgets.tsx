@@ -10,7 +10,10 @@ import {
   HrLeaveMyRequestsWidgetLoading,
 } from "../widgets/hr-leave-my-requests-widget";
 import {
+  AttendanceObservationsWidget,
+  DirectReportsWidget,
   EmploymentFactsWidget,
+  ExpenseClaimsWidget,
   MyWorkWidget,
   PublishedShiftsWidget,
   RepresentativeWidgetLoading,
@@ -24,10 +27,13 @@ interface ZenSurfaceWidgetProps {
 }
 
 const COMPONENTS = Object.freeze({
+  "hr.attendance.my-observations": AttendanceObservationsWidget,
   "hr.employment.current-facts": EmploymentFactsWidget,
+  "hr.expense.mine": ExpenseClaimsWidget,
   "hr.leave.my-requests": HrLeaveMyRequestsWidget,
   "hr.shift.my-published": PublishedShiftsWidget,
   "hr.timesheet.mine": TimesheetsWidget,
+  "hr.workforce.direct-reports": DirectReportsWidget,
   "hr.workforce.my-profile": WorkforceProfileWidget,
   "platform.my-work.queue": MyWorkWidget,
 }) satisfies Readonly<Record<string, ComponentType<ZenSurfaceWidgetProps>>>;
