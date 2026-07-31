@@ -163,7 +163,11 @@ function statusForError(error: Error): number {
   }
   if (error instanceof PlatformError) {
     if (error.code === "POLICY_DENIED" || error.code === "ACTOR_NOT_ACTIVE_MEMBER") return 403;
-    if (error.code === "INVALID_OPERATION_CONTEXT") return 400;
+    if (error.code === "INVALID_OPERATION_CONTEXT" || error.code === "NOTIFICATION_INPUT_INVALID") {
+      return 400;
+    }
+    if (error.code === "NOTIFICATION_NOT_FOUND") return 404;
+    if (error.code === "NOTIFICATION_VERSION_CONFLICT") return 409;
     if (error.code === "ACTIVATION_DEPENDENCY_BLOCKED") return 503;
     if (error.code === "SETTING_INVALID" || error.code === "SETTING_OVERRIDE_NOT_ALLOWED") {
       return 503;

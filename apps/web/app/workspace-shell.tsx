@@ -1,8 +1,10 @@
 import type {
+  PlatformNotificationPage,
   PresentationNavigationDiscovery,
   PresentationShortcutDiscovery,
 } from "@esbla/contracts";
 import type { ReactNode } from "react";
+import { loadOwnNotifications } from "../lib/platform-notifications";
 import { loadOwnPresentationNavigation } from "../lib/presentation-navigation";
 import { loadOwnPresentationPreferences } from "../lib/presentation-preferences";
 import { loadOwnPresentationShortcuts } from "../lib/presentation-shortcuts";
@@ -15,10 +17,11 @@ interface WorkspaceShellProps {
 }
 
 export async function WorkspaceShell({ children, currentSurface }: WorkspaceShellProps) {
-  const [navigation, shortcuts, systemEligible] = await Promise.all([
+  const [navigation, notifications, shortcuts, systemEligible] = await Promise.all([
     loadOwnPresentationNavigation().catch(
       (): PresentationNavigationDiscovery => ({ serviceGroups: [] }),
     ),
+    loadOwnNotifications().catch((): PlatformNotificationPage | undefined => undefined),
     loadOwnPresentationShortcuts(currentSurface === "HR" ? "hr" : undefined).catch(
       (): PresentationShortcutDiscovery | undefined => undefined,
     ),
@@ -32,6 +35,7 @@ export async function WorkspaceShell({ children, currentSurface }: WorkspaceShel
       <ZenShellChrome
         appearanceAvailable={systemEligible}
         discovery={navigation}
+        initialNotifications={notifications}
         settingsAvailable
         shortcutDiscovery={shortcuts}
       />

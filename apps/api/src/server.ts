@@ -213,6 +213,7 @@ import { registerEmploymentRoutes } from "./hr-employment-routes.js";
 import { registerExpenseClaimRoutes } from "./hr-expense-claim-routes.js";
 import { registerShiftAssignmentRoutes } from "./hr-shift-assignment-routes.js";
 import { registerTimesheetRoutes } from "./hr-timesheet-routes.js";
+import { registerNotificationRoutes } from "./notification-routes.js";
 import { sendProblem } from "./problems.js";
 
 type WorkforceConfigureBody = Extract<
@@ -235,6 +236,7 @@ export interface CreateServerOptions {
   readonly authenticate: RequestAuthenticator;
   readonly logger?: boolean;
   readonly migrationReadPool?: Pool;
+  readonly notificationProjectorWake?: () => void;
   readonly pool: Pool;
   readonly runtimeEnvironment?: "development" | "production" | "test";
 }
@@ -979,6 +981,11 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
     runtimeEnvironment: options.runtimeEnvironment ?? "production",
     server,
   });
+  registerNotificationRoutes({
+    authenticate,
+    pool: options.pool,
+    server,
+  });
 
   const attachAttendanceActions = async (request: FastifyRequest, reply: FastifyReply) => {
     const actions = await inspectAttendanceActionAuthority(options.pool, operationContext(request));
@@ -1664,6 +1671,7 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
         ...request.body,
         idempotencyKey: idempotencyKey(request),
       });
+      options.notificationProjectorWake?.();
       reply.header("idempotent-replayed", String(result.replayed));
       return reply.code(result.replayed ? 200 : 201).send(result.request);
     },
@@ -1770,6 +1778,7 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
           ...request.body,
           leaveRequestId: request.params.leaveRequestId,
         });
+        options.notificationProjectorWake?.();
         reply.header("idempotent-replayed", String(result.replayed));
         return result.request;
       },

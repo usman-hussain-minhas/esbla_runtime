@@ -481,6 +481,7 @@ export async function setupLeaveIntegration(): Promise<void> {
      TO ${applicationRole}`,
   );
   await migrationPool.query(`GRANT SELECT, INSERT ON evidence_events TO ${applicationRole}`);
+  await migrationPool.query(`GRANT SELECT ON membership_capabilities TO ${applicationRole}`);
 
   pool = createDatabasePool(connectionString, { max: 8 });
   await pool.query(

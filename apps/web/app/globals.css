@@ -16,6 +16,7 @@
   --shadow-soft: 0 18px 60px rgba(38, 72, 105, 0.1);
   --success: #18ae8a;
   --danger: #bd4654;
+  --danger-contrast: #ffffff;
   --surface-chrome: rgba(255, 255, 255, 0.68);
   --surface-chrome-hover: rgba(255, 255, 255, 0.96);
   --surface-panel: rgba(255, 255, 255, 0.92);
@@ -71,6 +72,7 @@
   --shadow-soft: 0 20px 70px rgba(0, 0, 0, 0.28);
   --success: #56d0ad;
   --danger: #ff8291;
+  --danger-contrast: #171a1d;
   --surface-chrome: rgba(31, 35, 38, 0.58);
   --surface-chrome-hover: rgba(40, 45, 48, 0.96);
   --surface-panel: rgba(35, 39, 42, 0.96);
@@ -634,12 +636,46 @@ a.zen-shortcut-picker-link:focus-visible {
   position: relative;
 }
 
+.notification-direct-launcher {
+  position: relative;
+}
+
+.notification-badge {
+  align-items: center;
+  background: var(--danger);
+  border: 2px solid var(--surface-chrome);
+  border-radius: 999px;
+  color: var(--danger-contrast);
+  display: inline-flex;
+  font-size: 9px;
+  font-weight: 800;
+  height: 17px;
+  justify-content: center;
+  line-height: 1;
+  min-width: 17px;
+  padding: 0 3px;
+  pointer-events: none;
+  position: absolute;
+  right: -5px;
+  top: -5px;
+}
+
 .theme-panel {
   background: var(--surface-panel);
   border: 1px solid var(--line-mid);
   border-radius: var(--radius-panel);
   box-shadow: var(--shadow-soft);
   color: var(--text-main);
+  max-height: calc(
+    var(--zen-visual-block-size) -
+    var(--safe-top) -
+    var(--safe-bottom) -
+    var(--edge) -
+    var(--corner-button) -
+    (var(--corner-gap) * 2)
+  );
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 18px;
   position: absolute;
   right: 0;
@@ -755,6 +791,132 @@ a.zen-shortcut-picker-link:focus-visible {
 .panel-error {
   color: var(--danger);
   margin-top: 10px;
+}
+
+.panel-text-command,
+.zen-notification-read-command {
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-chip);
+  color: var(--accent-strong);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  min-height: 36px;
+  padding: 6px 9px;
+}
+
+.panel-text-command:hover,
+.zen-notification-read-command:hover {
+  background: var(--accent-soft);
+}
+
+.panel-text-command:disabled,
+.zen-notification-read-command:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.zen-notification-empty {
+  align-items: center;
+  color: var(--text-soft);
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  min-height: 180px;
+  padding: 28px 18px;
+  text-align: center;
+}
+
+.zen-notification-empty strong {
+  color: var(--text-main);
+  font-size: 16px;
+}
+
+.zen-notification-empty p,
+.zen-notification-toolbar p,
+.zen-notification-copy p {
+  margin: 0;
+}
+
+.zen-notification-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.zen-notification-toolbar {
+  align-items: center;
+  color: var(--text-soft);
+  display: flex;
+  font-size: 12px;
+  justify-content: space-between;
+}
+
+.zen-notification-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.zen-notification-list > li {
+  align-items: start;
+  background: var(--surface-widget);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-chip);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 11px;
+}
+
+.zen-notification-list > li.is-unread {
+  border-color: var(--line-mid);
+  box-shadow: inset 3px 0 0 var(--accent-strong);
+}
+
+.zen-notification-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.zen-notification-copy a {
+  color: var(--text-main);
+  text-decoration: none;
+}
+
+.zen-notification-copy a:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.zen-notification-copy p {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.zen-notification-copy time,
+.zen-notification-target-unavailable,
+.zen-notification-read-state {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.zen-notification-target-unavailable {
+  font-style: italic;
+}
+
+.zen-notification-read-state {
+  padding: 9px;
+}
+
+.zen-notification-more {
+  justify-self: center;
 }
 
 .icon-command {

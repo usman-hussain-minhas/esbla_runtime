@@ -1,6 +1,9 @@
 "use client";
 
-import { parseUpdatePresentationPreferencesResponse } from "@esbla/contracts";
+import {
+  type PlatformNotificationPage,
+  parseUpdatePresentationPreferencesResponse,
+} from "@esbla/contracts";
 import { Check } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -10,6 +13,7 @@ import { writePresentationThemeCache } from "../../../../lib/presentation-theme-
 import { prepareRouteHeadingFocus, type ZenDirectOpenMenu } from "../chrome/zen-navigation-chrome";
 import { ZEN_THEME_CACHE_KEY, type ZenPalette } from "../identity";
 import { SemanticIcon } from "../semantic-icons";
+import { ZenNotificationPanel } from "./zen-notification-panel";
 
 interface AppearanceValues {
   readonly density: "comfortable" | "compact";
@@ -26,10 +30,15 @@ interface AppearanceState extends AppearanceValues {
   readonly version: number;
 }
 
-export type ZenSystemPanelView = "appearance" | "contextual" | "service-groups" | "system";
+export type ZenSystemPanelView =
+  | "appearance"
+  | "contextual"
+  | "notifications"
+  | "service-groups"
+  | "system";
 
 export interface ZenSystemPanelState {
-  readonly origin: "system" | "theme";
+  readonly origin: "notification" | "system" | "theme";
   readonly view: ZenSystemPanelView;
 }
 
@@ -101,6 +110,7 @@ function applyAppearance(next: AppearanceState) {
 function panelLabel(view: ZenSystemPanelView, model: ZenNavigationModel): string {
   if (view === "appearance") return "Appearance settings";
   if (view === "contextual") return model.contextualMenu?.label ?? "Current pages";
+  if (view === "notifications") return "Notifications";
   if (view === "service-groups") return "Service Groups";
   return "User and system";
 }
@@ -108,6 +118,7 @@ function panelLabel(view: ZenSystemPanelView, model: ZenNavigationModel): string
 function panelHeadingText(view: ZenSystemPanelView, model: ZenNavigationModel): string {
   if (view === "appearance") return "Appearance";
   if (view === "contextual") return model.contextualMenu?.label ?? "Current pages";
+  if (view === "notifications") return "Notifications";
   if (view === "service-groups") return "Service Groups";
   return "User and system";
 }
@@ -116,9 +127,11 @@ export function UserSystemControl({
   appearanceAvailable,
   collapsedMenus,
   model,
+  notificationPage,
   onOpenStateChange,
   openState,
   showAppearanceDirect,
+  showNotificationsDirect,
   showSettingsDirect,
   settingsAvailable,
   systemRequired,
@@ -126,9 +139,11 @@ export function UserSystemControl({
   appearanceAvailable: boolean;
   collapsedMenus: ReadonlySet<Exclude<ZenDirectOpenMenu, undefined>>;
   model: ZenNavigationModel;
+  notificationPage: PlatformNotificationPage | undefined;
   onOpenStateChange: (state: ZenSystemPanelState | undefined) => void;
   openState: ZenSystemPanelState | undefined;
   showAppearanceDirect: boolean;
+  showNotificationsDirect: boolean;
   showSettingsDirect: boolean;
   settingsAvailable: boolean;
   systemRequired: boolean;
@@ -139,6 +154,8 @@ export function UserSystemControl({
   const panelHeading = useRef<HTMLHeadingElement>(null);
   const systemLauncher = useRef<HTMLButtonElement>(null);
   const themeLauncher = useRef<HTMLButtonElement>(null);
+  const notificationLauncher = useRef<HTMLButtonElement>(null);
+  const [notifications, setNotifications] = useState(notificationPage);
   const [appearance, setAppearance] = useState<AppearanceState>({
     density: "comfortable",
     densityLocked: false,
@@ -165,6 +182,10 @@ export function UserSystemControl({
   }, []);
 
   useEffect(() => {
+    setNotifications(notificationPage);
+  }, [notificationPage]);
+
+  useEffect(() => {
     if (!openState) return;
     const frame = requestAnimationFrame(() => {
       const panel = panelHeading.current?.closest<HTMLElement>(".theme-panel");
@@ -182,7 +203,11 @@ export function UserSystemControl({
     const activeState = openState;
     const restoreLauncher = () => {
       const launcher =
-        activeState.origin === "system" ? systemLauncher.current : themeLauncher.current;
+        activeState.origin === "system"
+          ? systemLauncher.current
+          : activeState.origin === "notification"
+            ? notificationLauncher.current
+            : themeLauncher.current;
       onOpenStateChange(undefined);
       requestAnimationFrame(() => launcher?.focus());
     };
@@ -207,7 +232,11 @@ export function UserSystemControl({
 
   function closePanel() {
     const launcher =
-      openState?.origin === "system" ? systemLauncher.current : themeLauncher.current;
+      openState?.origin === "system"
+        ? systemLauncher.current
+        : openState?.origin === "notification"
+          ? notificationLauncher.current
+          : themeLauncher.current;
     onOpenStateChange(undefined);
     requestAnimationFrame(() => launcher?.focus());
   }
@@ -291,7 +320,10 @@ export function UserSystemControl({
 
   const systemExpanded = openState?.origin === "system";
   const themeExpanded = openState?.origin === "theme";
+  const notificationExpanded = openState?.origin === "notification";
   const label = openState ? panelLabel(openState.view, model) : "User and system";
+  const unreadCount = notifications?.unreadCount ?? 0;
+  const unreadLabel = unreadCount === 0 ? "Notifications" : `Notifications, ${unreadCount} unread`;
 
   return (
     <div className="theme-control" ref={root}>
@@ -320,6 +352,29 @@ export function UserSystemControl({
         >
           <SemanticIcon aria-hidden="true" semanticKey="settings" size={18} strokeWidth={1.75} />
         </Link>
+      ) : null}
+      {notifications && showNotificationsDirect ? (
+        <button
+          aria-controls={panelId}
+          aria-expanded={notificationExpanded}
+          aria-label={unreadLabel}
+          className="chrome-button notification-direct-launcher"
+          data-tooltip={unreadLabel}
+          onClick={() =>
+            onOpenStateChange(
+              notificationExpanded ? undefined : { origin: "notification", view: "notifications" },
+            )
+          }
+          ref={notificationLauncher}
+          type="button"
+        >
+          <SemanticIcon aria-hidden="true" semanticKey="bell" size={18} strokeWidth={1.75} />
+          {unreadCount > 0 ? (
+            <span aria-hidden="true" className="notification-badge">
+              {unreadCount > 99 ? "99+" : unreadCount}
+            </span>
+          ) : null}
+        </button>
       ) : null}
       {appearanceAvailable && showAppearanceDirect ? (
         <button
@@ -350,9 +405,11 @@ export function UserSystemControl({
               <p className="panel-kicker">
                 {openState.view === "system"
                   ? "Universal controls"
-                  : openState.view === "appearance"
-                    ? "Universal preference"
-                    : "Available navigation"}
+                  : openState.view === "notifications"
+                    ? "Recent activity"
+                    : openState.view === "appearance"
+                      ? "Universal preference"
+                      : "Available navigation"}
               </p>
               <h2 ref={panelHeading} tabIndex={-1}>
                 {panelHeadingText(openState.view, model)}
@@ -401,6 +458,17 @@ export function UserSystemControl({
                 >
                   <SemanticIcon aria-hidden="true" semanticKey="modules" size={17} />
                   <span>Service Groups</span>
+                  <span aria-hidden="true">›</span>
+                </button>
+              ) : null}
+              {notifications && !showNotificationsDirect ? (
+                <button
+                  className="theme-choice theme-choice-wide"
+                  onClick={() => onOpenStateChange({ origin: "system", view: "notifications" })}
+                  type="button"
+                >
+                  <SemanticIcon aria-hidden="true" semanticKey="bell" size={17} />
+                  <span>{unreadLabel}</span>
                   <span aria-hidden="true">›</span>
                 </button>
               ) : null}
@@ -490,6 +558,15 @@ export function UserSystemControl({
                 </Link>
               ))}
             </nav>
+          ) : null}
+
+          {openState.view === "notifications" && notifications ? (
+            <ZenNotificationPanel
+              onPageChange={(update) =>
+                setNotifications((current) => (current ? update(current) : current))
+              }
+              page={notifications}
+            />
           ) : null}
 
           {openState.view === "appearance" ? (

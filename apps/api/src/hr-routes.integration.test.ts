@@ -2,7 +2,13 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createDatabase, createDatabasePool, migrateDatabase } from "@esbla/db";
-import { evaluatePolicy, setServiceActivation, withTenantTransaction } from "@esbla/platform-core";
+import { verifyHrNotificationTargets } from "@esbla/hr";
+import {
+  evaluatePolicy,
+  projectPendingNotificationIntentsOnce,
+  setServiceActivation,
+  withTenantTransaction,
+} from "@esbla/platform-core";
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from "fastify";
 import type { Pool, PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -97,6 +103,7 @@ interface LeavePersistenceSnapshot {
 
 let migrationPool: Pool;
 let pool: Pool;
+let projectorPool: Pool;
 let server: FastifyInstance;
 
 function context(tenantId: string, actorPrincipalId: string, correlationId = randomUUID()) {
@@ -358,8 +365,14 @@ function expectPolicyDenied(result: Awaited<ReturnType<typeof signedRequest>>): 
 beforeAll(async () => {
   const connectionString = process.env.DATABASE_URL;
   const migrationConnectionString = process.env.DATABASE_MIGRATION_URL;
+  const projectorConnectionString = process.env.DATABASE_NOTIFICATION_PROJECTOR_URL;
   const applicationRole = process.env.ESBLA_TEST_APPLICATION_ROLE;
-  if (!connectionString || !migrationConnectionString || !applicationRole) {
+  if (
+    !connectionString ||
+    !migrationConnectionString ||
+    !projectorConnectionString ||
+    !applicationRole
+  ) {
     throw new Error("PostgreSQL harness environment is required");
   }
   if (!/^[a-z_][a-z0-9_]*$/.test(applicationRole)) {
@@ -472,12 +485,49 @@ beforeAll(async () => {
         ],
       ],
     );
+    await seedTenantRow(
+      authorityClient,
+      ids.tenantA,
+      `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+       SELECT $1,principal_id,capability_id
+       FROM unnest($2::uuid[]) AS principal(principal_id)
+       CROSS JOIN unnest($3::text[]) AS capability(capability_id)`,
+      [
+        ids.tenantA,
+        [ids.employeeA, ids.managerA],
+        [
+          "hr.leave.view",
+          "platform.notifications.list_own",
+          "platform.notifications.mark_all_read_own",
+          "platform.notifications.mark_read_own",
+        ],
+      ],
+    );
+    await seedTenantRow(
+      authorityClient,
+      ids.tenantB,
+      `INSERT INTO membership_capabilities (tenant_id, principal_id, capability_id)
+       SELECT $1,principal_id,capability_id
+       FROM unnest($2::uuid[]) AS principal(principal_id)
+       CROSS JOIN unnest($3::text[]) AS capability(capability_id)`,
+      [
+        ids.tenantB,
+        [ids.employeeB],
+        [
+          "hr.leave.view",
+          "platform.notifications.list_own",
+          "platform.notifications.mark_all_read_own",
+          "platform.notifications.mark_read_own",
+        ],
+      ],
+    );
   } finally {
     authorityClient.release();
   }
 
   await activateLeaveService(ids.tenantA, ids.adminA);
   await activateLeaveService(ids.tenantB, ids.adminB);
+  projectorPool = createDatabasePool(projectorConnectionString, { max: 2 });
   server = createServer({
     authenticate: createDevelopmentAuthenticator({ clock: () => now, secret }),
     logger: false,
@@ -489,6 +539,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server.close();
+  await projectorPool.end();
   await pool.end();
   await migrationPool.end();
 });
@@ -792,6 +843,119 @@ describe("HR Leave Request API boundary", () => {
     expect(Object.keys(detailBody.history[0] ?? {}).sort()).toEqual(
       ["eventType", "newState", "occurredAt", "priorState"].sort(),
     );
+  });
+
+  it("serves strict own-notification list and evidence-backed read routes", async () => {
+    const submitted = await submitLeave({
+      categoryCode: "sick",
+      reason: "Notification API proof",
+    });
+    const request = submitted.response.json<LeaveResponse>();
+    expect(
+      await projectPendingNotificationIntentsOnce(projectorPool, verifyHrNotificationTargets),
+    ).toMatchObject({ poisoned: 0, projected: expect.any(Number), retried: 0 });
+
+    const listed = await signedRequest({
+      method: "GET",
+      principalId: ids.managerA,
+      tenantId: ids.tenantA,
+      url: "/v1/platform/notifications?pageSize=20",
+    });
+    expect(listed.response.statusCode).toBe(200);
+    expect(listed.response.headers["cache-control"]).toBe("no-store");
+    const page = listed.response.json<{
+      items: Array<{
+        notificationId: string;
+        readAt: string | null;
+        rowVersion: number;
+        target: { available: boolean; resourceId: string | null };
+        title: string;
+      }>;
+      nextCursor: unknown;
+      unreadCount: number;
+    }>();
+    const notification = page.items.find(
+      ({ target }) => target.resourceId === request.leaveRequestId,
+    );
+    expect(notification).toMatchObject({
+      readAt: null,
+      rowVersion: 1,
+      target: { available: true, resourceId: request.leaveRequestId },
+      title: "A leave request needs your review",
+    });
+    expect(page.unreadCount).toBeGreaterThan(0);
+
+    const strictQuery = await signedRequest({
+      method: "GET",
+      principalId: ids.managerA,
+      tenantId: ids.tenantA,
+      url: "/v1/platform/notifications?unexpected=true",
+    });
+    expect(strictQuery.response.statusCode).toBe(400);
+    expect(strictQuery.response.json()).toMatchObject({
+      code: "REQUEST_VALIDATION_FAILED",
+      status: 400,
+    });
+
+    const idempotencyKey = randomUUID();
+    const body = { expectedVersion: 1 };
+    const url = `/v1/platform/notifications/${notification?.notificationId}/read`;
+    const read = await signedRequest({
+      body,
+      idempotencyKey,
+      method: "POST",
+      principalId: ids.managerA,
+      tenantId: ids.tenantA,
+      url,
+    });
+    expect(read.response.statusCode).toBe(200);
+    expect(read.response.headers["idempotent-replayed"]).toBe("false");
+    expect(read.response.json()).toMatchObject({
+      billingState: "non_billable",
+      notification: {
+        notificationId: notification?.notificationId,
+        readAt: expect.any(String),
+        rowVersion: 2,
+      },
+      replayed: false,
+    });
+    const replay = await signedRequest({
+      body,
+      idempotencyKey,
+      method: "POST",
+      principalId: ids.managerA,
+      tenantId: ids.tenantA,
+      url,
+    });
+    expect(replay.response.statusCode).toBe(200);
+    expect(replay.response.headers["idempotent-replayed"]).toBe("true");
+    expect(replay.response.json()).toMatchObject({ replayed: true });
+    const divergentReplay = await signedRequest({
+      body: { expectedVersion: 2 },
+      idempotencyKey,
+      method: "POST",
+      principalId: ids.managerA,
+      tenantId: ids.tenantA,
+      url,
+    });
+    expect(divergentReplay.response.statusCode).toBe(409);
+    expect(divergentReplay.response.json()).toMatchObject({
+      code: "IDEMPOTENCY_CONFLICT",
+      status: 409,
+    });
+
+    const otherTenant = await signedRequest({
+      method: "GET",
+      principalId: ids.employeeB,
+      tenantId: ids.tenantB,
+      url: "/v1/platform/notifications",
+    });
+    expect(otherTenant.response.statusCode).toBe(200);
+    expect(otherTenant.response.json()).toEqual({
+      items: [],
+      nextCursor: null,
+      unreadCount: 0,
+    });
   });
 
   it("enforces assigned-manager and tenant boundaries without leaking records", async () => {

@@ -24,6 +24,7 @@ export * from "./expense-claim.js";
 export * from "./expense-claim-queries.js";
 export * from "./expense-claim-service-control.js";
 export * from "./manifest.js";
+export * from "./notification-targets.js";
 export * from "./queries.js";
 export * from "./settings.js";
 export * from "./shift-assignment.js";
