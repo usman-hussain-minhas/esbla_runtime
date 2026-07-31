@@ -3858,6 +3858,122 @@ test("Shift and Attendance catalogue faces preserve exact routes and current aut
   }
 });
 
+test("Leave catalogue faces preserve employee and assigned-manager journeys", async ({
+  browser,
+}, testInfo) => {
+  const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
+  const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
+  const actors = [employee, manager];
+  let employeeEligibilityChanged = false;
+  try {
+    await manager.page.setViewportSize({ height: 900, width: 1_280 });
+    await manager.page.goto(`${manager.origin}/studio/surfaces/surface.mission-control/personal`);
+    const addAssigned = manager.page.getByRole("button", {
+      name: "Add Assigned Leave Approvals",
+    });
+    await expect(addAssigned).toBeVisible();
+    await addAssigned.click();
+    const managerSaveResponse = manager.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/presentation/surfaces/surface.mission-control",
+    );
+    await manager.page.getByRole("button", { name: "Save personal layout" }).click();
+    expect((await managerSaveResponse).status()).toBe(200);
+    await manager.page.goto(manager.origin);
+
+    const assigned = manager.page.locator('[data-widget-definition="hr.leave.assigned"]');
+    await expect(assigned).toHaveCount(1);
+    await expect(assigned).toHaveAttribute("data-widget-state", /^(empty|populated)$/);
+    await expect(
+      assigned.getByRole("link", { name: "Open Assigned Leave Approvals" }),
+    ).toHaveAttribute(
+      "href",
+      "/workspace/my-work?originFocusId=mission-control.leave-assigned.full-screen&returnSurface=mission-control",
+    );
+    if ((await assigned.getAttribute("data-widget-state")) === "populated") {
+      await expect(assigned.locator('a[href^="/workspace/hr/leave/"]').first()).toBeVisible();
+      await expect(assigned.getByRole("button", { name: "Approve leave request" })).toBeVisible();
+    } else {
+      await expect(
+        assigned.getByText("No assigned Leave approvals", { exact: true }),
+      ).toBeVisible();
+    }
+
+    await employee.page.setViewportSize({ height: 900, width: 1_280 });
+    await setEmployeeLeavePresentationEligibility(true, [
+      "hr.leave.list_own",
+      "hr.leave.submit",
+      "hr.leave.view",
+    ]);
+    employeeEligibilityChanged = true;
+    await employee.page.goto(`${employee.origin}/studio/surfaces/surface.mission-control/personal`);
+    for (const displayName of ["Leave Request History", "Submit Leave Request"]) {
+      const add = employee.page.getByRole("button", { name: `Add ${displayName}` });
+      await expect(add).toBeVisible();
+      await add.click();
+    }
+    const employeeSaveResponse = employee.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/presentation/surfaces/surface.mission-control",
+    );
+    await employee.page.getByRole("button", { name: "Save personal layout" }).click();
+    expect((await employeeSaveResponse).status()).toBe(200);
+    await employee.page.goto(employee.origin);
+
+    const history = employee.page.locator('[data-widget-definition="hr.leave.history"]');
+    const requestForm = employee.page.locator('[data-widget-definition="hr.leave.request-form"]');
+    await expect(history).toHaveCount(1);
+    await expect(history).toHaveAttribute("data-widget-state", /^(empty|populated)$/);
+    await expect(history.getByRole("link", { name: "Open Leave Request History" })).toHaveAttribute(
+      "href",
+      "/workspace/hr/leave?originFocusId=mission-control.leave-history.full-screen&returnSurface=mission-control",
+    );
+    if ((await history.getAttribute("data-widget-state")) === "populated") {
+      await expect(history.locator('a[href^="/workspace/hr/leave/"]').first()).toBeVisible();
+    } else {
+      await expect(history.getByText("No Leave history", { exact: true })).toBeVisible();
+    }
+    await expect(requestForm).toHaveCount(1);
+    await expect(requestForm).toHaveAttribute("data-widget-state", "populated");
+    await expect(requestForm.getByText("Whole-day V1", { exact: true })).toBeVisible();
+    await expect(requestForm.getByRole("link", { name: "Start Leave request" })).toHaveAttribute(
+      "href",
+      "/workspace/hr/leave/new",
+    );
+
+    for (const [name, actor] of [
+      ["catalogue-leave-manager", manager],
+      ["catalogue-leave-employee", employee],
+    ]) {
+      const evidencePath = testInfo.outputPath(`${name}.png`);
+      await actor.page.screenshot({ fullPage: false, path: evidencePath });
+      await testInfo.attach(name, { contentType: "image/png", path: evidencePath });
+      expect(actor.diagnostics.external).toEqual([]);
+      expect(actor.diagnostics.page).toEqual([]);
+      expect(actor.diagnostics.server).toEqual([]);
+      expect(actor.diagnostics.console).toEqual([]);
+    }
+  } finally {
+    if (employeeEligibilityChanged) {
+      await setEmployeeLeavePresentationEligibility(true, [
+        "hr.leave.list_own",
+        "hr.leave.view",
+      ]).catch(() => undefined);
+    }
+    for (const actor of actors) {
+      await actor.page
+        .goto(`${actor.origin}/studio/surfaces/surface.mission-control/personal`)
+        .catch(() => undefined);
+      const reset = actor.page.getByRole("button", { name: "Restore tenant layout" });
+      if (await reset.isEnabled().catch(() => false)) {
+        actor.page.once("dialog", (dialog) => dialog.accept());
+        await reset.click().catch(() => undefined);
+      }
+    }
+    await closeActors(...actors);
+  }
+});
+
 test("complete default HR widgets render real attendance, expense, and direct-report products", async ({
   browser,
 }, testInfo) => {

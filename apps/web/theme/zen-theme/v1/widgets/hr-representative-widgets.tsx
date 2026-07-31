@@ -13,6 +13,7 @@ import { hasAttendanceAction } from "../../../../lib/hr-attendance-core";
 import { loadEmploymentList } from "../../../../lib/hr-employment-record";
 import { getAssignedExpenseClaims, loadOwnExpenseClaims } from "../../../../lib/hr-expense-claim";
 import { getAssignedLeaveRequests } from "../../../../lib/hr-leave-assigned-list";
+import { getOwnLeaveRequests } from "../../../../lib/hr-leave-list";
 import { buildHrLeaveDetailHref } from "../../../../lib/hr-leave-navigation-core";
 import { loadOwnShifts, loadRosterShifts } from "../../../../lib/hr-shift-assignment";
 import { hasShiftAction } from "../../../../lib/hr-shift-assignment-core";
@@ -20,6 +21,7 @@ import { getAssignedTimesheets, loadOwnTimesheets } from "../../../../lib/hr-tim
 import { loadOwnWorkforceProfile } from "../../../../lib/hr-workforce-profile";
 import { loadAuthorizedWorkforceList } from "../../../../lib/hr-workforce-profile-list";
 import type { ResponsivePresentationWidgetPlacement } from "../../../../lib/presentation-layout-core";
+import { settlePresentationWidgetProviders } from "../../../../lib/presentation-widget-provider-core";
 import { buildRouteBackedWidgetHref } from "../../../../lib/route-backed-widget-navigation-core";
 import { getAssignedWorkspaceTasks } from "../../../../lib/workspace-task-assigned-list";
 import {
@@ -28,6 +30,11 @@ import {
   type SurfaceDefinition,
 } from "../index";
 import { SemanticIcon } from "../semantic-icons";
+import {
+  HR_LEAVE_WIDGET_TIMEOUT_STATE,
+  type HrLeaveWidgetFailureState,
+  resolveHrLeaveWidgetFailureState,
+} from "./hr-leave-widget-state";
 import { PresentationWidgetFrame, PresentationWidgetStateContent } from "./presentation-widget";
 
 interface RepresentativeWidgetProps {
@@ -263,6 +270,328 @@ export async function WorkforceProfileWidget({ placement, surfaceId }: Represent
   return (
     <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
       {content}
+    </WidgetFrame>
+  );
+}
+
+interface AssignedLeaveWidgetFailure {
+  readonly kind: "inactive" | "ineligible" | "unavailable";
+}
+
+function assignedLeaveFailure(error: unknown): AssignedLeaveWidgetFailure {
+  if (error instanceof AssignedProviderUnavailableError && error.provider === "hr_leave_assigned") {
+    return { kind: error.reason };
+  }
+  return { kind: "unavailable" };
+}
+
+function assignedLeaveFailureContent(
+  definition: PresentationWidgetDefinition,
+  failure: AssignedLeaveWidgetFailure,
+): ReactNode {
+  if (failure.kind === "inactive") {
+    return (
+      <FailureState
+        content={{
+          message: "Leave Request is not active for this tenant.",
+          title: "Leave service is inactive",
+        }}
+        definition={definition}
+        kind="inactive"
+      />
+    );
+  }
+  if (failure.kind === "ineligible") {
+    return (
+      <FailureState
+        content={{
+          message: "Your current authority does not permit assigned Leave approvals.",
+          title: "Assigned Leave is hidden",
+        }}
+        definition={definition}
+        kind="denied"
+      />
+    );
+  }
+  return (
+    <FailureState
+      content={{
+        message: "Assigned Leave could not be loaded. No private error detail is shown.",
+        title: "Assigned Leave unavailable",
+      }}
+      definition={definition}
+      kind="dependency_unavailable"
+    />
+  );
+}
+
+export async function LeaveAssignedWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.leave.assigned");
+  let settled:
+    | Awaited<
+        ReturnType<
+          typeof settlePresentationWidgetProviders<
+            Awaited<ReturnType<typeof getAssignedLeaveRequests>>,
+            AssignedLeaveWidgetFailure
+          >
+        >
+      >[number]
+    | undefined;
+  try {
+    [settled] = await settlePresentationWidgetProviders<
+      Awaited<ReturnType<typeof getAssignedLeaveRequests>>,
+      AssignedLeaveWidgetFailure
+    >(
+      [
+        {
+          classifyFailure: (error) => ({
+            scope: "provider",
+            value: assignedLeaveFailure(error),
+          }),
+          eligible: true,
+          id: "hr.leave.assigned",
+          load: (signal) => getAssignedLeaveRequests(undefined, signal),
+          timeoutFailure: { scope: "provider", value: { kind: "unavailable" } },
+        },
+      ],
+      { concurrency: 1, timeoutMs: 8_000 },
+    );
+  } catch {
+    settled = undefined;
+  }
+
+  if (settled?.status !== "fulfilled") {
+    const failure =
+      settled && (settled.status === "rejected" || settled.status === "timed_out")
+        ? settled.failure
+        : ({ kind: "unavailable" } satisfies AssignedLeaveWidgetFailure);
+    const state =
+      failure.kind === "inactive"
+        ? "service_inactive"
+        : failure.kind === "ineligible"
+          ? "permission_denied"
+          : "unavailable";
+    return (
+      <WidgetFrame
+        definition={definition}
+        placement={placement}
+        state={state}
+        surfaceId={surfaceId}
+      >
+        {assignedLeaveFailureContent(definition, failure)}
+      </WidgetFrame>
+    );
+  }
+
+  const items = settled.value.items.slice(0, 5);
+  return (
+    <WidgetFrame
+      definition={definition}
+      placement={placement}
+      state={items.length === 0 ? "empty" : "populated"}
+      surfaceId={surfaceId}
+    >
+      {items.length === 0 ? (
+        <EmptyState
+          definition={definition}
+          description="Submitted Leave requests assigned to your current manager role will appear here."
+          heading="No assigned Leave approvals"
+        />
+      ) : (
+        <PresentationWidgetStateContent state="populated">
+          <ol aria-label="Assigned Leave approvals" className="zen-widget-list">
+            {items.map((item, index) => {
+              const focusId = `${placement.desktop.instanceId}.${item.leaveRequestId}`;
+              return (
+                <li className="zen-widget-work-row" key={item.workItemId}>
+                  <Link
+                    className="zen-widget-row"
+                    href={buildHrLeaveDetailHref(
+                      item.leaveRequestId,
+                      surfaceId === "surface.mission-control"
+                        ? "mission-control"
+                        : "hr-mission-control",
+                      focusId,
+                    )}
+                    id={focusId}
+                  >
+                    <span className="leave-status leave-status-submitted">Submitted</span>
+                    <span>
+                      <strong>{item.employeeDisplayName}</strong>
+                      <p>
+                        {item.startDate}–{item.endDate} · {item.categoryCode}
+                      </p>
+                    </span>
+                    <ArrowRight aria-hidden="true" size={15} />
+                  </Link>
+                  {index === 0 ? (
+                    <div className="zen-widget-inline-command">
+                      <LeaveApprovalAction
+                        expectedVersion={item.version}
+                        idempotencyKey={randomUUID()}
+                        leaveRequestId={item.leaveRequestId}
+                      />
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ol>
+        </PresentationWidgetStateContent>
+      )}
+    </WidgetFrame>
+  );
+}
+
+function ownLeaveFailureContent(
+  definition: PresentationWidgetDefinition,
+  failure: HrLeaveWidgetFailureState,
+): ReactNode {
+  return (
+    <PresentationWidgetStateContent
+      description={failure.description}
+      heading={failure.heading}
+      icon={
+        <SemanticIcon
+          aria-hidden="true"
+          semanticKey={definition.semanticIcon}
+          size={25}
+          strokeWidth={1.6}
+        />
+      }
+      state={failure.state}
+    />
+  );
+}
+
+export async function LeaveHistoryWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.leave.history");
+  let settled:
+    | Awaited<
+        ReturnType<
+          typeof settlePresentationWidgetProviders<
+            Awaited<ReturnType<typeof getOwnLeaveRequests>>,
+            HrLeaveWidgetFailureState
+          >
+        >
+      >[number]
+    | undefined;
+  try {
+    [settled] = await settlePresentationWidgetProviders<
+      Awaited<ReturnType<typeof getOwnLeaveRequests>>,
+      HrLeaveWidgetFailureState
+    >(
+      [
+        {
+          classifyFailure: (error) => ({
+            scope: "provider",
+            value: resolveHrLeaveWidgetFailureState(error),
+          }),
+          eligible: true,
+          id: "hr.leave.history",
+          load: (signal) => getOwnLeaveRequests(undefined, signal),
+          timeoutFailure: { scope: "provider", value: HR_LEAVE_WIDGET_TIMEOUT_STATE },
+        },
+      ],
+      { concurrency: 1, timeoutMs: 8_000 },
+    );
+  } catch {
+    settled = undefined;
+  }
+
+  if (settled?.status !== "fulfilled") {
+    const failure =
+      settled && (settled.status === "rejected" || settled.status === "timed_out")
+        ? settled.failure
+        : resolveHrLeaveWidgetFailureState(new Error("unavailable"));
+    return (
+      <WidgetFrame
+        definition={definition}
+        placement={placement}
+        state={failure.state}
+        surfaceId={surfaceId}
+      >
+        {ownLeaveFailureContent(definition, failure)}
+      </WidgetFrame>
+    );
+  }
+
+  const items = settled.value.items.slice(0, 5);
+  return (
+    <WidgetFrame
+      definition={definition}
+      placement={placement}
+      state={items.length === 0 ? "empty" : "populated"}
+      surfaceId={surfaceId}
+    >
+      {items.length === 0 ? (
+        <EmptyState
+          definition={definition}
+          description="Submitted Leave requests and their durable decision status will appear here."
+          heading="No Leave history"
+        />
+      ) : (
+        <PresentationWidgetStateContent state="populated">
+          <ol aria-label="Leave request history" className="zen-widget-list">
+            {items.map((item) => {
+              const focusId = `${placement.desktop.instanceId}.${item.leaveRequestId}`;
+              return (
+                <li key={item.leaveRequestId}>
+                  <Link
+                    className="zen-widget-row"
+                    href={buildHrLeaveDetailHref(
+                      item.leaveRequestId,
+                      surfaceId === "surface.mission-control"
+                        ? "mission-control"
+                        : "hr-mission-control",
+                      focusId,
+                    )}
+                    id={focusId}
+                  >
+                    <span className={`leave-status leave-status-${item.status}`}>
+                      {item.status}
+                    </span>
+                    <span>
+                      <strong>
+                        {item.startDate}–{item.endDate}
+                      </strong>
+                      <p>{item.categoryCode} · evidence-backed history</p>
+                    </span>
+                    <ArrowRight aria-hidden="true" size={15} />
+                  </Link>
+                </li>
+              );
+            })}
+          </ol>
+        </PresentationWidgetStateContent>
+      )}
+    </WidgetFrame>
+  );
+}
+
+export function LeaveRequestFormWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
+  const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.leave.request-form");
+  return (
+    <WidgetFrame
+      definition={definition}
+      placement={placement}
+      state="populated"
+      surfaceId={surfaceId}
+    >
+      <PresentationWidgetStateContent state="populated">
+        <div className="zen-widget-summary">
+          <span className="leave-status leave-status-active">Whole-day V1</span>
+          <strong>Request whole-day leave</strong>
+          <p>
+            Choose a Leave category and inclusive start and end dates. Balances, accruals and
+            partial days are outside this service.
+          </p>
+          <Link className="text-command" href="/workspace/hr/leave/new">
+            Start Leave request
+            <ArrowRight aria-hidden="true" size={15} />
+          </Link>
+        </div>
+      </PresentationWidgetStateContent>
     </WidgetFrame>
   );
 }

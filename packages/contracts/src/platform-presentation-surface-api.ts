@@ -441,6 +441,42 @@ const UNIVERSAL_MISSION_CONTROL_CATALOGUE_INSTANCES = deepFreeze([
     widgetDefinitionId: "hr.attendance.correction-queue",
     widgetDefinitionVersion: 1,
   },
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "mission-control.leave-assigned",
+    placementPolicy: "catalogue_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 18,
+    widgetDefinitionId: "hr.leave.assigned",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "mission-control.leave-history",
+    placementPolicy: "catalogue_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 19,
+    widgetDefinitionId: "hr.leave.history",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "mission-control.leave-request",
+    placementPolicy: "catalogue_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 20,
+    widgetDefinitionId: "hr.leave.request-form",
+    widgetDefinitionVersion: 1,
+  },
 ] as const) satisfies readonly PresentationSurfaceCatalogueInstance[];
 
 const HR_MISSION_CONTROL_CATALOGUE_INSTANCES = deepFreeze([
@@ -540,6 +576,42 @@ const HR_MISSION_CONTROL_CATALOGUE_INSTANCES = deepFreeze([
     widgetDefinitionId: "hr.attendance.correction-queue",
     widgetDefinitionVersion: 1,
   },
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "hr-mission-control.leave-assigned",
+    placementPolicy: "catalogue_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 17,
+    widgetDefinitionId: "hr.leave.assigned",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "hr-mission-control.leave-history",
+    placementPolicy: "catalogue_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 18,
+    widgetDefinitionId: "hr.leave.history",
+    widgetDefinitionVersion: 1,
+  },
+  {
+    column: 1,
+    columnSpan: 4,
+    instanceId: "hr-mission-control.leave-request",
+    placementPolicy: "catalogue_optional",
+    row: 1,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder: 19,
+    widgetDefinitionId: "hr.leave.request-form",
+    widgetDefinitionVersion: 1,
+  },
 ] as const) satisfies readonly PresentationSurfaceCatalogueInstance[];
 
 function placementFromDefaultInstance({
@@ -609,11 +681,11 @@ const HR_MISSION_CONTROL_CONTRACT = {
 export const ZEN_V1_SURFACE_CONTRACTS = deepFreeze([
   {
     ...UNIVERSAL_MISSION_CONTROL_CONTRACT,
-    canonicalHash: "41a1378dfde6776b82a645971efbef53e59776892bb01ddaced10b57bc035609",
+    canonicalHash: "f7283bfdae04208b9df95275cfb353d917420b0d810c31c7cfa0351601b8eec6",
   },
   {
     ...HR_MISSION_CONTROL_CONTRACT,
-    canonicalHash: "b93cd55e7e3adf7da82346c21752439ef57938f8310403c98b75421c574be481",
+    canonicalHash: "9a6a91db25a8e97ffbbc9dce6651fedc53575c69719b753b23864ac60a5aebc6",
   },
 ] as const) satisfies readonly ZenV1SurfaceContract[];
 

@@ -151,6 +151,9 @@ describe("platform presentation surface API contract", () => {
         "hr.shift.publish-queue",
         "hr.attendance.reports",
         "hr.attendance.correction-queue",
+        "hr.leave.assigned",
+        "hr.leave.history",
+        "hr.leave.request-form",
       ],
       [
         "hr.employment.admin-queue",
@@ -161,6 +164,9 @@ describe("platform presentation surface API contract", () => {
         "hr.shift.publish-queue",
         "hr.attendance.reports",
         "hr.attendance.correction-queue",
+        "hr.leave.assigned",
+        "hr.leave.history",
+        "hr.leave.request-form",
       ],
     ]);
     expect(ZEN_V1_SURFACE_CONTRACTS.map(({ defaultInstances }) => defaultInstances[0])).toEqual([
