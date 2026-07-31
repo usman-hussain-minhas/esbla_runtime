@@ -1,15 +1,20 @@
-import { loadOwnResponsivePresentationSurfaceLayout } from "../../../lib/presentation-surfaces";
+import { resolveResponsivePresentationSurfaceLayout } from "../../../lib/presentation-layout-core";
+import { loadOwnPresentationPersonalSurfaceEditorWorkspace } from "../../../lib/presentation-surfaces";
 import { getEligibleZenSurfaceSections } from "../../../lib/zen-section-rail-core";
 import { getSurfaceDefinition } from "../../../theme/zen-theme/v1";
 import { ZenSectionRail } from "../../../theme/zen-theme/v1/surfaces/zen-section-rail";
+import { ZenSurfaceEditLauncher } from "../../../theme/zen-theme/v1/surfaces/zen-surface-edit-launcher";
 import { ZenSurfaceWidgets } from "../../../theme/zen-theme/v1/surfaces/zen-surface-widgets";
 
 export const dynamic = "force-dynamic";
 
 export default async function HrHubPage() {
-  const layout = await loadOwnResponsivePresentationSurfaceLayout(
+  const editorWorkspace = await loadOwnPresentationPersonalSurfaceEditorWorkspace(
     "surface.hr.mission-control",
   ).catch(() => undefined);
+  const layout = editorWorkspace
+    ? resolveResponsivePresentationSurfaceLayout(editorWorkspace.layout)
+    : undefined;
   const eligibleWidgetInstanceIds =
     layout?.layouts[0].placements.map(({ instanceId }) => instanceId) ?? [];
   const eligibleSections = getEligibleZenSurfaceSections(
@@ -34,9 +39,17 @@ export default async function HrHubPage() {
             People and work
           </h1>
         </div>
-        <p className="surface-summary">
-          Live HR widgets share the same authorized Product truth as their full-screen faces.
-        </p>
+        <div className="surface-heading-actions">
+          <p className="surface-summary">
+            Live HR widgets share the same authorized Product truth as their full-screen faces.
+          </p>
+          {editorWorkspace?.editable ? (
+            <ZenSurfaceEditLauncher
+              ariaLabel="Edit HR Mission Control personal layout"
+              href="/studio/surfaces/surface.hr.mission-control/personal"
+            />
+          ) : null}
+        </div>
       </header>
 
       <div className="widget-grid">

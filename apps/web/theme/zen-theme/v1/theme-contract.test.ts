@@ -83,6 +83,11 @@ describe("Zen Theme v1 composition contract", () => {
         widgetDefinitionId: "hr.timesheet.mine",
       },
     ]);
+    expect(
+      DEFAULT_SURFACE_INSTANCES.every(
+        ({ widgetDefinitionVersion }) => widgetDefinitionVersion === 1,
+      ),
+    ).toBe(true);
   });
 
   it("defines exactly the two code-owned Mission Control surfaces", () => {
@@ -187,6 +192,7 @@ describe("Zen Theme v1 composition contract", () => {
         row: instance.row,
         rowSpan: instance.rowSpan,
         widgetDefinitionId: instance.widgetDefinitionId,
+        widgetDefinitionVersion: instance.widgetDefinitionVersion,
       });
     }
     expect(() =>

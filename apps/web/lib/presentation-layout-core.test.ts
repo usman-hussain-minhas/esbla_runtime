@@ -19,6 +19,7 @@ const positioned = [
     row: 1,
     rowSpan: 3,
     widgetDefinitionId: "hr.leave.my-requests",
+    widgetDefinitionVersion: 1,
   },
   {
     column: 3,
@@ -27,12 +28,14 @@ const positioned = [
     row: 1,
     rowSpan: 3,
     widgetDefinitionId: "hr.leave.my-requests",
+    widgetDefinitionVersion: 1,
   },
 ] as const;
 
 const unpositioned = {
   instanceId: "surface.third",
   widgetDefinitionId: "hr.leave.my-requests",
+  widgetDefinitionVersion: 1,
 } as const;
 
 describe("presentation layout resolver", () => {
@@ -123,6 +126,7 @@ describe("presentation layout resolver", () => {
           row: 1,
           rowSpan: 1,
           widgetDefinitionId: "hr.leave.my-requests",
+          widgetDefinitionVersion: 1,
         },
       ],
       "desktop",
@@ -149,6 +153,7 @@ describe("presentation layout resolver", () => {
             row: 1,
             rowSpan: 3,
             widgetDefinitionId: "hr.leave.my-requests",
+            widgetDefinitionVersion: 1,
           },
         ],
         "desktop",
@@ -230,5 +235,33 @@ describe("presentation layout resolver", () => {
         ({ instanceId }) => instanceId === "mission-control.my-leave",
       ),
     );
+  });
+
+  it("compacts a personalized subset for tablet and phone preview without stale gaps", () => {
+    const contract = getZenV1SurfaceContract("surface.mission-control");
+    const leave = contract.basePlacements.find(
+      ({ instanceId }) => instanceId === "mission-control.my-leave",
+    );
+    if (!leave) throw new Error("Mission Control leave placement is missing");
+    const resolved = resolveResponsivePresentationSurfaceLayout(
+      {
+        baseDefinitionHash: contract.definitionHash,
+        basePlacements: contract.basePlacements,
+        baseVersion: 1,
+        diagnostics: [],
+        effectivePlacements: [leave],
+        overlayVersion: 1,
+        source: "user_overlay",
+        surfaceId: contract.surfaceId,
+      },
+      [HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION],
+    );
+
+    expect(resolved.layouts[1].placements).toEqual([
+      expect.objectContaining({ column: 1, instanceId: leave.instanceId, row: 1 }),
+    ]);
+    expect(resolved.layouts[2].placements).toEqual([
+      expect.objectContaining({ column: 1, instanceId: leave.instanceId, row: 1 }),
+    ]);
   });
 });

@@ -849,6 +849,432 @@ a.zen-shortcut-picker-link:focus-visible {
   margin: 0;
 }
 
+.surface-heading-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.surface-edit-launcher,
+.surface-editor-icon-button {
+  align-items: center;
+  background: var(--surface-chrome);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-button);
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 42px;
+  justify-content: center;
+  transition:
+    background var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-standard);
+  width: 42px;
+}
+
+.surface-edit-launcher:hover,
+.surface-editor-icon-button:hover:not(:disabled) {
+  background: var(--surface-chrome-hover);
+  border-color: var(--line-mid);
+  transform: translateY(-1px);
+}
+
+.surface-editor-page {
+  margin: 0 auto;
+  max-width: 1500px;
+  min-height: 100%;
+  padding: 28px clamp(14px, 3vw, 42px) 72px;
+}
+
+.surface-editor-breadcrumb {
+  align-items: center;
+  color: var(--text-soft);
+  display: flex;
+  font-size: 13px;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.surface-editor-breadcrumb a,
+.surface-editor-text-link {
+  color: var(--accent-strong);
+  text-underline-offset: 4px;
+}
+
+.surface-editor-shell,
+.surface-editor-unavailable {
+  background:
+    linear-gradient(145deg, color-mix(in oklab, var(--surface-panel), transparent 5%), transparent),
+    var(--surface-panel);
+  border: 1px solid var(--line-soft);
+  border-radius: 24px;
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
+}
+
+.surface-editor-unavailable {
+  padding: clamp(28px, 6vw, 72px);
+}
+
+.surface-editor-header {
+  align-items: flex-start;
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+  padding: clamp(22px, 3vw, 38px);
+}
+
+.surface-editor-header h1 {
+  font-size: clamp(30px, 4vw, 52px);
+  font-weight: 250;
+  letter-spacing: -0.035em;
+  margin-bottom: 10px;
+}
+
+.surface-editor-header p:last-child {
+  color: var(--text-soft);
+  margin: 0;
+  max-width: 650px;
+}
+
+.surface-editor-actions {
+  display: flex;
+  gap: 8px;
+}
+
+button.surface-editor-icon-button {
+  cursor: pointer;
+  padding: 0;
+}
+
+.surface-editor-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.surface-editor-save {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.surface-editor-lock,
+.surface-editor-issue {
+  align-items: flex-start;
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  gap: 12px;
+  padding: 14px clamp(22px, 3vw, 38px);
+}
+
+.surface-editor-lock {
+  background: color-mix(in oklab, var(--warning), transparent 89%);
+  color: var(--text-soft);
+}
+
+.surface-editor-lock strong,
+.surface-editor-issue strong {
+  color: var(--text-main);
+}
+
+.surface-editor-lock p {
+  margin: 3px 0 0;
+}
+
+.surface-editor-issue {
+  align-items: center;
+  background: color-mix(in oklab, var(--danger), transparent 91%);
+  color: var(--danger);
+}
+
+.surface-editor-issue button {
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-chip);
+  cursor: pointer;
+  margin-left: auto;
+  padding: 7px 10px;
+}
+
+.surface-editor-workbench {
+  display: grid;
+  grid-template-columns: minmax(230px, 292px) minmax(0, 1fr);
+  min-height: 660px;
+}
+
+.surface-editor-inspector {
+  background: color-mix(in oklab, var(--surface-widget), transparent 8%);
+  border-right: 1px solid var(--line-soft);
+  padding: 22px;
+}
+
+.surface-editor-inspector section + section {
+  border-top: 1px solid var(--line-soft);
+  margin-top: 26px;
+  padding-top: 24px;
+}
+
+.surface-editor-section-heading {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.surface-editor-section-heading h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.surface-editor-section-heading span {
+  background: var(--accent-soft);
+  border-radius: 999px;
+  color: var(--accent-strong);
+  font-size: 11px;
+  margin-left: auto;
+  padding: 3px 7px;
+}
+
+.surface-editor-catalogue {
+  display: grid;
+  gap: 7px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.surface-editor-catalogue li {
+  align-items: center;
+  background: var(--surface-panel);
+  border: 1px solid var(--line-soft);
+  border-radius: 11px;
+  display: flex;
+  font-size: 13px;
+  gap: 8px;
+  min-height: 42px;
+  padding: 7px 7px 7px 11px;
+}
+
+.surface-editor-catalogue li span {
+  flex: 1;
+}
+
+.surface-editor-catalogue button {
+  align-items: center;
+  background: var(--accent-soft);
+  border: 0;
+  border-radius: 8px;
+  color: var(--accent-strong);
+  cursor: pointer;
+  display: inline-flex;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
+}
+
+.surface-editor-selection {
+  display: grid;
+  gap: 8px;
+}
+
+.surface-editor-selection > span {
+  color: var(--accent-strong);
+  font-size: 12px;
+}
+
+.surface-editor-selection p,
+.surface-editor-muted {
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.surface-editor-remove {
+  align-items: center;
+  background: transparent;
+  border: 1px solid color-mix(in oklab, var(--danger), transparent 40%);
+  border-radius: 10px;
+  color: var(--danger);
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 7px;
+  min-height: 38px;
+}
+
+.surface-editor-stage {
+  min-width: 0;
+  padding: clamp(18px, 3vw, 34px);
+}
+
+.surface-editor-preview-toolbar {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.surface-editor-preview-toolbar > span {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.surface-editor-preview-options {
+  background: color-mix(in oklab, var(--surface-widget), transparent 4%);
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+}
+
+.surface-editor-preview-options button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+  display: inline-flex;
+  height: 34px;
+  justify-content: center;
+  width: 36px;
+}
+
+.surface-editor-preview-options button[aria-pressed="true"] {
+  background: var(--surface-panel);
+  box-shadow: 0 3px 12px color-mix(in oklab, var(--text-main), transparent 90%);
+  color: var(--accent-strong);
+}
+
+.surface-editor-viewport {
+  background:
+    linear-gradient(var(--line-soft) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line-soft) 1px, transparent 1px),
+    color-mix(in oklab, var(--bg-base), var(--surface-panel) 40%);
+  background-size: 24px 24px;
+  border: 1px solid var(--line-mid);
+  border-radius: 18px;
+  margin: 0 auto;
+  max-width: 100%;
+  min-height: 520px;
+  overflow: auto;
+  padding: 16px;
+  transition: width var(--motion-standard) var(--ease-standard);
+}
+
+.surface-editor-viewport-tablet {
+  width: min(100%, 760px);
+}
+
+.surface-editor-viewport-phone {
+  min-height: 560px;
+  width: min(100%, 390px);
+}
+
+.surface-editor-grid {
+  display: grid;
+  gap: 8px;
+  grid-auto-rows: 48px;
+  min-height: 480px;
+  position: relative;
+}
+
+.surface-editor-widget {
+  background:
+    radial-gradient(circle at 85% 15%, var(--accent-soft), transparent 42%), var(--surface-widget);
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  box-shadow: 0 9px 24px color-mix(in oklab, var(--text-main), transparent 93%);
+  cursor: grab;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 15px;
+  position: relative;
+  text-align: left;
+  touch-action: none;
+}
+
+.surface-editor-widget:active {
+  cursor: grabbing;
+}
+
+.surface-editor-widget[data-selected="true"] {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 2px var(--accent-soft),
+    0 12px 30px color-mix(in oklab, var(--accent), transparent 82%);
+}
+
+.surface-editor-widget strong {
+  font-size: clamp(12px, 1.4vw, 16px);
+  line-height: 1.2;
+  margin-top: auto;
+}
+
+.surface-editor-widget small {
+  color: var(--text-soft);
+  font-size: 10px;
+  margin-top: 5px;
+  text-transform: capitalize;
+}
+
+.surface-editor-widget-handle {
+  color: var(--text-muted);
+  position: absolute;
+  right: 10px;
+  top: 10px;
+}
+
+.surface-editor-widget-resize-handle {
+  border-block-end: 2px solid var(--text-muted);
+  border-inline-end: 2px solid var(--text-muted);
+  bottom: 10px;
+  cursor: nwse-resize;
+  height: 14px;
+  position: absolute;
+  right: 10px;
+  width: 14px;
+}
+
+.surface-editor-empty {
+  align-self: start;
+  border: 1px dashed var(--line-mid);
+  border-radius: 14px;
+  color: var(--text-soft);
+  grid-column: 1 / -1;
+  margin-top: 70px;
+  padding: 38px 20px;
+  text-align: center;
+}
+
+.surface-editor-empty p {
+  font-size: 13px;
+  margin: 7px 0 0;
+}
+
+.surface-editor-local-status {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 12px 0 0;
+}
+
+.surface-editor-local-status[data-status="error"] {
+  color: var(--danger);
+}
+
+.surface-editor-phone-note {
+  color: var(--text-muted);
+  display: none;
+  font-size: 12px;
+  margin: 12px 0 0;
+}
+
 [data-zen-section-heading] {
   scroll-margin-block-start: 30px;
 }
@@ -2671,10 +3097,107 @@ textarea:focus-visible,
     gap: 12px;
   }
 
+  .surface-heading-actions {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .surface-editor-page {
+    padding: 18px 8px 48px;
+  }
+
+  .surface-editor-header {
+    gap: 16px;
+    padding: 22px 18px;
+  }
+
+  .surface-editor-header h1 {
+    font-size: 32px;
+  }
+
+  .surface-editor-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .surface-editor-inspector {
+    border-bottom: 1px solid var(--line-soft);
+    border-right: 0;
+    display: grid;
+    gap: 18px;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .surface-editor-inspector section + section {
+    border-left: 1px solid var(--line-soft);
+    border-top: 0;
+    margin: 0;
+    padding: 0 0 0 18px;
+  }
+
+  .surface-editor-stage {
+    padding: 18px 12px 26px;
+  }
+
   .zen-widget {
     grid-column: var(--widget-phone-column) / span var(--widget-phone-column-span);
     grid-row: var(--widget-phone-row) / span var(--widget-phone-row-span);
   }
+}
+
+@media (max-width: 599px) {
+  .surface-editor-breadcrumb {
+    padding-inline: 6px;
+  }
+
+  .surface-editor-header {
+    flex-direction: column;
+  }
+
+  .surface-editor-actions button,
+  .surface-editor-inspector {
+    display: none;
+  }
+
+  .surface-editor-stage {
+    padding-inline: 8px;
+  }
+
+  .surface-editor-preview-options button:not([aria-label="Phone preview"]) {
+    display: none;
+  }
+
+  .surface-editor-preview-toolbar {
+    align-items: flex-end;
+  }
+
+  .surface-editor-viewport {
+    border-radius: 14px;
+    min-height: 520px;
+    padding: 10px;
+  }
+
+  .surface-editor-widget {
+    cursor: default;
+    padding: 12px;
+  }
+
+  .surface-editor-widget-handle,
+  .surface-editor-widget-resize-handle {
+    display: none;
+  }
+
+  .surface-editor-phone-note {
+    display: block;
+  }
+}
+
+.surface-editor-viewport-phone .surface-editor-widget {
+  cursor: default;
+}
+
+.surface-editor-viewport-phone .surface-editor-widget-handle,
+.surface-editor-viewport-phone .surface-editor-widget-resize-handle {
+  display: none;
 }
 
 :root[data-reduced-motion="reduce"] *,

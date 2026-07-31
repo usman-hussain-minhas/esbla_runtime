@@ -8,6 +8,7 @@ import type {
 import { fetchDevelopmentApi } from "./development-session";
 import { resolveResponsivePresentationSurfaceLayout } from "./presentation-layout-core";
 import {
+  decodePresentationPersonalSurfaceEditorWorkspaceResponse,
   decodePresentationSurfaceLayoutResponse,
   decodePresentationSurfaceOverlayResetResponse,
   decodePresentationSurfaceOverlayUpdateResponse,
@@ -18,6 +19,15 @@ export function loadOwnPresentationSurfaceLayout(surfaceId: ZenV1SurfaceId) {
     fetchDevelopmentApi({
       method: "GET",
       path: `/v1/platform/presentation/surfaces/${encodeURIComponent(surfaceId)}`,
+    }),
+  );
+}
+
+export function loadOwnPresentationPersonalSurfaceEditorWorkspace(surfaceId: ZenV1SurfaceId) {
+  return decodePresentationPersonalSurfaceEditorWorkspaceResponse(
+    fetchDevelopmentApi({
+      method: "GET",
+      path: `/v1/platform/presentation/surfaces/${encodeURIComponent(surfaceId)}/personal-editor`,
     }),
   );
 }

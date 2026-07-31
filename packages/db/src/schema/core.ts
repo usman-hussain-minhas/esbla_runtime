@@ -372,6 +372,36 @@ export const presentationSurfaceHeads = pgTable(
   ],
 ).enableRLS();
 
+export const presentationSurfaceSettings = pgTable(
+  "presentation_surface_settings",
+  {
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.tenantId, { onDelete: "restrict" }),
+    surfaceId: text("surface_id").notNull(),
+    personalizationEnabled: boolean("personalization_enabled").default(true).notNull(),
+    version: integer("version").default(1).notNull(),
+    updatedByPrincipalId: uuid("updated_by_principal_id").notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.surfaceId],
+      name: "presentation_surface_settings_pk",
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.updatedByPrincipalId],
+      foreignColumns: [memberships.tenantId, memberships.principalId],
+      name: "presentation_surface_settings_updater_membership_fk",
+    }).onDelete("restrict"),
+    check(
+      "presentation_surface_settings_surface_valid",
+      sql`${table.surfaceId} IN ('surface.mission-control', 'surface.hr.mission-control')`,
+    ),
+    check("presentation_surface_settings_version_positive", sql`${table.version} > 0`),
+  ],
+).enableRLS();
+
 export const presentationSurfaceDrafts = pgTable(
   "presentation_surface_drafts",
   {

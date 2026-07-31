@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertPresentationCompositionRegistriesCurrent,
   parsePresentationPreferenceInput,
+  reconcileRequiredPresentationSurfacePlacements,
   resolvePresentationPreferences,
   validatePersonalSurfacePlacements,
 } from "./presentation.js";
@@ -116,7 +117,7 @@ describe("presentation preference core", () => {
     });
   });
 
-  it("accepts only the exact surface instance and rejects overlap or registry drift", () => {
+  it("accepts an exact optional registered subset, including empty, and rejects registry drift", () => {
     const basePlacements = ZEN_V1_SURFACE_CONTRACTS[0].basePlacements;
     const moved = basePlacements.map((placement) =>
       placement.instanceId === "mission-control.my-leave" ? { ...placement, row: 10 } : placement,
@@ -124,6 +125,17 @@ describe("presentation preference core", () => {
     expect(validatePersonalSurfacePlacements("surface.mission-control", moved)).toHaveLength(
       basePlacements.length,
     );
+    expect(
+      validatePersonalSurfacePlacements("surface.mission-control", [
+        moved.find(({ instanceId }) => instanceId === "mission-control.my-leave"),
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        instanceId: "mission-control.my-leave",
+        widgetDefinitionId: "hr.leave.my-requests",
+      }),
+    ]);
+    expect(validatePersonalSurfacePlacements("surface.mission-control", [])).toEqual([]);
     expect(() =>
       validatePersonalSurfacePlacements(
         "surface.mission-control",
@@ -134,5 +146,30 @@ describe("presentation preference core", () => {
         ),
       ),
     ).toThrow();
+    expect(() =>
+      validatePersonalSurfacePlacements(
+        "surface.mission-control",
+        moved.map((placement) =>
+          placement.instanceId === "mission-control.my-leave"
+            ? { ...placement, widgetDefinitionVersion: 2 }
+            : placement,
+        ),
+      ),
+    ).toThrow();
+  });
+
+  it("reconciles a newly required instance ahead of a conflicting optional personal placement", () => {
+    const [required, optional] = ZEN_V1_SURFACE_CONTRACTS[0].basePlacements;
+    if (!required || !optional) throw new Error("Surface fixture is incomplete");
+    expect(
+      reconcileRequiredPresentationSurfacePlacements({
+        basePlacements: [required, optional],
+        personalPlacements: [{ ...optional, column: required.column, row: required.row }],
+        requiredInstanceIds: new Set([required.instanceId]),
+      }),
+    ).toEqual({
+      conflictedInstanceIds: [optional.instanceId],
+      placements: [required],
+    });
   });
 });

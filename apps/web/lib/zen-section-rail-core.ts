@@ -105,7 +105,7 @@ export const ZEN_SURFACE_SECTION_REGISTRY = deepFreeze({
       },
     ],
     surfaceBaseVersion: 1,
-    surfaceCanonicalHash: "e709c3a05f073fc04f961d8aac2a25884209e716e939a511d9c61d5a69d873de",
+    surfaceCanonicalHash: "ba52533dc6f7ceff2c12f6821c302f69ccc732b1e0e4b356c68f2c62ee1b67b6",
     surfaceDefinitionHash: "12e135cb9be3deeef974ec5af2362d7a8e68057bdba904976a29709afe601c36",
   },
   "surface.mission-control": {
@@ -126,7 +126,7 @@ export const ZEN_SURFACE_SECTION_REGISTRY = deepFreeze({
       },
     ],
     surfaceBaseVersion: 1,
-    surfaceCanonicalHash: "3a8392e8d622d3f6856bc2258ea6c81c1f773686efcb4103058d91fc87966f90",
+    surfaceCanonicalHash: "729e49237470fcfc396f277f5e3b9ed5b12e0894f71aba6af604a055d03a66f1",
     surfaceDefinitionHash: "c75bac3fed1b604fe9ebc9f39e1ccef45b2ad34570f5200ada0e8b77ab8b71fb",
   },
 } as const satisfies Readonly<Record<ZenV1SurfaceId, ZenSurfaceSectionDefinition>>);

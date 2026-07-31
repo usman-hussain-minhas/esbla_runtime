@@ -4,6 +4,7 @@ import type {
   PresentationDensity,
   PresentationNavigationDiscovery,
   PresentationPalette,
+  PresentationPersonalSurfaceEditorWorkspace,
   PresentationPreferences,
   PresentationReducedMotion,
   PresentationServiceGroupDiscovery,
@@ -117,6 +118,7 @@ const SURFACE_BASE_DRAFT_EVENT_TYPE = "platform.studio.surface_base.draft.update
 const SURFACE_BASE_PUBLISH_EVENT_TYPE = "platform.studio.surface_base.published";
 const SURFACE_BASE_ROLLBACK_EVENT_TYPE = "platform.studio.surface_base.rolled_back";
 const SURFACE_BASE_SUBJECT_TYPE = "platform_presentation_surface_base";
+const SURFACE_PERSONALIZATION_LOCK_NAMESPACE = "platform.presentation.surface.personalization";
 
 interface PresentationCompositionRegistryInput {
   readonly surfaceContracts?: readonly ZenV1SurfaceContract[];
@@ -1782,8 +1784,75 @@ function canonicalPlacements(placements: readonly PresentationWidgetPlacement[])
       row: placement.row,
       rowSpan: placement.rowSpan,
       widgetDefinitionId: placement.widgetDefinitionId,
+      widgetDefinitionVersion: placement.widgetDefinitionVersion,
     })),
   );
+}
+
+const legacyV1PlacementKeys = [
+  "column",
+  "columnSpan",
+  "instanceId",
+  "row",
+  "rowSpan",
+  "widgetDefinitionId",
+] as const;
+const currentPlacementKeys = [...legacyV1PlacementKeys, "widgetDefinitionVersion"] as const;
+
+function exactPlacementKeys(
+  value: unknown,
+  keys: readonly string[],
+): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort())
+  );
+}
+
+function upgradeLegacyV1SurfacePlacements(surfaceId: ZenV1SurfaceId, value: unknown): unknown {
+  if (!Array.isArray(value) || value.length === 0) return value;
+  if (value.every((placement) => exactPlacementKeys(placement, currentPlacementKeys))) {
+    return value;
+  }
+  if (!value.every((placement) => exactPlacementKeys(placement, legacyV1PlacementKeys))) {
+    return value;
+  }
+  const expected = new Map(
+    getZenV1SurfaceContract(surfaceId).basePlacements.map((placement) => [
+      `${placement.instanceId}:${placement.widgetDefinitionId}`,
+      placement.widgetDefinitionVersion,
+    ]),
+  );
+  const upgraded = value.map((placement) => {
+    const version = expected.get(
+      `${String(placement.instanceId)}:${String(placement.widgetDefinitionId)}`,
+    );
+    if (version !== 1) return placement;
+    return { ...placement, widgetDefinitionVersion: version };
+  });
+  return upgraded.every((placement) => exactPlacementKeys(placement, currentPlacementKeys))
+    ? upgraded
+    : value;
+}
+
+function upgradeLegacyV1SurfacePlacementProperties(
+  surfaceId: ZenV1SurfaceId,
+  value: unknown,
+  properties: readonly string[],
+): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  let upgraded = record;
+  for (const property of properties) {
+    if (!Object.hasOwn(record, property)) continue;
+    const next = upgradeLegacyV1SurfacePlacements(surfaceId, record[property]);
+    if (next === record[property]) continue;
+    if (upgraded === record) upgraded = { ...record };
+    upgraded[property] = next;
+  }
+  return upgraded;
 }
 
 function rectanglesOverlap(
@@ -1802,12 +1871,7 @@ export function validatePersonalSurfacePlacements(
   surfaceId: ZenV1SurfaceId,
   untrustedPlacements: unknown,
 ): readonly PresentationWidgetPlacement[] {
-  const contract = getZenV1SurfaceContract(surfaceId);
-  const placements = validateRegisteredSurfacePlacementSubset(surfaceId, untrustedPlacements);
-  if (placements.length !== contract.basePlacements.length) {
-    throw new PlatformError("SETTING_INVALID", "Presentation surface instance set is invalid");
-  }
-  return placements;
+  return validateRegisteredSurfacePlacementSubset(surfaceId, untrustedPlacements);
 }
 
 function validateRegisteredSurfacePlacementSubset(
@@ -1816,17 +1880,20 @@ function validateRegisteredSurfacePlacementSubset(
 ): readonly PresentationWidgetPlacement[] {
   const contract = getZenV1SurfaceContract(surfaceId);
   const placements = parseSurfacePlacements(untrustedPlacements);
-  if (placements.length === 0 || placements.length > contract.basePlacements.length) {
+  if (placements.length > contract.basePlacements.length) {
     throw new PlatformError("SETTING_INVALID", "Presentation surface instance set is invalid");
   }
   const expected = new Map(
     contract.basePlacements.map((placement) => [
       placement.instanceId,
-      placement.widgetDefinitionId,
+      `${placement.widgetDefinitionId}@${placement.widgetDefinitionVersion}`,
     ]),
   );
   for (const placement of placements) {
-    if (expected.get(placement.instanceId) !== placement.widgetDefinitionId) {
+    if (
+      expected.get(placement.instanceId) !==
+      `${placement.widgetDefinitionId}@${placement.widgetDefinitionVersion}`
+    ) {
       throw new PlatformError(
         "SETTING_INVALID",
         "Presentation surface registry binding is invalid",
@@ -1846,15 +1913,36 @@ function validateEligiblePersonalSurfacePlacements(
   const expected = new Map(
     basePlacements
       .filter(({ widgetDefinitionId }) => eligibleWidgetDefinitionIds.has(widgetDefinitionId))
-      .map((placement) => [placement.instanceId, placement.widgetDefinitionId]),
+      .map((placement) => [
+        placement.instanceId,
+        `${placement.widgetDefinitionId}@${placement.widgetDefinitionVersion}`,
+      ]),
   );
-  if (expected.size === 0 || placements.length !== expected.size) {
+  if (expected.size === 0) {
     throw new PlatformError("POLICY_DENIED", "Presentation surface is not currently eligible");
   }
   for (const placement of placements) {
-    if (expected.get(placement.instanceId) !== placement.widgetDefinitionId) {
+    if (
+      expected.get(placement.instanceId) !==
+      `${placement.widgetDefinitionId}@${placement.widgetDefinitionVersion}`
+    ) {
       throw new PlatformError("POLICY_DENIED", "Presentation surface is not currently eligible");
     }
+  }
+  const requiredInstanceIds = new Set(
+    getZenV1SurfaceContract(surfaceId)
+      .defaultInstances.filter(
+        ({ instanceId, placementPolicy }) =>
+          placementPolicy === "default_required" && expected.has(instanceId),
+      )
+      .map(({ instanceId }) => instanceId),
+  );
+  if (
+    [...requiredInstanceIds].some(
+      (instanceId) => !placements.some((placement) => placement.instanceId === instanceId),
+    )
+  ) {
+    throw new PlatformError("POLICY_DENIED", "A required presentation widget cannot be removed");
   }
   return placements;
 }
@@ -2061,6 +2149,7 @@ function rebasePlacement(
     row: personal.row === historicalBase.row ? currentBase.row : personal.row,
     rowSpan: personal.rowSpan === historicalBase.rowSpan ? currentBase.rowSpan : personal.rowSpan,
     widgetDefinitionId: currentBase.widgetDefinitionId,
+    widgetDefinitionVersion: currentBase.widgetDefinitionVersion,
   };
 }
 
@@ -2088,7 +2177,9 @@ async function rebaseSurfaceOverlay(
       !historicalPlacement ||
       !current ||
       historicalPlacement.widgetDefinitionId !== current.widgetDefinitionId ||
-      personal.widgetDefinitionId !== current.widgetDefinitionId
+      personal.widgetDefinitionId !== current.widgetDefinitionId ||
+      historicalPlacement.widgetDefinitionVersion !== current.widgetDefinitionVersion ||
+      personal.widgetDefinitionVersion !== current.widgetDefinitionVersion
     ) {
       throw new PlatformError("SETTING_INVALID", "Presentation surface overlay rebase conflicted", {
         conflict: "instance_binding_changed",
@@ -2105,6 +2196,55 @@ async function rebaseSurfaceOverlay(
     });
   }
   return { baseVersion: base.baseVersion, placements, version: overlay.version };
+}
+
+export function reconcileRequiredPresentationSurfacePlacements(
+  input: Readonly<{
+    basePlacements: readonly PresentationWidgetPlacement[];
+    personalPlacements: readonly PresentationWidgetPlacement[];
+    requiredInstanceIds: ReadonlySet<string>;
+  }>,
+): Readonly<{
+  conflictedInstanceIds: readonly string[];
+  placements: readonly PresentationWidgetPlacement[];
+}> {
+  const personalByInstance = new Map(
+    input.personalPlacements.map((placement) => [placement.instanceId, placement]),
+  );
+  let required = input.basePlacements
+    .filter(({ instanceId }) => input.requiredInstanceIds.has(instanceId))
+    .map((base) => personalByInstance.get(base.instanceId) ?? base);
+  if (
+    required.some((placement, index) =>
+      required.slice(index + 1).some((candidate) => rectanglesOverlap(placement, candidate)),
+    )
+  ) {
+    required = input.basePlacements.filter(({ instanceId }) =>
+      input.requiredInstanceIds.has(instanceId),
+    );
+  }
+  const accepted = [...required];
+  const conflictedInstanceIds: string[] = [];
+  for (const personal of input.personalPlacements) {
+    if (input.requiredInstanceIds.has(personal.instanceId)) continue;
+    if (accepted.some((current) => rectanglesOverlap(current, personal))) {
+      conflictedInstanceIds.push(personal.instanceId);
+    } else {
+      accepted.push(personal);
+    }
+  }
+  const sourceOrder = new Map(
+    input.basePlacements.map(({ instanceId }, index) => [instanceId, index]),
+  );
+  accepted.sort(
+    (left, right) =>
+      (sourceOrder.get(left.instanceId) ?? Number.MAX_SAFE_INTEGER) -
+      (sourceOrder.get(right.instanceId) ?? Number.MAX_SAFE_INTEGER),
+  );
+  return {
+    conflictedInstanceIds: Object.freeze(conflictedInstanceIds),
+    placements: Object.freeze(accepted),
+  };
 }
 
 function surfaceLayoutResponse(
@@ -2133,29 +2273,40 @@ function surfaceLayoutResponse(
     readonly instanceId: string;
   }> = [];
   if (overlay) {
-    const overlayByInstance = new Map(
-      overlay.placements.map((placement) => [placement.instanceId, placement]),
+    const proposed = filterEligible(overlay.placements);
+    const requiredInstanceIds = new Set(
+      contract.defaultInstances
+        .filter(
+          ({ instanceId, placementPolicy }) =>
+            placementPolicy === "default_required" &&
+            basePlacements.some((placement) => placement.instanceId === instanceId),
+        )
+        .map(({ instanceId }) => instanceId),
     );
-    const proposed = basePlacements.map(
-      (placement) => overlayByInstance.get(placement.instanceId) ?? placement,
+    const reconciled = reconcileRequiredPresentationSurfacePlacements({
+      basePlacements,
+      personalPlacements: proposed,
+      requiredInstanceIds,
+    });
+    diagnostics.push(
+      ...reconciled.conflictedInstanceIds.map((instanceId) => ({
+        code: "overlay_placement_conflict" as const,
+        instanceId,
+      })),
     );
-    const overlaps = proposed.some((placement, index) =>
-      proposed.slice(index + 1).some((candidate) => rectanglesOverlap(placement, candidate)),
+    const policySafeProposed = reconciled.placements;
+    const overlaps = policySafeProposed.some((placement, index) =>
+      policySafeProposed
+        .slice(index + 1)
+        .some((candidate) => rectanglesOverlap(placement, candidate)),
     );
     if (!overlaps) {
-      effectivePlacements = proposed;
+      effectivePlacements = [...policySafeProposed];
     } else {
-      effectivePlacements = [...basePlacements];
-      for (const basePlacement of basePlacements) {
-        const candidate = overlayByInstance.get(basePlacement.instanceId);
-        if (!candidate) continue;
-        const candidateIndex = effectivePlacements.findIndex(
-          ({ instanceId }) => instanceId === candidate.instanceId,
-        );
-        if (candidateIndex < 0) continue;
-        const otherPlacements = effectivePlacements.filter((_, index) => index !== candidateIndex);
-        if (!otherPlacements.some((other) => rectanglesOverlap(candidate, other))) {
-          effectivePlacements[candidateIndex] = candidate;
+      effectivePlacements = [];
+      for (const candidate of policySafeProposed) {
+        if (!effectivePlacements.some((other) => rectanglesOverlap(candidate, other))) {
+          effectivePlacements.push(candidate);
         } else {
           diagnostics.push({
             code: "overlay_placement_conflict",
@@ -2177,19 +2328,148 @@ function surfaceLayoutResponse(
   };
 }
 
+async function hasCurrentOwnPresentationLayoutCapability(
+  transaction: TenantTransaction,
+  actionKey:
+    | "platform.presentation.layouts.read_own"
+    | "platform.presentation.layouts.reset_own"
+    | "platform.presentation.layouts.write_own",
+): Promise<boolean> {
+  const capability = await transaction.client.query<{ capability_current: boolean }>(
+    `SELECT public.esbla_lock_membership_capability($1, $2, $3) AS capability_current`,
+    [transaction.context.tenantId, transaction.context.actorPrincipalId, actionKey],
+  );
+  return capability.rows[0]?.capability_current === true;
+}
+
+async function assertCurrentOwnPresentationLayoutCapability(
+  transaction: TenantTransaction,
+  actionKey:
+    | "platform.presentation.layouts.read_own"
+    | "platform.presentation.layouts.reset_own"
+    | "platform.presentation.layouts.write_own",
+  surfaceId: ZenV1SurfaceId,
+): Promise<void> {
+  const decision = evaluatePolicy(
+    {
+      actionKey,
+      input: {
+        capabilityCurrent: await hasCurrentOwnPresentationLayoutCapability(transaction, actionKey),
+      },
+      resourceKey: `principal:${transaction.context.actorPrincipalId}:surface:${surfaceId}`,
+      transaction,
+    },
+    [
+      {
+        effect: "allow",
+        id: "presentation.current-explicit-capability-may-access-own-layout",
+        matches: (input) => input.capabilityCurrent,
+      },
+    ],
+  );
+  assertPolicyAllowed(
+    decision,
+    transaction,
+    actionKey,
+    `principal:${transaction.context.actorPrincipalId}:surface:${surfaceId}`,
+  );
+}
+
+interface SurfacePersonalizationSetting {
+  readonly enabled: boolean;
+  readonly version: number;
+}
+
+async function lockSurfacePersonalizationSetting(
+  transaction: TenantTransaction,
+  surfaceId: ZenV1SurfaceId,
+  mode: "exclusive" | "shared",
+): Promise<void> {
+  const lockKey = `${SURFACE_PERSONALIZATION_LOCK_NAMESPACE}:${transaction.context.tenantId}:${surfaceId}`;
+  await transaction.client.query(
+    mode === "exclusive"
+      ? `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`
+      : `SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))`,
+    [lockKey],
+  );
+}
+
+async function loadSurfacePersonalizationSetting(
+  transaction: TenantTransaction,
+  surfaceId: ZenV1SurfaceId,
+  lock: "exclusive" | "none" | "shared" = "none",
+): Promise<SurfacePersonalizationSetting> {
+  if (lock !== "none") {
+    await lockSurfacePersonalizationSetting(transaction, surfaceId, lock);
+  }
+  const result = await transaction.client.query<{
+    personalization_enabled: boolean;
+    version: number;
+  }>(
+    `SELECT personalization_enabled, version
+     FROM presentation_surface_settings
+     WHERE tenant_id = $1 AND surface_id = $2`,
+    [transaction.context.tenantId, surfaceId],
+  );
+  const row = result.rows[0];
+  if (
+    row &&
+    (typeof row.personalization_enabled !== "boolean" ||
+      !Number.isSafeInteger(row.version) ||
+      row.version < 1)
+  ) {
+    throw new PlatformError("SETTING_INVALID", "Surface personalization setting is invalid");
+  }
+  const resolved = resolvePresentationSetting(
+    "surface.personalization_enabled.v1",
+    row
+      ? [
+          {
+            definitionVersion: 1,
+            rowVersion: row.version,
+            scope: "tenant_surface",
+            value: row.personalization_enabled,
+          },
+        ]
+      : [],
+    {},
+  );
+  if (
+    typeof resolved.value !== "boolean" ||
+    (resolved.sourceScope !== "product_default" && resolved.sourceScope !== "tenant_surface")
+  ) {
+    throw new PlatformError("SETTING_INVALID", "Surface personalization setting is invalid");
+  }
+  return { enabled: resolved.value, version: row?.version ?? 0 };
+}
+
+async function assertSurfacePersonalizationEnabled(
+  transaction: TenantTransaction,
+  surfaceId: ZenV1SurfaceId,
+): Promise<void> {
+  if (!(await loadSurfacePersonalizationSetting(transaction, surfaceId, "shared")).enabled) {
+    throw new PlatformError("POLICY_DENIED", "Personal surface editing is disabled");
+  }
+}
+
 async function loadEligibleWidgetDefinitionIds(
   transaction: TenantTransaction,
   surfaceId: ZenV1SurfaceId,
   authorityLock: "none" | "share" = "none",
 ): Promise<ReadonlySet<string>> {
   const definitions = [
-    ...new Set(
+    ...new Map(
       getZenV1SurfaceContract(surfaceId).basePlacements.map(
-        ({ widgetDefinitionId }) => widgetDefinitionId,
+        ({ widgetDefinitionId, widgetDefinitionVersion }) => [
+          `${widgetDefinitionId}@${widgetDefinitionVersion}`,
+          { widgetDefinitionId, widgetDefinitionVersion },
+        ],
       ),
-    ),
+    ).values(),
   ]
-    .map((definitionId) => getPresentationWidgetDefinition(definitionId))
+    .map(({ widgetDefinitionId, widgetDefinitionVersion }) =>
+      getPresentationWidgetDefinition(widgetDefinitionId, widgetDefinitionVersion),
+    )
     .sort((left, right) => left.id.localeCompare(right.id));
   const serviceKeys = [
     ...new Set(
@@ -2283,6 +2563,35 @@ async function loadEligibleWidgetDefinitionIds(
   return eligible;
 }
 
+async function loadOwnPresentationSurfaceLayout(
+  transaction: TenantTransaction,
+  surfaceId: ZenV1SurfaceId,
+): Promise<PresentationSurfaceLayout> {
+  assertOwnPresentationPolicy(
+    transaction,
+    "platform.presentation.layouts.read_own",
+    `principal:${transaction.context.actorPrincipalId}:surface:${surfaceId}`,
+  );
+  await assertCurrentOwnPresentationLayoutCapability(
+    transaction,
+    "platform.presentation.layouts.read_own",
+    surfaceId,
+  );
+  const base =
+    (await loadStoredSurfaceBase(transaction, surfaceId)) ?? codeDefaultSurfaceBase(surfaceId);
+  const overlay = await rebaseSurfaceOverlay(
+    transaction,
+    surfaceId,
+    base,
+    await loadOwnSurfaceOverlay(transaction, surfaceId),
+  );
+  const eligibleWidgetDefinitionIds = await loadEligibleWidgetDefinitionIds(transaction, surfaceId);
+  if (surfaceId === "surface.hr.mission-control" && eligibleWidgetDefinitionIds.size === 0) {
+    throw new PlatformError("POLICY_DENIED", "Presentation surface is not currently eligible");
+  }
+  return surfaceLayoutResponse(surfaceId, base, overlay, eligibleWidgetDefinitionIds);
+}
+
 export async function getOwnPresentationSurfaceLayout(
   pool: Pool,
   context: OperationContext,
@@ -2291,28 +2600,45 @@ export async function getOwnPresentationSurfaceLayout(
   return await withTenantTransaction(
     pool,
     context,
+    async (transaction) => await loadOwnPresentationSurfaceLayout(transaction, surfaceId),
+    { migrationBarrier: "shared" },
+  );
+}
+
+export async function getOwnPresentationPersonalSurfaceEditorWorkspace(
+  pool: Pool,
+  context: OperationContext,
+  surfaceId: ZenV1SurfaceId,
+): Promise<PresentationPersonalSurfaceEditorWorkspace> {
+  return await withTenantTransaction(
+    pool,
+    context,
     async (transaction) => {
-      assertOwnPresentationPolicy(
-        transaction,
-        "platform.presentation.layouts.read_own",
-        `principal:${transaction.context.actorPrincipalId}:surface:${surfaceId}`,
-      );
-      const base =
-        (await loadStoredSurfaceBase(transaction, surfaceId)) ?? codeDefaultSurfaceBase(surfaceId);
-      const overlay = await rebaseSurfaceOverlay(
+      const layout = await loadOwnPresentationSurfaceLayout(transaction, surfaceId);
+      const personalization = await loadSurfacePersonalizationSetting(
         transaction,
         surfaceId,
-        base,
-        await loadOwnSurfaceOverlay(transaction, surfaceId),
+        "shared",
       );
-      const eligibleWidgetDefinitionIds = await loadEligibleWidgetDefinitionIds(
+      const writeCapable = await hasCurrentOwnPresentationLayoutCapability(
         transaction,
-        surfaceId,
+        "platform.presentation.layouts.write_own",
       );
-      if (surfaceId === "surface.hr.mission-control" && eligibleWidgetDefinitionIds.size === 0) {
-        throw new PlatformError("POLICY_DENIED", "Presentation surface is not currently eligible");
-      }
-      return surfaceLayoutResponse(surfaceId, base, overlay, eligibleWidgetDefinitionIds);
+      const resetCapable = await hasCurrentOwnPresentationLayoutCapability(
+        transaction,
+        "platform.presentation.layouts.reset_own",
+      );
+      const editable = personalization.enabled && writeCapable;
+      return {
+        editable,
+        layout,
+        lockReason: editable
+          ? null
+          : personalization.enabled
+            ? "layout_write_capability_absent"
+            : "tenant_personalization_disabled",
+        resettable: personalization.enabled && resetCapable,
+      };
     },
     { migrationBarrier: "shared" },
   );
@@ -2385,7 +2711,10 @@ function parseSurfaceOverlayEvidenceState(
       billingState: PRESENTATION_BILLING_STATE,
       expectedVersion: Number(record.expectedVersion),
       materializedBaseDefinitionHashes: record.materializedBaseDefinitionHashes,
-      placements: validateRegisteredSurfacePlacementSubset(expectedSurfaceId, record.placements),
+      placements: validateRegisteredSurfacePlacementSubset(
+        expectedSurfaceId,
+        upgradeLegacyV1SurfacePlacements(expectedSurfaceId, record.placements),
+      ),
       surfaceId: expectedSurfaceId,
       version: Number(record.version),
     };
@@ -2475,6 +2804,12 @@ export async function updateOwnPresentationSurfaceOverlay(
         "platform.presentation.layouts.write_own",
         `principal:${transaction.context.actorPrincipalId}:surface:${surfaceId}`,
       );
+      await assertCurrentOwnPresentationLayoutCapability(
+        transaction,
+        "platform.presentation.layouts.write_own",
+        surfaceId,
+      );
+      await assertSurfacePersonalizationEnabled(transaction, surfaceId);
       const eligibleWidgetDefinitionIds = await loadEligibleWidgetDefinitionIds(
         transaction,
         surfaceId,
@@ -2679,6 +3014,21 @@ function semanticRequestHash(value: unknown): string {
   return createHash("sha256").update(canonicalJson(value)).digest("hex");
 }
 
+function legacyV1SurfaceDraftRequestHash(
+  surfaceId: ZenV1SurfaceId,
+  input: UpsertPresentationSurfaceDraftBody,
+  placements: readonly PresentationWidgetPlacement[],
+): string | undefined {
+  if (placements.some(({ widgetDefinitionVersion }) => widgetDefinitionVersion !== 1)) {
+    return undefined;
+  }
+  return semanticRequestHash({
+    ...input,
+    placements: placements.map(({ widgetDefinitionVersion: _version, ...placement }) => placement),
+    surfaceId,
+  });
+}
+
 interface PresentationMutationReplay {
   readonly evidenceEventId: string;
   readonly response: unknown;
@@ -2687,6 +3037,7 @@ interface PresentationMutationReplay {
 async function loadPresentationMutationReplay(
   transaction: TenantTransaction,
   input: {
+    readonly acceptedLegacyRequestHashes?: readonly string[];
     readonly eventType: string;
     readonly requestHash: string;
     readonly subjectId: string;
@@ -2720,7 +3071,10 @@ async function loadPresentationMutationReplay(
       state === null ||
       Array.isArray(state) ||
       JSON.stringify(Object.keys(state).sort()) !== JSON.stringify(["requestHash", "response"]) ||
-      (state as Record<string, unknown>).requestHash !== input.requestHash
+      ((state as Record<string, unknown>).requestHash !== input.requestHash &&
+        !input.acceptedLegacyRequestHashes?.includes(
+          String((state as Record<string, unknown>).requestHash),
+        ))
     ) {
       throw new Error("invalid");
     }
@@ -2900,6 +3254,7 @@ export async function upsertTenantPresentationSurfaceDraft(
   }
   const placements = parseTenantBasePlacements(surfaceId, input.placements);
   const requestHash = semanticRequestHash({ ...input, placements, surfaceId });
+  const acceptedLegacyRequestHash = legacyV1SurfaceDraftRequestHash(surfaceId, input, placements);
   return await withTenantTransaction(
     pool,
     context,
@@ -2911,6 +3266,9 @@ export async function upsertTenantPresentationSurfaceDraft(
       );
       const subjectId = surfaceBaseSubjectId(context, surfaceId);
       const replay = await loadPresentationMutationReplay(transaction, {
+        ...(acceptedLegacyRequestHash
+          ? { acceptedLegacyRequestHashes: [acceptedLegacyRequestHash] }
+          : {}),
         eventType: SURFACE_BASE_DRAFT_EVENT_TYPE,
         requestHash,
         subjectId,
@@ -2919,7 +3277,9 @@ export async function upsertTenantPresentationSurfaceDraft(
       if (replay) {
         return parseUpsertPresentationSurfaceDraftResponse({
           billingState: PRESENTATION_BILLING_STATE,
-          draft: replay.response,
+          draft: upgradeLegacyV1SurfacePlacementProperties(surfaceId, replay.response, [
+            "placements",
+          ]),
           evidenceEventId: replay.evidenceEventId,
           replayed: true,
         });
@@ -3074,9 +3434,12 @@ function surfaceBaseMutationResponseValue(
 
 function parseReplayBaseMutation(
   replay: PresentationMutationReplay,
+  surfaceId: ZenV1SurfaceId,
 ): PresentationSurfaceBaseMutationResponse {
   return parsePresentationSurfaceBaseMutationResponse({
-    ...(replay.response as Record<string, unknown>),
+    ...(upgradeLegacyV1SurfacePlacementProperties(surfaceId, replay.response, [
+      "placements",
+    ]) as Record<string, unknown>),
     billingState: PRESENTATION_BILLING_STATE,
     evidenceEventId: replay.evidenceEventId,
     replayed: true,
@@ -3112,7 +3475,7 @@ export async function publishTenantPresentationSurfaceDraft(
         subjectId,
         subjectType: SURFACE_BASE_SUBJECT_TYPE,
       });
-      if (replay) return parseReplayBaseMutation(replay);
+      if (replay) return parseReplayBaseMutation(replay, surfaceId);
 
       const { base, draft } = await loadExactDraftAndHead(transaction, surfaceId, input, "update");
       const nextBaseVersion = base.baseVersion + 1;
@@ -3214,7 +3577,7 @@ export async function rollbackTenantPresentationSurfaceBase(
         subjectId,
         subjectType: SURFACE_BASE_SUBJECT_TYPE,
       });
-      if (replay) return parseReplayBaseMutation(replay);
+      if (replay) return parseReplayBaseMutation(replay, surfaceId);
 
       const base = await loadStoredSurfaceBase(transaction, surfaceId, "update");
       if (!base || base.headRowVersion !== input.expectedHeadRowVersion) {
@@ -3328,6 +3691,12 @@ export async function resetOwnPresentationSurfaceOverlay(
         "platform.presentation.layouts.reset_own",
         `principal:${transaction.context.actorPrincipalId}:surface:${surfaceId}`,
       );
+      await assertCurrentOwnPresentationLayoutCapability(
+        transaction,
+        "platform.presentation.layouts.reset_own",
+        surfaceId,
+      );
+      await assertSurfacePersonalizationEnabled(transaction, surfaceId);
       const eligibleWidgetDefinitionIds = await loadEligibleWidgetDefinitionIds(
         transaction,
         surfaceId,
@@ -3347,7 +3716,10 @@ export async function resetOwnPresentationSurfaceOverlay(
       });
       if (replay) {
         return parseResetPresentationSurfaceOverlayResponse({
-          ...(replay.response as Record<string, unknown>),
+          ...(upgradeLegacyV1SurfacePlacementProperties(surfaceId, replay.response, [
+            "basePlacements",
+            "effectivePlacements",
+          ]) as Record<string, unknown>),
           billingState: PRESENTATION_BILLING_STATE,
           evidenceEventId: replay.evidenceEventId,
           replayed: true,

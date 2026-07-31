@@ -211,6 +211,13 @@
       "when": 1785390674942,
       "tag": "0029_wise_warbound",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1785467257883,
+      "tag": "0030_brainy_nick_fury",
+      "breakpoints": true
     }
   ]
 }

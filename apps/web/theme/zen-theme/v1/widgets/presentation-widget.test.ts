@@ -12,6 +12,7 @@ const placement = {
     row: 5,
     rowSpan: 3,
     widgetDefinitionId: "hr.leave.my-requests",
+    widgetDefinitionVersion: 1,
   },
   phone: {
     column: 1,
@@ -20,6 +21,7 @@ const placement = {
     row: 1,
     rowSpan: 3,
     widgetDefinitionId: "hr.leave.my-requests",
+    widgetDefinitionVersion: 1,
   },
   tablet: {
     column: 5,
@@ -28,6 +30,7 @@ const placement = {
     row: 1,
     rowSpan: 3,
     widgetDefinitionId: "hr.leave.my-requests",
+    widgetDefinitionVersion: 1,
   },
 } as const;
 
@@ -62,6 +65,7 @@ describe("shared presentation widget states", () => {
     );
 
     expect(html).toContain(`data-widget-state="${state}"`);
+    expect(html).toContain('data-widget-definition-version="1"');
     expect(html).not.toContain("stack trace");
     if (state === "loading" || state === "stale_retrying") {
       expect(html).toContain('aria-busy="true"');

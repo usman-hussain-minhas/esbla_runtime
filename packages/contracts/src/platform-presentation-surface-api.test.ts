@@ -5,8 +5,10 @@ import {
   canonicalizePresentationSurfaceContract,
   canonicalizePresentationSurfaceDefinition,
   PRESENTATION_SURFACE_DEFINITIONS,
+  parsePresentationPersonalSurfaceEditorWorkspace,
   parsePresentationSurfaceDefinition,
   parsePresentationSurfaceLayout,
+  parsePresentationWidgetPlacements,
   parseUpdatePresentationSurfaceOverlayBody,
   parseUpdatePresentationSurfaceOverlayResponse,
   validatePresentationCompositionRegistries,
@@ -36,8 +38,51 @@ describe("platform presentation surface API contract", () => {
       expect(responsiveBases?.desktop).toEqual(contract.basePlacements);
       expect(responsiveBases?.tablet).toHaveLength(contract.basePlacements.length);
       expect(responsiveBases?.phone).toHaveLength(contract.basePlacements.length);
+      expect(
+        [responsiveBases?.desktop, responsiveBases?.tablet, responsiveBases?.phone].every(
+          (placements) =>
+            placements?.every(
+              (placement) =>
+                (placement as { readonly widgetDefinitionVersion?: unknown })
+                  .widgetDefinitionVersion === 1,
+            ) === true,
+        ),
+      ).toBe(true);
       expect(Object.isFrozen(responsiveBases)).toBe(true);
     }
+  });
+
+  it("requires an exact widget-definition version on every persisted placement", () => {
+    expect(() =>
+      parsePresentationWidgetPlacements([
+        {
+          column: 1,
+          columnSpan: 4,
+          instanceId: "mission-control.my-leave",
+          row: 1,
+          rowSpan: 3,
+          widgetDefinitionId: "hr.leave.my-requests",
+        },
+      ]),
+    ).toThrow();
+    expect(
+      parsePresentationWidgetPlacements([
+        {
+          column: 1,
+          columnSpan: 4,
+          instanceId: "mission-control.my-leave",
+          row: 1,
+          rowSpan: 3,
+          widgetDefinitionId: "hr.leave.my-requests",
+          widgetDefinitionVersion: 1,
+        },
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        widgetDefinitionId: "hr.leave.my-requests",
+        widgetDefinitionVersion: 1,
+      }),
+    ]);
   });
 
   it("owns both surface definitions in one canonical shared registry", () => {
@@ -170,6 +215,7 @@ describe("platform presentation surface API contract", () => {
             row: 5,
             rowSpan: 3,
             widgetDefinitionId: "hr.leave.my-requests",
+            widgetDefinitionVersion: 1,
           },
         ],
       }),
@@ -242,6 +288,39 @@ describe("platform presentation surface API contract", () => {
       source: "code_default",
       surfaceId: "surface.mission-control",
     });
+  });
+
+  it("strictly binds personal editor availability to one parsed surface layout", () => {
+    const base = ZEN_V1_SURFACE_CONTRACTS[0];
+    expect(
+      parsePresentationPersonalSurfaceEditorWorkspace({
+        editable: false,
+        layout: {
+          baseDefinitionHash: base.definitionHash,
+          basePlacements: [],
+          baseVersion: base.baseVersion,
+          diagnostics: [],
+          effectivePlacements: [],
+          overlayVersion: 0,
+          source: "code_default",
+          surfaceId: base.surfaceId,
+        },
+        lockReason: "layout_write_capability_absent",
+        resettable: true,
+      }),
+    ).toMatchObject({
+      editable: false,
+      layout: { surfaceId: "surface.mission-control" },
+      lockReason: "layout_write_capability_absent",
+      resettable: true,
+    });
+    expect(() =>
+      parsePresentationPersonalSurfaceEditorWorkspace({
+        editable: true,
+        layout: {},
+        lockReason: "layout_write_capability_absent",
+      }),
+    ).toThrow();
   });
 
   it("preserves explicit non-sensitive overlay conflict diagnostics", () => {

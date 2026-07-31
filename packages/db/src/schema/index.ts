@@ -8,6 +8,7 @@ export {
   presentationSurfaceDrafts,
   presentationSurfaceHeads,
   presentationSurfaceOverlays,
+  presentationSurfaceSettings,
   presentationSurfaceVersions,
   principals,
   serviceActivationState,

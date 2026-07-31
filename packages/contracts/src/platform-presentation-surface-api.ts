@@ -31,13 +31,13 @@ export interface PresentationWidgetPlacement {
   readonly row: number;
   readonly rowSpan: number;
   readonly widgetDefinitionId: string;
+  readonly widgetDefinitionVersion: number;
 }
 
 export interface PresentationSurfaceDefaultInstance extends PresentationWidgetPlacement {
   readonly placementPolicy: "default_optional" | "default_required";
   readonly sectionId: "overview";
   readonly sourceOrder: number;
-  readonly widgetDefinitionVersion: number;
 }
 
 export interface PresentationSurfaceBreakpointPlacements {
@@ -268,8 +268,17 @@ function placementFromDefaultInstance({
   row,
   rowSpan,
   widgetDefinitionId,
+  widgetDefinitionVersion,
 }: PresentationSurfaceDefaultInstance): PresentationWidgetPlacement {
-  return { column, columnSpan, instanceId, row, rowSpan, widgetDefinitionId };
+  return {
+    column,
+    columnSpan,
+    instanceId,
+    row,
+    rowSpan,
+    widgetDefinitionId,
+    widgetDefinitionVersion,
+  };
 }
 
 function compactPlacements(
@@ -277,13 +286,14 @@ function compactPlacements(
   columnCount: 4 | 8,
 ): readonly PresentationWidgetPlacement[] {
   const perRow = columnCount / 4;
-  return instances.map(({ instanceId, widgetDefinitionId }, index) => ({
+  return instances.map(({ instanceId, widgetDefinitionId, widgetDefinitionVersion }, index) => ({
     column: (index % perRow) * 4 + 1,
     columnSpan: 4,
     instanceId,
     row: Math.floor(index / perRow) * 3 + 1,
     rowSpan: 3,
     widgetDefinitionId,
+    widgetDefinitionVersion,
   }));
 }
 
@@ -316,11 +326,11 @@ const HR_MISSION_CONTROL_CONTRACT = {
 export const ZEN_V1_SURFACE_CONTRACTS = deepFreeze([
   {
     ...UNIVERSAL_MISSION_CONTROL_CONTRACT,
-    canonicalHash: "3a8392e8d622d3f6856bc2258ea6c81c1f773686efcb4103058d91fc87966f90",
+    canonicalHash: "729e49237470fcfc396f277f5e3b9ed5b12e0894f71aba6af604a055d03a66f1",
   },
   {
     ...HR_MISSION_CONTROL_CONTRACT,
-    canonicalHash: "e709c3a05f073fc04f961d8aac2a25884209e716e939a511d9c61d5a69d873de",
+    canonicalHash: "ba52533dc6f7ceff2c12f6821c302f69ccc732b1e0e4b356c68f2c62ee1b67b6",
   },
 ] as const) satisfies readonly ZenV1SurfaceContract[];
 
@@ -339,6 +349,17 @@ export interface PresentationSurfaceLayout {
   readonly overlayVersion: number;
   readonly source: PresentationSurfaceLayoutSource;
   readonly surfaceId: ZenV1SurfaceId;
+}
+
+export type PresentationPersonalizationLockReason =
+  | "layout_write_capability_absent"
+  | "tenant_personalization_disabled";
+
+export interface PresentationPersonalSurfaceEditorWorkspace {
+  readonly editable: boolean;
+  readonly layout: PresentationSurfaceLayout;
+  readonly lockReason: PresentationPersonalizationLockReason | null;
+  readonly resettable: boolean;
 }
 
 export interface UpdatePresentationSurfaceOverlayBody {
@@ -370,8 +391,21 @@ export const presentationWidgetPlacementSchema = {
     row: { maximum: 1_000, minimum: 1, type: "integer" },
     rowSpan: { maximum: 100, minimum: 1, type: "integer" },
     widgetDefinitionId: { maxLength: 160, pattern: identifierPattern, type: "string" },
+    widgetDefinitionVersion: {
+      maximum: 2_147_483_647,
+      minimum: 1,
+      type: "integer",
+    },
   },
-  required: ["column", "columnSpan", "instanceId", "row", "rowSpan", "widgetDefinitionId"],
+  required: [
+    "column",
+    "columnSpan",
+    "instanceId",
+    "row",
+    "rowSpan",
+    "widgetDefinitionId",
+    "widgetDefinitionVersion",
+  ],
   type: "object",
 } as const;
 
@@ -414,6 +448,27 @@ export const presentationSurfaceLayoutSchema = {
     "source",
     "surfaceId",
   ],
+  type: "object",
+} as const;
+
+export const presentationPersonalSurfaceEditorWorkspaceSchema = {
+  $id: "PresentationPersonalSurfaceEditorWorkspaceV1",
+  additionalProperties: false,
+  properties: {
+    editable: { type: "boolean" },
+    layout: { $ref: "PresentationSurfaceLayoutV1#" },
+    lockReason: {
+      anyOf: [
+        {
+          enum: ["layout_write_capability_absent", "tenant_personalization_disabled"],
+          type: "string",
+        },
+        { type: "null" },
+      ],
+    },
+    resettable: { type: "boolean" },
+  },
+  required: ["editable", "layout", "lockReason", "resettable"],
   type: "object",
 } as const;
 
@@ -513,6 +568,7 @@ function parsePlacement(value: unknown): PresentationWidgetPlacement {
     "row",
     "rowSpan",
     "widgetDefinitionId",
+    "widgetDefinitionVersion",
   ] as const;
   if (
     !exactRecord(value, keys) ||
@@ -526,7 +582,8 @@ function parsePlacement(value: unknown): PresentationWidgetPlacement {
     !safeInteger(value.rowSpan, 1, 100) ||
     typeof value.widgetDefinitionId !== "string" ||
     value.widgetDefinitionId.length > 160 ||
-    !new RegExp(identifierPattern).test(value.widgetDefinitionId)
+    !new RegExp(identifierPattern).test(value.widgetDefinitionId) ||
+    !safeInteger(value.widgetDefinitionVersion, 1, 2_147_483_647)
   ) {
     throw new Error("Invalid presentation widget placement");
   }
@@ -537,6 +594,7 @@ function parsePlacement(value: unknown): PresentationWidgetPlacement {
     row: value.row,
     rowSpan: value.rowSpan,
     widgetDefinitionId: value.widgetDefinitionId,
+    widgetDefinitionVersion: value.widgetDefinitionVersion,
   };
 }
 
@@ -569,13 +627,13 @@ function parseDefaultInstance(value: unknown): PresentationSurfaceDefaultInstanc
     row: value.row,
     rowSpan: value.rowSpan,
     widgetDefinitionId: value.widgetDefinitionId,
+    widgetDefinitionVersion: value.widgetDefinitionVersion,
   });
   return {
     ...placement,
     placementPolicy: value.placementPolicy,
     sectionId: value.sectionId,
     sourceOrder: value.sourceOrder,
-    widgetDefinitionVersion: value.widgetDefinitionVersion,
   };
 }
 
@@ -736,6 +794,7 @@ export function validatePresentationCompositionRegistries(
           (placement, index) =>
             placement.instanceId !== instances[index]?.instanceId ||
             placement.widgetDefinitionId !== instances[index]?.widgetDefinitionId ||
+            placement.widgetDefinitionVersion !== instances[index]?.widgetDefinitionVersion ||
             placement.column + placement.columnSpan - 1 > columns,
         )
       ) {
@@ -772,6 +831,7 @@ function canonicalPlacements(placements: readonly PresentationWidgetPlacement[])
       row: placement.row,
       rowSpan: placement.rowSpan,
       widgetDefinitionId: placement.widgetDefinitionId,
+      widgetDefinitionVersion: placement.widgetDefinitionVersion,
     })),
   );
 }
@@ -856,16 +916,23 @@ export function parsePresentationSurfaceLayout(value: unknown): PresentationSurf
   );
   if (
     basePlacements.length !== expectedEligibleBase.length ||
-    basePlacements.some(
-      ({ instanceId, widgetDefinitionId }) =>
-        expectedEligibleBase.find((candidate) => candidate.instanceId === instanceId)
-          ?.widgetDefinitionId !== widgetDefinitionId,
-    )
+    basePlacements.some(({ instanceId, widgetDefinitionId, widgetDefinitionVersion }) => {
+      const expected = expectedEligibleBase.find(
+        (candidate) => candidate.instanceId === instanceId,
+      );
+      return (
+        expected?.widgetDefinitionId !== widgetDefinitionId ||
+        expected.widgetDefinitionVersion !== widgetDefinitionVersion
+      );
+    })
   ) {
     throw new Error("Presentation surface base drift");
   }
   const expectedInstances = new Map(
-    basePlacements.map(({ instanceId, widgetDefinitionId }) => [instanceId, widgetDefinitionId]),
+    basePlacements.map(({ instanceId, widgetDefinitionId, widgetDefinitionVersion }) => [
+      instanceId,
+      `${widgetDefinitionId}@${widgetDefinitionVersion}`,
+    ]),
   );
   if (!Array.isArray(value.diagnostics) || value.diagnostics.length > 100) {
     throw new Error("Invalid presentation surface diagnostics");
@@ -888,18 +955,19 @@ export function parsePresentationSurfaceLayout(value: unknown): PresentationSurf
     });
   });
   if (
-    effectivePlacements.length !== basePlacements.length ||
     effectivePlacements.some(
-      ({ instanceId, widgetDefinitionId }) =>
-        expectedInstances.get(instanceId) !== widgetDefinitionId,
+      ({ instanceId, widgetDefinitionId, widgetDefinitionVersion }) =>
+        expectedInstances.get(instanceId) !== `${widgetDefinitionId}@${widgetDefinitionVersion}`,
     ) ||
     (value.source === "code_default" &&
-      (value.baseVersion !== contract.baseVersion ||
+      (effectivePlacements.length !== basePlacements.length ||
+        value.baseVersion !== contract.baseVersion ||
         canonicalPlacements(basePlacements) !== canonicalPlacements(expectedEligibleBase) ||
         value.overlayVersion !== 0 ||
         canonicalPlacements(effectivePlacements) !== canonicalPlacements(basePlacements))) ||
     (value.source === "tenant_base" &&
-      (value.overlayVersion !== 0 ||
+      (effectivePlacements.length !== basePlacements.length ||
+        value.overlayVersion !== 0 ||
         canonicalPlacements(effectivePlacements) !== canonicalPlacements(basePlacements))) ||
     (value.source === "user_overlay" && value.overlayVersion < 1) ||
     (value.source !== "user_overlay" && diagnostics.length > 0)
@@ -915,6 +983,29 @@ export function parsePresentationSurfaceLayout(value: unknown): PresentationSurf
     overlayVersion: value.overlayVersion,
     source: value.source,
     surfaceId,
+  };
+}
+
+export function parsePresentationPersonalSurfaceEditorWorkspace(
+  value: unknown,
+): PresentationPersonalSurfaceEditorWorkspace {
+  if (
+    !exactRecord(value, ["editable", "layout", "lockReason", "resettable"]) ||
+    typeof value.editable !== "boolean" ||
+    typeof value.resettable !== "boolean" ||
+    (value.lockReason !== null &&
+      value.lockReason !== "layout_write_capability_absent" &&
+      value.lockReason !== "tenant_personalization_disabled") ||
+    (value.editable && value.lockReason !== null) ||
+    (!value.editable && value.lockReason === null)
+  ) {
+    throw new Error("Invalid personal surface editor workspace");
+  }
+  return {
+    editable: value.editable,
+    layout: parsePresentationSurfaceLayout(value.layout),
+    lockReason: value.lockReason,
+    resettable: value.resettable,
   };
 }
 
