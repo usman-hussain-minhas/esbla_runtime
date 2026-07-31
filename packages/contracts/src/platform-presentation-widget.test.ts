@@ -13,13 +13,17 @@ import {
 describe("presentation widget manifest", () => {
   it("registers the default Mission Control Product shapes in canonical identity order", () => {
     expect(PRESENTATION_WIDGET_DEFINITIONS.map(({ id }) => id)).toEqual([
+      "hr.attendance.correction-queue",
       "hr.attendance.my-observations",
+      "hr.attendance.reports",
       "hr.employment.admin-queue",
       "hr.employment.current-facts",
       "hr.employment.history",
       "hr.expense.mine",
       "hr.leave.my-requests",
       "hr.shift.my-published",
+      "hr.shift.publish-queue",
+      "hr.shift.roster-overview",
       "hr.timesheet.draft",
       "hr.timesheet.mine",
       "hr.workforce.admin-queue",
@@ -96,6 +100,62 @@ describe("presentation widget manifest", () => {
       ],
       widgetKind: "operational",
     });
+    expect(
+      PRESENTATION_WIDGET_DEFINITIONS.filter(({ id }) =>
+        [
+          "hr.attendance.correction-queue",
+          "hr.attendance.reports",
+          "hr.shift.publish-queue",
+          "hr.shift.roster-overview",
+        ].includes(id),
+      ),
+    ).toMatchObject([
+      {
+        allowedCommandIds: ["hr.attendance.record_manual", "hr.attendance.correct"],
+        fullScreenRoute: "/workspace/hr/attendance/reports",
+        id: "hr.attendance.correction-queue",
+        inlineMutationEligible: true,
+        requiredCapabilityIds: [
+          "hr.attendance.list_reports",
+          "hr.attendance.view_detail",
+          "hr.attendance.record_manual",
+          "hr.attendance.correct",
+        ],
+      },
+      {
+        allowedCommandIds: [],
+        fullScreenRoute: "/workspace/hr/attendance/reports",
+        id: "hr.attendance.reports",
+        inlineMutationEligible: false,
+        requiredCapabilityIds: ["hr.attendance.list_reports", "hr.attendance.view_detail"],
+      },
+      {
+        allowedCommandIds: [
+          "hr.shift.create_roster",
+          "hr.shift.assign",
+          "hr.shift.cancel",
+          "hr.shift.publish",
+        ],
+        fullScreenRoute: "/workspace/hr/shifts/reports",
+        id: "hr.shift.publish-queue",
+        inlineMutationEligible: true,
+        requiredCapabilityIds: [
+          "hr.shift.list_roster",
+          "hr.shift.view_detail",
+          "hr.shift.create_roster",
+          "hr.shift.assign",
+          "hr.shift.cancel",
+          "hr.shift.publish",
+        ],
+      },
+      {
+        allowedCommandIds: [],
+        fullScreenRoute: "/workspace/hr/shifts/reports",
+        id: "hr.shift.roster-overview",
+        inlineMutationEligible: false,
+        requiredCapabilityIds: ["hr.shift.list_roster", "hr.shift.view_detail"],
+      },
+    ]);
     expect(
       PRESENTATION_WIDGET_DEFINITIONS.find(({ id }) => id === "platform.my-work.queue"),
     ).toMatchObject({

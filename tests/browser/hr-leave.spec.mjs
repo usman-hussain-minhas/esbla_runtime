@@ -3765,6 +3765,87 @@ test("Attendance renders manual facts and persistent correction history by curre
   }
 });
 
+test("Shift and Attendance catalogue faces preserve exact routes and current authority", async ({
+  browser,
+}, testInfo) => {
+  const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
+  try {
+    await operator.page.setViewportSize({ height: 900, width: 1_280 });
+    await operator.page.goto(`${operator.origin}/studio/surfaces/surface.mission-control/personal`);
+    for (const displayName of [
+      "Roster Overview",
+      "Roster Publish Queue",
+      "Attendance Reports",
+      "Attendance Correction Queue",
+    ]) {
+      const add = operator.page.getByRole("button", { name: `Add ${displayName}` });
+      await expect(add).toBeVisible();
+      await add.click();
+    }
+    const saveResponse = operator.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/presentation/surfaces/surface.mission-control",
+    );
+    await operator.page.getByRole("button", { name: "Save personal layout" }).click();
+    expect((await saveResponse).status()).toBe(200);
+    await operator.page.goto(operator.origin);
+
+    const rosterOverview = operator.page.locator(
+      '[data-widget-definition="hr.shift.roster-overview"]',
+    );
+    const publishQueue = operator.page.locator('[data-widget-definition="hr.shift.publish-queue"]');
+    const attendanceReports = operator.page.locator(
+      '[data-widget-definition="hr.attendance.reports"]',
+    );
+    const correctionQueue = operator.page.locator(
+      '[data-widget-definition="hr.attendance.correction-queue"]',
+    );
+    for (const widget of [rosterOverview, publishQueue, attendanceReports, correctionQueue]) {
+      await expect(widget).toHaveCount(1);
+      await expect(widget).toHaveAttribute("data-widget-state", /^(empty|populated)$/);
+    }
+    await expect(rosterOverview.getByText("Select an exact roster", { exact: true })).toBeVisible();
+    await expect(publishQueue.getByText("Create draft roster", { exact: true })).toBeVisible();
+    await expect(publishQueue.getByRole("link", { name: /Create draft roster/ })).toHaveAttribute(
+      "href",
+      "/workspace/hr/shifts/reports",
+    );
+    await expect(attendanceReports).toHaveAttribute("data-widget-state", "empty");
+    await expect(
+      attendanceReports.getByText("No report Attendance", { exact: true }),
+    ).toBeVisible();
+    await expect(correctionQueue).toHaveAttribute("data-widget-state", "empty");
+    await expect(correctionQueue.getByText("No correction queue", { exact: true })).toBeVisible();
+    await expect(
+      attendanceReports.locator('a[href^="/workspace/hr/attendance/by-id/"]'),
+    ).toHaveCount(0);
+    await expect(correctionQueue.locator('a[href^="/workspace/hr/attendance/by-id/"]')).toHaveCount(
+      0,
+    );
+
+    const evidencePath = testInfo.outputPath("catalogue-shift-attendance-widgets.png");
+    await operator.page.screenshot({ fullPage: false, path: evidencePath });
+    await testInfo.attach("catalogue-shift-attendance-widgets", {
+      contentType: "image/png",
+      path: evidencePath,
+    });
+    expect(operator.diagnostics.external).toEqual([]);
+    expect(operator.diagnostics.page).toEqual([]);
+    expect(operator.diagnostics.server).toEqual([]);
+    expect(operator.diagnostics.console).toEqual([]);
+  } finally {
+    await operator.page
+      .goto(`${operator.origin}/studio/surfaces/surface.mission-control/personal`)
+      .catch(() => undefined);
+    const reset = operator.page.getByRole("button", { name: "Restore tenant layout" });
+    if (await reset.isEnabled().catch(() => false)) {
+      operator.page.once("dialog", (dialog) => dialog.accept());
+      await reset.click().catch(() => undefined);
+    }
+    await closeActors(operator);
+  }
+});
+
 test("complete default HR widgets render real attendance, expense, and direct-report products", async ({
   browser,
 }, testInfo) => {

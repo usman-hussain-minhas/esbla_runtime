@@ -375,6 +375,59 @@ const HR_ATTENDANCE_MY_OBSERVATIONS_MANIFEST = {
   widgetKind: "operational",
 } as const satisfies PresentationWidgetDefinitionWithoutHash;
 
+const HR_ATTENDANCE_CORRECTION_QUEUE_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "attendance",
+  allowedCommandIds: ["hr.attendance.record_manual", "hr.attendance.correct"],
+  definitionVersion: 1,
+  displayName: "Attendance Correction Queue",
+  fullScreenRoute: "/workspace/hr/attendance/reports",
+  id: "hr.attendance.correction-queue",
+  inlineMutationEligible: true,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.attendance.correction-queue.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.attendance.correction-queue.read.v1",
+  requiredCapabilityIds: [
+    "hr.attendance.list_reports",
+    "hr.attendance.view_detail",
+    "hr.attendance.record_manual",
+    "hr.attendance.correct",
+  ],
+  semanticIcon: "clock-3",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "attendance",
+  widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const HR_ATTENDANCE_REPORTS_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "attendance",
+  allowedCommandIds: [],
+  definitionVersion: 1,
+  displayName: "Attendance Reports",
+  fullScreenRoute: "/workspace/hr/attendance/reports",
+  id: "hr.attendance.reports",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.attendance.reports.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.attendance.reports.read.v1",
+  requiredCapabilityIds: ["hr.attendance.list_reports", "hr.attendance.view_detail"],
+  semanticIcon: "clock-3",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "attendance",
+  widgetKind: "detailed",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
 const HR_EMPLOYMENT_CURRENT_FACTS_MANIFEST = {
   ...COMMON_WIDGET_MANIFEST,
   activationPolicy: "exact_service",
@@ -521,6 +574,66 @@ const HR_SHIFT_MY_PUBLISHED_MANIFEST = {
   sourceServiceGroup: "hr",
   sourceServiceKey: "shift_assignment",
   widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const HR_SHIFT_PUBLISH_QUEUE_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "shift_assignment",
+  allowedCommandIds: [
+    "hr.shift.create_roster",
+    "hr.shift.assign",
+    "hr.shift.cancel",
+    "hr.shift.publish",
+  ],
+  definitionVersion: 1,
+  displayName: "Roster Publish Queue",
+  fullScreenRoute: "/workspace/hr/shifts/reports",
+  id: "hr.shift.publish-queue",
+  inlineMutationEligible: true,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.shift.publish-queue.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.shift.publish-queue.read.v1",
+  requiredCapabilityIds: [
+    "hr.shift.list_roster",
+    "hr.shift.view_detail",
+    "hr.shift.create_roster",
+    "hr.shift.assign",
+    "hr.shift.cancel",
+    "hr.shift.publish",
+  ],
+  semanticIcon: "calendar-range",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "shift_assignment",
+  widgetKind: "operational",
+} as const satisfies PresentationWidgetDefinitionWithoutHash;
+
+const HR_SHIFT_ROSTER_OVERVIEW_MANIFEST = {
+  ...COMMON_WIDGET_MANIFEST,
+  activationPolicy: "exact_service",
+  activationServiceKey: "shift_assignment",
+  allowedCommandIds: [],
+  definitionVersion: 1,
+  displayName: "Roster Overview",
+  fullScreenRoute: "/workspace/hr/shifts/reports",
+  id: "hr.shift.roster-overview",
+  inlineMutationEligible: false,
+  migration: {
+    compatibleFrom: 1,
+    compatibleThrough: 1,
+    id: "zen.hr.shift.roster-overview.v1",
+  },
+  providerEligibility: [],
+  readModelId: "hr.shift.roster-overview.read.v1",
+  requiredCapabilityIds: ["hr.shift.list_roster", "hr.shift.view_detail"],
+  semanticIcon: "calendar-range",
+  sourceServiceGroup: "hr",
+  sourceServiceKey: "shift_assignment",
+  widgetKind: "detailed",
 } as const satisfies PresentationWidgetDefinitionWithoutHash;
 
 const HR_TIMESHEET_MINE_MANIFEST = {
@@ -761,6 +874,16 @@ export const HR_ATTENDANCE_MY_OBSERVATIONS_WIDGET_DEFINITION = deepFreeze({
   canonicalHash: "93d4acd1c5e9facceaa8b6dc929d513a6832624ad7aef871ed8ff71d3b17cb28",
 }) satisfies PresentationWidgetDefinition;
 
+export const HR_ATTENDANCE_CORRECTION_QUEUE_WIDGET_DEFINITION = deepFreeze({
+  ...HR_ATTENDANCE_CORRECTION_QUEUE_MANIFEST,
+  canonicalHash: "e56e5112ccf79673c0c3616501a6865660c08dddf53ea47609eb01d1a3ce8d89",
+}) satisfies PresentationWidgetDefinition;
+
+export const HR_ATTENDANCE_REPORTS_WIDGET_DEFINITION = deepFreeze({
+  ...HR_ATTENDANCE_REPORTS_MANIFEST,
+  canonicalHash: "71fff7de4cb846eb419f7315243de716faa69fd31f6ec6cf0fd5b8d8a26866f7",
+}) satisfies PresentationWidgetDefinition;
+
 export const HR_EMPLOYMENT_CURRENT_FACTS_WIDGET_DEFINITION = deepFreeze({
   ...HR_EMPLOYMENT_CURRENT_FACTS_MANIFEST,
   canonicalHash: "a08e69a049cb21c05cb0337eb0c7b4957ef9f0129ef0f771161c41c6551524a4",
@@ -789,6 +912,16 @@ export const HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION = deepFreeze({
 export const HR_SHIFT_MY_PUBLISHED_WIDGET_DEFINITION = deepFreeze({
   ...HR_SHIFT_MY_PUBLISHED_MANIFEST,
   canonicalHash: "4d698d44b10bfaa6e820baffdf973f58bb1724ffdee61ee7e2d4d0c166a26a1d",
+}) satisfies PresentationWidgetDefinition;
+
+export const HR_SHIFT_PUBLISH_QUEUE_WIDGET_DEFINITION = deepFreeze({
+  ...HR_SHIFT_PUBLISH_QUEUE_MANIFEST,
+  canonicalHash: "9b5bf3632fc95f84867a7b4dc2f0f8e84bb193663694b02718a74fc79021a060",
+}) satisfies PresentationWidgetDefinition;
+
+export const HR_SHIFT_ROSTER_OVERVIEW_WIDGET_DEFINITION = deepFreeze({
+  ...HR_SHIFT_ROSTER_OVERVIEW_MANIFEST,
+  canonicalHash: "bc72bacfb9f1b620cc1bc634fabcac01263ca5d270c7d09bacf287ec72ed9fd5",
 }) satisfies PresentationWidgetDefinition;
 
 export const HR_TIMESHEET_MINE_WIDGET_DEFINITION = deepFreeze({
@@ -832,13 +965,17 @@ export const WORKSPACE_TASKS_MINE_WIDGET_DEFINITION = deepFreeze({
 }) satisfies PresentationWidgetDefinition;
 
 export const PRESENTATION_WIDGET_DEFINITIONS = deepFreeze([
+  HR_ATTENDANCE_CORRECTION_QUEUE_WIDGET_DEFINITION,
   HR_ATTENDANCE_MY_OBSERVATIONS_WIDGET_DEFINITION,
+  HR_ATTENDANCE_REPORTS_WIDGET_DEFINITION,
   HR_EMPLOYMENT_ADMIN_QUEUE_WIDGET_DEFINITION,
   HR_EMPLOYMENT_CURRENT_FACTS_WIDGET_DEFINITION,
   HR_EMPLOYMENT_HISTORY_WIDGET_DEFINITION,
   HR_EXPENSE_MINE_WIDGET_DEFINITION,
   HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION,
   HR_SHIFT_MY_PUBLISHED_WIDGET_DEFINITION,
+  HR_SHIFT_PUBLISH_QUEUE_WIDGET_DEFINITION,
+  HR_SHIFT_ROSTER_OVERVIEW_WIDGET_DEFINITION,
   HR_TIMESHEET_DRAFT_WIDGET_DEFINITION,
   HR_TIMESHEET_MINE_WIDGET_DEFINITION,
   HR_WORKFORCE_ADMIN_QUEUE_WIDGET_DEFINITION,
