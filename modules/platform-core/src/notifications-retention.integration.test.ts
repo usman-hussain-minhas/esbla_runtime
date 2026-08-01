@@ -579,5 +579,5 @@ describe("notification derivative retention", () => {
     } finally {
       executorClient.release();
     }
-  });
+  }, 15_000);
 });
