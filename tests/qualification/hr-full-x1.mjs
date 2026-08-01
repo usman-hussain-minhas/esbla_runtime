@@ -12,9 +12,18 @@ import {
   listAuthorizedWorkforceProfiles,
   listOwnExpenseClaims,
   listOwnTimesheets,
+  verifyHrNotificationTargets,
 } from "../../modules/hr/dist/index.js";
+import {
+  getOwnPresentationPreferences,
+  getOwnPresentationSurfaceLayout,
+  listOwnNotifications,
+  updateOwnPresentationPreferences,
+  updateOwnPresentationSurfaceOverlay,
+} from "../../modules/platform-core/dist/index.js";
 import { createDatabasePool } from "../../packages/db/dist/index.js";
 import { fixture, requiredEnvironment, seedHrLeaveFixture } from "../browser/hr-leave-fixture.mjs";
+import { proveRestoredProductBrowser } from "./hr-restored-product-browser.mjs";
 
 const execute = promisify(execFile);
 const representativeRows = 1_000;
@@ -43,6 +52,48 @@ function context(actorPrincipalId) {
     actorPrincipalId,
     correlationId: randomUUID(),
     tenantId: fixture.tenantId,
+  };
+}
+
+async function prepareRestorableProductState(pool) {
+  const employeeContext = context(fixture.employeePrincipalId);
+  const currentPreferences = await getOwnPresentationPreferences(pool, employeeContext);
+  const preferences = await updateOwnPresentationPreferences(pool, employeeContext, {
+    density: "compact",
+    expectedVersion: currentPreferences.userVersion,
+    highContrast: true,
+    palette: "dark",
+    reducedMotion: "reduce",
+  });
+  const currentLayout = await getOwnPresentationSurfaceLayout(
+    pool,
+    employeeContext,
+    "surface.mission-control",
+  );
+  const layout = await updateOwnPresentationSurfaceOverlay(
+    pool,
+    employeeContext,
+    "surface.mission-control",
+    {
+      expectedVersion: currentLayout.overlayVersion,
+      placements: currentLayout.effectivePlacements,
+    },
+  );
+  const notifications = await listOwnNotifications(
+    pool,
+    employeeContext,
+    { pageSize: 50 },
+    verifyHrNotificationTargets,
+  );
+  assert.ok(notifications.items.length > 0, "Restorable Product notifications are missing");
+  assert.ok(
+    notifications.items.some(({ title }) => title === "Your workforce profile is available"),
+    "Ratified first-activation notification is missing from restorable Product state",
+  );
+  return {
+    notificationCount: notifications.items.length,
+    overlayVersion: layout.overlayVersion,
+    preferenceVersion: preferences.userVersion,
   };
 }
 
@@ -687,6 +738,7 @@ async function proveBackupRestore(migrationConnectionString, applicationConnecti
     assert.equal(rootIdentity.uid, process.getuid?.(), "Qualification root owner must match");
     assert.equal(rootIdentity.mode & 0o777, 0o700, "Qualification root must remain private");
     const dumpPath = join(root, "hr-full-x1.pgdump");
+    const restoredBrowserReceiptPath = join(root, "restored-product-browser-receipt.json");
 
     migrationPool = createDatabasePool(sourceSuperUrl, { max: 1 });
     const sourceSchema = await schemaSnapshot(migrationPool);
@@ -730,6 +782,11 @@ async function proveBackupRestore(migrationConnectionString, applicationConnecti
           "evidence_events",
           "outbox_events",
           "work_items",
+          "presentation_setting_values",
+          "presentation_surface_overlays",
+          "presentation_surface_versions",
+          "notification_projection_receipts",
+          "notification_projections",
         ];
     for (const tableName of requiredRows) {
       const table = restoredData.tables.find((entry) => entry.tableName === tableName);
@@ -756,8 +813,36 @@ async function proveBackupRestore(migrationConnectionString, applicationConnecti
     } finally {
       applicationClient.release();
     }
+    const restoredProductBrowser = supportOnly
+      ? undefined
+      : await proveRestoredProductBrowser({
+          applicationUrl: restoredApplicationUrl,
+          migrationUrl: restoredMigrationUrl,
+          notificationProjectorUrl: databaseUrlFor(
+            applicationConnectionString,
+            restoreDatabaseName,
+            "esbla_notification_projector",
+          ),
+          receiptPath: restoredBrowserReceiptPath,
+        });
+    if (restoredProductBrowser) {
+      const persisted = await restoredMigrationPool.query(
+        `SELECT value::text value
+         FROM presentation_setting_values
+         WHERE tenant_id=$1 AND subject_type='user_override' AND subject_id=$2
+           AND setting_key='appearance.density.v1'`,
+        [fixture.tenantId, fixture.employeePrincipalId],
+      );
+      assert.equal(persisted.rowCount, 1, "Restored browser preference write is missing");
+      assert.equal(
+        JSON.parse(persisted.rows[0].value),
+        restoredProductBrowser.densityAfter,
+        "Restored browser preference write did not persist",
+      );
+    }
     return {
       dataDigest: sourceData.digest,
+      restoredProductBrowser: restoredProductBrowser ?? null,
       restoredTables: restoredData.tables.length,
       schemaDigest: sourceSchema,
     };
@@ -805,7 +890,11 @@ if (!supportOnly) {
 const migrationPool = createDatabasePool(migrationConnectionString, { max: 2 });
 const applicationPool = createDatabasePool(applicationConnectionString, { max: 4 });
 let performance;
+let restorableProductState;
 try {
+  restorableProductState = supportOnly
+    ? null
+    : await prepareRestorableProductState(applicationPool);
   const { rosterVersionId } = await seedRepresentativeRows(migrationPool);
   performance = await proveRepresentativePerformance(applicationPool, rosterVersionId);
 } finally {
@@ -820,7 +909,21 @@ const backupRestore = await proveBackupRestore(
 console.log(
   JSON.stringify({
     backupRestore,
-    browserScenarios: supportOnly ? 0 : 17,
+    browserProof: supportOnly
+      ? { aggregateMatrix: false, engines: [], restoredProductReplay: false }
+      : {
+          aggregateMatrix: process.env.ESBLA_T10_BROWSER_MATRIX === "1",
+          engines:
+            process.env.ESBLA_T10_BROWSER_MATRIX === "1"
+              ? [
+                  "chromium",
+                  "firefox",
+                  ...(process.platform !== "darwin" || process.env.CI === "true" ? ["webkit"] : []),
+                ]
+              : ["chromium"],
+          restoredProductReplay: true,
+          scenarioCountSource: "Playwright runner receipts",
+        },
     cannotClaim: [
       "FULL-X1 terminal",
       "PostgreSQL daemon restart",
@@ -830,10 +933,17 @@ console.log(
       "human acceptance",
     ],
     performance,
-    proofClass: supportOnly ? "FULL_X1_SUPPORT_ONLY" : "FULL_X1_REPOSITORY_CANDIDATE",
+    proofClass: supportOnly
+      ? "FULL_X1_SUPPORT_ONLY"
+      : process.env.ESBLA_T10_BROWSER_MATRIX === "1"
+        ? "T10_INTEGRATED_REPOSITORY_QUALIFICATION"
+        : "FULL_X1_REPOSITORY_CANDIDATE",
     representativeRows,
+    restorableProductState,
     status: supportOnly
       ? "HR_FULL_X1_SUPPORT_CHECK_GREEN"
-      : "HR_FULL_X1_REPOSITORY_QUALIFICATION_GREEN",
+      : process.env.ESBLA_T10_BROWSER_MATRIX === "1"
+        ? "HR_T10_INTEGRATED_QUALIFICATION_GREEN"
+        : "HR_FULL_X1_REPOSITORY_QUALIFICATION_GREEN",
   }),
 );

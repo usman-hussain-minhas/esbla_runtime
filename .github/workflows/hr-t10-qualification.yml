@@ -1,0 +1,123 @@
+name: HR T10 Qualification
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/hr-t10-qualification.yml
+      - package.json
+      - playwright.config.mjs
+      - tests/browser/hr-leave-stack.mjs
+      - tests/browser/hr-t10-cross-browser.spec.mjs
+      - tests/qualification/hr-full-x1.mjs
+      - tests/qualification/hr-restored-product-browser.mjs
+  pull_request:
+    paths:
+      - .github/workflows/hr-t10-qualification.yml
+      - package.json
+      - playwright.config.mjs
+      - tests/browser/hr-leave-stack.mjs
+      - tests/browser/hr-t10-cross-browser.spec.mjs
+      - tests/qualification/hr-full-x1.mjs
+      - tests/qualification/hr-restored-product-browser.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hr-t10-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium firefox webkit
+      - name: Verify exact source bytes before T10
+        run: |
+          test "$(git rev-parse HEAD)" = "$ESBLA_EXPECTED_SOURCE_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+        env:
+          ESBLA_EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - id: t10
+        name: Run integrated HR T10 qualification
+        run: |
+          mkdir -p "$ESBLA_T10_ENGINE_RECEIPT_DIR"
+          pnpm run test:hr-t10
+        env:
+          ESBLA_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/esbla-t10-browser-artifacts
+          ESBLA_EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ESBLA_T10_ENGINE_RECEIPT_DIR: ${{ runner.temp }}/esbla-t10-browser-artifacts/engine-receipts
+      - name: Verify exact source bytes after T10
+        if: always()
+        run: |
+          test "$(git rev-parse HEAD)" = "$ESBLA_EXPECTED_SOURCE_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+        env:
+          ESBLA_EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Record exact T10 receipt
+        if: always()
+        run: |
+          head="$(git rev-parse HEAD)"
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          clean=false
+          test -z "$(git status --porcelain=v1 --untracked-files=all)" && clean=true
+          aggregate="$RUNNER_TEMP/esbla-t10-browser-artifacts/esbla-playwright-results/.last-run.json"
+          restored="$RUNNER_TEMP/esbla-t10-browser-artifacts/restored/esbla-playwright-results/.last-run.json"
+          engines="$RUNNER_TEMP/esbla-t10-browser-artifacts/engine-receipts"
+          browser_eligible=false
+          test -f "$aggregate" && test -f "$restored" && \
+            jq -e -s 'length == 2 and all(.[]; .status == "passed" and (.failedTests | type) == "array" and (.failedTests | length) == 0)' "$aggregate" "$restored" >/dev/null && \
+            test "$(find "$engines" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')" = 3 && \
+            jq -e -s --argjson viewports '[{"colorScheme":"light","height":900,"label":"desktop-light","width":1440},{"colorScheme":"dark","height":768,"label":"tablet-dark-reduced","reducedMotion":"reduce","width":1024},{"colorScheme":"light","height":900,"label":"edge-light","width":768},{"colorScheme":"light","height":844,"label":"phone-light","width":390},{"colorScheme":"dark","height":844,"label":"phone-dark","width":390},{"colorScheme":"dark","forcedColors":"active","height":568,"label":"phone-high-contrast-reflow","reducedMotion":"reduce","width":320}]' \
+              'length == 3 and (map(.projectName) | sort) == ["chromium","firefox-t10","webkit-t10"] and all(.[]; .schemaVersion == 1 and .status == "T10_ENGINE_MATRIX_GREEN" and .platform == "linux" and .keyboardActivatedNotifications == true and .notificationsStateTruthful == true and .surfaceEditorTablet == true and .viewports == $viewports and ((.projectName == "chromium" and .browserName == "chromium") or (.projectName == "firefox-t10" and .browserName == "firefox") or (.projectName == "webkit-t10" and .browserName == "webkit")))' \
+              "$engines/chromium.json" "$engines/firefox-t10.json" "$engines/webkit-t10.json" >/dev/null && \
+            browser_eligible=true
+          t10_eligible=false
+          test "$T10_OUTCOME" = success && test "$head" = "$ESBLA_EXPECTED_SOURCE_SHA" && \
+            test "$clean" = true && test "$browser_eligible" = true && t10_eligible=true
+          jq -n \
+            --arg expected "$ESBLA_EXPECTED_SOURCE_SHA" \
+            --arg head "$head" \
+            --arg tree "$tree" \
+            --arg outcome "$T10_OUTCOME" \
+            --argjson clean "$clean" \
+            --argjson browser_eligible "$browser_eligible" \
+            --argjson t10_eligible "$t10_eligible" \
+            '{schema_version: 1, expected_head: $expected, tested_head: $head, tested_tree: $tree,
+              t10_outcome: $outcome, worktree_clean_after: $clean,
+              receipt_class: "CI_ATTEMPT", browser_matrix_proof_eligible: $browser_eligible,
+              t10_integrated_proof_eligible: $t10_eligible,
+              engines: ["chromium", "firefox", "webkit"],
+              proof_obligations: ["rendered_product", "restored_database", "application_restart",
+                "browser_write_after_restore", "responsive_matrix", "query_index_budgets"],
+              cannot_claim: ["release", "deployment", "production", "human_theme_acceptance"]}' \
+            > "$RUNNER_TEMP/esbla-t10-receipt.json"
+        env:
+          ESBLA_EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          T10_OUTCOME: ${{ steps.t10.outcome }}
+      - name: Upload sanitized T10 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hr-t10-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/esbla-t10-receipt.json
+            ${{ runner.temp }}/esbla-t10-browser-artifacts
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
