@@ -23,10 +23,21 @@ import {
 
 const fixtureEnvironment = createFixtureEnvironment();
 const testControlToken = randomBytes(32).toString("hex");
+const restoredReplay = process.env.ESBLA_T10_RESTORED_REPLAY === "1";
 const childRuntimeEnvironment = Object.fromEntries(
-  ["HOME", "LANG", "PATH", "PLAYWRIGHT_BROWSERS_PATH", "TERM", "TZ", "XDG_CACHE_HOME"].flatMap(
-    (name) => (process.env[name] ? [[name, process.env[name]]] : []),
-  ),
+  [
+    "ESBLA_T10_BROWSER_MATRIX",
+    "ESBLA_T10_ENGINE_RECEIPT_DIR",
+    "ESBLA_T10_RESTORED_RECEIPT",
+    "ESBLA_T10_RESTORED_REPLAY",
+    "HOME",
+    "LANG",
+    "PATH",
+    "PLAYWRIGHT_BROWSERS_PATH",
+    "TERM",
+    "TZ",
+    "XDG_CACHE_HOME",
+  ].flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : [])),
 );
 const artifactPath = process.env.ESBLA_BROWSER_ARTIFACT_DIR?.trim();
 const runnerTemp = process.env.RUNNER_TEMP?.trim();
@@ -59,7 +70,7 @@ function portOpen(port) {
   });
 }
 
-const seededFixture = await seedHrLeaveFixture();
+const seededFixture = restoredReplay ? undefined : await seedHrLeaveFixture();
 
 const applicationPool = createDatabasePool(requiredEnvironment("DATABASE_URL"), { max: 8 });
 const migrationReadPool = createDatabasePool(requiredEnvironment("DATABASE_MIGRATION_URL"), {
@@ -150,6 +161,7 @@ async function close() {
       const record = children[index];
       if (record.unexpected || record.terminationRequestFailed || receipt.error) return true;
       if (record.name === "playwright") {
+        if (!record.requestedSignal) return receipt.signal !== null;
         return receipt.signal !== null || (!interrupted && receipt.code !== 0);
       }
       if (!record.requestedSignal) return receipt.signal !== null || receipt.code !== 0;
@@ -603,7 +615,7 @@ try {
         principalId: fixture.adminPrincipalId,
         projectRoot: nextRuntimeRoot.projects.admin,
       },
-    ];
+    ].filter(({ persona }) => !restoredReplay || persona === "employee");
     for (const persona of personas) {
       if (closing) throw new Error("Browser stack closing during Web startup");
       const origin = new URL(persona.origin);
@@ -631,9 +643,14 @@ try {
           env: {
             ...childRuntimeEnvironment,
             ...playwrightArtifactEnvironment,
-            ESBLA_TEST_EMPLOYMENT_ACTION_WORKER_PROFILE_ID:
-              seededFixture.employmentActionWorkerProfileId,
-            ESBLA_TEST_SHIFT_EMPLOYEE_WORKER_PROFILE_ID: seededFixture.shiftEmployeeWorkerProfileId,
+            ...(seededFixture
+              ? {
+                  ESBLA_TEST_EMPLOYMENT_ACTION_WORKER_PROFILE_ID:
+                    seededFixture.employmentActionWorkerProfileId,
+                  ESBLA_TEST_SHIFT_EMPLOYEE_WORKER_PROFILE_ID:
+                    seededFixture.shiftEmployeeWorkerProfileId,
+                }
+              : {}),
             ESBLA_TEST_CONTROL_ORIGIN: `http://127.0.0.1:${ports.api}`,
             ESBLA_TEST_CONTROL_TOKEN: testControlToken,
             TMPDIR: playwrightRoot.path,
@@ -653,4 +670,7 @@ try {
   process.exitCode = 1;
   await close();
   throw new Error("Browser stack failed");
+} finally {
+  process.off("SIGINT", handleSignal);
+  process.off("SIGTERM", handleSignal);
 }

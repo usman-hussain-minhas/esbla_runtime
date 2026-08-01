@@ -18,6 +18,7 @@
     "test:browser:built": "node scripts/test/with-postgres.mjs node tests/browser/hr-leave-stack.mjs",
     "test:presentation-db-restart:built": "node scripts/test/with-postgres.mjs --one-restart-on-exit-75 node tests/qualification/presentation-restart.mjs",
     "test:hr-full-x1": "pnpm build && ESBLA_FULL_X1_EPHEMERAL=1 node scripts/test/with-postgres.mjs node tests/qualification/hr-full-x1.mjs",
+    "test:hr-t10": "pnpm build && ESBLA_FULL_X1_EPHEMERAL=1 ESBLA_T10_BROWSER_MATRIX=1 node scripts/test/with-postgres.mjs node tests/qualification/hr-full-x1.mjs",
     "test:process-safety": "node --test scripts/test/with-postgres.signal.test.mjs",
     "typecheck": "pnpm -r --sort --if-present typecheck"
   },
