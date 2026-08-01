@@ -239,6 +239,13 @@
       "when": 1785571200000,
       "tag": "0033_notification_shift_attendance_targets",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1785657600000,
+      "tag": "0034_notification_timesheet_expense_targets",
+      "breakpoints": true
     }
   ]
 }

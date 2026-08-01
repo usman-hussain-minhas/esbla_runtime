@@ -12,6 +12,7 @@ import {
 } from "@esbla/contracts/hr-expense-claim-api";
 import {
   appendEvidence,
+  appendNotificationIntent,
   assertPolicyAllowed,
   completeWorkItem,
   createWorkItem,
@@ -610,8 +611,8 @@ async function recordResult(
   newState: string,
   beforeVersion: number | null,
   aggregateVersion: number,
-): Promise<void> {
-  await recordMutationProof(transaction, {
+): Promise<string> {
+  const proof = await recordMutationProof(transaction, {
     evidence: {
       eventType: receipt.eventType,
       newState,
@@ -643,6 +644,20 @@ async function recordResult(
     subjectType: SUBJECT_RECEIPT,
   });
   if (bound.replayed) throw idempotencyConflict();
+  return proof.outboxEventId;
+}
+
+async function linkedWorkerPrincipal(
+  transaction: TenantTransaction,
+  workerProfileId: string,
+): Promise<string | null> {
+  const profile = await transaction.client.query<{ principal_id: string | null }>(
+    `SELECT principal_id FROM hr_worker_profiles
+     WHERE tenant_id=$1 AND worker_profile_id=$2
+     FOR SHARE`,
+    [transaction.context.tenantId, workerProfileId],
+  );
+  return profile.rows[0]?.principal_id ?? null;
 }
 
 export async function createExpenseClaim(
@@ -1063,7 +1078,7 @@ export async function submitExpenseClaim(
         workType: WORK_TYPE,
       });
       const expenseClaim = await mapExpenseClaim(transaction, expenseClaimId);
-      await recordResult(
+      const sourceEventId = await recordResult(
         transaction,
         receipt,
         expenseClaim,
@@ -1073,6 +1088,16 @@ export async function submitExpenseClaim(
         selectedVersion.row_version,
         expenseClaim.currentVersion.rowVersion,
       );
+      await appendNotificationIntent(transaction, {
+        category: "hr.expense_claim",
+        recipientPrincipalId: approver.managerPrincipalId,
+        safeSummary: "Open the expense claim for details.",
+        sourceEventId,
+        sourceServiceKey: HR_EXPENSE_CLAIM_SERVICE_KEY,
+        targetKind: "hr.expense_claim.detail",
+        targetResourceId: expenseClaimId,
+        title: "An expense claim needs your review",
+      });
       return {
         billingState: HR_EXPENSE_CLAIM_BILLING_STATE,
         expenseClaim,
@@ -1111,6 +1136,10 @@ export async function createExpenseClaimCorrection(
       );
       const selectedRoot = root.rows[0];
       if (!selectedRoot || selectedRoot.worker_profile_id !== workerProfileId) throw notFound();
+      const recipientPrincipalId = await linkedWorkerPrincipal(
+        transaction,
+        selectedRoot.worker_profile_id,
+      );
       const replay = await readReplay(transaction, receipt, input);
       if (replay) {
         return {
@@ -1183,7 +1212,7 @@ export async function createExpenseClaimCorrection(
       );
       if (advanced.rows.length !== 1) throw versionConflict();
       const expenseClaim = await mapExpenseClaim(transaction, expenseClaimId);
-      await recordResult(
+      const sourceEventId = await recordResult(
         transaction,
         receipt,
         expenseClaim,
@@ -1193,6 +1222,21 @@ export async function createExpenseClaimCorrection(
         selectedRoot.row_version,
         expenseClaim.rootVersion,
       );
+      if (
+        recipientPrincipalId !== null &&
+        recipientPrincipalId !== transaction.context.actorPrincipalId
+      ) {
+        await appendNotificationIntent(transaction, {
+          category: "hr.expense_claim",
+          recipientPrincipalId,
+          safeSummary: "Open the expense claim for details.",
+          sourceEventId,
+          sourceServiceKey: HR_EXPENSE_CLAIM_SERVICE_KEY,
+          targetKind: "hr.expense_claim.detail",
+          targetResourceId: expenseClaimId,
+          title: "An expense claim correction was recorded",
+        });
+      }
       return {
         billingState: HR_EXPENSE_CLAIM_BILLING_STATE,
         expenseClaim,
@@ -1294,6 +1338,10 @@ async function decideExpenseClaim(
       );
       const selectedRoot = root.rows[0];
       if (!selectedRoot) throw notFound();
+      const recipientPrincipalId = await linkedWorkerPrincipal(
+        transaction,
+        selectedRoot.worker_profile_id,
+      );
       if (
         selectedRoot.row_version !== input.expectedRootVersion ||
         selectedRoot.current_version_id !== versionId
@@ -1400,7 +1448,7 @@ async function decideExpenseClaim(
       if (updated.rows.length !== 1) throw versionConflict();
       await completeWorkItem(transaction, selectedWork.work_item_id);
       const expenseClaim = await mapExpenseClaim(transaction, expenseClaimId);
-      await recordResult(
+      const sourceEventId = await recordResult(
         transaction,
         receipt,
         expenseClaim,
@@ -1410,6 +1458,18 @@ async function decideExpenseClaim(
         selectedVersion.row_version,
         expenseClaim.currentVersion.rowVersion,
       );
+      if (recipientPrincipalId !== null) {
+        await appendNotificationIntent(transaction, {
+          category: "hr.expense_claim",
+          recipientPrincipalId,
+          safeSummary: "Open the expense claim for details.",
+          sourceEventId,
+          sourceServiceKey: HR_EXPENSE_CLAIM_SERVICE_KEY,
+          targetKind: "hr.expense_claim.detail",
+          targetResourceId: expenseClaimId,
+          title: `Your expense claim was ${targetStatus}`,
+        });
+      }
       return {
         billingState: HR_EXPENSE_CLAIM_BILLING_STATE,
         expenseClaim,
