@@ -24,6 +24,11 @@ describe("Esbla Theme v1 host contract", () => {
     expect(css).not.toContain("--corner-button: 42px");
     expect(css).toContain(".surface-frame::after");
     expect(css).not.toContain(".surface-frame::before");
+    expect(css).toContain("width: min(100%, 1920px)");
+    expect(css).toContain(':root[data-high-contrast="true"] body');
+    expect(css).not.toContain("linear-gradient(var(--bg-grid-line) 1px, transparent 1px)");
+    expect(css).toContain("border: 0;\n  border-radius: 0;");
+    expect(css).toContain("box-shadow: none;");
     expect(css).not.toContain("@media (max-width: 760px)");
     expect(css).not.toContain("@media (max-width: 980px)");
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
@@ -174,6 +179,41 @@ describe("Esbla Theme v1 host contract", () => {
     expect(systemControl).toContain("data-tooltip={`Close ");
     expect(systemControl).toContain("label.toLowerCase()");
     expect(shell).not.toContain("statusLabel: string");
+  });
+
+  it("hosts the eligible Edit Surface action in route-bound top-right chrome only", async () => {
+    const [entry, hrHub, hrLayout, shellChrome, systemControl] = await Promise.all([
+      readFile(new URL("./page.tsx", import.meta.url), "utf8"),
+      readFile(new URL("./workspace/hr/page.tsx", import.meta.url), "utf8"),
+      readFile(new URL("./workspace/hr/layout.tsx", import.meta.url), "utf8"),
+      readFile(
+        new URL("../theme/zen-theme/v1/chrome/zen-shell-chrome.tsx", import.meta.url),
+        "utf8",
+      ),
+      readFile(
+        new URL("../theme/zen-theme/v1/panels/zen-system-panel.tsx", import.meta.url),
+        "utf8",
+      ),
+    ]);
+    expect(entry).not.toContain("<ZenSurfaceEditLauncher");
+    expect(entry).toContain("editSurface={");
+    expect(hrHub).not.toContain("ZenSurfaceEditLauncher");
+    expect(hrLayout).toContain('route: "/workspace/hr"');
+    expect(shellChrome).toContain("editSurface?.route === pathname");
+    expect(systemControl).toContain("ZenSurfaceEditLauncher");
+    const user = systemControl.indexOf('data-tooltip="User and system"');
+    const settings = systemControl.indexOf('data-tooltip="Universal Settings"');
+    const appearance = systemControl.indexOf('data-tooltip="Appearance settings"');
+    const edit = systemControl.indexOf("<ZenSurfaceEditLauncher");
+    const notifications = systemControl.indexOf(
+      'className="chrome-button notification-direct-launcher"',
+    );
+    expect(user).toBeGreaterThan(-1);
+    expect(settings).toBeGreaterThan(user);
+    expect(appearance).toBeGreaterThan(settings);
+    expect(edit).toBeGreaterThan(appearance);
+    expect(notifications).toBeGreaterThan(edit);
+    expect(systemControl).not.toContain("Team");
   });
 
   it("keeps Universal Settings reachable when only Appearance is unavailable", async () => {

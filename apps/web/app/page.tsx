@@ -3,7 +3,6 @@ import { loadOwnPresentationPersonalSurfaceEditorWorkspace } from "../lib/presen
 import { getEligibleZenSurfaceSections } from "../lib/zen-section-rail-core";
 import { getSurfaceDefinition } from "../theme/zen-theme/v1";
 import { ZenSectionRail } from "../theme/zen-theme/v1/surfaces/zen-section-rail";
-import { ZenSurfaceEditLauncher } from "../theme/zen-theme/v1/surfaces/zen-surface-edit-launcher";
 import { ZenSurfaceWidgets } from "../theme/zen-theme/v1/surfaces/zen-surface-widgets";
 import { WorkspaceShell } from "./workspace-shell";
 
@@ -26,7 +25,18 @@ export default async function MissionControlPage() {
     },
   );
   return (
-    <WorkspaceShell currentSurface="Mission Control">
+    <WorkspaceShell
+      currentSurface="Mission Control"
+      editSurface={
+        editorWorkspace?.editable
+          ? {
+              ariaLabel: "Edit Mission Control personal layout",
+              href: "/studio/surfaces/surface.mission-control/personal",
+              route: "/",
+            }
+          : undefined
+      }
+    >
       <section
         aria-labelledby="mission-control-heading"
         className="mission-control-surface"
@@ -44,12 +54,6 @@ export default async function MissionControlPage() {
             <p className="surface-summary">
               Live service widgets share one source of Product truth.
             </p>
-            {editorWorkspace?.editable ? (
-              <ZenSurfaceEditLauncher
-                ariaLabel="Edit Mission Control personal layout"
-                href="/studio/surfaces/surface.mission-control/personal"
-              />
-            ) : null}
           </div>
         </header>
         <div className="widget-grid">

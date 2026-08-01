@@ -3,7 +3,6 @@ import { loadOwnPresentationPersonalSurfaceEditorWorkspace } from "../../../lib/
 import { getEligibleZenSurfaceSections } from "../../../lib/zen-section-rail-core";
 import { getSurfaceDefinition } from "../../../theme/zen-theme/v1";
 import { ZenSectionRail } from "../../../theme/zen-theme/v1/surfaces/zen-section-rail";
-import { ZenSurfaceEditLauncher } from "../../../theme/zen-theme/v1/surfaces/zen-surface-edit-launcher";
 import { ZenSurfaceWidgets } from "../../../theme/zen-theme/v1/surfaces/zen-surface-widgets";
 
 export const dynamic = "force-dynamic";
@@ -43,12 +42,6 @@ export default async function HrHubPage() {
           <p className="surface-summary">
             Live HR widgets share the same authorized Product truth as their full-screen faces.
           </p>
-          {editorWorkspace?.editable ? (
-            <ZenSurfaceEditLauncher
-              ariaLabel="Edit HR Mission Control personal layout"
-              href="/studio/surfaces/surface.hr.mission-control/personal"
-            />
-          ) : null}
         </div>
       </header>
 

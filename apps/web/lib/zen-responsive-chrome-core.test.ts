@@ -7,6 +7,7 @@ const roomyGeometry = {
   clusterGap: 18,
   controlGap: 8,
   endInset: 18,
+  hasEditSurface: false,
   startInset: 18,
 } as const;
 
@@ -25,7 +26,34 @@ describe("Zen responsive chrome resolver", () => {
     ).toEqual({
       breakpoint: "desktop",
       collapsed: [],
-      direct: ["contextual", "service-groups", "appearance", "settings"],
+      direct: ["contextual", "service-groups", "settings", "appearance"],
+      systemRequired: true,
+    });
+  });
+
+  it("preserves the exact desktop right-edge order and adds Edit Surface only when eligible", () => {
+    expect(
+      resolveZenResponsiveChrome({
+        ...roomyGeometry,
+        availableInlineSize: 1_440,
+        hasAppearance: true,
+        hasContextualMenu: true,
+        hasEditSurface: true,
+        hasNotifications: true,
+        hasSettings: true,
+        hasServiceGroups: true,
+      }),
+    ).toEqual({
+      breakpoint: "desktop",
+      collapsed: [],
+      direct: [
+        "contextual",
+        "service-groups",
+        "settings",
+        "appearance",
+        "edit-surface",
+        "notifications",
+      ],
       systemRequired: true,
     });
   });
@@ -75,7 +103,7 @@ describe("Zen responsive chrome resolver", () => {
     });
   });
 
-  it("keeps Home alone when no backed panel or eligible navigation exists", () => {
+  it("keeps the universal User/System control when no optional capability is backed", () => {
     expect(
       resolveZenResponsiveChrome({
         ...roomyGeometry,
@@ -90,7 +118,7 @@ describe("Zen responsive chrome resolver", () => {
       breakpoint: "phone",
       collapsed: [],
       direct: [],
-      systemRequired: false,
+      systemRequired: true,
     });
   });
 
@@ -167,7 +195,7 @@ describe("Zen responsive chrome resolver", () => {
     };
     expect(resolveZenResponsiveChrome({ ...input, availableInlineSize: 1_100 })).toMatchObject({
       collapsed: [],
-      direct: ["contextual", "service-groups", "notifications", "appearance", "settings"],
+      direct: ["contextual", "service-groups", "settings", "appearance", "notifications"],
     });
     expect(resolveZenResponsiveChrome({ ...input, availableInlineSize: 390 })).toMatchObject({
       breakpoint: "phone",
@@ -181,6 +209,26 @@ describe("Zen responsive chrome resolver", () => {
     ).toMatchObject({
       collapsed: ["notifications", "appearance", "settings", "service-groups", "contextual"],
       direct: [],
+    });
+  });
+
+  it("preserves existing phone collapse priority before containing Edit Surface", () => {
+    expect(
+      resolveZenResponsiveChrome({
+        ...roomyGeometry,
+        availableInlineSize: 390,
+        hasAppearance: true,
+        hasContextualMenu: true,
+        hasEditSurface: true,
+        hasNotifications: true,
+        hasSettings: true,
+        hasServiceGroups: true,
+      }),
+    ).toMatchObject({
+      breakpoint: "phone",
+      collapsed: ["notifications", "appearance", "settings", "edit-surface"],
+      direct: ["contextual", "service-groups"],
+      systemRequired: true,
     });
   });
 });

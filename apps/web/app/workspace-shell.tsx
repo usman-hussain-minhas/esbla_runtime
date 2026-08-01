@@ -9,14 +9,20 @@ import { loadOwnPresentationNavigation } from "../lib/presentation-navigation";
 import { loadOwnPresentationPreferences } from "../lib/presentation-preferences";
 import { loadOwnPresentationShortcuts } from "../lib/presentation-shortcuts";
 import { ZenShellChrome } from "../theme/zen-theme/v1/chrome/zen-shell-chrome";
+import type { ZenSurfaceEditDescriptor } from "../theme/zen-theme/v1/surfaces/zen-surface-edit-launcher";
 import type { WorkspaceSurfaceKey } from "./workspace-surfaces";
 
 interface WorkspaceShellProps {
   readonly children: ReactNode;
   readonly currentSurface: WorkspaceSurfaceKey;
+  readonly editSurface?: ZenSurfaceEditDescriptor | undefined;
 }
 
-export async function WorkspaceShell({ children, currentSurface }: WorkspaceShellProps) {
+export async function WorkspaceShell({
+  children,
+  currentSurface,
+  editSurface,
+}: WorkspaceShellProps) {
   const [navigation, notifications, shortcuts, systemEligible] = await Promise.all([
     loadOwnPresentationNavigation().catch(
       (): PresentationNavigationDiscovery => ({ serviceGroups: [] }),
@@ -35,6 +41,7 @@ export async function WorkspaceShell({ children, currentSurface }: WorkspaceShel
       <ZenShellChrome
         appearanceAvailable={systemEligible}
         discovery={navigation}
+        editSurface={editSurface}
         initialNotifications={notifications}
         settingsAvailable
         shortcutDiscovery={shortcuts}
