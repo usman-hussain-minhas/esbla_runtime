@@ -839,6 +839,16 @@ export interface NotificationProjectionBatchResult {
   readonly withheld: number;
 }
 
+export interface NotificationRetentionBatchResult {
+  readonly redacted: number;
+  readonly tenantId: string | null;
+}
+
+interface NotificationProjectorLifecycle {
+  readonly activeClient: (client: PoolClient | undefined) => void;
+  readonly clientDestroyed: (client: PoolClient) => boolean;
+}
+
 function sanitizedFailureCode(error: unknown): string {
   if (error instanceof Error && FAILURE_CODE_PATTERN.test(error.message)) return error.message;
   return "PROJECTOR_OPERATION_FAILED";
@@ -1173,10 +1183,7 @@ async function processClaimedIntents(
 async function processNotificationProjectionBatch(
   pool: Pool,
   verifyTargets: NotificationTargetVerifier,
-  lifecycle?: {
-    readonly activeClient: (client: PoolClient | undefined) => void;
-    readonly clientDestroyed: (client: PoolClient) => boolean;
-  },
+  lifecycle?: NotificationProjectorLifecycle,
 ): Promise<NotificationProjectionBatchResult> {
   const client = await pool.connect();
   lifecycle?.activeClient(client);
@@ -1207,6 +1214,56 @@ async function processNotificationProjectionBatch(
     lifecycle?.activeClient(undefined);
     if (!lifecycle?.clientDestroyed(client)) client.release();
   }
+}
+
+async function processNotificationRetentionBatch(
+  pool: Pool,
+  batchSize: number,
+  lifecycle?: NotificationProjectorLifecycle,
+): Promise<NotificationRetentionBatchResult> {
+  if (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 100) {
+    throw new Error("Notification retention batch size is invalid");
+  }
+  const client = await pool.connect();
+  lifecycle?.activeClient(client);
+  let began = false;
+  try {
+    await client.query("BEGIN");
+    began = true;
+    await client.query("SET LOCAL search_path TO pg_catalog,public,pg_temp");
+    const result = await client.query<{ redacted: number; tenant_id: string | null }>(
+      "SELECT tenant_id,redacted FROM public.esbla_apply_notification_retention_v1($1)",
+      [batchSize],
+    );
+    const row = result.rows[0];
+    if (
+      result.rows.length !== 1 ||
+      !row ||
+      !Number.isSafeInteger(row.redacted) ||
+      row.redacted < 0 ||
+      row.redacted > batchSize ||
+      (row.redacted === 0 && row.tenant_id !== null) ||
+      (row.redacted > 0 && (row.tenant_id === null || !UUID_PATTERN.test(row.tenant_id)))
+    ) {
+      throw new Error("INVALID_NOTIFICATION_RETENTION_RESULT");
+    }
+    await client.query("COMMIT");
+    began = false;
+    return { redacted: row.redacted, tenantId: row.tenant_id };
+  } catch (error) {
+    if (began) await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    lifecycle?.activeClient(undefined);
+    if (!lifecycle?.clientDestroyed(client)) client.release();
+  }
+}
+
+export async function applyNotificationRetentionOnce(
+  pool: Pool,
+  batchSize: number = NOTIFICATION_POLICY_V1.batchSize,
+): Promise<NotificationRetentionBatchResult> {
+  return await processNotificationRetentionBatch(pool, batchSize);
 }
 
 export async function projectPendingNotificationIntentsOnce(
@@ -1319,7 +1376,13 @@ export function createNotificationProjector(
       try {
         const result = await processNotificationProjectionBatch(pool, verifyTargets, lifecycle);
         if (signal.aborted) return;
-        if (result.claimed > 0) continue;
+        const retention = await processNotificationRetentionBatch(
+          pool,
+          NOTIFICATION_POLICY_V1.batchSize,
+          lifecycle,
+        );
+        if (signal.aborted) return;
+        if (result.claimed > 0 || retention.redacted > 0) continue;
       } catch {
         options.onDiagnostic?.({ code: "NOTIFICATION_PROJECTOR_BATCH_FAILED" });
       }
