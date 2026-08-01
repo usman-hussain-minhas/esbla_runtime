@@ -14,6 +14,7 @@ import type {
 } from "@esbla/contracts";
 import {
   appendEvidence,
+  appendNotificationIntent,
   assertPolicyAllowed,
   deriveStableUuid,
   evaluatePolicy,
@@ -772,8 +773,11 @@ async function recordAttendanceObservation(
     };
   }
   await beforeInsert?.();
-  const worker = await transaction.client.query<{ workforce_status: string }>(
-    `SELECT workforce_status FROM hr_worker_profiles
+  const worker = await transaction.client.query<{
+    principal_id: string | null;
+    workforce_status: string;
+  }>(
+    `SELECT principal_id,workforce_status FROM hr_worker_profiles
      WHERE tenant_id=$1 AND worker_profile_id=$2 FOR SHARE`,
     [transaction.context.tenantId, workerProfileId],
   );
@@ -794,7 +798,7 @@ async function recordAttendanceObservation(
   const observation = mapObservation(inserted.rows[0] as ObservationRow);
   const eventType =
     operation === "record_manual" ? EVENT_RECORD_MANUAL : EVENT_RECORD_SYNTHETIC_TEST;
-  await recordMutationProof(transaction, {
+  const proof = await recordMutationProof(transaction, {
     evidence: {
       eventType,
       newState: "recorded",
@@ -818,6 +822,23 @@ async function recordAttendanceObservation(
       },
     },
   });
+  const recipientPrincipalId = worker.rows[0]?.principal_id ?? null;
+  if (
+    operation === "record_manual" &&
+    recipientPrincipalId !== null &&
+    recipientPrincipalId !== transaction.context.actorPrincipalId
+  ) {
+    await appendNotificationIntent(transaction, {
+      category: "hr.attendance",
+      recipientPrincipalId,
+      safeSummary: "Open the attendance observation for details.",
+      sourceEventId: proof.outboxEventId,
+      sourceServiceKey: HR_ATTENDANCE_SERVICE_KEY,
+      targetKind: "hr.attendance.detail",
+      targetResourceId: observation.attendanceObservationId,
+      title: "An attendance observation was recorded",
+    });
+  }
   const bound = await appendEvidence(transaction, {
     eventType: `${eventType}.response_bound`,
     newState: semanticSha256([observation]),
@@ -1042,8 +1063,11 @@ export async function appendAttendanceCorrection(
         "SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1::text,0))",
         [`hr.attendance.correct:${transaction.context.tenantId}:${observationId}`],
       );
-      const observation = await transaction.client.query<{ attendance_observation_id: string }>(
-        `SELECT attendance_observation_id FROM hr_attendance_observations
+      const observation = await transaction.client.query<{
+        attendance_observation_id: string;
+        worker_profile_id: string;
+      }>(
+        `SELECT attendance_observation_id,worker_profile_id FROM hr_attendance_observations
          WHERE tenant_id=$1 AND attendance_observation_id=$2`,
         [transaction.context.tenantId, observationId],
       );
@@ -1053,6 +1077,11 @@ export async function appendAttendanceCorrection(
           "Attendance observation was not found",
         );
       }
+      const worker = await transaction.client.query<{ principal_id: string | null }>(
+        `SELECT principal_id FROM hr_worker_profiles
+         WHERE tenant_id=$1 AND worker_profile_id=$2 FOR SHARE`,
+        [transaction.context.tenantId, observation.rows[0].worker_profile_id],
+      );
       const current = await transaction.client.query<{
         attendance_correction_id: string;
         correction_version: number;
@@ -1093,7 +1122,7 @@ export async function appendAttendanceCorrection(
         ],
       );
       const correction = mapCorrection(inserted.rows[0] as CorrectionRow);
-      await recordMutationProof(transaction, {
+      const proof = await recordMutationProof(transaction, {
         evidence: {
           eventType: EVENT_CORRECT,
           newState: "recorded",
@@ -1117,6 +1146,22 @@ export async function appendAttendanceCorrection(
           },
         },
       });
+      const recipientPrincipalId = worker.rows[0]?.principal_id ?? null;
+      if (
+        recipientPrincipalId !== null &&
+        recipientPrincipalId !== transaction.context.actorPrincipalId
+      ) {
+        await appendNotificationIntent(transaction, {
+          category: "hr.attendance",
+          recipientPrincipalId,
+          safeSummary: "Open the attendance observation for details.",
+          sourceEventId: proof.outboxEventId,
+          sourceServiceKey: HR_ATTENDANCE_SERVICE_KEY,
+          targetKind: "hr.attendance.detail",
+          targetResourceId: observationId,
+          title: "An attendance observation was corrected",
+        });
+      }
       const bound = await appendEvidence(transaction, {
         eventType: `${EVENT_CORRECT}.response_bound`,
         newState: semanticSha256([correction]),

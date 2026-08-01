@@ -232,6 +232,13 @@
       "when": 1785538849124,
       "tag": "0032_notification_workforce_employment_targets",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1785571200000,
+      "tag": "0033_notification_shift_attendance_targets",
+      "breakpoints": true
     }
   ]
 }

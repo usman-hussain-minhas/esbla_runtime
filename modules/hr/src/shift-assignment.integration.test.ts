@@ -78,6 +78,7 @@ async function tenantTransaction<T>(
   tenantId: string,
   actorId: string,
   operation: (client: PoolClient) => Promise<T>,
+  correlationId: string = randomUUID(),
 ): Promise<T> {
   const client = await source.connect();
   try {
@@ -86,7 +87,7 @@ async function tenantTransaction<T>(
       `SELECT set_config('app.tenant_id',$1,true),
               set_config('app.actor_principal_id',$2,true),
               set_config('app.correlation_id',$3,true)`,
-      [tenantId, actorId, randomUUID()],
+      [tenantId, actorId, correlationId],
     );
     const result = await operation(client);
     await client.query("COMMIT");
@@ -115,6 +116,34 @@ async function shiftCounts(periodStart: string): Promise<ShiftCounts> {
     );
     return result.rows[0] as ShiftCounts;
   });
+}
+
+async function shiftNotificationIntents(subjectId: string, correlationId: string = randomUUID()) {
+  return await tenantTransaction(
+    pool,
+    ids.tenant,
+    ids.actor,
+    async (client) => {
+      const result = await client.query<{
+        event_type: string;
+        intent_payload: Record<string, unknown>;
+        recipient_principal_id: string;
+        source_service_key: string;
+      }>(
+        `SELECT outbox.event_type,intent.recipient_principal_id,
+              intent.source_service_key,intent.intent_payload
+       FROM notification_intents intent
+       JOIN outbox_events outbox
+         ON outbox.tenant_id=intent.tenant_id
+        AND outbox.event_id=intent.source_event_id
+       WHERE intent.tenant_id=$1 AND outbox.aggregate_id=$2
+       ORDER BY outbox.event_type,intent.recipient_principal_id`,
+        [ids.tenant, subjectId],
+      );
+      return result.rows;
+    },
+    correlationId,
+  );
 }
 
 type ControlCounts = {
@@ -885,6 +914,160 @@ describe("Shift Assignment mutation lifecycle", () => {
       "hr.shift_assignment.create_roster",
       "hr.shift_assignment.publish_roster",
     ]);
+  });
+
+  it("emits only the ratified published-roster and published-cancellation notifications", async () => {
+    const draft = (
+      await createShiftRoster(pool, context(), rosterInput("2098-10-01", "2098-10-14"))
+    ).roster;
+    const first = await assignShift(
+      pool,
+      context(),
+      assignmentInput(draft.rosterVersionId, "2098-10-03T04:00:00Z", "2098-10-03T12:00:00Z"),
+    );
+    await assignShift(
+      pool,
+      context(),
+      assignmentInput(draft.rosterVersionId, "2098-10-04T04:00:00Z", "2098-10-04T12:00:00Z"),
+    );
+    expect(await shiftNotificationIntents(draft.rosterVersionId)).toEqual([]);
+    expect(await shiftNotificationIntents(first.assignment.shiftAssignmentId)).toEqual([]);
+    expect(
+      await tenantTransaction(
+        pool,
+        ids.tenant,
+        ids.actor,
+        async (client) =>
+          (
+            await client.query<{ principal_id: string }>(
+              `SELECT DISTINCT profile.principal_id
+             FROM hr_shift_assignments assignment
+             JOIN hr_worker_profiles profile
+               ON profile.tenant_id=assignment.tenant_id
+              AND profile.worker_profile_id=assignment.worker_profile_id
+             WHERE assignment.tenant_id=$1 AND assignment.roster_version_id=$2
+               AND assignment.status='active' AND profile.workforce_status='active'
+               AND profile.principal_id IS NOT NULL`,
+              [ids.tenant, draft.rosterVersionId],
+            )
+          ).rows,
+      ),
+    ).toEqual([{ principal_id: ids.worker }]);
+
+    const publishCorrelation = randomUUID();
+    const publishInput = {
+      expectedVersion: draft.version,
+      idempotencyKey: randomUUID(),
+      rosterVersionId: draft.rosterVersionId,
+    };
+    const published = await publishShiftRoster(pool, context(publishCorrelation), publishInput);
+    expect(await shiftNotificationIntents(draft.rosterVersionId, publishCorrelation)).toEqual([
+      {
+        event_type: "hr.shift_assignment.publish_roster",
+        intent_payload: {
+          category: "hr.shift_assignment",
+          safeSummary: "Open your published schedule for details.",
+          targetHref: "/workspace/hr/shifts",
+          targetKind: "hr.shift_assignment.own_shifts",
+          targetReadCapabilityId: "hr.shift.list_roster",
+          targetResourceId: null,
+          title: "Your published schedule is available",
+        },
+        recipient_principal_id: ids.worker,
+        source_service_key: "shift_assignment",
+      },
+    ]);
+    expect(await publishShiftRoster(pool, context(), publishInput)).toEqual({
+      ...published,
+      replayed: true,
+    });
+    expect(await shiftNotificationIntents(draft.rosterVersionId, publishCorrelation)).toHaveLength(
+      1,
+    );
+
+    const cancelCorrelation = randomUUID();
+    await cancelShiftAssignment(pool, context(cancelCorrelation), {
+      expectedVersion: first.assignment.version,
+      idempotencyKey: randomUUID(),
+      shiftAssignmentId: first.assignment.shiftAssignmentId,
+    });
+    expect(
+      await shiftNotificationIntents(first.assignment.shiftAssignmentId, cancelCorrelation),
+    ).toEqual([
+      {
+        event_type: "hr.shift_assignment.cancel_assignment",
+        intent_payload: {
+          category: "hr.shift_assignment",
+          safeSummary: "Open the shift assignment for details.",
+          targetHref: `/workspace/hr/shifts/by-id/${first.assignment.shiftAssignmentId}`,
+          targetKind: "hr.shift_assignment.detail",
+          targetReadCapabilityId: "hr.shift.view_detail",
+          targetResourceId: first.assignment.shiftAssignmentId,
+          title: "One of your published shifts was cancelled",
+        },
+        recipient_principal_id: ids.worker,
+        source_service_key: "shift_assignment",
+      },
+    ]);
+
+    const unpublished = (
+      await createShiftRoster(pool, context(), rosterInput("2098-11-01", "2098-11-14"))
+    ).roster;
+    const unpublishedAssignment = await assignShift(
+      pool,
+      context(),
+      assignmentInput(unpublished.rosterVersionId, "2098-11-03T04:00:00Z", "2098-11-03T12:00:00Z"),
+    );
+    await cancelShiftAssignment(pool, context(), {
+      expectedVersion: unpublishedAssignment.assignment.version,
+      idempotencyKey: randomUUID(),
+      shiftAssignmentId: unpublishedAssignment.assignment.shiftAssignmentId,
+    });
+    expect(
+      await shiftNotificationIntents(unpublishedAssignment.assignment.shiftAssignmentId),
+    ).toEqual([]);
+
+    const rollbackRoster = (
+      await createShiftRoster(pool, context(), rosterInput("2098-12-01", "2098-12-14"))
+    ).roster;
+    await assignShift(
+      pool,
+      context(),
+      assignmentInput(
+        rollbackRoster.rosterVersionId,
+        "2098-12-03T04:00:00Z",
+        "2098-12-03T12:00:00Z",
+      ),
+    );
+    const rollbackBaseline = await shiftCounts("2098-12-01");
+    await migrationPool.query(`REVOKE INSERT ON notification_intents FROM ${applicationRole}`);
+    try {
+      await expect(
+        publishShiftRoster(pool, context(), {
+          expectedVersion: rollbackRoster.version,
+          idempotencyKey: randomUUID(),
+          rosterVersionId: rollbackRoster.rosterVersionId,
+        }),
+      ).rejects.toBeInstanceOf(Error);
+    } finally {
+      await migrationPool.query(`GRANT INSERT ON notification_intents TO ${applicationRole}`);
+    }
+    expect(await shiftCounts("2098-12-01")).toEqual(rollbackBaseline);
+    expect(
+      await tenantTransaction(
+        migrationPool,
+        ids.tenant,
+        ids.actor,
+        async (client) =>
+          (
+            await client.query<{ status: string }>(
+              `SELECT status FROM hr_shift_roster_versions
+             WHERE tenant_id=$1 AND roster_version_id=$2`,
+              [ids.tenant, rollbackRoster.rosterVersionId],
+            )
+          ).rows,
+      ),
+    ).toEqual([{ status: "draft" }]);
   });
 
   it("rechecks authority and dependencies before replay and rolls proof failures back", async () => {

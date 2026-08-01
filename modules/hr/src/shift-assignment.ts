@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { HrShiftAssignmentHistoryEvent } from "@esbla/contracts";
 import {
   appendEvidence,
+  appendNotificationIntent,
   assertPolicyAllowed,
   deriveStableUuid,
   evaluatePolicy,
@@ -555,8 +556,8 @@ async function recordResult(
   version: number,
   result: HrShiftRoster | HrShiftAssignment,
   extra: Readonly<Record<string, unknown>> = {},
-): Promise<void> {
-  await recordMutationProof(transaction, {
+): Promise<string> {
+  const proof = await recordMutationProof(transaction, {
     evidence: { eventType: receipt.eventType, newState, priorState, subjectId, subjectType },
     outbox: {
       aggregateId: subjectId,
@@ -579,6 +580,7 @@ async function recordResult(
     subjectType: SUBJECT_RECEIPT,
   });
   if (binding.replayed) throw idempotencyConflict();
+  return proof.outboxEventId;
 }
 
 async function assignmentHistory(
@@ -1014,6 +1016,18 @@ export async function publishShiftRoster(
         ],
       );
       if (invalid.rows.length > 0) throw conflict("Shift roster assignments are not publishable");
+      const recipients = await transaction.client.query<{ principal_id: string }>(
+        `SELECT DISTINCT profile.principal_id
+         FROM hr_shift_assignments assignment
+         JOIN hr_worker_profiles profile
+           ON profile.tenant_id=assignment.tenant_id
+          AND profile.worker_profile_id=assignment.worker_profile_id
+         WHERE assignment.tenant_id=$1 AND assignment.roster_version_id=$2
+           AND assignment.status='active' AND profile.workforce_status='active'
+           AND profile.principal_id IS NOT NULL
+         ORDER BY profile.principal_id`,
+        [transaction.context.tenantId, rosterVersionId],
+      );
       const prior = predecessor.rows[0] ?? null;
       if (prior) {
         const superseded = await transaction.client.query(
@@ -1038,7 +1052,7 @@ export async function publishShiftRoster(
       );
       if (updated.rows.length !== 1) throw versionConflict();
       const roster = mapRoster(updated.rows[0] as RosterRow);
-      await recordResult(
+      const sourceEventId = await recordResult(
         transaction,
         receipt,
         SUBJECT_ROSTER,
@@ -1053,6 +1067,18 @@ export async function publishShiftRoster(
           supersededRosterVersionId: prior?.roster_version_id ?? null,
         },
       );
+      for (const recipient of recipients.rows) {
+        await appendNotificationIntent(transaction, {
+          category: "hr.shift_assignment",
+          recipientPrincipalId: recipient.principal_id,
+          safeSummary: "Open your published schedule for details.",
+          sourceEventId,
+          sourceServiceKey: HR_SHIFT_ASSIGNMENT_SERVICE_KEY,
+          targetKind: "hr.shift_assignment.own_shifts",
+          targetResourceId: null,
+          title: "Your published schedule is available",
+        });
+      }
       return { billingState: HR_SHIFT_ASSIGNMENT_BILLING_STATE, replayed: false, roster };
     });
   } catch (error) {
@@ -1078,6 +1104,25 @@ export async function cancelShiftAssignment(
       if (replay) {
         return await assignmentResult(transaction, replay, true);
       }
+      const candidate = await transaction.client.query<AssignmentRow>(
+        `SELECT ${ASSIGNMENT_COLUMNS} FROM hr_shift_assignments
+         WHERE tenant_id=$1 AND shift_assignment_id=$2`,
+        [transaction.context.tenantId, shiftAssignmentId],
+      );
+      const observed = candidate.rows[0];
+      if (!observed) {
+        throw new HrShiftAssignmentError("SHIFT_NOT_FOUND", "Shift assignment was not found");
+      }
+      const roster = await transaction.client.query<{ status: string }>(
+        `SELECT status FROM hr_shift_roster_versions
+         WHERE tenant_id=$1 AND roster_version_id=$2 FOR SHARE`,
+        [transaction.context.tenantId, observed.roster_version_id],
+      );
+      const worker = await transaction.client.query<{ principal_id: string | null }>(
+        `SELECT principal_id FROM hr_worker_profiles
+         WHERE tenant_id=$1 AND worker_profile_id=$2 FOR SHARE`,
+        [transaction.context.tenantId, observed.worker_profile_id],
+      );
       const selected = await transaction.client.query<AssignmentRow>(
         `SELECT ${ASSIGNMENT_COLUMNS} FROM hr_shift_assignments
          WHERE tenant_id=$1 AND shift_assignment_id=$2 FOR UPDATE`,
@@ -1097,7 +1142,7 @@ export async function cancelShiftAssignment(
       );
       if (updated.rows.length !== 1) throw versionConflict();
       const assignment = mapAssignment(updated.rows[0] as AssignmentRow);
-      await recordResult(
+      const sourceEventId = await recordResult(
         transaction,
         receipt,
         SUBJECT_ASSIGNMENT,
@@ -1108,6 +1153,19 @@ export async function cancelShiftAssignment(
         assignment,
         { afterVersion: assignment.version, beforeVersion: input.expectedVersion },
       );
+      const recipientPrincipalId = worker.rows[0]?.principal_id ?? null;
+      if (roster.rows[0]?.status === "published" && recipientPrincipalId !== null) {
+        await appendNotificationIntent(transaction, {
+          category: "hr.shift_assignment",
+          recipientPrincipalId,
+          safeSummary: "Open the shift assignment for details.",
+          sourceEventId,
+          sourceServiceKey: HR_SHIFT_ASSIGNMENT_SERVICE_KEY,
+          targetKind: "hr.shift_assignment.detail",
+          targetResourceId: assignment.shiftAssignmentId,
+          title: "One of your published shifts was cancelled",
+        });
+      }
       return await assignmentResult(transaction, assignment, false);
     });
   } catch (error) {

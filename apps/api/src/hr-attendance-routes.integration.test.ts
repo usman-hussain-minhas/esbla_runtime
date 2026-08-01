@@ -39,6 +39,7 @@ type SignedGetOptions = Pick<SignedPostOptions, "principalId" | "tenantId"> & {
   readonly url: string;
 };
 let migrationPool: Pool;
+let applicationRole = "";
 let managerProfileId = "";
 let otherWorkerProfileId = "";
 let pool: Pool;
@@ -51,6 +52,7 @@ async function tenantTransaction<T>(
   tenantId: string,
   actorPrincipalId: string,
   operation: (tenantClient: PoolClient) => Promise<T>,
+  correlationId: string = randomUUID(),
 ): Promise<T> {
   await client.query("BEGIN");
   try {
@@ -58,7 +60,7 @@ async function tenantTransaction<T>(
       `SELECT set_config('app.tenant_id',$1,true),
               set_config('app.actor_principal_id',$2,true),
               set_config('app.correlation_id',$3,true)`,
-      [tenantId, actorPrincipalId, randomUUID()],
+      [tenantId, actorPrincipalId, correlationId],
     );
     const result = await operation(client);
     await client.query("COMMIT");
@@ -226,6 +228,41 @@ async function counts(tenantId: string = ids.tenant) {
     work: Number(row.work),
   };
 }
+
+async function attendanceNotificationIntents(
+  targetResourceId: string,
+  correlationId: string = randomUUID(),
+) {
+  const client = await pool.connect();
+  try {
+    return await tenantTransaction(
+      client,
+      ids.tenant,
+      ids.operator,
+      (tenantClient) =>
+        tenantClient.query<{
+          event_type: string;
+          intent_payload: Record<string, unknown>;
+          recipient_principal_id: string;
+          source_service_key: string;
+        }>(
+          `SELECT outbox.event_type,intent.recipient_principal_id,
+              intent.source_service_key,intent.intent_payload
+       FROM notification_intents intent
+       JOIN outbox_events outbox
+         ON outbox.tenant_id=intent.tenant_id
+        AND outbox.event_id=intent.source_event_id
+       WHERE intent.tenant_id=$1
+         AND intent.intent_payload->>'targetResourceId'=$2
+       ORDER BY outbox.event_type,intent.recipient_principal_id`,
+          [ids.tenant, targetResourceId],
+        ),
+      correlationId,
+    );
+  } finally {
+    client.release();
+  }
+}
 function expectProblem(
   result: Awaited<ReturnType<typeof signedPost>>,
   status: number,
@@ -287,7 +324,7 @@ async function createActiveWorkerProfile(
 beforeAll(async () => {
   const runtimeUrl = process.env.DATABASE_URL;
   const migrationUrl = process.env.DATABASE_MIGRATION_URL;
-  const applicationRole = process.env.ESBLA_TEST_APPLICATION_ROLE ?? "";
+  applicationRole = process.env.ESBLA_TEST_APPLICATION_ROLE ?? "";
   if (!runtimeUrl || !migrationUrl || !/^[a-z_][a-z0-9_]*$/.test(applicationRole)) {
     throw new Error("PostgreSQL Attendance API harness is unavailable");
   }
@@ -427,6 +464,23 @@ describe("Attendance manual observation API", () => {
       version: 1,
       workerProfileId,
     });
+    const observationId = String(first.response.json().attendanceObservationId);
+    expect((await attendanceNotificationIntents(observationId, key)).rows).toEqual([
+      {
+        event_type: "hr.attendance.record_manual",
+        intent_payload: {
+          category: "hr.attendance",
+          safeSummary: "Open the attendance observation for details.",
+          targetHref: `/workspace/hr/attendance/by-id/${observationId}`,
+          targetKind: "hr.attendance.detail",
+          targetReadCapabilityId: "hr.attendance.view_detail",
+          targetResourceId: observationId,
+          title: "An attendance observation was recorded",
+        },
+        recipient_principal_id: ids.worker,
+        source_service_key: "attendance",
+      },
+    ]);
     const replay = await signedPost({ body: body(), idempotencyKey: key });
     expect(replay.response.statusCode, replay.response.body).toBe(200);
     expect(replay.response.headers["idempotent-replayed"]).toBe("true");
@@ -509,6 +563,58 @@ describe("Attendance manual observation API", () => {
       outbox: 0,
       work: 0,
     });
+  });
+  it("suppresses actor notifications and rolls notification failures back atomically", async () => {
+    await governedMutation(
+      "UPDATE memberships SET role_key='hr_operator' WHERE tenant_id=$1 AND principal_id=$2",
+      [ids.tenant, ids.worker],
+    );
+    await governedMutation(
+      `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+       VALUES ($1,$2,'hr.attendance.record_manual')`,
+      [ids.tenant, ids.worker],
+    );
+    const selfKey = randomUUID();
+    try {
+      const self = await signedPost({
+        body: body(),
+        idempotencyKey: selfKey,
+        principalId: ids.worker,
+      });
+      expect(self.response.statusCode, self.response.body).toBe(201);
+      expect(
+        (
+          await attendanceNotificationIntents(
+            String(self.response.json().attendanceObservationId),
+            selfKey,
+          )
+        ).rows,
+      ).toEqual([]);
+    } finally {
+      await governedMutation(
+        `DELETE FROM membership_capabilities
+         WHERE tenant_id=$1 AND principal_id=$2
+           AND capability_id='hr.attendance.record_manual'`,
+        [ids.tenant, ids.worker],
+      );
+      await governedMutation(
+        "UPDATE memberships SET role_key='employee' WHERE tenant_id=$1 AND principal_id=$2",
+        [ids.tenant, ids.worker],
+      );
+    }
+
+    const baseline = await counts();
+    await migrationPool.query(`REVOKE INSERT ON notification_intents FROM ${applicationRole}`);
+    try {
+      expectProblem(
+        await signedPost({ body: body(), idempotencyKey: randomUUID() }),
+        403,
+        "POLICY_DENIED",
+      );
+    } finally {
+      await migrationPool.query(`GRANT INSERT ON notification_intents TO ${applicationRole}`);
+    }
+    expect(await counts()).toEqual(baseline);
   });
   it("enforces activation, active-worker and exact registered setting state", async () => {
     const baseline = await counts();
@@ -665,6 +771,9 @@ describe("Attendance internal synthetic-test action", () => {
       outbox: before.outbox + 1,
       work: before.work,
     });
+    expect(
+      (await attendanceNotificationIntents(first.observation.attendanceObservationId)).rows,
+    ).toEqual([]);
     const proof = await governed((client) =>
       client.query(
         `SELECT evidence.tenant_id,evidence.actor_principal_id,
@@ -812,6 +921,24 @@ describe("Attendance correction API", () => {
       supersedesAttendanceCorrectionId: null,
       version: 1,
     });
+    expect(
+      (await attendanceNotificationIntents(observation.attendanceObservationId, key)).rows,
+    ).toEqual([
+      {
+        event_type: "hr.attendance.correct",
+        intent_payload: {
+          category: "hr.attendance",
+          safeSummary: "Open the attendance observation for details.",
+          targetHref: `/workspace/hr/attendance/by-id/${observation.attendanceObservationId}`,
+          targetKind: "hr.attendance.detail",
+          targetReadCapabilityId: "hr.attendance.view_detail",
+          targetResourceId: observation.attendanceObservationId,
+          title: "An attendance observation was corrected",
+        },
+        recipient_principal_id: ids.worker,
+        source_service_key: "attendance",
+      },
+    ]);
     expect(Object.keys(first.response.json()).sort()).toEqual([
       "attendanceCorrectionId",
       "attendanceObservationId",
