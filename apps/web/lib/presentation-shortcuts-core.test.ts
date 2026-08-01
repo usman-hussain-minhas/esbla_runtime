@@ -35,11 +35,22 @@ const universal = {
 const discovery = { contextual: null, universal } as const;
 
 describe("presentation shortcut web boundary", () => {
-  it("builds only the canonical optional service-context query", () => {
+  it("builds only zero or one canonical service or surface context query", () => {
     expect(buildPresentationShortcutsPath()).toBe("/v1/platform/presentation/shortcuts");
-    expect(buildPresentationShortcutsPath("hr")).toBe(
+    expect(buildPresentationShortcutsPath({ contextServiceGroupId: "hr" })).toBe(
       "/v1/platform/presentation/shortcuts?contextServiceGroupId=hr",
     );
+    expect(
+      buildPresentationShortcutsPath({
+        contextSurfaceId: "surface.mission-control",
+      }),
+    ).toBe("/v1/platform/presentation/shortcuts?contextSurfaceId=surface.mission-control");
+    expect(() =>
+      buildPresentationShortcutsPath({
+        contextServiceGroupId: "hr",
+        contextSurfaceId: "surface.mission-control",
+      } as never),
+    ).toThrow(PresentationShortcutsError);
   });
 
   it("accepts only exact HTTP 200 strict discovery and update responses", async () => {
@@ -133,5 +144,17 @@ describe("presentation shortcut web boundary", () => {
         settingKey: "navigation.contextual_shortcuts.v1",
       }),
     ).toThrow(PresentationShortcutsError);
+
+    const surface = {
+      ...universal,
+      contextId: "surface.mission-control",
+      contextKind: "surface",
+      settingKey: "navigation.contextual_shortcuts.v1",
+    } as const;
+    const surfaceDiscovery = { contextual: surface, universal } as const;
+    expect(replacePresentationShortcutSet(surfaceDiscovery, { ...surface, version: 2 })).toEqual({
+      contextual: { ...surface, version: 2 },
+      universal,
+    });
   });
 });

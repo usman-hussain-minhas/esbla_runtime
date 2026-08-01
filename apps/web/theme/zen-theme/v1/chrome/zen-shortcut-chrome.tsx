@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  getPresentationShortcutContextLabel,
   type PresentationShortcutDiscovery,
   type PresentationShortcutSet,
   type PresentationShortcutTarget,
@@ -18,6 +19,9 @@ export type ZenShortcutScope = "contextual" | "universal";
 
 function scopeLabel(scope: ZenShortcutScope, set: PresentationShortcutSet): string {
   if (scope === "universal") return "Universal shortcuts";
+  if (set.contextKind === "surface") {
+    return `${getPresentationShortcutContextLabel(set.contextKind, set.contextId)} shortcuts`;
+  }
   return `${set.contextId.toUpperCase()} shortcuts`;
 }
 
@@ -98,7 +102,9 @@ function ShortcutPicker({
               ? "Registered destinations"
               : scope === "universal"
                 ? "Available everywhere"
-                : "Current service"}
+                : set.contextKind === "surface"
+                  ? "Current surface"
+                  : "Current service"}
           </p>
           <h2 data-shortcut-mode={mode} ref={heading} tabIndex={-1}>
             {catalogOpen ? `Add to ${label.toLowerCase()}` : label}
@@ -357,6 +363,9 @@ export function ZenShortcutChrome({
       (responsiveClass === "desktop"
         ? discovery.contextual.items.length > 0
         : discovery.contextual.eligibleTargets.length > 0));
+  const contextualScopeLabel = discovery.contextual
+    ? scopeLabel("contextual", discovery.contextual)
+    : undefined;
   const toggleScope = (scope: ZenShortcutScope) => {
     setPickerMode("list");
     setError(undefined);
@@ -409,9 +418,9 @@ export function ZenShortcutChrome({
             <button
               aria-controls={contextualPanelId}
               aria-expanded={contextualExpanded}
-              aria-label={`${discovery.contextual.contextId.toUpperCase()} shortcuts`}
+              aria-label={contextualScopeLabel}
               className="chrome-button zen-shortcut-launcher zen-shortcut-contextual-launcher"
-              data-tooltip={`${discovery.contextual.contextId.toUpperCase()} shortcuts`}
+              data-tooltip={contextualScopeLabel}
               onClick={() => toggleScope("contextual")}
               ref={contextualLauncher}
               type="button"

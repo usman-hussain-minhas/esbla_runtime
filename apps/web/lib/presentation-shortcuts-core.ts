@@ -1,9 +1,10 @@
 import {
-  type PresentationServiceGroupId,
   type PresentationShortcutDiscovery,
+  type PresentationShortcutDiscoveryQuery,
   type PresentationShortcutSet,
   parseApiProblemDetails,
   parsePresentationShortcutDiscovery,
+  parsePresentationShortcutDiscoveryQuery,
   parseUpdatePresentationShortcutBody,
   parseUpdatePresentationShortcutResponse,
   type UpdatePresentationShortcutBody,
@@ -49,10 +50,22 @@ async function strictProblem(response: Response): Promise<PresentationShortcutsE
 }
 
 export function buildPresentationShortcutsPath(
-  contextServiceGroupId?: PresentationServiceGroupId,
+  query: PresentationShortcutDiscoveryQuery = {},
 ): string {
-  if (!contextServiceGroupId) return "/v1/platform/presentation/shortcuts";
-  const parameters = new URLSearchParams({ contextServiceGroupId });
+  let parsed: PresentationShortcutDiscoveryQuery;
+  try {
+    parsed = parsePresentationShortcutDiscoveryQuery(query);
+  } catch {
+    throw new PresentationShortcutsError("invalid_input");
+  }
+  if (parsed.contextServiceGroupId) {
+    const parameters = new URLSearchParams({
+      contextServiceGroupId: parsed.contextServiceGroupId,
+    });
+    return `/v1/platform/presentation/shortcuts?${parameters.toString()}`;
+  }
+  if (!parsed.contextSurfaceId) return "/v1/platform/presentation/shortcuts";
+  const parameters = new URLSearchParams({ contextSurfaceId: parsed.contextSurfaceId });
   return `/v1/platform/presentation/shortcuts?${parameters.toString()}`;
 }
 

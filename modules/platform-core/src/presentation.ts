@@ -8,6 +8,8 @@ import type {
   PresentationPreferences,
   PresentationReducedMotion,
   PresentationServiceGroupDiscovery,
+  PresentationShortcutContextId,
+  PresentationShortcutContextKind,
   PresentationShortcutDiscovery,
   PresentationShortcutDiscoveryQuery,
   PresentationShortcutSet,
@@ -46,6 +48,7 @@ import {
   canonicalizePresentationSurfaceContract,
   canonicalizePresentationSurfaceDefinition,
   canonicalizePresentationWidgetDefinition,
+  getPresentationShortcutSurfaceContextDefinition,
   getPresentationShortcutTargetDefinition,
   getPresentationShortcutTargetServiceGroupId,
   getPresentationWidgetDefinition,
@@ -675,21 +678,36 @@ function parsePresentationShortcutUpdateInput(value: unknown): UpdatePresentatio
 
 function shortcutCandidateScope(
   settingKey: PresentationShortcutSettingKey,
-): "user_global" | "user_service" {
-  return settingKey === "navigation.universal_shortcuts.v1" ? "user_global" : "user_service";
+  contextKind: PresentationShortcutContextKind,
+): "user_global" | "user_service" | "user_surface" {
+  if (settingKey === "navigation.universal_shortcuts.v1") return "user_global";
+  return contextKind === "surface" ? "user_surface" : "user_service";
 }
 
 function registeredShortcutTargets(
-  contextKind: "global" | "service",
-  contextId: "global" | (typeof PRESENTATION_SERVICE_GROUP_DEFINITIONS)[number]["serviceGroupId"],
+  contextKind: PresentationShortcutContextKind,
+  contextId: PresentationShortcutContextId,
 ): readonly PresentationShortcutTarget[] {
   if (contextKind === "global" && contextId === "global") {
     return PRESENTATION_SHORTCUT_TARGET_DEFINITIONS;
   }
-  if (contextKind !== "service" || contextId === "global") throw invalidShortcutStorage();
-  return PRESENTATION_SHORTCUT_TARGET_DEFINITIONS.filter(
-    ({ id }) => getPresentationShortcutTargetServiceGroupId(id) === contextId,
-  );
+  if (contextKind === "service" && contextId !== "global" && !contextId.startsWith("surface.")) {
+    return PRESENTATION_SHORTCUT_TARGET_DEFINITIONS.filter(
+      ({ id }) => getPresentationShortcutTargetServiceGroupId(id) === contextId,
+    );
+  }
+  if (contextKind === "surface" && contextId.startsWith("surface.")) {
+    let allowed: ReadonlySet<PresentationShortcutTargetId>;
+    try {
+      allowed = new Set(
+        getPresentationShortcutSurfaceContextDefinition(contextId).allowedTargetIds,
+      );
+    } catch {
+      throw invalidShortcutStorage();
+    }
+    return PRESENTATION_SHORTCUT_TARGET_DEFINITIONS.filter(({ id }) => allowed.has(id));
+  }
+  throw invalidShortcutStorage();
 }
 
 function eligibleShortcutTargetIds(
@@ -705,8 +723,8 @@ function eligibleShortcutTargetIds(
 
 function eligibleShortcutTargets(
   discovery: PresentationNavigationDiscovery,
-  contextKind: "global" | "service",
-  contextId: "global" | (typeof PRESENTATION_SERVICE_GROUP_DEFINITIONS)[number]["serviceGroupId"],
+  contextKind: PresentationShortcutContextKind,
+  contextId: PresentationShortcutContextId,
 ): readonly PresentationShortcutTarget[] {
   const eligibleIds = eligibleShortcutTargetIds(discovery);
   return registeredShortcutTargets(contextKind, contextId).filter(({ id }) => eligibleIds.has(id));
@@ -800,8 +818,8 @@ async function lockShortcutAppendTargetEligibility(
 async function loadStoredShortcutPatch(
   transaction: TenantTransaction,
   settingKey: PresentationShortcutSettingKey,
-  contextKind: "global" | "service",
-  contextId: "global" | (typeof PRESENTATION_SERVICE_GROUP_DEFINITIONS)[number]["serviceGroupId"],
+  contextKind: PresentationShortcutContextKind,
+  contextId: PresentationShortcutContextId,
   lock: "none" | "update" = "none",
 ): Promise<StoredShortcutPatch | undefined> {
   const result = await transaction.client.query<{ patch: unknown; version: number }>(
@@ -835,8 +853,8 @@ async function loadStoredShortcutPatch(
 
 function resolveShortcutSet(
   settingKey: PresentationShortcutSettingKey,
-  contextKind: "global" | "service",
-  contextId: "global" | (typeof PRESENTATION_SERVICE_GROUP_DEFINITIONS)[number]["serviceGroupId"],
+  contextKind: PresentationShortcutContextKind,
+  contextId: PresentationShortcutContextId,
   stored: StoredShortcutPatch | undefined,
   eligibleTargets: readonly PresentationShortcutTarget[],
 ): PresentationShortcutSet {
@@ -850,7 +868,7 @@ function resolveShortcutSet(
             {
               definitionVersion: 1,
               rowVersion: stored.version,
-              scope: shortcutCandidateScope(settingKey),
+              scope: shortcutCandidateScope(settingKey, contextKind),
               value: { operations: stored.operations },
             },
           ]
@@ -893,8 +911,8 @@ async function loadShortcutSet(
   transaction: TenantTransaction,
   discovery: PresentationNavigationDiscovery,
   settingKey: PresentationShortcutSettingKey,
-  contextKind: "global" | "service",
-  contextId: "global" | (typeof PRESENTATION_SERVICE_GROUP_DEFINITIONS)[number]["serviceGroupId"],
+  contextKind: PresentationShortcutContextKind,
+  contextId: PresentationShortcutContextId,
   lock: "none" | "update" = "none",
 ): Promise<PresentationShortcutSet> {
   const stored = await loadStoredShortcutPatch(
@@ -950,7 +968,15 @@ export async function getOwnPresentationShortcuts(
               "service",
               query.contextServiceGroupId,
             )
-          : null;
+          : query.contextSurfaceId
+            ? await loadShortcutSet(
+                transaction,
+                discovery,
+                "navigation.contextual_shortcuts.v1",
+                "surface",
+                query.contextSurfaceId,
+              )
+            : null;
       return { contextual, universal };
     },
     { migrationBarrier: "shared" },

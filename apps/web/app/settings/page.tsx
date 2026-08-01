@@ -1,4 +1,8 @@
-import type { PresentationSurfaceLayout } from "@esbla/contracts";
+import type {
+  PresentationShortcutDiscovery,
+  PresentationShortcutSet,
+  PresentationSurfaceLayout,
+} from "@esbla/contracts";
 import {
   loadOwnPresentationPreferences,
   loadPresentationPreferenceCacheScope,
@@ -17,18 +21,29 @@ const surfaceDefinitions = [
 ] as const;
 
 export default async function UniversalSettingsPage() {
-  const [preferences, shortcuts, layoutResults, tenantBaseResults] = await Promise.all([
-    loadOwnPresentationPreferences().catch(() => undefined),
-    loadOwnPresentationShortcuts("hr").catch(() => undefined),
-    Promise.allSettled(
-      surfaceDefinitions.map(({ surfaceId }) => loadOwnPresentationSurfaceLayout(surfaceId)),
-    ),
-    Promise.allSettled(
-      surfaceDefinitions.map(({ surfaceId }) =>
-        loadTenantPresentationSurfaceBaseWorkspace(surfaceId),
+  const [preferences, rootShortcuts, hrShortcuts, layoutResults, tenantBaseResults] =
+    await Promise.all([
+      loadOwnPresentationPreferences().catch(() => undefined),
+      loadOwnPresentationShortcuts({ contextSurfaceId: "surface.mission-control" }).catch(
+        (): PresentationShortcutDiscovery | undefined => undefined,
       ),
-    ),
-  ]);
+      loadOwnPresentationShortcuts({ contextServiceGroupId: "hr" }).catch(
+        (): PresentationShortcutDiscovery | undefined => undefined,
+      ),
+      Promise.allSettled(
+        surfaceDefinitions.map(({ surfaceId }) => loadOwnPresentationSurfaceLayout(surfaceId)),
+      ),
+      Promise.allSettled(
+        surfaceDefinitions.map(({ surfaceId }) =>
+          loadTenantPresentationSurfaceBaseWorkspace(surfaceId),
+        ),
+      ),
+    ]);
+  const shortcutSets = [
+    rootShortcuts?.universal ?? hrShortcuts?.universal,
+    rootShortcuts?.contextual,
+    hrShortcuts?.contextual,
+  ].filter((set): set is PresentationShortcutSet => set !== undefined && set !== null);
   let cacheScope: string | null = null;
   try {
     cacheScope = loadPresentationPreferenceCacheScope();
@@ -67,7 +82,7 @@ export default async function UniversalSettingsPage() {
           cacheScope={cacheScope}
           initialLayouts={layouts}
           initialPreferences={preferences ?? null}
-          initialShortcuts={shortcuts}
+          initialShortcutSets={shortcutSets.length > 0 ? shortcutSets : undefined}
         />
       </section>
     </WorkspaceShell>

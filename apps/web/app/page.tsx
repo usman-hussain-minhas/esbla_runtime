@@ -36,6 +36,7 @@ export default async function MissionControlPage() {
             }
           : undefined
       }
+      shortcutContext={{ contextSurfaceId: "surface.mission-control" }}
     >
       <section
         aria-labelledby="mission-control-heading"

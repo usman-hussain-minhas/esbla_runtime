@@ -5,6 +5,7 @@ import {
   type PresentationServiceGroupId,
   presentationServiceGroupIds,
 } from "./platform-presentation-service-group.js";
+import { type ZenV1SurfaceId, zenV1SurfaceIds } from "./platform-presentation-surface-api.js";
 import type { PresentationSemanticIconKey } from "./platform-presentation-widget.js";
 
 export const presentationShortcutSettingKeys = [
@@ -18,7 +19,16 @@ export type PresentationShortcutTargetId =
   | "platform.mission_control"
   | `service_group.${PresentationServiceGroupId}.mission_control`
   | PresentationNavigationDestinationId;
-export type PresentationShortcutContextKind = "global" | "service";
+export const presentationShortcutSurfaceContextIds = [
+  "surface.mission-control",
+] as const satisfies readonly ZenV1SurfaceId[];
+export type PresentationShortcutSurfaceContextId =
+  (typeof presentationShortcutSurfaceContextIds)[number];
+export type PresentationShortcutContextId =
+  | "global"
+  | PresentationServiceGroupId
+  | PresentationShortcutSurfaceContextId;
+export type PresentationShortcutContextKind = "global" | "service" | "surface";
 
 export interface PresentationShortcutTarget {
   readonly href: string;
@@ -28,7 +38,7 @@ export interface PresentationShortcutTarget {
 }
 
 export interface PresentationShortcutSet {
-  readonly contextId: "global" | PresentationServiceGroupId;
+  readonly contextId: PresentationShortcutContextId;
   readonly contextKind: PresentationShortcutContextKind;
   readonly editable: boolean;
   readonly eligibleTargets: readonly PresentationShortcutTarget[];
@@ -45,10 +55,11 @@ export interface PresentationShortcutDiscovery {
 
 export interface PresentationShortcutDiscoveryQuery {
   readonly contextServiceGroupId?: PresentationServiceGroupId;
+  readonly contextSurfaceId?: PresentationShortcutSurfaceContextId;
 }
 
 export interface UpdatePresentationShortcutBody {
-  readonly contextId: "global" | PresentationServiceGroupId;
+  readonly contextId: PresentationShortcutContextId;
   readonly contextKind: PresentationShortcutContextKind;
   readonly expectedVersion: number;
   readonly operation: "append" | "remove";
@@ -100,6 +111,58 @@ export const presentationShortcutTargetIds = PRESENTATION_SHORTCUT_TARGET_DEFINI
   ({ id }) => id,
 ) as readonly PresentationShortcutTargetId[];
 
+export interface PresentationShortcutSurfaceContextDefinition {
+  readonly allowedTargetIds: readonly PresentationShortcutTargetId[];
+  readonly contextId: PresentationShortcutSurfaceContextId;
+  readonly label: string;
+  readonly selfTargetId: PresentationShortcutTargetId;
+}
+
+export const PRESENTATION_SHORTCUT_SURFACE_CONTEXT_DEFINITIONS = deepFreeze([
+  {
+    allowedTargetIds: presentationShortcutTargetIds.filter(
+      (targetId) => targetId !== "platform.mission_control",
+    ) as readonly PresentationShortcutTargetId[],
+    contextId: "surface.mission-control",
+    label: "Mission Control surface",
+    selfTargetId: "platform.mission_control",
+  },
+] as const satisfies readonly PresentationShortcutSurfaceContextDefinition[]);
+
+function validatePresentationShortcutSurfaceContextRegistry(): void {
+  const contextIds = PRESENTATION_SHORTCUT_SURFACE_CONTEXT_DEFINITIONS.map(
+    ({ contextId }) => contextId,
+  );
+  if (
+    contextIds.length !== presentationShortcutSurfaceContextIds.length ||
+    new Set(contextIds).size !== contextIds.length ||
+    contextIds.some(
+      (contextId) =>
+        !presentationShortcutSurfaceContextIds.includes(contextId) ||
+        !zenV1SurfaceIds.includes(contextId),
+    )
+  ) {
+    throw new Error("Invalid presentation shortcut surface context registry");
+  }
+  for (const definition of PRESENTATION_SHORTCUT_SURFACE_CONTEXT_DEFINITIONS) {
+    if (
+      definition.label.trim() !== definition.label ||
+      definition.label.length < 1 ||
+      definition.allowedTargetIds.length < 1 ||
+      new Set(definition.allowedTargetIds).size !== definition.allowedTargetIds.length ||
+      definition.allowedTargetIds.includes(definition.selfTargetId) ||
+      !presentationShortcutTargetIds.includes(definition.selfTargetId) ||
+      definition.allowedTargetIds.some(
+        (targetId) => !presentationShortcutTargetIds.includes(targetId),
+      )
+    ) {
+      throw new Error("Invalid presentation shortcut surface context registry");
+    }
+  }
+}
+
+validatePresentationShortcutSurfaceContextRegistry();
+
 const maximumVersion = 2_147_483_647;
 const maximumMutationVersion = maximumVersion - 1;
 const uuidPattern =
@@ -126,6 +189,40 @@ function isServiceGroupId(value: unknown): value is PresentationServiceGroupId {
     typeof value === "string" &&
     presentationServiceGroupIds.includes(value as PresentationServiceGroupId)
   );
+}
+
+function isSurfaceContextId(value: unknown): value is PresentationShortcutSurfaceContextId {
+  return (
+    typeof value === "string" &&
+    presentationShortcutSurfaceContextIds.includes(value as PresentationShortcutSurfaceContextId)
+  );
+}
+
+export function getPresentationShortcutSurfaceContextDefinition(
+  contextId: string,
+): PresentationShortcutSurfaceContextDefinition {
+  const definition = PRESENTATION_SHORTCUT_SURFACE_CONTEXT_DEFINITIONS.find(
+    (candidate) => candidate.contextId === contextId,
+  );
+  if (!definition) throw new Error("Unknown presentation shortcut surface context");
+  return definition;
+}
+
+export function getPresentationShortcutContextLabel(
+  contextKind: PresentationShortcutContextKind,
+  contextId: PresentationShortcutContextId,
+): string {
+  if (contextKind === "global" && contextId === "global") return "Universal";
+  if (contextKind === "service" && isServiceGroupId(contextId)) {
+    const group = PRESENTATION_SERVICE_GROUP_DEFINITIONS.find(
+      ({ serviceGroupId }) => serviceGroupId === contextId,
+    );
+    if (group) return `${group.label} service`;
+  }
+  if (contextKind === "surface" && isSurfaceContextId(contextId)) {
+    return getPresentationShortcutSurfaceContextDefinition(contextId).label;
+  }
+  throw new Error("Invalid presentation shortcut context");
 }
 
 export function getPresentationShortcutTargetDefinition(
@@ -178,7 +275,7 @@ function exactTarget(value: unknown): PresentationShortcutTarget {
 
 function allowedTargetIds(
   contextKind: PresentationShortcutContextKind,
-  contextId: "global" | PresentationServiceGroupId,
+  contextId: PresentationShortcutContextId,
 ): readonly PresentationShortcutTargetId[] {
   if (contextKind === "global" && contextId === "global") {
     return presentationShortcutTargetIds;
@@ -187,6 +284,9 @@ function allowedTargetIds(
     return presentationShortcutTargetIds.filter(
       (targetId) => getPresentationShortcutTargetServiceGroupId(targetId) === contextId,
     );
+  }
+  if (contextKind === "surface" && isSurfaceContextId(contextId)) {
+    return getPresentationShortcutSurfaceContextDefinition(contextId).allowedTargetIds;
   }
   throw new Error("Invalid presentation shortcuts");
 }
@@ -203,8 +303,12 @@ function parseShortcutSet(value: unknown): PresentationShortcutSet {
       "tombstoneCount",
       "version",
     ]) ||
-    (value.contextKind !== "global" && value.contextKind !== "service") ||
-    (value.contextId !== "global" && !isServiceGroupId(value.contextId)) ||
+    (value.contextKind !== "global" &&
+      value.contextKind !== "service" &&
+      value.contextKind !== "surface") ||
+    (value.contextId !== "global" &&
+      !isServiceGroupId(value.contextId) &&
+      !isSurfaceContextId(value.contextId)) ||
     typeof value.editable !== "boolean" ||
     !Array.isArray(value.eligibleTargets) ||
     !Array.isArray(value.items) ||
@@ -221,7 +325,10 @@ function parseShortcutSet(value: unknown): PresentationShortcutSet {
     (settingKey === "navigation.universal_shortcuts.v1" &&
       (contextKind !== "global" || contextId !== "global")) ||
     (settingKey === "navigation.contextual_shortcuts.v1" &&
-      (contextKind !== "service" || !isServiceGroupId(contextId)))
+      !(
+        (contextKind === "service" && isServiceGroupId(contextId)) ||
+        (contextKind === "surface" && isSurfaceContextId(contextId))
+      ))
   ) {
     throw new Error("Invalid presentation shortcuts");
   }
@@ -275,37 +382,42 @@ export function parsePresentationShortcutDiscovery(value: unknown): Presentation
 export function parsePresentationShortcutDiscoveryQuery(
   value: unknown,
 ): PresentationShortcutDiscoveryQuery {
-  if (
-    !exactRecord(
-      value,
-      typeof value === "object" &&
-        value !== null &&
-        !Array.isArray(value) &&
-        "contextServiceGroupId" in value
-        ? ["contextServiceGroupId"]
-        : [],
-    )
-  ) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("Invalid presentation shortcut query");
   }
-  if (!("contextServiceGroupId" in value)) return {};
-  if (!isServiceGroupId(value.contextServiceGroupId)) {
+  const keys = ["contextServiceGroupId", "contextSurfaceId"].filter((key) => key in value);
+  if (!exactRecord(value, keys) || keys.length > 1) {
     throw new Error("Invalid presentation shortcut query");
   }
-  return { contextServiceGroupId: value.contextServiceGroupId };
+  if ("contextServiceGroupId" in value) {
+    if (!isServiceGroupId(value.contextServiceGroupId)) {
+      throw new Error("Invalid presentation shortcut query");
+    }
+    return { contextServiceGroupId: value.contextServiceGroupId };
+  }
+  if ("contextSurfaceId" in value) {
+    if (!isSurfaceContextId(value.contextSurfaceId)) {
+      throw new Error("Invalid presentation shortcut query");
+    }
+    return { contextSurfaceId: value.contextSurfaceId };
+  }
+  return {};
 }
 
 function assertUpdateContext(
   settingKey: PresentationShortcutSettingKey,
   contextKind: PresentationShortcutContextKind,
-  contextId: "global" | PresentationServiceGroupId,
+  contextId: PresentationShortcutContextId,
   targetId: PresentationShortcutTargetId,
 ): void {
   if (
     (settingKey === "navigation.universal_shortcuts.v1" &&
       (contextKind !== "global" || contextId !== "global")) ||
     (settingKey === "navigation.contextual_shortcuts.v1" &&
-      (contextKind !== "service" || !isServiceGroupId(contextId)))
+      !(
+        (contextKind === "service" && isServiceGroupId(contextId)) ||
+        (contextKind === "surface" && isSurfaceContextId(contextId))
+      ))
   ) {
     throw new Error("Invalid presentation shortcut update");
   }
@@ -326,8 +438,12 @@ export function parseUpdatePresentationShortcutBody(
       "settingKey",
       "targetId",
     ]) ||
-    (value.contextKind !== "global" && value.contextKind !== "service") ||
-    (value.contextId !== "global" && !isServiceGroupId(value.contextId)) ||
+    (value.contextKind !== "global" &&
+      value.contextKind !== "service" &&
+      value.contextKind !== "surface") ||
+    (value.contextId !== "global" &&
+      !isServiceGroupId(value.contextId) &&
+      !isSurfaceContextId(value.contextId)) ||
     !isVersion(value.expectedVersion, maximumMutationVersion) ||
     (value.operation !== "append" && value.operation !== "remove") ||
     !presentationShortcutSettingKeys.includes(value.settingKey as PresentationShortcutSettingKey) ||
@@ -384,8 +500,10 @@ const presentationShortcutTargetSchema = {
 const presentationShortcutSetSchema = {
   additionalProperties: false,
   properties: {
-    contextId: { enum: ["global", ...presentationServiceGroupIds] },
-    contextKind: { enum: ["global", "service"] },
+    contextId: {
+      enum: ["global", ...presentationServiceGroupIds, ...presentationShortcutSurfaceContextIds],
+    },
+    contextKind: { enum: ["global", "service", "surface"] },
     editable: { type: "boolean" },
     eligibleTargets: {
       items: presentationShortcutTargetSchema,
@@ -432,8 +550,10 @@ export const presentationShortcutDiscoverySchema = {
 export const presentationShortcutDiscoveryQuerySchema = {
   $id: "PresentationShortcutDiscoveryQueryV1",
   additionalProperties: false,
+  maxProperties: 1,
   properties: {
     contextServiceGroupId: { enum: presentationServiceGroupIds },
+    contextSurfaceId: { enum: presentationShortcutSurfaceContextIds },
   },
   type: "object",
 } as const;
@@ -442,8 +562,10 @@ export const updatePresentationShortcutBodySchema = {
   $id: "UpdatePresentationShortcutBodyV1",
   additionalProperties: false,
   properties: {
-    contextId: { enum: ["global", ...presentationServiceGroupIds] },
-    contextKind: { enum: ["global", "service"] },
+    contextId: {
+      enum: ["global", ...presentationServiceGroupIds, ...presentationShortcutSurfaceContextIds],
+    },
+    contextKind: { enum: ["global", "service", "surface"] },
     expectedVersion: { maximum: maximumMutationVersion, minimum: 0, type: "integer" },
     operation: { enum: ["append", "remove"] },
     settingKey: { enum: presentationShortcutSettingKeys },
