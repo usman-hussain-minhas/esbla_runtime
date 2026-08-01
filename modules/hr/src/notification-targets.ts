@@ -363,6 +363,159 @@ export async function verifyHrNotificationTargets(
     );
     for (const row of result.rows) outcomes.set(row.reference_id, row.outcome);
   }
+  const timesheetTargets = targets.filter(({ targetKind }) => targetKind === "hr.timesheet.detail");
+  if (timesheetTargets.length > 0) {
+    const result = await client.query<{
+      outcome: "allowed" | "denied" | "missing";
+      reference_id: string;
+    }>(
+      `SELECT item.reference_id,
+              CASE
+                WHEN root.timesheet_id IS NULL THEN 'missing'
+                WHEN recipient.status<>'active' THEN 'denied'
+                WHEN recipient.role_key='hr_operator' THEN 'allowed'
+                WHEN recipient.role_key='employee'
+                  AND 1=(SELECT count(*) FROM hr_worker_profiles own_profile
+                         WHERE own_profile.tenant_id=$1
+                           AND own_profile.principal_id=item.recipient_principal_id
+                           AND own_profile.worker_profile_id=root.worker_profile_id
+                           AND own_profile.workforce_status='active') THEN 'allowed'
+                WHEN recipient.role_key='manager'
+                  AND 1=(SELECT count(*) FROM hr_worker_profiles manager_profile
+                         WHERE manager_profile.tenant_id=$1
+                           AND manager_profile.principal_id=item.recipient_principal_id
+                           AND manager_profile.workforce_status='active')
+                  AND (
+                    EXISTS (
+                      SELECT 1 FROM hr_worker_profiles worker
+                      JOIN hr_reporting_relationships relationship
+                        ON relationship.tenant_id=worker.tenant_id
+                       AND relationship.worker_profile_id=worker.worker_profile_id
+                       AND relationship.reporting_relationship_id=
+                           worker.current_reporting_relationship_id
+                      JOIN hr_worker_profiles manager_profile
+                        ON manager_profile.tenant_id=relationship.tenant_id
+                       AND manager_profile.worker_profile_id=
+                           relationship.manager_worker_profile_id
+                      WHERE worker.tenant_id=$1
+                        AND worker.worker_profile_id=root.worker_profile_id
+                        AND worker.workforce_status='active'
+                        AND manager_profile.principal_id=item.recipient_principal_id
+                        AND manager_profile.workforce_status='active'
+                        AND relationship.relationship_status='assigned'
+                    )
+                    OR EXISTS (
+                      SELECT 1 FROM work_items work
+                      JOIN hr_timesheet_versions version
+                        ON version.tenant_id=work.tenant_id
+                       AND version.timesheet_version_id=work.subject_id
+                      WHERE work.tenant_id=$1
+                        AND version.timesheet_id=root.timesheet_id
+                        AND work.assignee_principal_id=item.recipient_principal_id
+                        AND work.subject_type='hr.timesheet.version'
+                        AND work.work_type='hr.timesheet.approval'
+                        AND work.status<>'cancelled'
+                    )
+                  ) THEN 'allowed'
+                ELSE 'denied'
+              END AS outcome
+       FROM jsonb_to_recordset($2::jsonb)
+         AS item(reference_id uuid,recipient_principal_id uuid,target_resource_id uuid)
+       LEFT JOIN hr_timesheets root
+         ON root.tenant_id=$1 AND root.timesheet_id=item.target_resource_id
+       LEFT JOIN memberships recipient
+         ON recipient.tenant_id=$1
+        AND recipient.principal_id=item.recipient_principal_id`,
+      [
+        tenantId,
+        JSON.stringify(
+          timesheetTargets.map(({ recipientPrincipalId, referenceId, targetResourceId }) => ({
+            recipient_principal_id: recipientPrincipalId,
+            reference_id: referenceId,
+            target_resource_id: targetResourceId,
+          })),
+        ),
+      ],
+    );
+    for (const row of result.rows) outcomes.set(row.reference_id, row.outcome);
+  }
+  const expenseTargets = targets.filter(
+    ({ targetKind }) => targetKind === "hr.expense_claim.detail",
+  );
+  if (expenseTargets.length > 0) {
+    const result = await client.query<{
+      outcome: "allowed" | "denied" | "missing";
+      reference_id: string;
+    }>(
+      `SELECT item.reference_id,
+              CASE
+                WHEN root.expense_claim_id IS NULL THEN 'missing'
+                WHEN recipient.status<>'active' THEN 'denied'
+                WHEN recipient.role_key='employee'
+                  AND 1=(SELECT count(*) FROM hr_worker_profiles own_profile
+                         WHERE own_profile.tenant_id=$1
+                           AND own_profile.principal_id=item.recipient_principal_id
+                           AND own_profile.worker_profile_id=root.worker_profile_id
+                           AND own_profile.workforce_status='active') THEN 'allowed'
+                WHEN recipient.role_key='manager'
+                  AND 1=(SELECT count(*) FROM hr_worker_profiles manager_profile
+                         WHERE manager_profile.tenant_id=$1
+                           AND manager_profile.principal_id=item.recipient_principal_id
+                           AND manager_profile.workforce_status='active')
+                  AND (
+                    EXISTS (
+                      SELECT 1 FROM hr_worker_profiles worker
+                      JOIN hr_reporting_relationships relationship
+                        ON relationship.tenant_id=worker.tenant_id
+                       AND relationship.worker_profile_id=worker.worker_profile_id
+                       AND relationship.reporting_relationship_id=
+                           worker.current_reporting_relationship_id
+                      JOIN hr_worker_profiles manager_profile
+                        ON manager_profile.tenant_id=relationship.tenant_id
+                       AND manager_profile.worker_profile_id=
+                           relationship.manager_worker_profile_id
+                      WHERE worker.tenant_id=$1
+                        AND worker.worker_profile_id=root.worker_profile_id
+                        AND worker.workforce_status='active'
+                        AND manager_profile.principal_id=item.recipient_principal_id
+                        AND manager_profile.workforce_status='active'
+                        AND relationship.relationship_status='assigned'
+                    )
+                    OR EXISTS (
+                      SELECT 1 FROM work_items work
+                      JOIN hr_expense_claim_versions version
+                        ON version.tenant_id=work.tenant_id
+                       AND version.expense_claim_version_id=work.subject_id
+                      WHERE work.tenant_id=$1
+                        AND version.expense_claim_id=root.expense_claim_id
+                        AND work.assignee_principal_id=item.recipient_principal_id
+                        AND work.subject_type='hr.expense.version'
+                        AND work.work_type='hr.expense.approval'
+                        AND work.status<>'cancelled'
+                    )
+                  ) THEN 'allowed'
+                ELSE 'denied'
+              END AS outcome
+       FROM jsonb_to_recordset($2::jsonb)
+         AS item(reference_id uuid,recipient_principal_id uuid,target_resource_id uuid)
+       LEFT JOIN hr_expense_claims root
+         ON root.tenant_id=$1 AND root.expense_claim_id=item.target_resource_id
+       LEFT JOIN memberships recipient
+         ON recipient.tenant_id=$1
+        AND recipient.principal_id=item.recipient_principal_id`,
+      [
+        tenantId,
+        JSON.stringify(
+          expenseTargets.map(({ recipientPrincipalId, referenceId, targetResourceId }) => ({
+            recipient_principal_id: recipientPrincipalId,
+            reference_id: referenceId,
+            target_resource_id: targetResourceId,
+          })),
+        ),
+      ],
+    );
+    for (const row of result.rows) outcomes.set(row.reference_id, row.outcome);
+  }
   return targets.map(({ referenceId, targetKind }) => ({
     outcome:
       targetKind === "hr.leave_request.detail" ||
@@ -371,7 +524,9 @@ export async function verifyHrNotificationTargets(
       targetKind === "hr.employment_record.detail" ||
       targetKind === "hr.shift_assignment.detail" ||
       targetKind === "hr.shift_assignment.own_shifts" ||
-      targetKind === "hr.attendance.detail"
+      targetKind === "hr.attendance.detail" ||
+      targetKind === "hr.timesheet.detail" ||
+      targetKind === "hr.expense_claim.detail"
         ? (outcomes.get(referenceId) ?? "missing")
         : "denied",
     referenceId,

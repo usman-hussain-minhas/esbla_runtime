@@ -8,7 +8,7 @@ import {
   projectPendingNotificationIntentsOnce,
   withTenantTransaction,
 } from "@esbla/platform-core";
-import type { Pool, QueryResultRow } from "pg";
+import type { Pool, PoolClient, QueryResultRow } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   approveLeaveRequest,
@@ -31,6 +31,7 @@ import {
 
 const notificationIds = {
   employmentRecord: "30000000-0000-4000-8000-000000000082",
+  expenseTarget: "30000000-0000-4000-8000-000000000087",
   attendanceTarget: "30000000-0000-4000-8000-000000000085",
   missingTarget: "30000000-0000-4000-8000-000000000083",
   requestApproved: "30000000-0000-4000-8000-000000000071",
@@ -45,14 +46,17 @@ const notificationIds = {
   workforceEmployee: "30000000-0000-4000-8000-000000000080",
   workforceManager: "30000000-0000-4000-8000-000000000081",
   shiftTarget: "30000000-0000-4000-8000-000000000084",
+  timesheetTarget: "30000000-0000-4000-8000-000000000086",
 } as const;
 
 const notificationCapabilities = [
   "hr.employment.view_detail",
+  "hr.expense.view_detail",
   "hr.attendance.view_detail",
   "hr.leave.view",
   "hr.shift.list_roster",
   "hr.shift.view_detail",
+  "hr.timesheet.view_detail",
   "hr.workforce.list_authorized",
   "hr.workforce.view_authorized_detail",
   "platform.notifications.list_own",
@@ -63,9 +67,11 @@ const notificationCapabilities = [
 let projectorPool: Pool;
 let attendanceTargetId: string;
 let employmentTargetId: string;
+let expenseTargetId: string;
 const intentIds = new Map<string, string>();
 let workforceEmployeeTargetId: string;
 let shiftTargetId: string;
+let timesheetTargetId: string;
 
 async function seedCapabilities(tenantId: string, principalIds: readonly string[]): Promise<void> {
   const client = await migrationPool.connect();
@@ -92,6 +98,30 @@ async function mutateTenant(
   const client = await migrationPool.connect();
   try {
     await seedTenantRow(client, tenantId, query, values);
+  } finally {
+    client.release();
+  }
+}
+
+async function mutateTenantAtomically(
+  tenantId: string,
+  actorPrincipalId: string,
+  operation: (client: PoolClient) => Promise<void>,
+): Promise<void> {
+  const client = await migrationPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `SELECT set_config('app.tenant_id',$1,true),
+              set_config('app.actor_principal_id',$2,true),
+              set_config('app.correlation_id',$3,true)`,
+      [tenantId, actorPrincipalId, randomUUID()],
+    );
+    await operation(client);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
   } finally {
     client.release();
   }
@@ -206,7 +236,8 @@ beforeAll(async () => {
     ids.tenantA,
     `INSERT INTO service_activations (tenant_id,service_key,state,version)
      VALUES ($1,'workforce_profile','active',1),($1,'employment_record','active',1),
-            ($1,'shift_assignment','active',1),($1,'attendance','active',1)`,
+            ($1,'shift_assignment','active',1),($1,'attendance','active',1),
+            ($1,'timesheet','active',1),($1,'expense_claim_boundary','active',1)`,
     [ids.tenantA],
   );
   await mutateTenant(
@@ -343,6 +374,48 @@ beforeAll(async () => {
     [ids.tenantA, workforceEmployeeTargetId, ids.employeeA, randomUUID()],
   );
   attendanceTargetId = String(observation[0]?.attendance_observation_id);
+  timesheetTargetId = randomUUID();
+  const timesheetVersionId = randomUUID();
+  expenseTargetId = randomUUID();
+  const expenseVersionId = randomUUID();
+  await mutateTenantAtomically(ids.tenantA, ids.employeeA, async (client) => {
+    await client.query(
+      `INSERT INTO hr_timesheets
+         (timesheet_id,tenant_id,worker_profile_id,period_start,period_end,current_version_id)
+       VALUES ($2,$1,$3,'2097-02-01','2097-02-07',$4)`,
+      [ids.tenantA, timesheetTargetId, workforceEmployeeTargetId, timesheetVersionId],
+    );
+    await client.query(
+      `INSERT INTO hr_timesheet_versions
+         (timesheet_version_id,tenant_id,timesheet_id,version)
+       VALUES ($2,$1,$3,1)`,
+      [ids.tenantA, timesheetVersionId, timesheetTargetId],
+    );
+    await client.query(
+      `INSERT INTO work_items
+         (tenant_id,assignee_principal_id,work_type,subject_type,subject_id,status,completed_at)
+       VALUES ($1,$2,'hr.timesheet.approval','hr.timesheet.version',$3,'completed',now())`,
+      [ids.tenantA, ids.managerA, timesheetVersionId],
+    );
+    await client.query(
+      `INSERT INTO hr_expense_claims
+         (expense_claim_id,tenant_id,worker_profile_id,current_version_id)
+       VALUES ($2,$1,$3,$4)`,
+      [ids.tenantA, expenseTargetId, workforceEmployeeTargetId, expenseVersionId],
+    );
+    await client.query(
+      `INSERT INTO hr_expense_claim_versions
+         (expense_claim_version_id,tenant_id,expense_claim_id,version,currency_code)
+       VALUES ($2,$1,$3,1,'PKR')`,
+      [ids.tenantA, expenseVersionId, expenseTargetId],
+    );
+    await client.query(
+      `INSERT INTO work_items
+         (tenant_id,assignee_principal_id,work_type,subject_type,subject_id,status,completed_at)
+       VALUES ($1,$2,'hr.expense.approval','hr.expense.version',$3,'completed',now())`,
+      [ids.tenantA, ids.managerA, expenseVersionId],
+    );
+  });
   await mutateTenant(
     ids.tenantA,
     `DELETE FROM membership_capabilities
@@ -399,6 +472,14 @@ describe.sequential("HR notification Core and Leave slice", () => {
       "SELECT tenant_id,roster_version_id,status FROM hr_shift_roster_versions LIMIT 0",
       `SELECT tenant_id,attendance_observation_id,worker_profile_id
        FROM hr_attendance_observations LIMIT 0`,
+      "SELECT tenant_id,timesheet_id,worker_profile_id FROM hr_timesheets LIMIT 0",
+      `SELECT tenant_id,timesheet_id,timesheet_version_id
+       FROM hr_timesheet_versions LIMIT 0`,
+      "SELECT tenant_id,expense_claim_id,worker_profile_id FROM hr_expense_claims LIMIT 0",
+      `SELECT tenant_id,expense_claim_id,expense_claim_version_id
+       FROM hr_expense_claim_versions LIMIT 0`,
+      `SELECT tenant_id,assignee_principal_id,work_type,subject_type,subject_id,status
+       FROM work_items LIMIT 0`,
     ]) {
       await expect(projectorPool.query(query)).resolves.toBeDefined();
     }
@@ -410,6 +491,11 @@ describe.sequential("HR notification Core and Leave slice", () => {
       "SELECT starts_at FROM hr_shift_assignments LIMIT 0",
       "SELECT period_start FROM hr_shift_roster_versions LIMIT 0",
       "SELECT observed_at FROM hr_attendance_observations LIMIT 0",
+      "SELECT period_start FROM hr_timesheets LIMIT 0",
+      "SELECT status FROM hr_timesheet_versions LIMIT 0",
+      "SELECT created_at FROM hr_expense_claims LIMIT 0",
+      "SELECT status FROM hr_expense_claim_versions LIMIT 0",
+      "SELECT created_at FROM work_items LIMIT 0",
     ]) {
       await expect(projectorPool.query(query)).rejects.toMatchObject({ code: "42501" });
     }
@@ -459,6 +545,18 @@ describe.sequential("HR notification Core and Leave slice", () => {
             targetResourceId: attendanceTargetId,
           },
           {
+            recipientPrincipalId: ids.employeeA,
+            referenceId: notificationIds.timesheetTarget,
+            targetKind: "hr.timesheet.detail",
+            targetResourceId: timesheetTargetId,
+          },
+          {
+            recipientPrincipalId: ids.employeeA,
+            referenceId: notificationIds.expenseTarget,
+            targetKind: "hr.expense_claim.detail",
+            targetResourceId: expenseTargetId,
+          },
+          {
             recipientPrincipalId: ids.employeeA2,
             referenceId: notificationIds.requestRetry,
             targetKind: "hr.workforce_profile.detail",
@@ -478,11 +576,15 @@ describe.sequential("HR notification Core and Leave slice", () => {
         { outcome: "allowed", referenceId: notificationIds.shiftTarget },
         { outcome: "allowed", referenceId: notificationIds.requestCapability },
         { outcome: "allowed", referenceId: notificationIds.attendanceTarget },
+        { outcome: "allowed", referenceId: notificationIds.timesheetTarget },
+        { outcome: "allowed", referenceId: notificationIds.expenseTarget },
         { outcome: "denied", referenceId: notificationIds.requestRetry },
         { outcome: "missing", referenceId: notificationIds.requestPoisoned },
       ]);
       const managerShiftReference = randomUUID();
       const managerAttendanceReference = randomUUID();
+      const managerTimesheetReference = randomUUID();
+      const managerExpenseReference = randomUUID();
       expect(
         await verifyHrNotificationTargets(client, ids.tenantA, [
           {
@@ -497,10 +599,24 @@ describe.sequential("HR notification Core and Leave slice", () => {
             targetKind: "hr.attendance.detail",
             targetResourceId: attendanceTargetId,
           },
+          {
+            recipientPrincipalId: ids.managerA,
+            referenceId: managerTimesheetReference,
+            targetKind: "hr.timesheet.detail",
+            targetResourceId: timesheetTargetId,
+          },
+          {
+            recipientPrincipalId: ids.managerA,
+            referenceId: managerExpenseReference,
+            targetKind: "hr.expense_claim.detail",
+            targetResourceId: expenseTargetId,
+          },
         ]),
       ).toEqual([
         { outcome: "allowed", referenceId: managerShiftReference },
         { outcome: "allowed", referenceId: managerAttendanceReference },
+        { outcome: "allowed", referenceId: managerTimesheetReference },
+        { outcome: "allowed", referenceId: managerExpenseReference },
       ]);
       await mutateTenant(
         ids.tenantA,
@@ -522,10 +638,24 @@ describe.sequential("HR notification Core and Leave slice", () => {
               targetKind: "hr.attendance.detail",
               targetResourceId: attendanceTargetId,
             },
+            {
+              recipientPrincipalId: ids.managerA,
+              referenceId: managerTimesheetReference,
+              targetKind: "hr.timesheet.detail",
+              targetResourceId: timesheetTargetId,
+            },
+            {
+              recipientPrincipalId: ids.managerA,
+              referenceId: managerExpenseReference,
+              targetKind: "hr.expense_claim.detail",
+              targetResourceId: expenseTargetId,
+            },
           ]),
         ).toEqual([
           { outcome: "denied", referenceId: managerShiftReference },
           { outcome: "denied", referenceId: managerAttendanceReference },
+          { outcome: "denied", referenceId: managerTimesheetReference },
+          { outcome: "denied", referenceId: managerExpenseReference },
         ]);
       } finally {
         await mutateTenant(
@@ -544,6 +674,8 @@ describe.sequential("HR notification Core and Leave slice", () => {
         const suspendedShift = randomUUID();
         const suspendedOwn = randomUUID();
         const suspendedAttendance = randomUUID();
+        const suspendedTimesheet = randomUUID();
+        const suspendedExpense = randomUUID();
         expect(
           await verifyHrNotificationTargets(client, ids.tenantA, [
             {
@@ -564,11 +696,25 @@ describe.sequential("HR notification Core and Leave slice", () => {
               targetKind: "hr.attendance.detail",
               targetResourceId: attendanceTargetId,
             },
+            {
+              recipientPrincipalId: ids.employeeA,
+              referenceId: suspendedTimesheet,
+              targetKind: "hr.timesheet.detail",
+              targetResourceId: timesheetTargetId,
+            },
+            {
+              recipientPrincipalId: ids.employeeA,
+              referenceId: suspendedExpense,
+              targetKind: "hr.expense_claim.detail",
+              targetResourceId: expenseTargetId,
+            },
           ]),
         ).toEqual([
           { outcome: "denied", referenceId: suspendedShift },
           { outcome: "denied", referenceId: suspendedOwn },
           { outcome: "denied", referenceId: suspendedAttendance },
+          { outcome: "denied", referenceId: suspendedTimesheet },
+          { outcome: "denied", referenceId: suspendedExpense },
         ]);
       } finally {
         await mutateTenant(

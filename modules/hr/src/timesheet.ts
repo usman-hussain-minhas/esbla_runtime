@@ -12,6 +12,7 @@ import {
 } from "@esbla/contracts";
 import {
   appendEvidence,
+  appendNotificationIntent,
   assertPolicyAllowed,
   completeWorkItem,
   createWorkItem,
@@ -581,8 +582,8 @@ async function recordResult(
   newState: string,
   beforeVersion: number | null,
   aggregateVersion: number,
-): Promise<void> {
-  await recordMutationProof(transaction, {
+): Promise<string> {
+  const proof = await recordMutationProof(transaction, {
     evidence: {
       eventType: receipt.eventType,
       newState,
@@ -614,6 +615,20 @@ async function recordResult(
     subjectType: SUBJECT_RECEIPT,
   });
   if (bound.replayed) throw idempotencyConflict();
+  return proof.outboxEventId;
+}
+
+async function linkedWorkerPrincipal(
+  transaction: TenantTransaction,
+  workerProfileId: string,
+): Promise<string | null> {
+  const profile = await transaction.client.query<{ principal_id: string | null }>(
+    `SELECT principal_id FROM hr_worker_profiles
+     WHERE tenant_id=$1 AND worker_profile_id=$2
+     FOR SHARE`,
+    [transaction.context.tenantId, workerProfileId],
+  );
+  return profile.rows[0]?.principal_id ?? null;
 }
 
 export async function createTimesheet(
@@ -1015,7 +1030,7 @@ export async function submitTimesheet(
         workType: WORK_TYPE,
       });
       const timesheet = await mapTimesheet(transaction, timesheetId);
-      await recordResult(
+      const sourceEventId = await recordResult(
         transaction,
         receipt,
         timesheet,
@@ -1026,6 +1041,16 @@ export async function submitTimesheet(
         selectedVersion.row_version,
         timesheet.currentVersion.rowVersion,
       );
+      await appendNotificationIntent(transaction, {
+        category: "hr.timesheet",
+        recipientPrincipalId: approver.managerPrincipalId,
+        safeSummary: "Open the timesheet for details.",
+        sourceEventId,
+        sourceServiceKey: HR_TIMESHEET_SERVICE_KEY,
+        targetKind: "hr.timesheet.detail",
+        targetResourceId: timesheetId,
+        title: "A timesheet needs your review",
+      });
       return { billingState: HR_TIMESHEET_BILLING_STATE, replayed: false, timesheet };
     });
   } catch (error) {
@@ -1098,6 +1123,10 @@ export async function createTimesheetCorrection(
       );
       const selectedRoot = root.rows[0];
       if (!selectedRoot) throw notFound();
+      const recipientPrincipalId = await linkedWorkerPrincipal(
+        transaction,
+        selectedRoot.worker_profile_id,
+      );
       if (
         selectedRoot.row_version !== input.expectedRootVersion ||
         selectedRoot.current_version_id !== versionId
@@ -1158,7 +1187,7 @@ export async function createTimesheetCorrection(
       );
       if (advanced.rows.length !== 1) throw versionConflict();
       const timesheet = await mapTimesheet(transaction, timesheetId);
-      await recordResult(
+      const sourceEventId = await recordResult(
         transaction,
         receipt,
         timesheet,
@@ -1169,6 +1198,21 @@ export async function createTimesheetCorrection(
         selectedRoot.row_version,
         correctionNumber,
       );
+      if (
+        recipientPrincipalId !== null &&
+        recipientPrincipalId !== transaction.context.actorPrincipalId
+      ) {
+        await appendNotificationIntent(transaction, {
+          category: "hr.timesheet",
+          recipientPrincipalId,
+          safeSummary: "Open the timesheet for details.",
+          sourceEventId,
+          sourceServiceKey: HR_TIMESHEET_SERVICE_KEY,
+          targetKind: "hr.timesheet.detail",
+          targetResourceId: timesheetId,
+          title: "A timesheet correction was recorded",
+        });
+      }
       return { billingState: HR_TIMESHEET_BILLING_STATE, replayed: false, timesheet };
     });
   } catch (error) {
@@ -1260,6 +1304,10 @@ async function decideTimesheet(
       );
       const selectedRoot = root.rows[0];
       if (!selectedRoot) throw notFound();
+      const recipientPrincipalId = await linkedWorkerPrincipal(
+        transaction,
+        selectedRoot.worker_profile_id,
+      );
       const versionId = normalizeUuid(
         input.expectedTimesheetVersionId,
         "expectedTimesheetVersionId",
@@ -1364,7 +1412,7 @@ async function decideTimesheet(
       if (updated.rows.length !== 1) throw versionConflict();
       await completeWorkItem(transaction, selectedWork.work_item_id);
       const timesheet = await mapTimesheet(transaction, timesheetId);
-      await recordResult(
+      const sourceEventId = await recordResult(
         transaction,
         receipt,
         timesheet,
@@ -1375,6 +1423,18 @@ async function decideTimesheet(
         selectedVersion.row_version,
         timesheet.currentVersion.rowVersion,
       );
+      if (recipientPrincipalId !== null) {
+        await appendNotificationIntent(transaction, {
+          category: "hr.timesheet",
+          recipientPrincipalId,
+          safeSummary: "Open the timesheet for details.",
+          sourceEventId,
+          sourceServiceKey: HR_TIMESHEET_SERVICE_KEY,
+          targetKind: "hr.timesheet.detail",
+          targetResourceId: timesheetId,
+          title: `Your timesheet was ${targetStatus}`,
+        });
+      }
       return { billingState: HR_TIMESHEET_BILLING_STATE, replayed: false, timesheet };
     });
   } catch (error) {

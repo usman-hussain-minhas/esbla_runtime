@@ -32,6 +32,7 @@ interface SignedMutation {
 let applicationRole = "";
 let migrationPool: Pool;
 let pool: Pool;
+let projectorPool: Pool;
 let server: FastifyInstance;
 let managerProfileId = "";
 let timesheetId = "";
@@ -42,6 +43,7 @@ async function governed<T>(
   tenantId: string,
   actorPrincipalId: string,
   operation: (client: PoolClient) => Promise<T>,
+  correlationId = randomUUID(),
 ): Promise<T> {
   const client = await migrationPool.connect();
   try {
@@ -50,7 +52,7 @@ async function governed<T>(
       `SELECT set_config('app.tenant_id',$1,true),
               set_config('app.actor_principal_id',$2,true),
               set_config('app.correlation_id',$3,true)`,
-      [tenantId, actorPrincipalId, randomUUID()],
+      [tenantId, actorPrincipalId, correlationId],
     );
     const result = await operation(client);
     await client.query("COMMIT");
@@ -254,15 +256,36 @@ async function proofSnapshot() {
   });
 }
 
+async function notificationIntents(targetResourceId: string) {
+  const result = await projectorPool.query<{
+    intent_payload: Record<string, unknown>;
+    recipient_principal_id: string;
+  }>(
+    `SELECT intent_payload,recipient_principal_id::text
+     FROM notification_intents
+     WHERE tenant_id=$1 AND intent_payload->>'targetResourceId'=$2
+     ORDER BY created_at,intent_id`,
+    [ids.tenant, targetResourceId],
+  );
+  return result.rows;
+}
+
 beforeAll(async () => {
   const runtimeUrl = process.env.DATABASE_URL;
   const migrationUrl = process.env.DATABASE_MIGRATION_URL;
+  const projectorUrl = process.env.DATABASE_NOTIFICATION_PROJECTOR_URL;
   applicationRole = process.env.ESBLA_TEST_APPLICATION_ROLE ?? "";
-  if (!runtimeUrl || !migrationUrl || !/^[a-z_][a-z0-9_]*$/.test(applicationRole)) {
+  if (
+    !runtimeUrl ||
+    !migrationUrl ||
+    !projectorUrl ||
+    !/^[a-z_][a-z0-9_]*$/.test(applicationRole)
+  ) {
     throw new Error("PostgreSQL Timesheet workflow harness is unavailable");
   }
   migrationPool = createDatabasePool(migrationUrl, { max: 3 });
   await migrateDatabase(createDatabase(migrationPool));
+  projectorPool = createDatabasePool(projectorUrl, { max: 2 });
   await migrationPool.query(
     `GRANT SELECT ON membership_capabilities,tenant_settings,hr_reporting_relationships TO ${applicationRole};
      GRANT SELECT,UPDATE ON hr_worker_profiles,service_activations TO ${applicationRole};
@@ -383,6 +406,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server?.close();
+  await projectorPool?.end();
   await pool?.end();
   await migrationPool?.end();
 });
@@ -444,6 +468,7 @@ describe("Timesheet employee workflow API", () => {
       rootVersion: 1,
     });
     expectProblem(byStatus(edits, 409), 409, "TIMESHEET_VERSION_CONFLICT");
+    expect(await notificationIntents(draft.timesheetId)).toEqual([]);
 
     const submitBody = {
       expectedRootVersion: 1,
@@ -490,6 +515,23 @@ describe("Timesheet employee workflow API", () => {
     } finally {
       await migrationPool.query(`GRANT INSERT ON work_items TO ${applicationRole}`);
     }
+    const beforeNotificationFailure = await proofSnapshot();
+    await migrationPool.query(`REVOKE INSERT ON notification_intents FROM ${applicationRole}`);
+    try {
+      expectProblem(
+        await mutation(
+          submitBody,
+          randomUUID(),
+          "POST",
+          `/v1/hr/timesheets/${draft.timesheetId}/submit`,
+        ),
+        403,
+        "POLICY_DENIED",
+      );
+      expect(await proofSnapshot()).toEqual(beforeNotificationFailure);
+    } finally {
+      await migrationPool.query(`GRANT INSERT ON notification_intents TO ${applicationRole}`);
+    }
     let submitKey = randomUUID();
     const competingSubmitKey = randomUUID();
     const submitUrl = `/v1/hr/timesheets/${draft.timesheetId}/submit`;
@@ -511,6 +553,20 @@ describe("Timesheet employee workflow API", () => {
       expect(retried.response.headers["idempotent-replayed"]).toBe("true");
       expect(retried.response.json()).toEqual(expected);
     }
+    expect(await notificationIntents(draft.timesheetId)).toEqual([
+      {
+        intent_payload: {
+          category: "hr.timesheet",
+          safeSummary: "Open the timesheet for details.",
+          targetHref: `/workspace/hr/timesheets/by-id/${draft.timesheetId}`,
+          targetKind: "hr.timesheet.detail",
+          targetReadCapabilityId: "hr.timesheet.view_detail",
+          targetResourceId: draft.timesheetId,
+          title: "A timesheet needs your review",
+        },
+        recipient_principal_id: ids.manager,
+      },
+    ]);
     expect(await proofSnapshot()).toEqual({
       approvals: 0,
       completed_work: 0,
@@ -662,6 +718,18 @@ describe("Timesheet employee workflow API", () => {
       await migrationPool.query(`GRANT UPDATE ON work_items TO ${applicationRole}`);
     }
 
+    await migrationPool.query(`REVOKE INSERT ON notification_intents FROM ${applicationRole}`);
+    try {
+      expectProblem(
+        await mutation(approve, randomUUID(), "POST", approveUrl, ids.manager),
+        403,
+        "POLICY_DENIED",
+      );
+      expect(await proofSnapshot()).toEqual(before);
+    } finally {
+      await migrationPool.query(`GRANT INSERT ON notification_intents TO ${applicationRole}`);
+    }
+
     const approveKey = randomUUID();
     const rejectKey = randomUUID();
     const decisions = await Promise.all([
@@ -700,6 +768,24 @@ describe("Timesheet employee workflow API", () => {
     expect(replay.response.statusCode, replay.response.body).toBe(200);
     expect(replay.response.headers["idempotent-replayed"]).toBe("true");
     expect(replay.response.json()).toEqual(decided.response.json());
+    expect(await notificationIntents(timesheetId)).toEqual([
+      expect.objectContaining({
+        intent_payload: expect.objectContaining({ title: "A timesheet needs your review" }),
+        recipient_principal_id: ids.manager,
+      }),
+      {
+        intent_payload: {
+          category: "hr.timesheet",
+          safeSummary: "Open the timesheet for details.",
+          targetHref: `/workspace/hr/timesheets/by-id/${timesheetId}`,
+          targetKind: "hr.timesheet.detail",
+          targetReadCapabilityId: "hr.timesheet.view_detail",
+          targetResourceId: timesheetId,
+          title: `Your timesheet was ${winner.status}`,
+        },
+        recipient_principal_id: ids.employee,
+      },
+    ]);
     expect(await proofSnapshot()).toEqual({
       ...before,
       approvals: Number(before.approvals) + 1,
@@ -896,6 +982,17 @@ describe("Timesheet employee workflow API", () => {
     }
 
     const keys = [randomUUID(), randomUUID()];
+    await migrationPool.query(`REVOKE INSERT ON notification_intents FROM ${applicationRole}`);
+    try {
+      expectProblem(
+        await mutation(body, randomUUID(), "POST", url, ids.operator),
+        403,
+        "POLICY_DENIED",
+      );
+      expect(await proofSnapshot()).toEqual(before);
+    } finally {
+      await migrationPool.query(`GRANT INSERT ON notification_intents TO ${applicationRole}`);
+    }
     const attempts = await Promise.all(
       keys.map((key) => mutation(body, key, "POST", url, ids.operator)),
     );
@@ -921,6 +1018,30 @@ describe("Timesheet employee workflow API", () => {
     expect(replay.response.statusCode, replay.response.body).toBe(200);
     expect(replay.response.headers["idempotent-replayed"]).toBe("true");
     expect(replay.response.json()).toEqual(correction);
+    expect(await notificationIntents(timesheetId)).toEqual([
+      expect.objectContaining({
+        intent_payload: expect.objectContaining({ title: "A timesheet needs your review" }),
+        recipient_principal_id: ids.manager,
+      }),
+      expect.objectContaining({
+        intent_payload: expect.objectContaining({
+          title: expect.stringMatching(/^Your timesheet was (approved|rejected)$/),
+        }),
+        recipient_principal_id: ids.employee,
+      }),
+      {
+        intent_payload: {
+          category: "hr.timesheet",
+          safeSummary: "Open the timesheet for details.",
+          targetHref: `/workspace/hr/timesheets/by-id/${timesheetId}`,
+          targetKind: "hr.timesheet.detail",
+          targetReadCapabilityId: "hr.timesheet.view_detail",
+          targetResourceId: timesheetId,
+          title: "A timesheet correction was recorded",
+        },
+        recipient_principal_id: ids.employee,
+      },
+    ]);
     expect(await proofSnapshot()).toEqual({
       ...before,
       evidence: Number(before.evidence) + 2,

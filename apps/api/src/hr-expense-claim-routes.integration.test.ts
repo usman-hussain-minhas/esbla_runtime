@@ -40,7 +40,9 @@ interface SignedRequestOptions {
 }
 let migrationPool: Pool;
 let pool: Pool;
+let projectorPool: Pool;
 let server: FastifyInstance;
+let applicationRole = "";
 let approvedExpenseClaimId = "";
 let approvedExpenseClaimVersionId = "";
 let managerProfileId = "";
@@ -52,6 +54,7 @@ async function tenantTransaction<T>(
   tenantId: string,
   actorPrincipalId: string,
   operation: (tenantClient: PoolClient) => Promise<T>,
+  correlationId = randomUUID(),
 ): Promise<T> {
   await client.query("BEGIN");
   try {
@@ -59,7 +62,7 @@ async function tenantTransaction<T>(
       `SELECT set_config('app.tenant_id',$1,true),
               set_config('app.actor_principal_id',$2,true),
               set_config('app.correlation_id',$3,true)`,
-      [tenantId, actorPrincipalId, randomUUID()],
+      [tenantId, actorPrincipalId, correlationId],
     );
     const result = await operation(client);
     await client.query("COMMIT");
@@ -294,15 +297,35 @@ async function claimProofCounts() {
   if (!row) throw new Error("Expense Claim lifecycle proof counts are unavailable");
   return row;
 }
+async function notificationIntents(targetResourceId: string) {
+  const result = await projectorPool.query<{
+    intent_payload: Record<string, unknown>;
+    recipient_principal_id: string;
+  }>(
+    `SELECT intent_payload,recipient_principal_id::text
+     FROM notification_intents
+     WHERE tenant_id=$1 AND intent_payload->>'targetResourceId'=$2
+     ORDER BY created_at,intent_id`,
+    [ids.tenant, targetResourceId],
+  );
+  return result.rows;
+}
 beforeAll(async () => {
   const runtimeUrl = process.env.DATABASE_URL;
   const migrationUrl = process.env.DATABASE_MIGRATION_URL;
-  const applicationRole = process.env.ESBLA_TEST_APPLICATION_ROLE ?? "";
-  if (!runtimeUrl || !migrationUrl || !/^[a-z_][a-z0-9_]*$/.test(applicationRole)) {
+  const projectorUrl = process.env.DATABASE_NOTIFICATION_PROJECTOR_URL;
+  applicationRole = process.env.ESBLA_TEST_APPLICATION_ROLE ?? "";
+  if (
+    !runtimeUrl ||
+    !migrationUrl ||
+    !projectorUrl ||
+    !/^[a-z_][a-z0-9_]*$/.test(applicationRole)
+  ) {
     throw new Error("PostgreSQL Expense Claim API harness is unavailable");
   }
   migrationPool = createDatabasePool(migrationUrl, { max: 3 });
   await migrateDatabase(createDatabase(migrationPool));
+  projectorPool = createDatabasePool(projectorUrl, { max: 2 });
   await migrationPool.query(
     `GRANT SELECT ON membership_capabilities,tenant_settings,hr_expense_claim_service_control,hr_reporting_relationships TO ${applicationRole};
      GRANT SELECT,UPDATE ON hr_worker_profiles TO ${applicationRole};
@@ -432,6 +455,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await server?.close();
+  await projectorPool?.end();
   await pool?.end();
   await migrationPool?.end();
 });
@@ -705,6 +729,7 @@ describe.sequential("Expense Claim employee lifecycle API", () => {
       totalAmountMinor: 20_000,
     });
     expect(edited.response.json().currentVersion.lines).toHaveLength(2);
+    expect(await notificationIntents(expenseClaimId)).toEqual([]);
     const replayedEdit = await claimMutation(
       "PATCH",
       `/v1/hr/expense-claims/${expenseClaimId}/draft`,
@@ -727,6 +752,18 @@ describe.sequential("Expense Claim employee lifecycle API", () => {
       expectedVersion: 2,
     };
     const submitKey = randomUUID();
+    const beforeNotificationFailure = await claimProofCounts();
+    await migrationPool.query(`REVOKE INSERT ON notification_intents FROM ${applicationRole}`);
+    try {
+      expectProblem(
+        await claimMutation("POST", `/v1/hr/expense-claims/${expenseClaimId}/submit`, submitBody),
+        403,
+        "POLICY_DENIED",
+      );
+      expect(await claimProofCounts()).toEqual(beforeNotificationFailure);
+    } finally {
+      await migrationPool.query(`GRANT INSERT ON notification_intents TO ${applicationRole}`);
+    }
     const submitted = await claimMutation(
       "POST",
       `/v1/hr/expense-claims/${expenseClaimId}/submit`,
@@ -748,6 +785,20 @@ describe.sequential("Expense Claim employee lifecycle API", () => {
     );
     expect(replayedSubmit.response.headers["idempotent-replayed"]).toBe("true");
     expect(replayedSubmit.response.json()).toEqual(submitted.response.json());
+    expect(await notificationIntents(expenseClaimId)).toEqual([
+      {
+        intent_payload: {
+          category: "hr.expense_claim",
+          safeSummary: "Open the expense claim for details.",
+          targetHref: `/workspace/hr/expenses/by-id/${expenseClaimId}`,
+          targetKind: "hr.expense_claim.detail",
+          targetReadCapabilityId: "hr.expense.view_detail",
+          targetResourceId: expenseClaimId,
+          title: "An expense claim needs your review",
+        },
+        recipient_principal_id: ids.manager,
+      },
+    ]);
     expect(await claimProofCounts()).toEqual({
       approvals: before.approvals,
       completedWork: before.completedWork,
@@ -866,6 +917,24 @@ describe.sequential("Expense Claim assigned-manager decision API", () => {
 
     const approveBody = expectedDecision(approveCandidate.expenseClaimVersionId);
     const approveKey = randomUUID();
+    const beforeNotificationFailure = await claimProofCounts();
+    await migrationPool.query(`REVOKE INSERT ON notification_intents FROM ${applicationRole}`);
+    try {
+      expectProblem(
+        await claimMutation(
+          "POST",
+          `/v1/hr/expense-claims/${approveCandidate.expenseClaimId}/approve`,
+          approveBody,
+          randomUUID(),
+          ids.manager,
+        ),
+        403,
+        "POLICY_DENIED",
+      );
+      expect(await claimProofCounts()).toEqual(beforeNotificationFailure);
+    } finally {
+      await migrationPool.query(`GRANT INSERT ON notification_intents TO ${applicationRole}`);
+    }
     const approved = await claimMutation(
       "POST",
       `/v1/hr/expense-claims/${approveCandidate.expenseClaimId}/approve`,
@@ -890,6 +959,24 @@ describe.sequential("Expense Claim assigned-manager decision API", () => {
     );
     expect(replayedApprove.response.headers["idempotent-replayed"]).toBe("true");
     expect(replayedApprove.response.json()).toEqual(approved.response.json());
+    expect(await notificationIntents(approveCandidate.expenseClaimId)).toEqual([
+      expect.objectContaining({
+        intent_payload: expect.objectContaining({ title: "An expense claim needs your review" }),
+        recipient_principal_id: ids.manager,
+      }),
+      {
+        intent_payload: {
+          category: "hr.expense_claim",
+          safeSummary: "Open the expense claim for details.",
+          targetHref: `/workspace/hr/expenses/by-id/${approveCandidate.expenseClaimId}`,
+          targetKind: "hr.expense_claim.detail",
+          targetReadCapabilityId: "hr.expense.view_detail",
+          targetResourceId: approveCandidate.expenseClaimId,
+          title: "Your expense claim was approved",
+        },
+        recipient_principal_id: ids.employee,
+      },
+    ]);
 
     const rejectBody = expectedDecision(rejectCandidate.expenseClaimVersionId);
     const beforeDenied = await claimProofCounts();
@@ -984,6 +1071,24 @@ describe.sequential("Expense Claim assigned-manager decision API", () => {
     );
     expect(replayedReject.response.headers["idempotent-replayed"]).toBe("true");
     expect(replayedReject.response.json()).toEqual(rejected.response.json());
+    expect(await notificationIntents(rejectCandidate.expenseClaimId)).toEqual([
+      expect.objectContaining({
+        intent_payload: expect.objectContaining({ title: "An expense claim needs your review" }),
+        recipient_principal_id: ids.manager,
+      }),
+      {
+        intent_payload: {
+          category: "hr.expense_claim",
+          safeSummary: "Open the expense claim for details.",
+          targetHref: `/workspace/hr/expenses/by-id/${rejectCandidate.expenseClaimId}`,
+          targetKind: "hr.expense_claim.detail",
+          targetReadCapabilityId: "hr.expense.view_detail",
+          targetResourceId: rejectCandidate.expenseClaimId,
+          title: "Your expense claim was rejected",
+        },
+        recipient_principal_id: ids.employee,
+      },
+    ]);
 
     await governedOther(async (client) => {
       await client.query(
@@ -1075,6 +1180,7 @@ describe.sequential("Expense Claim assigned-manager decision API", () => {
     );
     expect(replayed.response.headers["idempotent-replayed"]).toBe("true");
     expect(replayed.response.json()).toEqual(correction);
+    expect(await notificationIntents(approvedExpenseClaimId)).toHaveLength(2);
     const rejectedCorrection = await claimMutation(
       "POST",
       `/v1/hr/expense-claims/${rejectedExpenseClaimId}/corrections`,
