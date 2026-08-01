@@ -751,17 +751,21 @@ export const notificationProjections = pgTable(
     intentId: uuid("intent_id").notNull(),
     sourceEventId: uuid("source_event_id").notNull(),
     sourceServiceKey: text("source_service_key").notNull(),
-    category: text("category").notNull(),
-    title: varchar("title", { length: 160 }).notNull(),
-    safeSummary: varchar("safe_summary", { length: 240 }).notNull(),
-    targetKind: text("target_kind").notNull(),
+    category: text("category"),
+    title: varchar("title", { length: 160 }),
+    safeSummary: varchar("safe_summary", { length: 240 }),
+    targetKind: text("target_kind"),
     targetResourceId: uuid("target_resource_id"),
-    targetHref: text("target_href").notNull(),
-    targetReadCapabilityId: text("target_read_capability_id").notNull(),
+    targetHref: text("target_href"),
+    targetReadCapabilityId: text("target_read_capability_id"),
     occurredAt: timestamp("occurred_at", { mode: "date", withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
     readAt: timestamp("read_at", { mode: "date", withTimezone: true }),
     retentionStatus: text("retention_status").default("active").notNull(),
+    retentionRedactedAt: timestamp("retention_redacted_at", {
+      mode: "date",
+      withTimezone: true,
+    }),
     rowVersion: integer("row_version").default(1).notNull(),
   },
   (table) => [
@@ -809,6 +813,9 @@ export const notificationProjections = pgTable(
       table.occurredAt,
       table.notificationId,
     ),
+    index("notification_projections_retention_schedule_idx")
+      .on(table.occurredAt, table.tenantId, table.notificationId)
+      .where(sql`${table.retentionStatus} = 'active'`),
     check(
       "notification_projections_source_service_key_valid",
       sql`${table.sourceServiceKey} ~ '^[a-z][a-z0-9_.-]{0,127}$'`,
@@ -859,7 +866,31 @@ export const notificationProjections = pgTable(
     ),
     check(
       "notification_projections_retention_status_valid",
-      sql`${table.retentionStatus} = 'active'`,
+      sql`${table.retentionStatus} IN ('active', 'expired')`,
+    ),
+    check(
+      "notification_projections_retention_shape",
+      sql`(
+        ${table.retentionStatus} = 'active'
+        AND ${table.category} IS NOT NULL
+        AND ${table.title} IS NOT NULL
+        AND ${table.safeSummary} IS NOT NULL
+        AND ${table.targetKind} IS NOT NULL
+        AND ${table.targetHref} IS NOT NULL
+        AND ${table.targetReadCapabilityId} IS NOT NULL
+        AND ${table.retentionRedactedAt} IS NULL
+      ) OR (
+        ${table.retentionStatus} = 'expired'
+        AND ${table.category} IS NULL
+        AND ${table.title} IS NULL
+        AND ${table.safeSummary} IS NULL
+        AND ${table.targetKind} IS NULL
+        AND ${table.targetResourceId} IS NULL
+        AND ${table.targetHref} IS NULL
+        AND ${table.targetReadCapabilityId} IS NULL
+        AND ${table.readAt} IS NULL
+        AND ${table.retentionRedactedAt} IS NOT NULL
+      )`,
     ),
     check("notification_projections_row_version_positive", sql`${table.rowVersion} > 0`),
   ],
@@ -977,7 +1008,8 @@ export const notificationProjectorEvidence = pgTable(
         'platform.notifications.projected',
         'platform.notifications.withheld',
         'platform.notifications.retry_scheduled',
-        'platform.notifications.poisoned'
+        'platform.notifications.poisoned',
+        'platform.notifications.retention_redacted'
       )`,
     ),
     check(
