@@ -31,6 +31,7 @@ import {
 
 const notificationIds = {
   employmentRecord: "30000000-0000-4000-8000-000000000082",
+  attendanceTarget: "30000000-0000-4000-8000-000000000085",
   missingTarget: "30000000-0000-4000-8000-000000000083",
   requestApproved: "30000000-0000-4000-8000-000000000071",
   requestCapability: "30000000-0000-4000-8000-000000000075",
@@ -43,11 +44,15 @@ const notificationIds = {
   requestSuspended: "30000000-0000-4000-8000-000000000074",
   workforceEmployee: "30000000-0000-4000-8000-000000000080",
   workforceManager: "30000000-0000-4000-8000-000000000081",
+  shiftTarget: "30000000-0000-4000-8000-000000000084",
 } as const;
 
 const notificationCapabilities = [
   "hr.employment.view_detail",
+  "hr.attendance.view_detail",
   "hr.leave.view",
+  "hr.shift.list_roster",
+  "hr.shift.view_detail",
   "hr.workforce.list_authorized",
   "hr.workforce.view_authorized_detail",
   "platform.notifications.list_own",
@@ -56,9 +61,11 @@ const notificationCapabilities = [
 ] as const;
 
 let projectorPool: Pool;
+let attendanceTargetId: string;
 let employmentTargetId: string;
 const intentIds = new Map<string, string>();
 let workforceEmployeeTargetId: string;
+let shiftTargetId: string;
 
 async function seedCapabilities(tenantId: string, principalIds: readonly string[]): Promise<void> {
   const client = await migrationPool.connect();
@@ -85,6 +92,32 @@ async function mutateTenant(
   const client = await migrationPool.connect();
   try {
     await seedTenantRow(client, tenantId, query, values);
+  } finally {
+    client.release();
+  }
+}
+
+async function tenantQuery<Row extends QueryResultRow>(
+  tenantId: string,
+  actorPrincipalId: string,
+  query: string,
+  values: readonly unknown[],
+): Promise<readonly Row[]> {
+  const client = await migrationPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `SELECT set_config('app.tenant_id',$1,true),
+              set_config('app.actor_principal_id',$2,true),
+              set_config('app.correlation_id',$3,true)`,
+      [tenantId, actorPrincipalId, randomUUID()],
+    );
+    const result = await client.query<Row>(query, [...values]);
+    await client.query("COMMIT");
+    return result.rows;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
   } finally {
     client.release();
   }
@@ -172,7 +205,8 @@ beforeAll(async () => {
   await mutateTenant(
     ids.tenantA,
     `INSERT INTO service_activations (tenant_id,service_key,state,version)
-     VALUES ($1,'workforce_profile','active',1),($1,'employment_record','active',1)`,
+     VALUES ($1,'workforce_profile','active',1),($1,'employment_record','active',1),
+            ($1,'shift_assignment','active',1),($1,'attendance','active',1)`,
     [ids.tenantA],
   );
   await mutateTenant(
@@ -224,7 +258,24 @@ beforeAll(async () => {
     return active.profile.workerProfileId;
   };
   workforceEmployeeTargetId = await createFixtureProfile(ids.employeeA, "employee");
-  await createFixtureProfile(ids.managerA, "manager");
+  const managerProfileId = await createFixtureProfile(ids.managerA, "manager");
+  const relationship = await tenantQuery<{ reporting_relationship_id: string }>(
+    ids.tenantA,
+    ids.employeeA,
+    `INSERT INTO hr_reporting_relationships
+       (tenant_id,worker_profile_id,manager_worker_profile_id,relationship_status,
+        relationship_version)
+     VALUES ($1,$2,$3,'assigned',1)
+     RETURNING reporting_relationship_id`,
+    [ids.tenantA, workforceEmployeeTargetId, managerProfileId],
+  );
+  await mutateTenant(
+    ids.tenantA,
+    `UPDATE hr_worker_profiles
+     SET current_reporting_relationship_id=$3,row_version=row_version+1
+     WHERE tenant_id=$1 AND worker_profile_id=$2`,
+    [ids.tenantA, workforceEmployeeTargetId, relationship[0]?.reporting_relationship_id],
+  );
   await mutateTenant(
     ids.tenantA,
     `UPDATE memberships SET role_key='hr_operator'
@@ -237,6 +288,68 @@ beforeAll(async () => {
     { idempotencyKey: randomUUID(), workerProfileId: workforceEmployeeTargetId },
   );
   employmentTargetId = employment.mutation.employmentRecordId;
+  await mutateTenant(
+    ids.tenantA,
+    `UPDATE memberships SET role_key='employee'
+     WHERE tenant_id=$1 AND principal_id=$2`,
+    [ids.tenantA, ids.employeeA],
+  );
+  const roster = await tenantQuery<{ roster_version_id: string }>(
+    ids.tenantA,
+    ids.employeeA,
+    `INSERT INTO hr_shift_roster_versions
+       (tenant_id,period_start,period_end,version)
+     VALUES ($1,'2097-01-01','2097-01-14',1)
+     RETURNING roster_version_id`,
+    [ids.tenantA],
+  );
+  const assignment = await tenantQuery<{ shift_assignment_id: string }>(
+    ids.tenantA,
+    ids.employeeA,
+    `INSERT INTO hr_shift_assignments
+       (tenant_id,roster_version_id,worker_profile_id,starts_at,ends_at,iana_timezone)
+     VALUES ($1,$2,$3,'2097-01-03T04:00:00Z','2097-01-03T12:00:00Z','Asia/Karachi')
+     RETURNING shift_assignment_id`,
+    [ids.tenantA, roster[0]?.roster_version_id, workforceEmployeeTargetId],
+  );
+  await mutateTenant(
+    ids.tenantA,
+    `UPDATE hr_shift_roster_versions
+     SET status='published',row_version=row_version+1
+     WHERE tenant_id=$1 AND roster_version_id=$2`,
+    [ids.tenantA, roster[0]?.roster_version_id],
+  );
+  shiftTargetId = String(assignment[0]?.shift_assignment_id);
+  await mutateTenant(
+    ids.tenantA,
+    `UPDATE memberships SET role_key='hr_operator'
+     WHERE tenant_id=$1 AND principal_id=$2`,
+    [ids.tenantA, ids.employeeA],
+  );
+  await mutateTenant(
+    ids.tenantA,
+    `INSERT INTO membership_capabilities (tenant_id,principal_id,capability_id)
+     VALUES ($1,$2,'hr.attendance.record_manual')`,
+    [ids.tenantA, ids.employeeA],
+  );
+  const observation = await tenantQuery<{ attendance_observation_id: string }>(
+    ids.tenantA,
+    ids.employeeA,
+    `INSERT INTO hr_attendance_observations
+       (tenant_id,worker_profile_id,observed_at,observation_kind,source_kind,
+        actor_principal_id,correlation_id)
+     VALUES ($1,$2,'2097-01-03T04:00:00Z','presence_start','manual',$3,$4)
+     RETURNING attendance_observation_id`,
+    [ids.tenantA, workforceEmployeeTargetId, ids.employeeA, randomUUID()],
+  );
+  attendanceTargetId = String(observation[0]?.attendance_observation_id);
+  await mutateTenant(
+    ids.tenantA,
+    `DELETE FROM membership_capabilities
+     WHERE tenant_id=$1 AND principal_id=$2
+       AND capability_id='hr.attendance.record_manual'`,
+    [ids.tenantA, ids.employeeA],
+  );
   await mutateTenant(
     ids.tenantA,
     `UPDATE memberships SET role_key='employee'
@@ -281,6 +394,11 @@ describe.sequential("HR notification Core and Leave slice", () => {
               manager_worker_profile_id,relationship_status
        FROM hr_reporting_relationships LIMIT 0`,
       "SELECT tenant_id,employment_record_id,worker_profile_id FROM hr_employment_records LIMIT 0",
+      `SELECT tenant_id,shift_assignment_id,roster_version_id,worker_profile_id
+       FROM hr_shift_assignments LIMIT 0`,
+      "SELECT tenant_id,roster_version_id,status FROM hr_shift_roster_versions LIMIT 0",
+      `SELECT tenant_id,attendance_observation_id,worker_profile_id
+       FROM hr_attendance_observations LIMIT 0`,
     ]) {
       await expect(projectorPool.query(query)).resolves.toBeDefined();
     }
@@ -289,12 +407,15 @@ describe.sequential("HR notification Core and Leave slice", () => {
       "SELECT employee_number FROM hr_worker_profiles LIMIT 0",
       "SELECT effective_at FROM hr_reporting_relationships LIMIT 0",
       "SELECT status FROM hr_employment_records LIMIT 0",
+      "SELECT starts_at FROM hr_shift_assignments LIMIT 0",
+      "SELECT period_start FROM hr_shift_roster_versions LIMIT 0",
+      "SELECT observed_at FROM hr_attendance_observations LIMIT 0",
     ]) {
       await expect(projectorPool.query(query)).rejects.toMatchObject({ code: "42501" });
     }
   });
 
-  it("fails closed through exact Workforce and Employment target authority", async () => {
+  it("fails closed through exact Workforce, Employment, Shift and Attendance target authority", async () => {
     const client = await projectorPool.connect();
     try {
       await client.query("BEGIN");
@@ -320,6 +441,24 @@ describe.sequential("HR notification Core and Leave slice", () => {
             targetResourceId: employmentTargetId,
           },
           {
+            recipientPrincipalId: ids.employeeA,
+            referenceId: notificationIds.shiftTarget,
+            targetKind: "hr.shift_assignment.detail",
+            targetResourceId: shiftTargetId,
+          },
+          {
+            recipientPrincipalId: ids.employeeA,
+            referenceId: notificationIds.requestCapability,
+            targetKind: "hr.shift_assignment.own_shifts",
+            targetResourceId: null,
+          },
+          {
+            recipientPrincipalId: ids.employeeA,
+            referenceId: notificationIds.attendanceTarget,
+            targetKind: "hr.attendance.detail",
+            targetResourceId: attendanceTargetId,
+          },
+          {
             recipientPrincipalId: ids.employeeA2,
             referenceId: notificationIds.requestRetry,
             targetKind: "hr.workforce_profile.detail",
@@ -336,9 +475,109 @@ describe.sequential("HR notification Core and Leave slice", () => {
         { outcome: "allowed", referenceId: notificationIds.workforceEmployee },
         { outcome: "allowed", referenceId: notificationIds.workforceManager },
         { outcome: "allowed", referenceId: notificationIds.employmentRecord },
+        { outcome: "allowed", referenceId: notificationIds.shiftTarget },
+        { outcome: "allowed", referenceId: notificationIds.requestCapability },
+        { outcome: "allowed", referenceId: notificationIds.attendanceTarget },
         { outcome: "denied", referenceId: notificationIds.requestRetry },
         { outcome: "missing", referenceId: notificationIds.requestPoisoned },
       ]);
+      const managerShiftReference = randomUUID();
+      const managerAttendanceReference = randomUUID();
+      expect(
+        await verifyHrNotificationTargets(client, ids.tenantA, [
+          {
+            recipientPrincipalId: ids.managerA,
+            referenceId: managerShiftReference,
+            targetKind: "hr.shift_assignment.detail",
+            targetResourceId: shiftTargetId,
+          },
+          {
+            recipientPrincipalId: ids.managerA,
+            referenceId: managerAttendanceReference,
+            targetKind: "hr.attendance.detail",
+            targetResourceId: attendanceTargetId,
+          },
+        ]),
+      ).toEqual([
+        { outcome: "allowed", referenceId: managerShiftReference },
+        { outcome: "allowed", referenceId: managerAttendanceReference },
+      ]);
+      await mutateTenant(
+        ids.tenantA,
+        "UPDATE memberships SET role_key='employee' WHERE tenant_id=$1 AND principal_id=$2",
+        [ids.tenantA, ids.managerA],
+      );
+      try {
+        expect(
+          await verifyHrNotificationTargets(client, ids.tenantA, [
+            {
+              recipientPrincipalId: ids.managerA,
+              referenceId: managerShiftReference,
+              targetKind: "hr.shift_assignment.detail",
+              targetResourceId: shiftTargetId,
+            },
+            {
+              recipientPrincipalId: ids.managerA,
+              referenceId: managerAttendanceReference,
+              targetKind: "hr.attendance.detail",
+              targetResourceId: attendanceTargetId,
+            },
+          ]),
+        ).toEqual([
+          { outcome: "denied", referenceId: managerShiftReference },
+          { outcome: "denied", referenceId: managerAttendanceReference },
+        ]);
+      } finally {
+        await mutateTenant(
+          ids.tenantA,
+          "UPDATE memberships SET role_key='manager' WHERE tenant_id=$1 AND principal_id=$2",
+          [ids.tenantA, ids.managerA],
+        );
+      }
+      await mutateTenant(
+        ids.tenantA,
+        `UPDATE memberships SET status='suspended'
+         WHERE tenant_id=$1 AND principal_id=$2`,
+        [ids.tenantA, ids.employeeA],
+      );
+      try {
+        const suspendedShift = randomUUID();
+        const suspendedOwn = randomUUID();
+        const suspendedAttendance = randomUUID();
+        expect(
+          await verifyHrNotificationTargets(client, ids.tenantA, [
+            {
+              recipientPrincipalId: ids.employeeA,
+              referenceId: suspendedShift,
+              targetKind: "hr.shift_assignment.detail",
+              targetResourceId: shiftTargetId,
+            },
+            {
+              recipientPrincipalId: ids.employeeA,
+              referenceId: suspendedOwn,
+              targetKind: "hr.shift_assignment.own_shifts",
+              targetResourceId: null,
+            },
+            {
+              recipientPrincipalId: ids.employeeA,
+              referenceId: suspendedAttendance,
+              targetKind: "hr.attendance.detail",
+              targetResourceId: attendanceTargetId,
+            },
+          ]),
+        ).toEqual([
+          { outcome: "denied", referenceId: suspendedShift },
+          { outcome: "denied", referenceId: suspendedOwn },
+          { outcome: "denied", referenceId: suspendedAttendance },
+        ]);
+      } finally {
+        await mutateTenant(
+          ids.tenantA,
+          `UPDATE memberships SET status='active'
+           WHERE tenant_id=$1 AND principal_id=$2`,
+          [ids.tenantA, ids.employeeA],
+        );
+      }
       await client.query("ROLLBACK");
     } finally {
       await client.query("ROLLBACK").catch(() => undefined);
