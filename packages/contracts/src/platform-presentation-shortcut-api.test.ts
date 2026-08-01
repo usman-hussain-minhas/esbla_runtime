@@ -50,6 +50,20 @@ const discovery = {
   },
 } as const;
 
+const missionControlSurfaceDiscovery = {
+  ...discovery,
+  contextual: {
+    contextId: "surface.mission-control",
+    contextKind: "surface",
+    editable: true,
+    eligibleTargets: [hrMissionControl, leave],
+    items: [leave],
+    settingKey: "navigation.contextual_shortcuts.v1",
+    tombstoneCount: 0,
+    version: 1,
+  },
+} as const;
+
 describe("presentation shortcut API contracts", () => {
   it("registers one canonical internal target catalog without route aliases", () => {
     expect(PRESENTATION_SHORTCUT_TARGET_DEFINITIONS.slice(0, 3)).toEqual([
@@ -75,6 +89,20 @@ describe("presentation shortcut API contracts", () => {
     expect(parsePresentationShortcutDiscoveryQuery({ contextServiceGroupId: "hr" })).toEqual({
       contextServiceGroupId: "hr",
     });
+    expect(parsePresentationShortcutDiscovery(missionControlSurfaceDiscovery)).toEqual(
+      missionControlSurfaceDiscovery,
+    );
+    expect(
+      parsePresentationShortcutDiscoveryQuery({
+        contextSurfaceId: "surface.mission-control",
+      }),
+    ).toEqual({ contextSurfaceId: "surface.mission-control" });
+    expect(() =>
+      parsePresentationShortcutDiscoveryQuery({
+        contextServiceGroupId: "hr",
+        contextSurfaceId: "surface.mission-control",
+      }),
+    ).toThrow("Invalid presentation shortcut query");
   });
 
   it("rejects cross-context, unregistered, ineligible and non-canonical discovery", () => {
@@ -101,6 +129,13 @@ describe("presentation shortcut API contracts", () => {
           ...discovery.universal,
           eligibleTargets: [home, hrMissionControl],
           items: [leave],
+        },
+      },
+      {
+        ...missionControlSurfaceDiscovery,
+        contextual: {
+          ...missionControlSurfaceDiscovery.contextual,
+          eligibleTargets: [home, hrMissionControl, leave],
         },
       },
     ]) {
@@ -138,6 +173,28 @@ describe("presentation shortcut API contracts", () => {
       operation: "remove",
       settingKey: "navigation.contextual_shortcuts.v1",
     });
+    expect(
+      parseUpdatePresentationShortcutBody({
+        ...append,
+        contextId: "surface.mission-control",
+        contextKind: "surface",
+        settingKey: "navigation.contextual_shortcuts.v1",
+      }),
+    ).toEqual({
+      ...append,
+      contextId: "surface.mission-control",
+      contextKind: "surface",
+      settingKey: "navigation.contextual_shortcuts.v1",
+    });
+    expect(() =>
+      parseUpdatePresentationShortcutBody({
+        ...append,
+        contextId: "surface.mission-control",
+        contextKind: "surface",
+        settingKey: "navigation.contextual_shortcuts.v1",
+        targetId: "platform.mission_control",
+      }),
+    ).toThrow("Invalid presentation shortcut update");
     for (const candidate of [
       { ...append, anchorId: "hr.workforce.own" },
       { ...append, contextKind: "service" },

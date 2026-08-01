@@ -2,8 +2,8 @@
 
 import {
   type EffectivePresentationPreference,
+  getPresentationShortcutContextLabel,
   type PresentationPreferences,
-  type PresentationShortcutDiscovery,
   type PresentationShortcutSet,
   type PresentationSurfaceLayout,
   type PresentationSurfaceLayoutSource,
@@ -16,7 +16,6 @@ import {
 import { Check, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { replacePresentationShortcutSet } from "../../../../lib/presentation-shortcuts-core";
 import { writePresentationThemeCache } from "../../../../lib/presentation-theme-cache-core";
 import {
   deriveTenantPresentationDraft,
@@ -167,7 +166,6 @@ function ShortcutSetEditor({
   disabled,
   onMutate,
   set,
-  title,
 }: Readonly<{
   disabled: boolean;
   onMutate: (
@@ -176,17 +174,21 @@ function ShortcutSetEditor({
     operation: "append" | "remove",
   ) => void;
   set: PresentationShortcutSet;
-  title: string;
 }>) {
   const selected = new Set(set.items.map(({ id }) => id));
+  const contextLabel = getPresentationShortcutContextLabel(set.contextKind, set.contextId);
   return (
     <article className="universal-settings-card shortcut-settings-card">
       <div className="settings-card-heading">
         <div>
           <p className="settings-card-kicker">
-            {set.contextKind === "global" ? "Everywhere" : "HR"}
+            {set.contextKind === "global"
+              ? "Everywhere"
+              : set.contextKind === "surface"
+                ? "Surface"
+                : "Service"}
           </p>
-          <h3>{title}</h3>
+          <h3>{contextLabel} shortcuts</h3>
         </div>
         <span className="settings-version">v{set.version}</span>
       </div>
@@ -239,12 +241,12 @@ export function UniversalSettings({
   cacheScope,
   initialLayouts,
   initialPreferences,
-  initialShortcuts,
+  initialShortcutSets,
 }: Readonly<{
   cacheScope: string | null;
   initialLayouts: readonly SettingsLayout[];
   initialPreferences: PresentationPreferences | null;
-  initialShortcuts: PresentationShortcutDiscovery | undefined;
+  initialShortcutSets: readonly PresentationShortcutSet[] | undefined;
 }>) {
   const [preferences, setPreferences] = useState(initialPreferences);
   const [draft, setDraft] = useState<AppearanceDraft | null>(() =>
@@ -253,7 +255,7 @@ export function UniversalSettings({
   const [tenant, setTenant] = useState<TenantPresentationDraft | null>(() =>
     initialPreferences ? deriveTenantPresentationDraft(initialPreferences) : null,
   );
-  const [shortcuts, setShortcuts] = useState(initialShortcuts);
+  const [shortcutSets, setShortcutSets] = useState(initialShortcutSets);
   const [layouts, setLayouts] = useState(initialLayouts);
   const [pending, setPending] = useState<string>();
   const [error, setError] = useState<string>();
@@ -421,7 +423,7 @@ export function UniversalSettings({
     targetId: PresentationShortcutSet["items"][number]["id"],
     operation: "append" | "remove",
   ) {
-    if (!shortcuts) return;
+    if (!shortcutSets) return;
     start(`shortcut:${set.contextId}:${targetId}`);
     try {
       const response = parseUpdatePresentationShortcutResponse(
@@ -435,10 +437,18 @@ export function UniversalSettings({
           targetId,
         }),
       );
-      setShortcuts(replacePresentationShortcutSet(shortcuts, response.set));
+      setShortcutSets((current) =>
+        current?.map((candidate) =>
+          candidate.settingKey === response.set.settingKey &&
+          candidate.contextKind === response.set.contextKind &&
+          candidate.contextId === response.set.contextId
+            ? response.set
+            : candidate,
+        ),
+      );
       broadcast("shortcuts", response.evidenceEventId);
       setSuccess(
-        `${response.set.contextKind === "global" ? "Universal" : "HR"} shortcuts updated.`,
+        `${getPresentationShortcutContextLabel(response.set.contextKind, response.set.contextId)} shortcuts updated.`,
       );
     } catch (caught) {
       setError(errorMessage(caught));
@@ -619,22 +629,16 @@ export function UniversalSettings({
             <p>Only current, authorized internal destinations can be added.</p>
           </div>
         </header>
-        {shortcuts ? (
+        {shortcutSets ? (
           <div className="settings-grid">
-            <ShortcutSetEditor
-              disabled={busy}
-              onMutate={mutateShortcut}
-              set={shortcuts.universal}
-              title="Universal shortcuts"
-            />
-            {shortcuts.contextual ? (
+            {shortcutSets.map((set) => (
               <ShortcutSetEditor
                 disabled={busy}
+                key={`${set.contextKind}:${set.contextId}`}
                 onMutate={mutateShortcut}
-                set={shortcuts.contextual}
-                title="HR shortcuts"
+                set={set}
               />
-            ) : null}
+            ))}
           </div>
         ) : (
           <div className="settings-inline-unavailable" role="status">

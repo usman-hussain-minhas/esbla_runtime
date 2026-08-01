@@ -2,6 +2,7 @@ import type {
   PlatformNotificationPage,
   PresentationNavigationDiscovery,
   PresentationShortcutDiscovery,
+  PresentationShortcutDiscoveryQuery,
 } from "@esbla/contracts";
 import type { ReactNode } from "react";
 import { loadOwnNotifications } from "../lib/platform-notifications";
@@ -16,19 +17,21 @@ interface WorkspaceShellProps {
   readonly children: ReactNode;
   readonly currentSurface: WorkspaceSurfaceKey;
   readonly editSurface?: ZenSurfaceEditDescriptor | undefined;
+  readonly shortcutContext?: PresentationShortcutDiscoveryQuery | undefined;
 }
 
 export async function WorkspaceShell({
   children,
   currentSurface,
   editSurface,
+  shortcutContext,
 }: WorkspaceShellProps) {
   const [navigation, notifications, shortcuts, systemEligible] = await Promise.all([
     loadOwnPresentationNavigation().catch(
       (): PresentationNavigationDiscovery => ({ serviceGroups: [] }),
     ),
     loadOwnNotifications().catch((): PlatformNotificationPage | undefined => undefined),
-    loadOwnPresentationShortcuts(currentSurface === "HR" ? "hr" : undefined).catch(
+    loadOwnPresentationShortcuts(shortcutContext).catch(
       (): PresentationShortcutDiscovery | undefined => undefined,
     ),
     loadOwnPresentationPreferences()

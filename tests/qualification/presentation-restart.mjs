@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import {
   getOwnPresentationPreferences,
+  getOwnPresentationShortcuts,
   getOwnPresentationSurfaceLayout,
   updateOwnPresentationPreferences,
+  updateOwnPresentationShortcut,
   updateOwnPresentationSurfaceOverlay,
 } from "../../modules/platform-core/dist/index.js";
 import {
@@ -45,9 +47,8 @@ try {
   if (restartCount === "0") {
     await migrateDatabase(createDatabase(migrationPool));
     await migrationPool.query(`GRANT SELECT, INSERT ON evidence_events TO ${applicationRole}`);
-    await migrationPool.query(
-      `GRANT SELECT ON membership_capabilities, service_activations TO ${applicationRole}`,
-    );
+    await migrationPool.query(`GRANT SELECT ON membership_capabilities TO ${applicationRole}`);
+    await migrationPool.query(`GRANT SELECT, UPDATE ON service_activations TO ${applicationRole}`);
     const client = await migrationPool.connect();
     try {
       await client.query("BEGIN");
@@ -72,7 +73,9 @@ try {
                 ($1, $2, 'hr.leave.view'),
                 ($1, $2, 'platform.presentation.layouts.read_own'),
                 ($1, $2, 'platform.presentation.layouts.reset_own'),
-                ($1, $2, 'platform.presentation.layouts.write_own')`,
+                ($1, $2, 'platform.presentation.layouts.write_own'),
+                ($1, $2, 'platform.presentation.shortcuts.read_own'),
+                ($1, $2, 'platform.presentation.shortcuts.write_own')`,
         [ids.tenant, ids.actor],
       );
       await client.query(
@@ -119,6 +122,21 @@ try {
           },
         ],
       },
+    );
+    const shortcut = await updateOwnPresentationShortcut(applicationPool, context(), {
+      contextId: "surface.mission-control",
+      contextKind: "surface",
+      expectedVersion: 0,
+      operation: "append",
+      settingKey: "navigation.contextual_shortcuts.v1",
+      targetId: "hr.leave.own",
+    });
+    assert.equal(shortcut.billingState, "non_billable");
+    assert.equal(shortcut.replayed, false);
+    assert.equal(shortcut.set.version, 1);
+    assert.deepEqual(
+      shortcut.set.items.map(({ id }) => id),
+      ["hr.leave.own"],
     );
   } else {
     assert.deepEqual(await getOwnPresentationPreferences(applicationPool, context()), {
@@ -182,6 +200,16 @@ try {
         widgetDefinitionVersion: 1,
       },
     ]);
+    const shortcuts = await getOwnPresentationShortcuts(applicationPool, context(), {
+      contextSurfaceId: "surface.mission-control",
+    });
+    assert.equal(shortcuts.contextual?.contextKind, "surface");
+    assert.equal(shortcuts.contextual?.contextId, "surface.mission-control");
+    assert.equal(shortcuts.contextual?.version, 1);
+    assert.deepEqual(
+      shortcuts.contextual?.items.map(({ id }) => id),
+      ["hr.leave.own"],
+    );
     const client = await migrationPool.connect();
     try {
       await client.query("BEGIN");
@@ -193,15 +221,38 @@ try {
          WHERE tenant_id = $1
            AND event_type IN (
              'platform.presentation.preferences.updated',
-             'platform.presentation.surface_overlay.updated'
+             'platform.presentation.surface_overlay.updated',
+             'platform.presentation.shortcut.updated'
            )`,
         [ids.tenant],
       );
-      assert.equal(evidence.rows[0]?.count, 2);
+      assert.equal(evidence.rows[0]?.count, 3);
+      const shortcutStorage = await client.query(
+        `SELECT setting_key, context_kind, context_id, version
+         FROM presentation_shortcut_user_patches
+         WHERE tenant_id = $1 AND principal_id = $2`,
+        [ids.tenant, ids.actor],
+      );
+      assert.deepEqual(shortcutStorage.rows, [
+        {
+          context_id: "surface.mission-control",
+          context_kind: "surface",
+          setting_key: "navigation.contextual_shortcuts.v1",
+          version: 1,
+        },
+      ]);
+      const shortcutOutbox = await client.query(
+        `SELECT count(*)::integer AS count
+         FROM outbox_events
+         WHERE tenant_id = $1 AND event_type LIKE 'platform.presentation.shortcut%'`,
+        [ids.tenant],
+      );
+      assert.equal(shortcutOutbox.rows[0]?.count, 0);
       await client.query("ROLLBACK");
     } finally {
       client.release();
     }
+    console.log("PRESENTATION_SHORTCUT_ACTUAL_DATABASE_RESTART_GREEN");
     console.log("PRESENTATION_ACTUAL_DATABASE_RESTART_GREEN");
   }
 } finally {

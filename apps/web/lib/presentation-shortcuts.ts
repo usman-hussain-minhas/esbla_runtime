@@ -1,6 +1,9 @@
 import "server-only";
 
-import type { PresentationServiceGroupId, UpdatePresentationShortcutBody } from "@esbla/contracts";
+import type {
+  PresentationShortcutDiscoveryQuery,
+  UpdatePresentationShortcutBody,
+} from "@esbla/contracts";
 import { fetchDevelopmentApi } from "./development-session";
 import {
   buildPresentationShortcutsPath,
@@ -8,11 +11,11 @@ import {
   decodePresentationShortcutUpdateResponse,
 } from "./presentation-shortcuts-core";
 
-export function loadOwnPresentationShortcuts(contextServiceGroupId?: PresentationServiceGroupId) {
+export function loadOwnPresentationShortcuts(query: PresentationShortcutDiscoveryQuery = {}) {
   return decodePresentationShortcutDiscoveryResponse(
     fetchDevelopmentApi({
       method: "GET",
-      path: buildPresentationShortcutsPath(contextServiceGroupId),
+      path: buildPresentationShortcutsPath(query),
     }),
   );
 }

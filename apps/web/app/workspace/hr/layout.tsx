@@ -20,6 +20,7 @@ export default async function HrLayout({ children }: Readonly<{ children: ReactN
             }
           : undefined
       }
+      shortcutContext={{ contextServiceGroupId: "hr" }}
     >
       {children}
     </WorkspaceShell>

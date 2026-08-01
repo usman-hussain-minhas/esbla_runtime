@@ -1965,6 +1965,157 @@ test("Zen chrome remains inside the visual viewport without Product placeholders
   }
 });
 
+test("Mission Control surface shortcuts persist and fail closed at activation", async ({
+  browser,
+}, testInfo) => {
+  const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
+  let eligibilityChanged = false;
+  let shortcutAdded = false;
+  try {
+    await employee.page.setViewportSize({ height: 900, width: 1_440 });
+    await employee.page.goto(employee.origin);
+    const launcher = employee.page.getByRole("button", {
+      exact: true,
+      name: "Mission Control surface shortcuts",
+    });
+    await expect(launcher).toBeVisible();
+    await launcher.click();
+    let panel = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "Mission Control surface shortcuts",
+    });
+    await expect(
+      panel.getByRole("heading", { name: "Mission Control surface shortcuts" }),
+    ).toBeFocused();
+    await expect(panel.getByText("Current surface", { exact: true })).toBeVisible();
+    await expect(panel.getByText("Current service", { exact: true })).toHaveCount(0);
+    await panel.getByRole("button", { exact: true, name: "Add shortcut" }).click();
+    await expect(
+      panel.getByRole("button", {
+        exact: true,
+        name: "Add Mission Control to Mission Control surface shortcuts",
+      }),
+    ).toHaveCount(0);
+    await expect(
+      panel.getByRole("button", {
+        exact: true,
+        name: "Add HR Mission Control to Mission Control surface shortcuts",
+      }),
+    ).toBeVisible();
+    const appendResponse = employee.page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/presentation/shortcuts",
+    );
+    await panel
+      .getByRole("button", {
+        exact: true,
+        name: "Add Leave Requests to Mission Control surface shortcuts",
+      })
+      .click();
+    expect((await appendResponse).status()).toBe(200);
+    shortcutAdded = true;
+    await panel.getByRole("button", { name: "Close mission control surface shortcuts" }).click();
+    const surfaceLeaveShortcut = employee.page
+      .locator(".zen-shortcut-contextual")
+      .getByRole("link", { exact: true, name: "Leave Requests" });
+    await expect(surfaceLeaveShortcut).toBeVisible();
+
+    await employee.page.reload();
+    await expect(surfaceLeaveShortcut).toBeVisible();
+    await employee.page.goto("about:blank");
+    await restartEmployeeApplication();
+    await employee.page.goto(employee.origin);
+    await expect(surfaceLeaveShortcut).toBeVisible();
+
+    const desktopEvidencePath = testInfo.outputPath("mission-control-surface-shortcut-desktop.png");
+    await employee.page.screenshot({ fullPage: false, path: desktopEvidencePath });
+    await testInfo.attach("mission-control-surface-shortcut-desktop", {
+      contentType: "image/png",
+      path: desktopEvidencePath,
+    });
+
+    await employee.page.setViewportSize({ height: 844, width: 390 });
+    await expect(surfaceLeaveShortcut).toHaveCount(0);
+    await launcher.click();
+    panel = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "Mission Control surface shortcuts",
+    });
+    await expect(panel.getByRole("link", { exact: true, name: "Leave Requests" })).toBeVisible();
+    expect(
+      await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+    const phoneEvidencePath = testInfo.outputPath("mission-control-surface-shortcut-phone.png");
+    await employee.page.screenshot({ fullPage: false, path: phoneEvidencePath });
+    await testInfo.attach("mission-control-surface-shortcut-phone", {
+      contentType: "image/png",
+      path: phoneEvidencePath,
+    });
+    await employee.page.keyboard.press("Escape");
+    await expect(panel).toBeHidden();
+    await expect(launcher).toBeFocused();
+
+    await employee.page.setViewportSize({ height: 900, width: 1_440 });
+    eligibilityChanged = true;
+    await setEmployeeLeavePresentationEligibility(false, ["hr.leave.list_own", "hr.leave.view"]);
+    await surfaceLeaveShortcut.click();
+    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/leave`);
+    await expect(employee.page.getByText("Current and historical whole-day requests.")).toHaveCount(
+      0,
+    );
+    await expect.poll(() => employee.diagnostics.page.length).toBe(1);
+    expect(employee.diagnostics.page).toEqual([
+      expect.stringContaining(
+        "The specific message is omitted in production builds to avoid leaking sensitive details.",
+      ),
+    ]);
+    employee.diagnostics.page.length = 0;
+
+    await setEmployeeLeavePresentationEligibility(true, ["hr.leave.list_own", "hr.leave.view"]);
+    eligibilityChanged = false;
+    await employee.page.goto(employee.origin);
+    await launcher.click();
+    panel = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "Mission Control surface shortcuts",
+    });
+    const removalResponse = employee.page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/presentation/shortcuts",
+    );
+    await panel
+      .getByRole("button", {
+        name: "Remove Leave Requests from Mission Control surface shortcuts",
+      })
+      .click();
+    expect((await removalResponse).status()).toBe(200);
+    shortcutAdded = false;
+  } finally {
+    if (eligibilityChanged) {
+      await setEmployeeLeavePresentationEligibility(true, [
+        "hr.leave.list_own",
+        "hr.leave.view",
+      ]).catch(() => undefined);
+    }
+    if (shortcutAdded) {
+      await employee.page.goto(employee.origin).catch(() => undefined);
+      const launcher = employee.page.getByRole("button", {
+        exact: true,
+        name: "Mission Control surface shortcuts",
+      });
+      if (await launcher.isVisible().catch(() => false)) {
+        await launcher.click().catch(() => undefined);
+        await employee.page
+          .getByRole("dialog", { exact: true, name: "Mission Control surface shortcuts" })
+          .getByRole("button", {
+            name: "Remove Leave Requests from Mission Control surface shortcuts",
+          })
+          .click()
+          .catch(() => undefined);
+      }
+    }
+    await closeActors(employee);
+  }
+});
+
 test("registered universal and HR shortcuts persist, arbitrate, and fail closed", async ({
   browser,
 }, testInfo) => {
@@ -2402,6 +2553,15 @@ test("Universal Settings preserves Theme, exposes authority, and coordinates tab
       "Appearance & accessibility",
       "Navigation shortcuts",
       "Personal layouts",
+    ]) {
+      await expect(
+        employee.page.getByRole("heading", { exact: true, name: heading }),
+      ).toBeVisible();
+    }
+    for (const heading of [
+      "Universal shortcuts",
+      "Mission Control surface shortcuts",
+      "HR service shortcuts",
     ]) {
       await expect(
         employee.page.getByRole("heading", { exact: true, name: heading }),
