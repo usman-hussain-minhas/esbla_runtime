@@ -116,21 +116,16 @@ body {
 
 body {
   background-color: var(--bg-base);
-  background-image:
-    radial-gradient(circle, var(--bg-grid-dot) 1px, transparent 1px),
-    linear-gradient(var(--bg-grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--bg-grid-line) 1px, transparent 1px);
-  background-position:
-    0 0,
-    0 0,
-    0 0;
-  background-size:
-    var(--grid-small) var(--grid-small),
-    var(--grid-large) var(--grid-large),
-    var(--grid-large) var(--grid-large);
+  background-image: radial-gradient(circle, var(--bg-grid-dot) 1px, transparent 1px);
+  background-position: 0 0;
+  background-size: var(--grid-small) var(--grid-small);
   color: var(--text-main);
   font-family: var(--font-body);
   margin: 0;
+}
+
+:root[data-high-contrast="true"] body {
+  background-image: none;
 }
 
 a {
@@ -247,6 +242,8 @@ h1 {
 
 .system-launcher::after,
 .theme-direct-launcher::after,
+.surface-edit-launcher::after,
+.notification-direct-launcher::after,
 .icon-command::after {
   right: 0;
 }
@@ -953,11 +950,11 @@ a.zen-shortcut-picker-link:focus-visible {
 }
 
 .surface-frame {
-  background: var(--surface-panel);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-panel);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   bottom: calc(var(--surface-frame-bottom) + var(--safe-bottom) + var(--zen-visual-block-end));
-  box-shadow: var(--shadow-soft);
+  box-shadow: none;
   left: calc(var(--surface-frame-left) + var(--safe-left) + var(--zen-visual-inline-start));
   min-height: 0;
   overflow: hidden;
@@ -968,7 +965,7 @@ a.zen-shortcut-picker-link:focus-visible {
 }
 
 .surface-frame::after {
-  background: linear-gradient(to bottom, var(--surface-panel), transparent);
+  background: linear-gradient(to bottom, var(--bg-base), transparent);
   content: "";
   height: 22px;
   left: 0;
@@ -990,9 +987,10 @@ a.zen-shortcut-picker-link:focus-visible {
 
 .mission-control-surface {
   margin: 0 auto;
-  max-width: 1360px;
+  max-width: none;
   min-height: 100%;
   padding: 36px clamp(18px, 4vw, 48px) 64px;
+  width: min(100%, 1920px);
 }
 
 .mission-control-heading {
@@ -1017,7 +1015,6 @@ a.zen-shortcut-picker-link:focus-visible {
   gap: 10px;
 }
 
-.surface-edit-launcher,
 .surface-editor-icon-button {
   align-items: center;
   background: var(--surface-chrome);
@@ -1034,11 +1031,15 @@ a.zen-shortcut-picker-link:focus-visible {
   width: 42px;
 }
 
-.surface-edit-launcher:hover,
 .surface-editor-icon-button:hover:not(:disabled) {
   background: var(--surface-chrome-hover);
   border-color: var(--line-mid);
   transform: translateY(-1px);
+}
+
+.surface-edit-launcher {
+  position: relative;
+  text-decoration: none;
 }
 
 .surface-editor-page {

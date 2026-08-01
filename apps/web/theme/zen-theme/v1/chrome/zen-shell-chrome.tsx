@@ -24,6 +24,7 @@ import {
   type ZenVisualViewportResult,
 } from "../../../../lib/zen-visual-viewport-core";
 import { UserSystemControl, type ZenSystemPanelState } from "../panels/zen-system-panel";
+import type { ZenSurfaceEditDescriptor } from "../surfaces/zen-surface-edit-launcher";
 import {
   consumeRouteHeadingFocus,
   type ZenDirectOpenMenu,
@@ -75,6 +76,7 @@ function publishVisualViewport(viewport: ZenVisualViewportResult): void {
 function initialResolution(
   model: ZenNavigationModel,
   appearanceAvailable: boolean,
+  editSurfaceAvailable: boolean,
   notificationsAvailable: boolean,
   settingsAvailable: boolean,
 ): ZenResponsiveChromeResult {
@@ -84,11 +86,12 @@ function initialResolution(
     direct: [
       ...(model.contextualMenu ? (["contextual"] as const) : []),
       ...(model.serviceGroups.length > 0 ? (["service-groups"] as const) : []),
-      ...(notificationsAvailable ? (["notifications"] as const) : []),
-      ...(appearanceAvailable ? (["appearance"] as const) : []),
       ...(settingsAvailable ? (["settings"] as const) : []),
+      ...(appearanceAvailable ? (["appearance"] as const) : []),
+      ...(editSurfaceAvailable ? (["edit-surface"] as const) : []),
+      ...(notificationsAvailable ? (["notifications"] as const) : []),
     ],
-    systemRequired: appearanceAvailable || notificationsAvailable || settingsAvailable,
+    systemRequired: true,
   };
 }
 
@@ -107,22 +110,31 @@ function sameResolution(
 export function ZenShellChrome({
   appearanceAvailable,
   discovery,
+  editSurface,
   initialNotifications,
   settingsAvailable,
   shortcutDiscovery,
 }: Readonly<{
   appearanceAvailable: boolean;
   discovery: PresentationNavigationDiscovery;
+  editSurface: ZenSurfaceEditDescriptor | undefined;
   initialNotifications: PlatformNotificationPage | undefined;
   settingsAvailable: boolean;
   shortcutDiscovery: PresentationShortcutDiscovery | undefined;
 }>) {
   const pathname = usePathname();
   const model = useMemo(() => buildZenNavigationModel(discovery, pathname), [discovery, pathname]);
+  const activeEditSurface = editSurface?.route === pathname ? editSurface : undefined;
   const [layer, setLayer] = useState<ZenChromeLayer>();
   const activeLayer = useRef(layer);
   const [resolution, setResolution] = useState(() =>
-    initialResolution(model, appearanceAvailable, Boolean(initialNotifications), settingsAvailable),
+    initialResolution(
+      model,
+      appearanceAvailable,
+      Boolean(activeEditSurface),
+      Boolean(initialNotifications),
+      settingsAvailable,
+    ),
   );
   const buttonProbe = useRef<HTMLSpanElement>(null);
   const clusterGapProbe = useRef<HTMLSpanElement>(null);
@@ -150,6 +162,7 @@ export function ZenShellChrome({
       endInset,
       hasAppearance: appearanceAvailable,
       hasContextualMenu: Boolean(model.contextualMenu),
+      hasEditSurface: Boolean(activeEditSurface),
       hasNotifications: Boolean(initialNotifications),
       hasSettings: settingsAvailable,
       hasServiceGroups: model.serviceGroups.length > 0,
@@ -177,6 +190,7 @@ export function ZenShellChrome({
     });
   }, [
     appearanceAvailable,
+    activeEditSurface,
     initialNotifications,
     model.contextualMenu,
     model.serviceGroups.length,
@@ -457,11 +471,13 @@ export function ZenShellChrome({
         <UserSystemControl
           appearanceAvailable={appearanceAvailable}
           collapsedMenus={collapsedMenus}
+          editSurface={activeEditSurface}
           model={model}
           notificationPage={initialNotifications}
           onOpenStateChange={onOpenSystemStateChange}
           openState={openSystemState}
           showAppearanceDirect={resolution.direct.includes("appearance")}
+          showEditSurfaceDirect={resolution.direct.includes("edit-surface")}
           showNotificationsDirect={resolution.direct.includes("notifications")}
           showSettingsDirect={resolution.direct.includes("settings")}
           settingsAvailable={settingsAvailable}

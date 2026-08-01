@@ -541,6 +541,97 @@ test("Mission Control reuses the real Leave widget and persists four independent
     ).toBeVisible();
     await expect(employee.page.getByRole("navigation", { name: "On this surface" })).toHaveCount(0);
     await expect(employee.page.getByRole("combobox", { name: "On this surface" })).toHaveCount(0);
+    await employee.page.setViewportSize({ height: 1_440, width: 2_560 });
+    const surfaceGeometry = await employee.page
+      .locator(".mission-control-surface")
+      .evaluate((surface) => {
+        const frame = surface.closest(".surface-frame");
+        if (!(frame instanceof HTMLElement)) throw new Error("Surface frame is unavailable");
+        const frameStyle = getComputedStyle(frame);
+        return {
+          bodyBackgroundImage: getComputedStyle(document.body).backgroundImage,
+          documentOverflow: getComputedStyle(document.documentElement).overflow,
+          frameBorderWidth: frameStyle.borderTopWidth,
+          frameRadius: frameStyle.borderRadius,
+          frameShadow: frameStyle.boxShadow,
+          scrollOwners: document.querySelectorAll(".surface-scroll").length,
+          surfaceWidth: surface.getBoundingClientRect().width,
+        };
+      });
+    expect(surfaceGeometry.scrollOwners).toBe(1);
+    expect(surfaceGeometry.documentOverflow).toBe("hidden");
+    expect(surfaceGeometry.frameBorderWidth).toBe("0px");
+    expect(surfaceGeometry.frameRadius).toBe("0px");
+    expect(surfaceGeometry.frameShadow).toBe("none");
+    expect(surfaceGeometry.bodyBackgroundImage).toContain("radial-gradient");
+    expect(surfaceGeometry.bodyBackgroundImage).not.toContain("linear-gradient");
+    expect(Math.abs(surfaceGeometry.surfaceWidth - 1_920)).toBeLessThanOrEqual(1);
+
+    const userControl = employee.page.getByRole("button", {
+      exact: true,
+      name: "User and system",
+    });
+    const settingsControl = employee.page.getByRole("link", {
+      exact: true,
+      name: "Universal Settings",
+    });
+    const appearanceControl = employee.page.getByRole("button", {
+      exact: true,
+      name: "Appearance settings",
+    });
+    const editControl = employee.page.getByRole("link", {
+      exact: true,
+      name: "Edit Mission Control personal layout",
+    });
+    const notificationControl = employee.page.getByRole("button", {
+      name: /^Notifications(?:, \d+ unread)?$/,
+    });
+    for (const control of [
+      userControl,
+      settingsControl,
+      appearanceControl,
+      editControl,
+      notificationControl,
+    ]) {
+      await expect(control).toBeVisible();
+    }
+    const controlXs = await Promise.all(
+      [userControl, settingsControl, appearanceControl, editControl, notificationControl].map(
+        async (control) => (await control.boundingBox())?.x,
+      ),
+    );
+    expect(controlXs.every((value) => value !== undefined)).toBe(true);
+    expect(controlXs[0]).toBeGreaterThan(controlXs[1]);
+    expect(controlXs[1]).toBeGreaterThan(controlXs[2]);
+    expect(controlXs[2]).toBeGreaterThan(controlXs[3]);
+    expect(controlXs[3]).toBeGreaterThan(controlXs[4]);
+    expect(
+      await employee.page.evaluate(() =>
+        [...document.querySelectorAll(".theme-control > .chrome-button")].map((element) =>
+          element.getAttribute("aria-label"),
+        ),
+      ),
+    ).toEqual([
+      "User and system",
+      "Universal Settings",
+      "Appearance settings",
+      "Edit Mission Control personal layout",
+      expect.stringMatching(/^Notifications(?:, \d+ unread)?$/),
+    ]);
+    await userControl.focus();
+    await employee.page.keyboard.press("Tab");
+    await expect(settingsControl).toBeFocused();
+    await employee.page.keyboard.press("Tab");
+    await expect(appearanceControl).toBeFocused();
+    await employee.page.keyboard.press("Tab");
+    await expect(editControl).toBeFocused();
+    await employee.page.keyboard.press("Tab");
+    await expect(notificationControl).toBeFocused();
+    await expect(employee.page.getByText("Team", { exact: true })).toHaveCount(0);
+    await expect(employee.page.getByRole("button", { exact: true, name: "Search" })).toHaveCount(0);
+    await expect(
+      employee.page.getByRole("button", { exact: true, name: "System Status" }),
+    ).toHaveCount(0);
     const universalWidget = employee.page.locator(
       '[data-surface-instance="mission-control.my-leave"]:not([data-widget-state="loading"])',
     );
@@ -588,6 +679,12 @@ test("Mission Control reuses the real Leave widget and persists four independent
     await expect(universalWidget).toHaveCSS("--widget-row", "11");
 
     await employee.page.goto(`${employee.origin}/workspace/hr`);
+    await expect(
+      employee.page.getByRole("link", {
+        exact: true,
+        name: "Edit HR Mission Control personal layout",
+      }),
+    ).toBeVisible();
     await expect(employee.page.getByRole("navigation", { name: "On this surface" })).toHaveCount(0);
     await expect(employee.page.getByRole("combobox", { name: "On this surface" })).toHaveCount(0);
     await expect(
@@ -822,7 +919,7 @@ test("Mission Control reuses the real Leave widget and persists four independent
     });
     await expect(shellChrome).toHaveAttribute(
       "data-collapsed-controls",
-      "notifications appearance settings",
+      "notifications appearance settings edit-surface",
     );
     await expect(directAppearanceLauncher).toBeHidden();
     await expect(appearancePanel).toBeVisible();
@@ -921,7 +1018,7 @@ test("Mission Control reuses the real Leave widget and persists four independent
     });
     await expect(shellChrome).toHaveAttribute(
       "data-collapsed-controls",
-      "notifications appearance settings service-groups",
+      "notifications appearance settings edit-surface service-groups",
     );
     await expect(serviceGroupsLauncher).toHaveCount(0);
     const collapsedServiceGroups = employee.page.getByRole("region", {
@@ -945,7 +1042,7 @@ test("Mission Control reuses the real Leave widget and persists four independent
     });
     await expect(shellChrome).toHaveAttribute(
       "data-collapsed-controls",
-      "notifications appearance settings",
+      "notifications appearance settings edit-surface",
     );
     await expect(serviceGroupsLauncher).toBeVisible();
 
@@ -969,6 +1066,12 @@ test("Mission Control reuses the real Leave widget and persists four independent
     await contextualNavigation.getByRole("link", { exact: true, name: "Leave Requests" }).click();
     await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/leave`);
     await expect(employee.page.getByRole("heading", { name: "My Leave Requests" })).toBeFocused();
+    await expect(
+      employee.page.getByRole("link", {
+        exact: true,
+        name: "Edit HR Mission Control personal layout",
+      }),
+    ).toHaveCount(0);
     await systemLauncher.click();
     await expect(systemPanel).toBeVisible();
     await employee.page.goBack();

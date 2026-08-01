@@ -13,6 +13,10 @@ import { writePresentationThemeCache } from "../../../../lib/presentation-theme-
 import { prepareRouteHeadingFocus, type ZenDirectOpenMenu } from "../chrome/zen-navigation-chrome";
 import { ZEN_THEME_CACHE_KEY, type ZenPalette } from "../identity";
 import { SemanticIcon } from "../semantic-icons";
+import {
+  type ZenSurfaceEditDescriptor,
+  ZenSurfaceEditLauncher,
+} from "../surfaces/zen-surface-edit-launcher";
 import { ZenNotificationPanel } from "./zen-notification-panel";
 
 interface AppearanceValues {
@@ -126,11 +130,13 @@ function panelHeadingText(view: ZenSystemPanelView, model: ZenNavigationModel): 
 export function UserSystemControl({
   appearanceAvailable,
   collapsedMenus,
+  editSurface,
   model,
   notificationPage,
   onOpenStateChange,
   openState,
   showAppearanceDirect,
+  showEditSurfaceDirect,
   showNotificationsDirect,
   showSettingsDirect,
   settingsAvailable,
@@ -138,11 +144,13 @@ export function UserSystemControl({
 }: Readonly<{
   appearanceAvailable: boolean;
   collapsedMenus: ReadonlySet<Exclude<ZenDirectOpenMenu, undefined>>;
+  editSurface: ZenSurfaceEditDescriptor | undefined;
   model: ZenNavigationModel;
   notificationPage: PlatformNotificationPage | undefined;
   onOpenStateChange: (state: ZenSystemPanelState | undefined) => void;
   openState: ZenSystemPanelState | undefined;
   showAppearanceDirect: boolean;
+  showEditSurfaceDirect: boolean;
   showNotificationsDirect: boolean;
   showSettingsDirect: boolean;
   settingsAvailable: boolean;
@@ -353,6 +361,31 @@ export function UserSystemControl({
           <SemanticIcon aria-hidden="true" semanticKey="settings" size={18} strokeWidth={1.75} />
         </Link>
       ) : null}
+      {appearanceAvailable && showAppearanceDirect ? (
+        <button
+          aria-controls={panelId}
+          aria-expanded={themeExpanded}
+          aria-label="Appearance settings"
+          className="chrome-button theme-direct-launcher"
+          data-tooltip="Appearance settings"
+          disabled={!hydrated}
+          onClick={() =>
+            onOpenStateChange(themeExpanded ? undefined : { origin: "theme", view: "appearance" })
+          }
+          ref={themeLauncher}
+          type="button"
+        >
+          <SemanticIcon
+            aria-hidden="true"
+            semanticKey={appearance.palette === "dark" ? "moon" : "sun"}
+            size={18}
+            strokeWidth={1.75}
+          />
+        </button>
+      ) : null}
+      {editSurface && showEditSurfaceDirect ? (
+        <ZenSurfaceEditLauncher ariaLabel={editSurface.ariaLabel} href={editSurface.href} />
+      ) : null}
       {notifications && showNotificationsDirect ? (
         <button
           aria-controls={panelId}
@@ -374,28 +407,6 @@ export function UserSystemControl({
               {unreadCount > 99 ? "99+" : unreadCount}
             </span>
           ) : null}
-        </button>
-      ) : null}
-      {appearanceAvailable && showAppearanceDirect ? (
-        <button
-          aria-controls={panelId}
-          aria-expanded={themeExpanded}
-          aria-label="Appearance settings"
-          className="chrome-button theme-direct-launcher"
-          data-tooltip="Appearance settings"
-          disabled={!hydrated}
-          onClick={() =>
-            onOpenStateChange(themeExpanded ? undefined : { origin: "theme", view: "appearance" })
-          }
-          ref={themeLauncher}
-          type="button"
-        >
-          <SemanticIcon
-            aria-hidden="true"
-            semanticKey={appearance.palette === "dark" ? "moon" : "sun"}
-            size={18}
-            strokeWidth={1.75}
-          />
         </button>
       ) : null}
       {openState ? (
@@ -496,6 +507,22 @@ export function UserSystemControl({
                 >
                   <SemanticIcon aria-hidden="true" semanticKey="settings" size={17} />
                   <span>Universal Settings</span>
+                  <span aria-hidden="true">›</span>
+                </Link>
+              ) : null}
+              {editSurface && !showEditSurfaceDirect ? (
+                <Link
+                  aria-label={editSurface.ariaLabel}
+                  className="theme-choice theme-choice-wide"
+                  href={editSurface.href}
+                  onClick={(event) => {
+                    prepareRouteHeadingFocus(event);
+                    onOpenStateChange(undefined);
+                  }}
+                  prefetch={false}
+                >
+                  <SemanticIcon aria-hidden="true" semanticKey="edit" size={17} />
+                  <span>Edit Surface</span>
                   <span aria-hidden="true">›</span>
                 </Link>
               ) : null}
