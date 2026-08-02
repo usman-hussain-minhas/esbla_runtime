@@ -1,12 +1,36 @@
 import { randomUUID } from "node:crypto";
+import Link from "next/link";
 import { loadReportAttendance } from "../../../../../lib/hr-attendance";
 import { canRenderAttendanceAction } from "../../../../../lib/hr-attendance-core";
+import {
+  buildNestedRouteBackedWidgetHref,
+  getRouteBackedWidgetOriginParameters,
+  type RouteBackedWidgetOrigin,
+} from "../../../../../lib/route-backed-widget-navigation-core";
+import {
+  RouteBackedWidgetGetForm,
+  RouteBackedWidgetPostForm,
+} from "../../../../../theme/zen-theme/v1/route-backed-widget-overlay";
 
 interface Props {
+  readonly focusOrigin?: RouteBackedWidgetOrigin;
+  readonly mode?: "focus-master" | "standalone";
+  readonly preloadedState?: Awaited<ReturnType<typeof loadReportAttendance>>;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 function one(value: string | string[] | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+function attendanceDetailHref(
+  attendanceObservationId: string,
+  parameters: Record<string, string | string[] | undefined>,
+): string {
+  const query = new URLSearchParams({ returnTo: "reports" });
+  const from = one(parameters.from);
+  const to = one(parameters.to);
+  if (from) query.set("from", from);
+  if (to) query.set("to", to);
+  return `/workspace/hr/attendance/by-id/${attendanceObservationId}?${query}`;
 }
 function displayInstant(value: string): string {
   return new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(
@@ -14,9 +38,15 @@ function displayInstant(value: string): string {
   );
 }
 
-export default async function ReportAttendancePage({ searchParams }: Props) {
+export default async function ReportAttendancePage({
+  focusOrigin,
+  mode = "standalone",
+  preloadedState,
+  searchParams,
+}: Props) {
   const parameters = await searchParams;
-  const state = await loadReportAttendance(parameters);
+  const state = preloadedState ?? (await loadReportAttendance(parameters));
+  const encodedOrigin = focusOrigin ? getRouteBackedWidgetOriginParameters(focusOrigin) : undefined;
   const canRecord = canRenderAttendanceAction(
     state.authorizedActions,
     state.status,
@@ -24,9 +54,11 @@ export default async function ReportAttendancePage({ searchParams }: Props) {
   );
   return (
     <section aria-labelledby="attendance-reports-heading" className="work-surface">
-      <a className="text-command detail-back" href="/workspace/hr">
-        Back to HR
-      </a>
+      {mode === "standalone" ? (
+        <a className="text-command detail-back" href="/workspace/hr">
+          Back to HR
+        </a>
+      ) : null}
       <header className="surface-heading">
         <div>
           <p className="surface-label">Attendance</p>
@@ -42,8 +74,24 @@ export default async function ReportAttendancePage({ searchParams }: Props) {
         </div>
       ) : null}
       {canRecord ? (
-        <form action="/workspace/hr/attendance/action" className="leave-request-form" method="post">
+        <RouteBackedWidgetPostForm
+          action="/workspace/hr/attendance/action"
+          className="leave-request-form"
+        >
           <h2>Record a manual attendance fact</h2>
+          {encodedOrigin ? (
+            <>
+              <input name="originFocusId" type="hidden" value={encodedOrigin.originFocusId} />
+              <input name="returnSurface" type="hidden" value={encodedOrigin.returnSurface} />
+              <input name="returnTo" type="hidden" value="reports" />
+              {one(parameters.from) ? (
+                <input name="from" type="hidden" value={one(parameters.from)} />
+              ) : null}
+              {one(parameters.to) ? (
+                <input name="to" type="hidden" value={one(parameters.to)} />
+              ) : null}
+            </>
+          ) : null}
           <input name="idempotencyKey" type="hidden" value={randomUUID()} />
           <input name="operation" type="hidden" value="record_manual" />
           <div className="form-field">
@@ -74,9 +122,18 @@ export default async function ReportAttendancePage({ searchParams }: Props) {
           <button className="command-button command-button-primary" type="submit">
             Record attendance
           </button>
-        </form>
+        </RouteBackedWidgetPostForm>
       ) : null}
-      <form className="leave-request-form" method="get">
+      <RouteBackedWidgetGetForm
+        action="/workspace/hr/attendance/reports"
+        className="leave-request-form"
+      >
+        {encodedOrigin ? (
+          <>
+            <input name="originFocusId" type="hidden" value={encodedOrigin.originFocusId} />
+            <input name="returnSurface" type="hidden" value={encodedOrigin.returnSurface} />
+          </>
+        ) : null}
         <div className="form-grid-two">
           <div className="form-field">
             <label htmlFor="attendance-report-from">From date</label>
@@ -100,7 +157,7 @@ export default async function ReportAttendancePage({ searchParams }: Props) {
         <button className="command-button" type="submit">
           Apply period
         </button>
-      </form>
+      </RouteBackedWidgetGetForm>
       {state.status === "error" ? (
         <div className="form-error-summary" role="alert">
           <h2>{state.title}</h2>
@@ -123,27 +180,37 @@ export default async function ReportAttendancePage({ searchParams }: Props) {
                     <p className="work-queue-dates">{observation.workerProfileId}</p>
                   </div>
                 </div>
-                <a
+                <Link
                   className="text-command"
-                  href={`/workspace/hr/attendance/by-id/${observation.attendanceObservationId}?returnTo=reports`}
+                  href={
+                    focusOrigin
+                      ? buildNestedRouteBackedWidgetHref(
+                          attendanceDetailHref(observation.attendanceObservationId, parameters),
+                          focusOrigin,
+                        )
+                      : attendanceDetailHref(observation.attendanceObservationId, parameters)
+                  }
                 >
                   View correction history
-                </a>
+                </Link>
               </li>
             ))}
           </ol>
           {state.page.nextCursor ? (
-            <a
+            <Link
               className="text-command"
-              href={`?${new URLSearchParams({
-                ...(one(parameters.from) ? { from: one(parameters.from) as string } : {}),
-                ...(one(parameters.to) ? { to: one(parameters.to) as string } : {}),
-                cursorAttendanceObservationId: state.page.nextCursor.attendanceObservationId,
-                cursorObservedAt: state.page.nextCursor.observedAt,
-              })}`}
+              href={(() => {
+                const href = `/workspace/hr/attendance/reports?${new URLSearchParams({
+                  ...(one(parameters.from) ? { from: one(parameters.from) as string } : {}),
+                  ...(one(parameters.to) ? { to: one(parameters.to) as string } : {}),
+                  cursorAttendanceObservationId: state.page.nextCursor.attendanceObservationId,
+                  cursorObservedAt: state.page.nextCursor.observedAt,
+                })}`;
+                return focusOrigin ? buildNestedRouteBackedWidgetHref(href, focusOrigin) : href;
+              })()}
             >
               Next report page
-            </a>
+            </Link>
           ) : null}
         </>
       )}

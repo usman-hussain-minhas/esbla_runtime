@@ -1,27 +1,59 @@
 import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
+import Link from "next/link";
 import {
   loadRosterShifts,
   readShiftMutationReceipt,
   SHIFT_MUTATION_RECEIPT_COOKIE,
 } from "../../../../../lib/hr-shift-assignment";
 import { hasShiftAction } from "../../../../../lib/hr-shift-assignment-core";
+import {
+  buildNestedRouteBackedWidgetHref,
+  getRouteBackedWidgetOriginParameters,
+  type RouteBackedWidgetOrigin,
+} from "../../../../../lib/route-backed-widget-navigation-core";
+import {
+  RouteBackedWidgetGetForm,
+  RouteBackedWidgetPostForm,
+} from "../../../../../theme/zen-theme/v1/route-backed-widget-overlay";
 
 interface Props {
+  readonly focusOrigin?: RouteBackedWidgetOrigin;
+  readonly mode?: "focus-master" | "standalone";
+  readonly preloadedState?: Awaited<ReturnType<typeof loadRosterShifts>>;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 const discoveryRoster = "00000000-0000-4000-8000-000000000000";
 function one(value: string | string[] | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
+function reportShiftDetailHref(
+  shiftAssignmentId: string,
+  rosterVersionId: string,
+  status: string,
+): string {
+  return `/workspace/hr/shifts/by-id/${shiftAssignmentId}?${new URLSearchParams({
+    returnTo: "reports",
+    rosterVersionId,
+    status,
+  })}`;
+}
 
-export default async function ReportShiftsPage({ searchParams }: Props) {
+export default async function ReportShiftsPage({
+  focusOrigin,
+  mode = "standalone",
+  preloadedState,
+  searchParams,
+}: Props) {
   const [parameters, cookieStore] = await Promise.all([searchParams, cookies()]);
+  const encodedOrigin = focusOrigin ? getRouteBackedWidgetOriginParameters(focusOrigin) : undefined;
   const rosterVersionId = one(parameters.rosterVersionId);
-  const state = await loadRosterShifts({
-    rosterVersionId: rosterVersionId ?? discoveryRoster,
-    status: one(parameters.status) ?? "active",
-  });
+  const state =
+    preloadedState ??
+    (await loadRosterShifts({
+      rosterVersionId: rosterVersionId ?? discoveryRoster,
+      status: one(parameters.status) ?? "active",
+    }));
   const actions = state.authorizedActions;
   const actionable =
     state.status === "success" || state.kind === "denied" || state.kind === "not_found";
@@ -37,11 +69,19 @@ export default async function ReportShiftsPage({ searchParams }: Props) {
   const confirmed = receipt && hasShiftAction(actions, receipt.operation) ? receipt : null;
   const unconfirmed =
     one(parameters.result) && (one(parameters.result) !== "success" || !confirmed);
+  const originFields = encodedOrigin ? (
+    <>
+      <input name="originFocusId" type="hidden" value={encodedOrigin.originFocusId} />
+      <input name="returnSurface" type="hidden" value={encodedOrigin.returnSurface} />
+    </>
+  ) : null;
   return (
     <section aria-labelledby="report-shifts-heading" className="work-surface">
-      <a className="text-command detail-back" href="/workspace/hr">
-        Back to HR
-      </a>
+      {mode === "standalone" ? (
+        <a className="text-command detail-back" href="/workspace/hr">
+          Back to HR
+        </a>
+      ) : null}
       <header className="surface-heading">
         <h1 id="report-shifts-heading">Report shifts</h1>
       </header>
@@ -61,7 +101,16 @@ export default async function ReportShiftsPage({ searchParams }: Props) {
           <p>The requested Shift action is not confirmed. Review current values and try again.</p>
         </div>
       ) : null}
-      <form className="leave-request-form" method="get">
+      <RouteBackedWidgetGetForm
+        action="/workspace/hr/shifts/reports"
+        className="leave-request-form"
+      >
+        {encodedOrigin ? (
+          <>
+            <input name="originFocusId" type="hidden" value={encodedOrigin.originFocusId} />
+            <input name="returnSurface" type="hidden" value={encodedOrigin.returnSurface} />
+          </>
+        ) : null}
         <div className="form-grid-two">
           <div className="form-field">
             <label htmlFor="roster-id">Roster Version ID</label>
@@ -82,11 +131,15 @@ export default async function ReportShiftsPage({ searchParams }: Props) {
         <button className="command-button command-button-primary" type="submit">
           Load authorized roster
         </button>
-      </form>
+      </RouteBackedWidgetGetForm>
       {canCreate ? (
         <details className="leave-detail-section">
           <summary>Create an exact roster period</summary>
-          <form action="/workspace/hr/shifts/action" className="leave-request-form" method="post">
+          <RouteBackedWidgetPostForm
+            action="/workspace/hr/shifts/action"
+            className="leave-request-form"
+          >
+            {originFields}
             <input name="operation" type="hidden" value="create_roster" />
             <input name="idempotencyKey" type="hidden" value={randomUUID()} />
             <div className="form-grid-two">
@@ -102,13 +155,17 @@ export default async function ReportShiftsPage({ searchParams }: Props) {
             <button className="command-button command-button-primary" type="submit">
               Create draft roster
             </button>
-          </form>
+          </RouteBackedWidgetPostForm>
         </details>
       ) : null}
       {rosterVersionId && canAssign ? (
         <details className="leave-detail-section">
           <summary>Assign a worker</summary>
-          <form action="/workspace/hr/shifts/action" className="leave-request-form" method="post">
+          <RouteBackedWidgetPostForm
+            action="/workspace/hr/shifts/action"
+            className="leave-request-form"
+          >
+            {originFields}
             <input name="operation" type="hidden" value="assign" />
             <input name="idempotencyKey" type="hidden" value={randomUUID()} />
             <input name="rosterVersionId" type="hidden" value={rosterVersionId} />
@@ -138,11 +195,15 @@ export default async function ReportShiftsPage({ searchParams }: Props) {
             <button className="command-button command-button-primary" type="submit">
               Assign shift
             </button>
-          </form>
+          </RouteBackedWidgetPostForm>
         </details>
       ) : null}
       {rosterVersionId && canPublish ? (
-        <form action="/workspace/hr/shifts/action" className="leave-request-form" method="post">
+        <RouteBackedWidgetPostForm
+          action="/workspace/hr/shifts/action"
+          className="leave-request-form"
+        >
+          {originFields}
           <input name="operation" type="hidden" value="publish" />
           <input name="idempotencyKey" type="hidden" value={randomUUID()} />
           <input name="rosterVersionId" type="hidden" value={rosterVersionId} />
@@ -160,10 +221,14 @@ export default async function ReportShiftsPage({ searchParams }: Props) {
           <button className="command-button command-button-primary" type="submit">
             Publish exact roster
           </button>
-        </form>
+        </RouteBackedWidgetPostForm>
       ) : null}
       {canCancel && state.status === "error" ? (
-        <form action="/workspace/hr/shifts/action" className="leave-request-form" method="post">
+        <RouteBackedWidgetPostForm
+          action="/workspace/hr/shifts/action"
+          className="leave-request-form"
+        >
+          {originFields}
           <input name="operation" type="hidden" value="cancel" />
           <input name="idempotencyKey" type="hidden" value={randomUUID()} />
           <div className="form-field">
@@ -183,7 +248,7 @@ export default async function ReportShiftsPage({ searchParams }: Props) {
           <button className="command-button command-button-danger" type="submit">
             Cancel assignment
           </button>
-        </form>
+        </RouteBackedWidgetPostForm>
       ) : null}
       {!rosterVersionId ? (
         <div className="empty-worklist">
@@ -210,14 +275,30 @@ export default async function ReportShiftsPage({ searchParams }: Props) {
                 </div>
                 <span className="leave-status">{shift.ianaTimezone}</span>
               </div>
-              <a
+              <Link
                 className="text-command"
-                href={`/workspace/hr/shifts/by-id/${shift.shiftAssignmentId}?returnTo=reports&rosterVersionId=${rosterVersionId}`}
+                href={
+                  focusOrigin
+                    ? buildNestedRouteBackedWidgetHref(
+                        reportShiftDetailHref(
+                          shift.shiftAssignmentId,
+                          rosterVersionId,
+                          one(parameters.status) ?? "active",
+                        ),
+                        focusOrigin,
+                      )
+                    : reportShiftDetailHref(
+                        shift.shiftAssignmentId,
+                        rosterVersionId,
+                        one(parameters.status) ?? "active",
+                      )
+                }
               >
                 View persistent history
-              </a>
+              </Link>
               {canCancel && shift.status === "active" ? (
-                <form action="/workspace/hr/shifts/action" method="post">
+                <RouteBackedWidgetPostForm action="/workspace/hr/shifts/action">
+                  {originFields}
                   <input name="operation" type="hidden" value="cancel" />
                   <input name="idempotencyKey" type="hidden" value={randomUUID()} />
                   <input name="shiftAssignmentId" type="hidden" value={shift.shiftAssignmentId} />
@@ -225,7 +306,7 @@ export default async function ReportShiftsPage({ searchParams }: Props) {
                   <button className="command-button command-button-danger" type="submit">
                     Cancel assignment
                   </button>
-                </form>
+                </RouteBackedWidgetPostForm>
               ) : null}
             </li>
           ))}

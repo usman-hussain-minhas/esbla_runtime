@@ -1,15 +1,25 @@
+import type { ReactNode } from "react";
 import { loadShiftDetail } from "../../../../../../lib/hr-shift-assignment";
 
 interface Props {
+  readonly leadingControl?: ReactNode;
+  readonly mode?: "focus" | "standalone";
   readonly params: Promise<{ shiftAssignmentId: string }>;
+  readonly preloadedState?: Awaited<ReturnType<typeof loadShiftDetail>>;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 function one(value: string | string[] | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
-export default async function ShiftDetailPage({ params, searchParams }: Props) {
+export default async function ShiftDetailPage({
+  leadingControl,
+  mode = "standalone",
+  params,
+  preloadedState,
+  searchParams,
+}: Props) {
   const [{ shiftAssignmentId }, query] = await Promise.all([params, searchParams]);
-  const state = await loadShiftDetail(shiftAssignmentId);
+  const state = preloadedState ?? (await loadShiftDetail(shiftAssignmentId));
   const back =
     one(query.returnTo) === "own"
       ? "/workspace/hr/shifts"
@@ -18,9 +28,12 @@ export default async function ShiftDetailPage({ params, searchParams }: Props) {
         : "/workspace/hr";
   return (
     <section aria-labelledby="shift-detail-heading" className="work-surface leave-form-surface">
-      <a className="text-command detail-back" href={back}>
-        Back to shifts
-      </a>
+      {leadingControl ??
+        (mode === "standalone" ? (
+          <a className="text-command detail-back" href={back}>
+            Back to shifts
+          </a>
+        ) : null)}
       <header className="surface-heading">
         <h1 id="shift-detail-heading">Shift assignment</h1>
       </header>

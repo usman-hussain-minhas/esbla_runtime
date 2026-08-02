@@ -12,6 +12,11 @@ import {
   validateAttendanceServiceAction,
 } from "../../../../../lib/hr-attendance-core";
 import { isSameOriginSubmission } from "../../../../../lib/hr-leave-submit-core";
+import {
+  buildNestedRouteBackedWidgetHref,
+  parseOptionalRouteBackedWidgetOrigin,
+  type RouteBackedWidgetOrigin,
+} from "../../../../../lib/route-backed-widget-navigation-core";
 
 export const dynamic = "force-dynamic";
 const headers = { "cache-control": "no-store", "x-content-type-options": "nosniff" } as const;
@@ -32,10 +37,14 @@ function redirect(
   requestUrl: string,
   result?: string,
   sealed?: string,
+  origin?: RouteBackedWidgetOrigin,
 ): Response {
-  const location = result
-    ? `${destination}?${new URLSearchParams({ result })}#attendance-result`
+  const target = result
+    ? `${destination}${destination.includes("?") ? "&" : "?"}${new URLSearchParams({ result })}`
     : destination;
+  const location = `${origin ? buildNestedRouteBackedWidgetHref(target, origin) : target}${
+    result ? "#attendance-result" : ""
+  }`;
   return new Response(null, {
     headers: { ...headers, location, "set-cookie": receiptCookie(requestUrl, sealed) },
     status: 303,
@@ -96,12 +105,38 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
   }
+  const presentationOrigin = parseOptionalRouteBackedWidgetOrigin(value);
+  const returnTo = value.returnTo === "own" || value.returnTo === "reports" ? value.returnTo : null;
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(value.from ?? "") ? value.from : null;
+  const to = /^\d{4}-\d{2}-\d{2}$/.test(value.to ?? "") ? value.to : null;
+  delete value.originFocusId;
+  delete value.returnSurface;
+  delete value.returnTo;
+  delete value.from;
+  delete value.to;
+  const contextualDestination = (destination: string, detailReturnTo?: "own" | "reports") => {
+    const parameters = new URLSearchParams();
+    if (detailReturnTo) parameters.set("returnTo", detailReturnTo);
+    if (from) parameters.set("from", from);
+    if (to) parameters.set("to", to);
+    return `${destination}${parameters.size > 0 ? `?${parameters}` : ""}`;
+  };
   const validation = validateAttendanceAction(value);
   const failureDestination =
     value.operation === "correct" && typeof value.observationId === "string"
-      ? `/workspace/hr/attendance/by-id/${encodeURIComponent(value.observationId)}`
-      : "/workspace/hr/attendance/reports";
-  if (!validation.ok) return redirect(failureDestination, request.url, validation.state.kind);
+      ? contextualDestination(
+          `/workspace/hr/attendance/by-id/${encodeURIComponent(value.observationId)}`,
+          returnTo ?? undefined,
+        )
+      : contextualDestination("/workspace/hr/attendance/reports");
+  if (!validation.ok)
+    return redirect(
+      failureDestination,
+      request.url,
+      validation.state.kind,
+      undefined,
+      presentationOrigin,
+    );
   try {
     const result = await executeAttendanceAction(validation.value);
     const observationId =
@@ -111,9 +146,30 @@ export async function POST(request: Request): Promise<Response> {
           : null
         : validation.value.observationId;
     return observationId
-      ? redirect(`/workspace/hr/attendance/by-id/${encodeURIComponent(observationId)}`, request.url)
-      : redirect(failureDestination, request.url, "operational_error");
+      ? redirect(
+          contextualDestination(
+            `/workspace/hr/attendance/by-id/${encodeURIComponent(observationId)}`,
+            validation.value.operation === "record_manual" ? "reports" : (returnTo ?? undefined),
+          ),
+          request.url,
+          undefined,
+          undefined,
+          presentationOrigin,
+        )
+      : redirect(
+          failureDestination,
+          request.url,
+          "operational_error",
+          undefined,
+          presentationOrigin,
+        );
   } catch (error) {
-    return redirect(failureDestination, request.url, attendanceStateForError(error).kind);
+    return redirect(
+      failureDestination,
+      request.url,
+      attendanceStateForError(error).kind,
+      undefined,
+      presentationOrigin,
+    );
   }
 }

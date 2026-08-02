@@ -1,10 +1,31 @@
+import Link from "next/link";
 import { loadOwnShifts } from "../../../../lib/hr-shift-assignment";
+import {
+  buildNestedRouteBackedWidgetHref,
+  getRouteBackedWidgetOriginParameters,
+  type RouteBackedWidgetOrigin,
+} from "../../../../lib/route-backed-widget-navigation-core";
+import { RouteBackedWidgetGetForm } from "../../../../theme/zen-theme/v1/route-backed-widget-overlay";
 
 interface Props {
+  readonly focusOrigin?: RouteBackedWidgetOrigin;
+  readonly mode?: "focus-master" | "standalone";
+  readonly preloadedState?: Awaited<ReturnType<typeof loadOwnShifts>>;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 function one(value: string | string[] | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+function shiftDetailHref(
+  shiftAssignmentId: string,
+  parameters: Record<string, string | string[] | undefined>,
+): string {
+  const query = new URLSearchParams({ returnTo: "own" });
+  const from = one(parameters.from);
+  const to = one(parameters.to);
+  if (from) query.set("from", from);
+  if (to) query.set("to", to);
+  return `/workspace/hr/shifts/by-id/${shiftAssignmentId}?${query}`;
 }
 function localTime(value: string, timeZone: string): string {
   try {
@@ -19,14 +40,22 @@ function localTime(value: string, timeZone: string): string {
   }
 }
 
-export default async function OwnShiftsPage({ searchParams }: Props) {
+export default async function OwnShiftsPage({
+  focusOrigin,
+  mode = "standalone",
+  preloadedState,
+  searchParams,
+}: Props) {
   const parameters = await searchParams;
-  const state = await loadOwnShifts(parameters);
+  const state = preloadedState ?? (await loadOwnShifts(parameters));
+  const encodedOrigin = focusOrigin ? getRouteBackedWidgetOriginParameters(focusOrigin) : undefined;
   return (
     <section aria-labelledby="own-shifts-heading" className="work-surface">
-      <a className="text-command detail-back" href="/workspace/hr">
-        Back to HR
-      </a>
+      {mode === "standalone" ? (
+        <a className="text-command detail-back" href="/workspace/hr">
+          Back to HR
+        </a>
+      ) : null}
       <header className="surface-heading">
         <h1 id="own-shifts-heading">My shifts</h1>
       </header>
@@ -35,7 +64,13 @@ export default async function OwnShiftsPage({ searchParams }: Props) {
           <p>The requested Shift action is not confirmed. Review current values and try again.</p>
         </div>
       ) : null}
-      <form className="leave-request-form" method="get">
+      <RouteBackedWidgetGetForm action="/workspace/hr/shifts" className="leave-request-form">
+        {encodedOrigin ? (
+          <>
+            <input name="originFocusId" type="hidden" value={encodedOrigin.originFocusId} />
+            <input name="returnSurface" type="hidden" value={encodedOrigin.returnSurface} />
+          </>
+        ) : null}
         <div className="form-grid-two">
           <div className="form-field">
             <label htmlFor="shift-from">From date</label>
@@ -49,7 +84,7 @@ export default async function OwnShiftsPage({ searchParams }: Props) {
         <button className="command-button command-button-primary" type="submit">
           Apply period
         </button>
-      </form>
+      </RouteBackedWidgetGetForm>
       {state.status === "error" ? (
         <div className="form-error-summary" role="alert">
           <h2>{state.title}</h2>
@@ -73,12 +108,19 @@ export default async function OwnShiftsPage({ searchParams }: Props) {
                 </div>
                 <span className="leave-status">{shift.ianaTimezone}</span>
               </div>
-              <a
+              <Link
                 className="text-command"
-                href={`/workspace/hr/shifts/by-id/${shift.shiftAssignmentId}?returnTo=own`}
+                href={
+                  focusOrigin
+                    ? buildNestedRouteBackedWidgetHref(
+                        shiftDetailHref(shift.shiftAssignmentId, parameters),
+                        focusOrigin,
+                      )
+                    : shiftDetailHref(shift.shiftAssignmentId, parameters)
+                }
               >
                 View persistent history
-              </a>
+              </Link>
             </li>
           ))}
         </ol>

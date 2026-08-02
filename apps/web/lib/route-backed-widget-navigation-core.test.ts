@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildNestedRouteBackedWidgetHref,
   buildRouteBackedWidgetHref,
+  getRouteBackedWidgetOriginParameters,
+  parseOptionalRouteBackedWidgetOrigin,
   parseRouteBackedWidgetFallbackHref,
   parseRouteBackedWidgetOrigin,
   parseRouteBackedWidgetReturnFocus,
@@ -57,6 +60,27 @@ describe("route-backed widget navigation", () => {
     expect(() =>
       buildRouteBackedWidgetHref("/workspace/my-work", "surface.mission-control", "invalid origin"),
     ).toThrow();
+    expect(
+      parseOptionalRouteBackedWidgetOrigin({
+        originFocusId: "mission-control.my-work.full-screen",
+        returnSurface: "mission-control",
+      }),
+    ).toEqual({
+      fallbackHref: "/",
+      returnFocusId: "mission-control.my-work.full-screen",
+    });
+    expect(
+      parseOptionalRouteBackedWidgetOrigin({
+        originFocusId: ["mission-control.my-work.full-screen"],
+        returnSurface: "mission-control",
+      }),
+    ).toBeUndefined();
+    expect(
+      parseOptionalRouteBackedWidgetOrigin({
+        originFocusId: "mission-control.my-work.full-screen",
+        returnSurface: "external",
+      }),
+    ).toBeUndefined();
   });
 
   it("round-trips only an exact current-origin focus receipt", () => {
@@ -95,5 +119,34 @@ describe("route-backed widget navigation", () => {
         '{"fallbackHref":"/","returnFocusId":"mission-control.my-work.full-screen","scrollLeft":0,"scrollTop":-1}',
       ),
     ).toBeUndefined();
+  });
+
+  it("carries one validated surface origin through nested focus routes", () => {
+    const origin = parseRouteBackedWidgetOrigin(
+      {
+        originFocusId: "hr-mission-control.my-attendance.full-screen",
+        returnSurface: "hr-mission-control",
+      },
+      "/workspace/hr",
+    );
+    expect(getRouteBackedWidgetOriginParameters(origin)).toEqual({
+      originFocusId: "hr-mission-control.my-attendance.full-screen",
+      returnSurface: "hr-mission-control",
+    });
+    expect(
+      buildNestedRouteBackedWidgetHref(
+        "/workspace/hr/attendance/by-id/record?returnTo=own",
+        origin,
+      ),
+    ).toBe(
+      "/workspace/hr/attendance/by-id/record?returnTo=own&originFocusId=hr-mission-control.my-attendance.full-screen&returnSurface=hr-mission-control",
+    );
+    expect(() => buildNestedRouteBackedWidgetHref("https://external.test", origin)).toThrow();
+    expect(() =>
+      getRouteBackedWidgetOriginParameters({
+        fallbackHref: "/workspace/my-work",
+        returnFocusId: "mission-control.my-work.full-screen",
+      }),
+    ).toThrow();
   });
 });
