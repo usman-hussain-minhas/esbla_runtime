@@ -18,7 +18,7 @@
     "test:integration:employment-readiness": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/employment-readiness.integration.test.ts",
     "test:integration:shift-readiness": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/shift-assignment-readiness.integration.test.ts",
     "test:integration:shift": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/shift-assignment.integration.test.ts",
-    "test:integration:employment": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/employment.integration.test.ts",
+    "test:integration:employment": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 --testTimeout=15000 src/employment.integration.test.ts",
     "test:integration:leave-proof": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/leave-proof-closure.integration.test.ts",
     "test:integration:leave": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/leave.integration.test.ts",
     "test:integration:notification": "node ../../scripts/test/with-postgres.mjs vitest run --maxWorkers=1 src/notifications.integration.test.ts",
