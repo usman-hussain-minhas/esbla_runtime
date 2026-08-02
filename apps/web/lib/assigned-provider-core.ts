@@ -84,6 +84,21 @@ export interface AssignedProviderCursors {
   readonly workspace: WorkspaceTaskCursor | undefined;
 }
 
+const ASSIGNED_PROVIDER_CURSOR_MAPPING = Object.freeze([
+  ["cursorLeaveRequestId", "masterCursorLeaveRequestId"],
+  ["cursorSubmittedAt", "masterCursorSubmittedAt"],
+  ["cursorTaskId", "masterCursorTaskId"],
+  ["cursorCreatedAt", "masterCursorCreatedAt"],
+  ["cursorTimesheetVersionId", "masterCursorTimesheetVersionId"],
+  ["cursorTimesheetSubmittedAt", "masterCursorTimesheetSubmittedAt"],
+  ["cursorExpenseClaimVersionId", "masterCursorExpenseClaimVersionId"],
+  ["cursorExpenseSubmittedAt", "masterCursorExpenseSubmittedAt"],
+] as const);
+
+export const ASSIGNED_PROVIDER_MASTER_CURSOR_KEYS = Object.freeze(
+  ASSIGNED_PROVIDER_CURSOR_MAPPING.map(([, masterKey]) => masterKey),
+);
+
 export type AssignedProviderState<Page> =
   | { readonly empty: boolean; readonly page: Page; readonly unavailable: false }
   | { readonly unavailable: true };
@@ -312,6 +327,70 @@ export function parseAssignedProviderCursors(
   if (timesheetError !== undefined) throw timesheetError;
   if (expenseError !== undefined) throw expenseError;
   return Object.freeze({ expense, hr, timesheet, workspace });
+}
+
+function assignedProviderCursorParameters(
+  cursors: AssignedProviderCursors,
+): Readonly<Record<string, string>> {
+  return Object.freeze({
+    ...(cursors.hr
+      ? {
+          cursorLeaveRequestId: cursors.hr.leaveRequestId,
+          cursorSubmittedAt: cursors.hr.submittedAt,
+        }
+      : {}),
+    ...(cursors.workspace
+      ? {
+          cursorCreatedAt: cursors.workspace.createdAt,
+          cursorTaskId: cursors.workspace.taskId,
+        }
+      : {}),
+    ...(cursors.timesheet
+      ? {
+          cursorTimesheetSubmittedAt: cursors.timesheet.submittedAt,
+          cursorTimesheetVersionId: cursors.timesheet.timesheetVersionId,
+        }
+      : {}),
+    ...(cursors.expense
+      ? {
+          cursorExpenseClaimVersionId: cursors.expense.expenseClaimVersionId,
+          cursorExpenseSubmittedAt: cursors.expense.submittedAt,
+        }
+      : {}),
+  });
+}
+
+export function toAssignedProviderMasterCursorParameters(
+  searchParams: AssignedProviderSearchParams,
+): Readonly<Record<string, string>> {
+  const parameters = assignedProviderCursorParameters(parseAssignedProviderCursors(searchParams));
+  return Object.freeze(
+    Object.fromEntries(
+      ASSIGNED_PROVIDER_CURSOR_MAPPING.flatMap(([cursorKey, masterKey]) => {
+        const value = parameters[cursorKey];
+        return value === undefined ? [] : [[masterKey, value]];
+      }),
+    ),
+  );
+}
+
+export function fromAssignedProviderMasterCursorParameters(
+  searchParams: AssignedProviderSearchParams,
+): Readonly<Record<string, string>> {
+  const projected = Object.fromEntries(
+    ASSIGNED_PROVIDER_CURSOR_MAPPING.flatMap(([cursorKey, masterKey]) =>
+      hasOwn(searchParams, masterKey) ? [[cursorKey, searchParams[masterKey]]] : [],
+    ),
+  );
+  return assignedProviderCursorParameters(parseAssignedProviderCursors(projected));
+}
+
+export function parseAssignedProviderMasterCursorParameters(
+  searchParams: AssignedProviderSearchParams,
+): Readonly<Record<string, string>> {
+  return toAssignedProviderMasterCursorParameters(
+    fromAssignedProviderMasterCursorParameters(searchParams),
+  );
 }
 
 type Settlement<Value> =

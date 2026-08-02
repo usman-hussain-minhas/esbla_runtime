@@ -6,6 +6,7 @@ import {
   buildHrLeaveNewHref,
   getHrLeaveReturnLink,
   HR_LEAVE_CANONICAL_HOST_LINK,
+  parseHrLeaveListCursor,
   parseHrLeaveOriginFocusId,
   parseHrLeaveReturnContext,
 } from "./hr-leave-navigation-core";
@@ -117,6 +118,37 @@ describe("HR leave closed navigation", () => {
     ).toBe(
       `/workspace/hr/leave?cursorLeaveRequestId=${leaveRequestId}&cursorSubmittedAt=2026-08-02T01%3A02%3A03.000Z`,
     );
+    const cursor = {
+      leaveRequestId,
+      submittedAt: "2026-08-02T01:02:03.000Z",
+    };
+    expect(
+      parseHrLeaveListCursor({
+        cursorLeaveRequestId: cursor.leaveRequestId,
+        cursorSubmittedAt: cursor.submittedAt,
+      }),
+    ).toEqual(cursor);
+    expect(buildHrLeaveDetailHref(leaveRequestId, "leave-list", undefined, cursor)).toBe(
+      `/workspace/hr/leave/${leaveRequestId}?returnContext=leave-list&cursorLeaveRequestId=${leaveRequestId}&cursorSubmittedAt=2026-08-02T01%3A02%3A03.000Z`,
+    );
+    expect(() => parseHrLeaveListCursor({ cursorLeaveRequestId: leaveRequestId })).toThrowError(
+      "Leave cursor is invalid",
+    );
+    for (const submittedAt of [
+      "2026-08-02",
+      "2026-02-30T00:00:00.000Z",
+      "2026-08-02T25:00:00.000Z",
+    ]) {
+      expect(() =>
+        parseHrLeaveListCursor({
+          cursorLeaveRequestId: leaveRequestId,
+          cursorSubmittedAt: submittedAt,
+        }),
+      ).toThrowError("Leave cursor is invalid");
+      expect(() => buildHrLeaveListHref(undefined, { leaveRequestId, submittedAt })).toThrowError(
+        "Leave cursor is invalid",
+      );
+    }
 
     for (const originFocusId of ["../outside", "two..dots", "/absolute", "https://bad"]) {
       expect(parseHrLeaveOriginFocusId(originFocusId)).toBeUndefined();
@@ -151,7 +183,8 @@ describe("HR leave closed navigation", () => {
     expect(list).toContain("buildHrLeaveDetailHref(");
     expect(list).toContain('focusNavigation?.returnContext ?? "leave-list"');
     expect(list).toContain("View details");
-    expect(myWork).toContain('buildHrLeaveDetailHref(item.leaveRequestId, "my-work")');
+    expect(myWork).toContain("toAssignedProviderMasterCursorParameters(productParameters)");
+    expect(myWork).toContain("successHref={successHref}");
     expect(approval).toContain('buildHrLeaveDetailHref(result.leaveRequestId, "my-work")');
     expect(rejection).toContain('buildHrLeaveDetailHref(result.leaveRequestId, "my-work")');
     expect(detail).toContain("parseHrLeaveReturnContext(parameters.returnContext)");

@@ -1,10 +1,20 @@
 import { randomUUID } from "node:crypto";
+import type { ReactNode } from "react";
 import { loadExpenseClaimDetail, loadOwnExpenseClaims } from "../../../../lib/hr-expense-claim";
-import { hasExpenseAction } from "../../../../lib/hr-expense-claim-core";
+import { hasExpenseAction, parseOwnExpenseCursor } from "../../../../lib/hr-expense-claim-core";
+import {
+  getRouteBackedWidgetOriginParameters,
+  type RouteBackedWidgetOrigin,
+  withoutRouteBackedWidgetOrigin,
+} from "../../../../lib/route-backed-widget-navigation-core";
+import { RouteBackedWidgetLink } from "../../../../theme/zen-theme/v1/route-backed-widget-link";
+import { RouteBackedWidgetPostForm } from "../../../../theme/zen-theme/v1/route-backed-widget-overlay";
 import { ExpenseLineEditor } from "./expense-line-editor";
 import { ExpenseResult } from "./result";
 
 interface Props {
+  readonly focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  readonly mode?: "focus-master" | "standalone" | undefined;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 const resultCopy = {
@@ -28,10 +38,52 @@ function minor(value: number, currency: string): string {
   return `${new Intl.NumberFormat("en").format(value)} ${currency} minor units`;
 }
 
-export default async function ExpensesPage({ searchParams }: Props) {
+function ExpenseActionForm({
+  children,
+  className,
+  focusOrigin,
+}: Readonly<{
+  children: ReactNode;
+  className?: string | undefined;
+  focusOrigin?: RouteBackedWidgetOrigin | undefined;
+}>) {
+  if (!focusOrigin) {
+    return (
+      <form action="/workspace/hr/expenses/action" className={className} method="post">
+        {children}
+      </form>
+    );
+  }
+  const origin = getRouteBackedWidgetOriginParameters(focusOrigin);
+  return (
+    <RouteBackedWidgetPostForm
+      action="/workspace/hr/expenses/action"
+      resultFocusId="expense-result"
+      {...(className === undefined ? {} : { className })}
+    >
+      <input name="originFocusId" type="hidden" value={origin.originFocusId} />
+      <input name="returnSurface" type="hidden" value={origin.returnSurface} />
+      {children}
+    </RouteBackedWidgetPostForm>
+  );
+}
+
+export default async function ExpensesPage({
+  focusOrigin,
+  mode = "standalone",
+  searchParams,
+}: Props) {
   const parameters = await searchParams;
   const selectedId = one(parameters.edit);
-  const listPromise = loadOwnExpenseClaims(parameters);
+  const productParameters = withoutRouteBackedWidgetOrigin(parameters);
+  const listCursor = parseOwnExpenseCursor(productParameters);
+  const ownCursorParameters = listCursor
+    ? {
+        cursorCreatedAt: listCursor.createdAt,
+        cursorExpenseClaimId: listCursor.expenseClaimId,
+      }
+    : {};
+  const listPromise = loadOwnExpenseClaims(productParameters);
   const detailPromise = selectedId ? loadExpenseClaimDetail(selectedId) : Promise.resolve(null);
   const [state, selected] = await Promise.all([listPromise, detailPromise]);
   const result = one(parameters.result);
@@ -51,9 +103,11 @@ export default async function ExpensesPage({ searchParams }: Props) {
 
   return (
     <section aria-labelledby="expenses-heading" className="work-surface">
-      <a className="text-command detail-back" href="/workspace/hr">
-        Back to HR
-      </a>
+      {mode === "standalone" ? (
+        <a className="text-command detail-back" href="/workspace/hr">
+          Back to HR
+        </a>
+      ) : null}
       <header className="surface-heading">
         <div>
           <p className="surface-label">Expense Claim Boundary</p>
@@ -78,14 +132,13 @@ export default async function ExpensesPage({ searchParams }: Props) {
       ) : (
         <>
           {canCreate ? (
-            <form
-              action="/workspace/hr/expenses/action"
-              className="leave-request-form"
-              method="post"
-            >
+            <ExpenseActionForm className="leave-request-form" focusOrigin={focusOrigin}>
               <h2>Create a claim draft</h2>
               <input name="idempotencyKey" type="hidden" value={randomUUID()} />
               <input name="operation" type="hidden" value="create" />
+              {Object.entries(ownCursorParameters).map(([name, value]) => (
+                <input key={name} name={name} type="hidden" value={value} />
+              ))}
               <div className="form-field">
                 <label htmlFor="expense-currency">ISO currency code</label>
                 <input
@@ -106,7 +159,7 @@ export default async function ExpensesPage({ searchParams }: Props) {
               <button className="command-button command-button-primary" type="submit">
                 Create Expense Claim draft
               </button>
-            </form>
+            </ExpenseActionForm>
           ) : null}
 
           {selected ? (
@@ -138,13 +191,12 @@ export default async function ExpensesPage({ searchParams }: Props) {
                   </div>
                 </dl>
                 {canEdit ? (
-                  <form
-                    action="/workspace/hr/expenses/action"
-                    className="leave-request-form"
-                    method="post"
-                  >
+                  <ExpenseActionForm className="leave-request-form" focusOrigin={focusOrigin}>
                     <h3>Edit claim lines</h3>
                     <input name="operation" type="hidden" value="edit_draft" />
+                    {Object.entries(ownCursorParameters).map(([name, value]) => (
+                      <input key={name} name={name} type="hidden" value={value} />
+                    ))}
                     <input
                       name="expenseClaimId"
                       type="hidden"
@@ -173,11 +225,14 @@ export default async function ExpensesPage({ searchParams }: Props) {
                     <button className="command-button command-button-primary" type="submit">
                       Save Expense Claim draft
                     </button>
-                  </form>
+                  </ExpenseActionForm>
                 ) : null}
                 {canSubmit ? (
-                  <form action="/workspace/hr/expenses/action" method="post">
+                  <ExpenseActionForm focusOrigin={focusOrigin}>
                     <input name="operation" type="hidden" value="submit" />
+                    {Object.entries(ownCursorParameters).map(([name, value]) => (
+                      <input key={name} name={name} type="hidden" value={value} />
+                    ))}
                     <input
                       name="expenseClaimId"
                       type="hidden"
@@ -202,7 +257,7 @@ export default async function ExpensesPage({ searchParams }: Props) {
                     <button className="command-button command-button-primary" type="submit">
                       Submit Expense Claim
                     </button>
-                  </form>
+                  </ExpenseActionForm>
                 ) : null}
               </section>
             )
@@ -227,31 +282,58 @@ export default async function ExpensesPage({ searchParams }: Props) {
                   <div className="work-queue-actions">
                     {item.status === "draft" &&
                     hasExpenseAction(state.authorizedActions, "edit_draft") ? (
-                      <a className="text-command" href={`?edit=${item.expenseClaimId}`}>
+                      <RouteBackedWidgetLink
+                        className="text-command"
+                        focusHref={`/workspace/hr/expenses?${new URLSearchParams({
+                          edit: item.expenseClaimId,
+                          ...ownCursorParameters,
+                        })}`}
+                        focusOrigin={focusOrigin}
+                        href={`?${new URLSearchParams({
+                          edit: item.expenseClaimId,
+                          ...ownCursorParameters,
+                        })}`}
+                      >
                         Edit draft
-                      </a>
+                      </RouteBackedWidgetLink>
                     ) : null}
-                    <a
+                    <RouteBackedWidgetLink
                       className="text-command"
-                      href={`/workspace/hr/expenses/by-id/${item.expenseClaimId}?returnTo=own`}
+                      focusOrigin={focusOrigin}
+                      href={`/workspace/hr/expenses/by-id/${item.expenseClaimId}?${new URLSearchParams(
+                        {
+                          returnTo: "own",
+                          ...(listCursor
+                            ? {
+                                cursorCreatedAt: listCursor.createdAt,
+                                cursorExpenseClaimId: listCursor.expenseClaimId,
+                              }
+                            : {}),
+                        },
+                      )}`}
                     >
                       View status and history
-                    </a>
+                    </RouteBackedWidgetLink>
                   </div>
                 </li>
               ))}
             </ol>
           )}
           {state.page.nextCursor ? (
-            <a
+            <RouteBackedWidgetLink
               className="text-command"
+              focusHref={`/workspace/hr/expenses?${new URLSearchParams({
+                cursorCreatedAt: state.page.nextCursor.createdAt,
+                cursorExpenseClaimId: state.page.nextCursor.expenseClaimId,
+              })}`}
+              focusOrigin={focusOrigin}
               href={`?${new URLSearchParams({
                 cursorCreatedAt: state.page.nextCursor.createdAt,
                 cursorExpenseClaimId: state.page.nextCursor.expenseClaimId,
               })}`}
             >
               Next Expense Claim page
-            </a>
+            </RouteBackedWidgetLink>
           ) : null}
         </>
       )}

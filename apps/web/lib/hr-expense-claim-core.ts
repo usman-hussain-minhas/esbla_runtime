@@ -5,6 +5,7 @@ import type {
   HrExpenseClaimCreateCorrectionBody,
   HrExpenseClaimEditDraftBody,
   HrExpenseClaimListResponse,
+  HrExpenseClaimOwnCursor,
   HrExpenseClaimRejectBody,
   HrExpenseClaimResponse,
   HrExpenseClaimSubmitBody,
@@ -603,14 +604,27 @@ export function validateExpenseAction(
 export function buildOwnExpensePath(search: Search): string {
   try {
     const query = new URLSearchParams();
-    const createdAtPresent = Object.hasOwn(search, "cursorCreatedAt");
-    const expenseClaimIdPresent = Object.hasOwn(search, "cursorExpenseClaimId");
-    if (createdAtPresent !== expenseClaimIdPresent) throw 0;
-    if (createdAtPresent) {
-      query.set("cursorCreatedAt", timestamp(search.cursorCreatedAt));
-      query.set("cursorExpenseClaimId", uuid(search.cursorExpenseClaimId));
+    const cursor = parseOwnExpenseCursor(search);
+    if (cursor) {
+      query.set("cursorCreatedAt", cursor.createdAt);
+      query.set("cursorExpenseClaimId", cursor.expenseClaimId);
     }
     return `/v1/hr/expense-claims/own${query.size ? `?${query}` : ""}`;
+  } catch {
+    throw new ExpenseUiError("validation", 400);
+  }
+}
+
+export function parseOwnExpenseCursor(search: Search): HrExpenseClaimOwnCursor | undefined {
+  try {
+    const createdAtPresent = Object.hasOwn(search, "cursorCreatedAt");
+    const expenseClaimIdPresent = Object.hasOwn(search, "cursorExpenseClaimId");
+    if (!createdAtPresent && !expenseClaimIdPresent) return undefined;
+    if (createdAtPresent !== expenseClaimIdPresent) throw 0;
+    return Object.freeze({
+      createdAt: timestamp(search.cursorCreatedAt),
+      expenseClaimId: uuid(search.cursorExpenseClaimId),
+    });
   } catch {
     throw new ExpenseUiError("validation", 400);
   }

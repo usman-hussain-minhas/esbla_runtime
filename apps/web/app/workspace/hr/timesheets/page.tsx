@@ -1,10 +1,20 @@
 import { randomUUID } from "node:crypto";
 import { HR_TIMESHEET_DRAFT_WIDGET_DEFINITION } from "@esbla/contracts";
+import type { ReactNode } from "react";
 import { loadOwnTimesheets, loadTimesheetDetail } from "../../../../lib/hr-timesheet";
-import { hasTimesheetAction } from "../../../../lib/hr-timesheet-core";
+import { hasTimesheetAction, parseOwnTimesheetCursor } from "../../../../lib/hr-timesheet-core";
+import {
+  getRouteBackedWidgetOriginParameters,
+  type RouteBackedWidgetOrigin,
+  withoutRouteBackedWidgetOrigin,
+} from "../../../../lib/route-backed-widget-navigation-core";
+import { RouteBackedWidgetLink } from "../../../../theme/zen-theme/v1/route-backed-widget-link";
+import { RouteBackedWidgetPostForm } from "../../../../theme/zen-theme/v1/route-backed-widget-overlay";
 import { TimesheetResult } from "./result";
 
 interface Props {
+  readonly focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  readonly mode?: "focus-master" | "standalone" | undefined;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 const resultCopy = {
@@ -29,10 +39,52 @@ function minutes(value: number): string {
   return `${hours}h ${remainder}m`;
 }
 
-export default async function TimesheetsPage({ searchParams }: Props) {
+function TimesheetActionForm({
+  children,
+  className,
+  focusOrigin,
+}: Readonly<{
+  children: ReactNode;
+  className?: string | undefined;
+  focusOrigin?: RouteBackedWidgetOrigin | undefined;
+}>) {
+  if (!focusOrigin) {
+    return (
+      <form action="/workspace/hr/timesheets/action" className={className} method="post">
+        {children}
+      </form>
+    );
+  }
+  const origin = getRouteBackedWidgetOriginParameters(focusOrigin);
+  return (
+    <RouteBackedWidgetPostForm
+      action="/workspace/hr/timesheets/action"
+      resultFocusId="timesheet-result"
+      {...(className === undefined ? {} : { className })}
+    >
+      <input name="originFocusId" type="hidden" value={origin.originFocusId} />
+      <input name="returnSurface" type="hidden" value={origin.returnSurface} />
+      {children}
+    </RouteBackedWidgetPostForm>
+  );
+}
+
+export default async function TimesheetsPage({
+  focusOrigin,
+  mode = "standalone",
+  searchParams,
+}: Props) {
   const parameters = await searchParams;
   const selectedId = one(parameters.edit);
-  const listPromise = loadOwnTimesheets(parameters);
+  const productParameters = withoutRouteBackedWidgetOrigin(parameters);
+  const listCursor = parseOwnTimesheetCursor(productParameters);
+  const ownCursorParameters = listCursor
+    ? {
+        cursorPeriodStart: listCursor.periodStart,
+        cursorTimesheetId: listCursor.timesheetId,
+      }
+    : {};
+  const listPromise = loadOwnTimesheets(productParameters);
   const detailPromise = selectedId ? loadTimesheetDetail(selectedId) : Promise.resolve(null);
   const [state, selected] = await Promise.all([listPromise, detailPromise]);
   const result = one(parameters.result);
@@ -52,9 +104,11 @@ export default async function TimesheetsPage({ searchParams }: Props) {
 
   return (
     <section aria-labelledby="timesheets-heading" className="work-surface">
-      <a className="text-command detail-back" href="/workspace/hr">
-        Back to HR
-      </a>
+      {mode === "standalone" ? (
+        <a className="text-command detail-back" href="/workspace/hr">
+          Back to HR
+        </a>
+      ) : null}
       <header className="surface-heading">
         <div>
           <p className="surface-label">Timesheet</p>
@@ -86,14 +140,13 @@ export default async function TimesheetsPage({ searchParams }: Props) {
                 HR_TIMESHEET_DRAFT_WIDGET_DEFINITION.definitionVersion
               }
             >
-              <form
-                action="/workspace/hr/timesheets/action"
-                className="leave-request-form"
-                method="post"
-              >
+              <TimesheetActionForm className="leave-request-form" focusOrigin={focusOrigin}>
                 <h2 id="timesheet-draft-form-heading">Create a weekly draft</h2>
                 <input name="idempotencyKey" type="hidden" value={randomUUID()} />
                 <input name="operation" type="hidden" value="create" />
+                {Object.entries(ownCursorParameters).map(([name, value]) => (
+                  <input key={name} name={name} type="hidden" value={value} />
+                ))}
                 <div className="form-grid-two">
                   <div className="form-field">
                     <label htmlFor="timesheet-period-start">Period starts</label>
@@ -111,7 +164,7 @@ export default async function TimesheetsPage({ searchParams }: Props) {
                 <button className="command-button command-button-primary" type="submit">
                   Create Timesheet draft
                 </button>
-              </form>
+              </TimesheetActionForm>
             </section>
           ) : null}
 
@@ -141,13 +194,12 @@ export default async function TimesheetsPage({ searchParams }: Props) {
                   </div>
                 </dl>
                 {canEdit && detail ? (
-                  <form
-                    action="/workspace/hr/timesheets/action"
-                    className="leave-request-form"
-                    method="post"
-                  >
+                  <TimesheetActionForm className="leave-request-form" focusOrigin={focusOrigin}>
                     <h3>Edit work-time entries</h3>
                     <input name="operation" type="hidden" value="edit_draft" />
+                    {Object.entries(ownCursorParameters).map(([name, value]) => (
+                      <input key={name} name={name} type="hidden" value={value} />
+                    ))}
                     <input name="timesheetId" type="hidden" value={detail.timesheetId} />
                     <input name="idempotencyKey" type="hidden" value={randomUUID()} />
                     <input name="expectedRootVersion" type="hidden" value={detail.rootVersion} />
@@ -227,11 +279,14 @@ export default async function TimesheetsPage({ searchParams }: Props) {
                     <button className="command-button command-button-primary" type="submit">
                       Save Timesheet draft
                     </button>
-                  </form>
+                  </TimesheetActionForm>
                 ) : null}
                 {canSubmit && detail ? (
-                  <form action="/workspace/hr/timesheets/action" method="post">
+                  <TimesheetActionForm focusOrigin={focusOrigin}>
                     <input name="operation" type="hidden" value="submit" />
+                    {Object.entries(ownCursorParameters).map(([name, value]) => (
+                      <input key={name} name={name} type="hidden" value={value} />
+                    ))}
                     <input name="timesheetId" type="hidden" value={detail.timesheetId} />
                     <input name="idempotencyKey" type="hidden" value={randomUUID()} />
                     <input name="expectedRootVersion" type="hidden" value={detail.rootVersion} />
@@ -248,7 +303,7 @@ export default async function TimesheetsPage({ searchParams }: Props) {
                     <button className="command-button command-button-primary" type="submit">
                       Submit Timesheet
                     </button>
-                  </form>
+                  </TimesheetActionForm>
                 ) : null}
               </section>
             )
@@ -275,31 +330,58 @@ export default async function TimesheetsPage({ searchParams }: Props) {
                   <div className="work-queue-actions">
                     {item.status === "draft" &&
                     hasTimesheetAction(state.authorizedActions, "edit_draft") ? (
-                      <a className="text-command" href={`?edit=${item.timesheetId}`}>
+                      <RouteBackedWidgetLink
+                        className="text-command"
+                        focusHref={`/workspace/hr/timesheets?${new URLSearchParams({
+                          edit: item.timesheetId,
+                          ...ownCursorParameters,
+                        })}`}
+                        focusOrigin={focusOrigin}
+                        href={`?${new URLSearchParams({
+                          edit: item.timesheetId,
+                          ...ownCursorParameters,
+                        })}`}
+                      >
                         Edit draft
-                      </a>
+                      </RouteBackedWidgetLink>
                     ) : null}
-                    <a
+                    <RouteBackedWidgetLink
                       className="text-command"
-                      href={`/workspace/hr/timesheets/by-id/${item.timesheetId}?returnTo=own`}
+                      focusOrigin={focusOrigin}
+                      href={`/workspace/hr/timesheets/by-id/${item.timesheetId}?${new URLSearchParams(
+                        {
+                          returnTo: "own",
+                          ...(listCursor
+                            ? {
+                                cursorPeriodStart: listCursor.periodStart,
+                                cursorTimesheetId: listCursor.timesheetId,
+                              }
+                            : {}),
+                        },
+                      )}`}
                     >
                       View status and history
-                    </a>
+                    </RouteBackedWidgetLink>
                   </div>
                 </li>
               ))}
             </ol>
           )}
           {state.page.nextCursor ? (
-            <a
+            <RouteBackedWidgetLink
               className="text-command"
+              focusHref={`/workspace/hr/timesheets?${new URLSearchParams({
+                cursorPeriodStart: state.page.nextCursor.periodStart,
+                cursorTimesheetId: state.page.nextCursor.timesheetId,
+              })}`}
+              focusOrigin={focusOrigin}
               href={`?${new URLSearchParams({
                 cursorPeriodStart: state.page.nextCursor.periodStart,
                 cursorTimesheetId: state.page.nextCursor.timesheetId,
               })}`}
             >
               Next Timesheet page
-            </a>
+            </RouteBackedWidgetLink>
           ) : null}
         </>
       )}

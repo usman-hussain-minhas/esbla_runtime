@@ -1,35 +1,35 @@
-import { parseRouteBackedWidgetOrigin } from "../../../../../lib/route-backed-widget-navigation-core";
+import { parseRouteBackedWidgetOrigin } from "../../../../../../../lib/route-backed-widget-navigation-core";
 import {
   RouteBackedWidgetFocusPane,
   RouteBackedWidgetFocusWorkspace,
   RouteBackedWidgetOverlay,
-} from "../../../../../theme/zen-theme/v1/route-backed-widget-overlay";
-import TimesheetsPage from "../../../../workspace/hr/timesheets/page";
+} from "../../../../../../../theme/zen-theme/v1/route-backed-widget-overlay";
+import TimesheetCorrectionsPage from "../../../../../../workspace/hr/timesheets/admin/corrections/page";
 
 interface Props {
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
-export default async function InterceptedTimesheetsPage({ searchParams }: Props) {
+export default async function InterceptedTimesheetCorrectionsPage({ searchParams }: Props) {
   const parameters = await searchParams;
   const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr");
   return (
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}
-      label="My Timesheets"
+      label="Timesheet corrections"
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace
         activePane="master"
-        closeLabel="Close My Timesheets"
+        closeLabel="Close Timesheet corrections"
         fallbackHref={origin.fallbackHref}
         layout="single"
-        workspaceId="hr-timesheet-list"
+        workspaceId="hr-timesheet-corrections"
       >
         <RouteBackedWidgetFocusPane kind="master">
-          <TimesheetsPage
+          <TimesheetCorrectionsPage
             focusOrigin={origin}
-            mode="focus-master"
+            mode="focus"
             searchParams={Promise.resolve(parameters)}
           />
         </RouteBackedWidgetFocusPane>

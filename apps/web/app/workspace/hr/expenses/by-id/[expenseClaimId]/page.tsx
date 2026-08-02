@@ -1,9 +1,23 @@
 import { randomUUID } from "node:crypto";
+import type { ReactNode } from "react";
+import { parseAssignedProviderMasterCursorParameters } from "../../../../../../lib/assigned-provider-core";
 import { loadExpenseClaimDetail } from "../../../../../../lib/hr-expense-claim";
-import { hasExpenseAction } from "../../../../../../lib/hr-expense-claim-core";
+import {
+  hasExpenseAction,
+  parseOwnExpenseCursor,
+} from "../../../../../../lib/hr-expense-claim-core";
+import {
+  getRouteBackedWidgetOriginParameters,
+  type RouteBackedWidgetOrigin,
+  withoutRouteBackedWidgetOrigin,
+} from "../../../../../../lib/route-backed-widget-navigation-core";
+import { RouteBackedWidgetLink } from "../../../../../../theme/zen-theme/v1/route-backed-widget-link";
+import { RouteBackedWidgetPostForm } from "../../../../../../theme/zen-theme/v1/route-backed-widget-overlay";
 import { ExpenseResult } from "../../result";
 
 interface Props {
+  readonly focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  readonly leadingControl?: ReactNode;
   readonly params: Promise<{ expenseClaimId: string }>;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
@@ -28,13 +42,63 @@ function minor(value: number, currency: string): string {
   return `${new Intl.NumberFormat("en").format(value)} ${currency} minor units`;
 }
 
-export default async function ExpenseClaimDetailPage({ params, searchParams }: Props) {
+function ExpenseActionForm({
+  children,
+  className,
+  focusOrigin,
+}: Readonly<{
+  children: ReactNode;
+  className?: string | undefined;
+  focusOrigin?: RouteBackedWidgetOrigin | undefined;
+}>) {
+  if (!focusOrigin) {
+    return (
+      <form action="/workspace/hr/expenses/action" className={className} method="post">
+        {children}
+      </form>
+    );
+  }
+  const origin = getRouteBackedWidgetOriginParameters(focusOrigin);
+  return (
+    <RouteBackedWidgetPostForm
+      action="/workspace/hr/expenses/action"
+      resultFocusId="expense-result"
+      {...(className === undefined ? {} : { className })}
+    >
+      <input name="originFocusId" type="hidden" value={origin.originFocusId} />
+      <input name="returnSurface" type="hidden" value={origin.returnSurface} />
+      {children}
+    </RouteBackedWidgetPostForm>
+  );
+}
+
+export default async function ExpenseClaimDetailPage({
+  focusOrigin,
+  leadingControl,
+  params,
+  searchParams,
+}: Props) {
   const [{ expenseClaimId }, parameters] = await Promise.all([params, searchParams]);
-  const state = await loadExpenseClaimDetail(expenseClaimId, parameters);
+  const productParameters = withoutRouteBackedWidgetOrigin(parameters);
+  const state = await loadExpenseClaimDetail(expenseClaimId, productParameters);
   const returnTo = one(parameters.returnTo);
   const returnContext = one(parameters.returnContext);
   const fromMyWork = returnTo === "my-work" || returnContext === "my-work";
-  const back = fromMyWork ? "/workspace/my-work" : "/workspace/hr/expenses";
+  const masterCursorParameters = fromMyWork
+    ? parseAssignedProviderMasterCursorParameters(parameters)
+    : {};
+  const ownCursor = returnTo === "own" ? parseOwnExpenseCursor(parameters) : undefined;
+  const ownCursorParameters = ownCursor
+    ? {
+        cursorCreatedAt: ownCursor.createdAt,
+        cursorExpenseClaimId: ownCursor.expenseClaimId,
+      }
+    : {};
+  const backQuery = new URLSearchParams(
+    fromMyWork ? masterCursorParameters : ownCursorParameters,
+  ).toString();
+  const backPath = fromMyWork ? "/workspace/my-work" : "/workspace/hr/expenses";
+  const back = `${backPath}${backQuery ? `?${backQuery}` : ""}`;
   const result = one(parameters.result);
   const detail = state.status === "success" ? state.detail : null;
   const canApprove =
@@ -53,9 +117,11 @@ export default async function ExpenseClaimDetailPage({ params, searchParams }: P
     hasExpenseAction(state.authorizedActions, "create_correction");
   return (
     <section aria-labelledby="expense-detail-heading" className="work-surface">
-      <a className="text-command detail-back" href={back}>
-        {fromMyWork ? "Back to My Work" : "Back to Expense Claims"}
-      </a>
+      {leadingControl ?? (
+        <a className="text-command detail-back" href={back}>
+          {fromMyWork ? "Back to My Work" : "Back to Expense Claims"}
+        </a>
+      )}
       <header className="surface-heading">
         <div>
           <p className="surface-label">Expense Claim Boundary</p>
@@ -134,23 +200,33 @@ export default async function ExpenseClaimDetailPage({ params, searchParams }: P
                   <strong>
                     Version {item.version}: {label(item.status)}
                   </strong>
+                  {" — "}
                   <span>{minor(item.totalAmountMinor, item.currencyCode)}</span>
                   {item.decisionNote ? <p>{item.decisionNote}</p> : null}
                 </li>
               ))}
             </ol>
             {state.detail.history?.nextCursor ? (
-              <a
+              <RouteBackedWidgetLink
                 className="text-command"
+                focusHref={`/workspace/hr/expenses/by-id/${expenseClaimId}?${new URLSearchParams({
+                  ...(fromMyWork ? { returnContext: "my-work" } : { returnTo: "own" }),
+                  ...(fromMyWork ? masterCursorParameters : ownCursorParameters),
+                  cursorExpenseClaimVersionId:
+                    state.detail.history.nextCursor.expenseClaimVersionId,
+                  cursorVersion: String(state.detail.history.nextCursor.version),
+                })}`}
+                focusOrigin={focusOrigin}
                 href={`?${new URLSearchParams({
                   ...(fromMyWork ? { returnContext: "my-work" } : { returnTo: "own" }),
+                  ...(fromMyWork ? masterCursorParameters : ownCursorParameters),
                   cursorExpenseClaimVersionId:
                     state.detail.history.nextCursor.expenseClaimVersionId,
                   cursorVersion: String(state.detail.history.nextCursor.version),
                 })}`}
               >
                 Older Expense Claim versions
-              </a>
+              </RouteBackedWidgetLink>
             ) : null}
           </section>
           {canCreateCorrection ? (
@@ -160,12 +236,11 @@ export default async function ExpenseClaimDetailPage({ params, searchParams }: P
                 This preserves the terminal version and creates its sole successor draft for you to
                 complete and submit.
               </p>
-              <form
-                action="/workspace/hr/expenses/action"
-                className="leave-request-form"
-                method="post"
-              >
+              <ExpenseActionForm className="leave-request-form" focusOrigin={focusOrigin}>
                 <input name="operation" type="hidden" value="create_correction" />
+                {Object.entries(ownCursorParameters).map(([name, value]) => (
+                  <input key={name} name={name} type="hidden" value={value} />
+                ))}
                 <input name="expenseClaimId" type="hidden" value={state.detail.expenseClaimId} />
                 <input name="idempotencyKey" type="hidden" value={randomUUID()} />
                 <input name="expectedRootVersion" type="hidden" value={state.detail.rootVersion} />
@@ -183,7 +258,7 @@ export default async function ExpenseClaimDetailPage({ params, searchParams }: P
                 <button className="command-button command-button-primary" type="submit">
                   Create correction draft
                 </button>
-              </form>
+              </ExpenseActionForm>
             </section>
           ) : null}
           {canApprove || canReject ? (
@@ -194,11 +269,7 @@ export default async function ExpenseClaimDetailPage({ params, searchParams }: P
                 recorded.
               </p>
               {canApprove ? (
-                <form
-                  action="/workspace/hr/expenses/action"
-                  className="leave-request-form"
-                  method="post"
-                >
+                <ExpenseActionForm className="leave-request-form" focusOrigin={focusOrigin}>
                   <input name="operation" type="hidden" value="approve" />
                   <input name="expenseClaimId" type="hidden" value={state.detail.expenseClaimId} />
                   <input name="idempotencyKey" type="hidden" value={randomUUID()} />
@@ -218,6 +289,9 @@ export default async function ExpenseClaimDetailPage({ params, searchParams }: P
                     value={state.detail.currentVersion.rowVersion}
                   />
                   <input name="returnTo" type="hidden" value={fromMyWork ? "my-work" : "detail"} />
+                  {Object.entries(masterCursorParameters).map(([name, value]) => (
+                    <input key={name} name={name} type="hidden" value={value} />
+                  ))}
                   <div className="form-field">
                     <label htmlFor="expense-approval-note">Approval note</label>
                     <textarea id="expense-approval-note" maxLength={2000} name="decisionNote" />
@@ -225,14 +299,10 @@ export default async function ExpenseClaimDetailPage({ params, searchParams }: P
                   <button className="command-button command-button-primary" type="submit">
                     Approve Expense Claim
                   </button>
-                </form>
+                </ExpenseActionForm>
               ) : null}
               {canReject ? (
-                <form
-                  action="/workspace/hr/expenses/action"
-                  className="leave-request-form"
-                  method="post"
-                >
+                <ExpenseActionForm className="leave-request-form" focusOrigin={focusOrigin}>
                   <input name="operation" type="hidden" value="reject" />
                   <input name="expenseClaimId" type="hidden" value={state.detail.expenseClaimId} />
                   <input name="idempotencyKey" type="hidden" value={randomUUID()} />
@@ -252,6 +322,9 @@ export default async function ExpenseClaimDetailPage({ params, searchParams }: P
                     value={state.detail.currentVersion.rowVersion}
                   />
                   <input name="returnTo" type="hidden" value={fromMyWork ? "my-work" : "detail"} />
+                  {Object.entries(masterCursorParameters).map(([name, value]) => (
+                    <input key={name} name={name} type="hidden" value={value} />
+                  ))}
                   <div className="form-field">
                     <label htmlFor="expense-rejection-note">Rejection note</label>
                     <textarea
@@ -267,7 +340,7 @@ export default async function ExpenseClaimDetailPage({ params, searchParams }: P
                   <button className="command-button command-button-danger" type="submit">
                     Reject Expense Claim
                   </button>
-                </form>
+                </ExpenseActionForm>
               ) : null}
             </section>
           ) : null}

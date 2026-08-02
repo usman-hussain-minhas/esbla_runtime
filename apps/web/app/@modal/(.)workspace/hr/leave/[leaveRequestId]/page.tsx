@@ -1,13 +1,19 @@
 import { ArrowLeft } from "lucide-react";
+import { fromAssignedProviderMasterCursorParameters } from "../../../../../../lib/assigned-provider-core";
 import { getLeaveRequestDetail } from "../../../../../../lib/hr-leave-detail";
 import {
   buildHrLeaveListHref,
   getHrLeaveReturnLink,
   HR_LEAVE_CANONICAL_HOST_LINK,
   type HrLeaveFocusNavigation,
+  parseHrLeaveListCursor,
   parseHrLeaveOriginFocusId,
   parseHrLeaveReturnContext,
 } from "../../../../../../lib/hr-leave-navigation-core";
+import {
+  buildNestedRouteBackedWidgetHref,
+  parseOptionalRouteBackedWidgetOrigin,
+} from "../../../../../../lib/route-backed-widget-navigation-core";
 import {
   RouteBackedWidgetFocusPane,
   RouteBackedWidgetFocusWorkspace,
@@ -18,6 +24,7 @@ import HrLeaveDetailError from "../../../../../workspace/hr/leave/[leaveRequestI
 import { HrLeaveRequestDetailFace } from "../../../../../workspace/hr/leave/[leaveRequestId]/leave-request-detail-face";
 import HrLeaveDetailNotFound from "../../../../../workspace/hr/leave/[leaveRequestId]/not-found";
 import HrLeaveRequestPage from "../../../../../workspace/hr/leave/page";
+import MyWorkPage from "../../../../../workspace/my-work/page";
 
 interface InterceptedLeaveDetailPageProps {
   readonly params: Promise<{ leaveRequestId: string }>;
@@ -32,6 +39,8 @@ export default async function InterceptedLeaveDetailPage({
   const returnContext = parseHrLeaveReturnContext(parameters.returnContext);
   const returnLink = getHrLeaveReturnLink(returnContext);
   const originFocusId = parseHrLeaveOriginFocusId(parameters.originFocusId);
+  const routeOrigin = parseOptionalRouteBackedWidgetOrigin(parameters);
+  const fromFocusedMyWork = returnContext === "my-work" && routeOrigin !== undefined;
   const detailResult = await (async () => {
     try {
       const detail = await getLeaveRequestDetail(leaveRequestId);
@@ -41,7 +50,9 @@ export default async function InterceptedLeaveDetailPage({
     }
   })();
 
-  const fallbackHref = returnLink?.href ?? HR_LEAVE_CANONICAL_HOST_LINK.href;
+  const fallbackHref = fromFocusedMyWork
+    ? routeOrigin.fallbackHref
+    : (returnLink?.href ?? HR_LEAVE_CANONICAL_HOST_LINK.href);
   const focusNavigation: HrLeaveFocusNavigation | undefined =
     returnContext === "leave-list"
       ? { returnContext }
@@ -49,13 +60,36 @@ export default async function InterceptedLeaveDetailPage({
           originFocusId
         ? { originFocusId, returnContext }
         : undefined;
-  const masterHref = focusNavigation ? buildHrLeaveListHref(focusNavigation) : fallbackHref;
-  const showMaster = Boolean(focusNavigation) && detailResult.kind !== "error";
+  const listCursor =
+    returnContext === "leave-list" ? parseHrLeaveListCursor(parameters) : undefined;
+  const masterParameters = fromFocusedMyWork
+    ? fromAssignedProviderMasterCursorParameters(parameters)
+    : listCursor
+      ? {
+          cursorLeaveRequestId: listCursor.leaveRequestId,
+          cursorSubmittedAt: listCursor.submittedAt,
+        }
+      : {};
+  const myWorkQuery = new URLSearchParams(masterParameters).toString();
+  const masterHref = fromFocusedMyWork
+    ? buildNestedRouteBackedWidgetHref(
+        myWorkQuery ? `/workspace/my-work?${myWorkQuery}` : "/workspace/my-work",
+        routeOrigin,
+      )
+    : focusNavigation
+      ? buildHrLeaveListHref(focusNavigation, listCursor)
+      : fallbackHref;
+  const showMaster =
+    (fromFocusedMyWork || Boolean(focusNavigation)) && detailResult.kind !== "error";
   const leadingControl =
     showMaster || returnLink ? (
       <RouteBackedWidgetNestedBackLink href={masterHref}>
         <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
-        {showMaster ? "Back to requests" : returnLink?.label}
+        {fromFocusedMyWork
+          ? "Back to My Work"
+          : showMaster
+            ? "Back to requests"
+            : returnLink?.label}
       </RouteBackedWidgetNestedBackLink>
     ) : undefined;
   return (
@@ -63,7 +97,7 @@ export default async function InterceptedLeaveDetailPage({
       browserBackMode={showMaster ? "return-master" : "close-origin"}
       fallbackHref={fallbackHref}
       label="Leave request detail"
-      returnFocusId={originFocusId ?? "leave-detail-fallback-focus"}
+      returnFocusId={routeOrigin?.returnFocusId ?? originFocusId ?? "leave-detail-fallback-focus"}
     >
       <RouteBackedWidgetFocusWorkspace
         activePane="detail"
@@ -72,13 +106,20 @@ export default async function InterceptedLeaveDetailPage({
         layout={showMaster ? "master-detail" : "single"}
         workspaceId="hr-leave"
       >
-        {showMaster && focusNavigation ? (
+        {showMaster ? (
           <RouteBackedWidgetFocusPane kind="master">
-            <HrLeaveRequestPage
-              focusNavigation={focusNavigation}
-              mode="focus-master"
-              searchParams={Promise.resolve({})}
-            />
+            {fromFocusedMyWork ? (
+              <MyWorkPage
+                focusOrigin={routeOrigin}
+                searchParams={Promise.resolve(masterParameters)}
+              />
+            ) : focusNavigation ? (
+              <HrLeaveRequestPage
+                focusNavigation={focusNavigation}
+                mode="focus-master"
+                searchParams={Promise.resolve(masterParameters)}
+              />
+            ) : null}
           </RouteBackedWidgetFocusPane>
         ) : null}
         <RouteBackedWidgetFocusPane kind="detail">

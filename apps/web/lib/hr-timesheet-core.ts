@@ -9,6 +9,7 @@ import type {
   HrTimesheetCreateBody,
   HrTimesheetEditDraftBody,
   HrTimesheetListResponse,
+  HrTimesheetOwnCursor,
   HrTimesheetRejectBody,
   HrTimesheetResponse,
   HrTimesheetSubmitBody,
@@ -574,14 +575,27 @@ export function buildTimesheetCorrectionDetailHref(value: unknown): string {
 export function buildOwnTimesheetPath(search: Search): string {
   try {
     const query = new URLSearchParams();
-    const periodStartPresent = Object.hasOwn(search, "cursorPeriodStart");
-    const timesheetIdPresent = Object.hasOwn(search, "cursorTimesheetId");
-    if (periodStartPresent !== timesheetIdPresent) throw 0;
-    if (periodStartPresent) {
-      query.set("cursorPeriodStart", date(search.cursorPeriodStart));
-      query.set("cursorTimesheetId", uuid(search.cursorTimesheetId));
+    const cursor = parseOwnTimesheetCursor(search);
+    if (cursor) {
+      query.set("cursorPeriodStart", cursor.periodStart);
+      query.set("cursorTimesheetId", cursor.timesheetId);
     }
     return `/v1/hr/timesheets/own${query.size ? `?${query}` : ""}`;
+  } catch {
+    throw new TimesheetUiError("validation", 400);
+  }
+}
+
+export function parseOwnTimesheetCursor(search: Search): HrTimesheetOwnCursor | undefined {
+  try {
+    const periodStartPresent = Object.hasOwn(search, "cursorPeriodStart");
+    const timesheetIdPresent = Object.hasOwn(search, "cursorTimesheetId");
+    if (!periodStartPresent && !timesheetIdPresent) return undefined;
+    if (periodStartPresent !== timesheetIdPresent) throw 0;
+    return Object.freeze({
+      periodStart: date(search.cursorPeriodStart),
+      timesheetId: uuid(search.cursorTimesheetId),
+    });
   } catch {
     throw new TimesheetUiError("validation", 400);
   }

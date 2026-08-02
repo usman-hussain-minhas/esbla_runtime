@@ -31,9 +31,29 @@ async function closeActors(...actors) {
   }
 }
 
+async function postLocation(response, routeBacked) {
+  if (!routeBacked) {
+    expect(response.status()).toBe(303);
+    const location = response.headers().location;
+    expect(location).toBeTruthy();
+    return location;
+  }
+  expect(response.status()).toBe(200);
+  expect(response.headers()["content-type"]?.split(";", 1)[0]?.trim().toLowerCase()).toBe(
+    "application/json",
+  );
+  const payload = await response.json();
+  expect(Object.keys(payload)).toEqual(["location"]);
+  expect(payload.location).toMatch(/^\/(?!\/)/);
+  return payload.location;
+}
+
 async function post(actor, buttonName) {
   const button = actor.page.getByRole("button", { exact: true, name: buttonName });
   await expect(button).toBeEnabled();
+  const form = button.locator("xpath=ancestor::form");
+  const routeBacked = (await form.getAttribute("data-route-backed-post")) === "true";
+  const submittedIdempotencyKey = await form.locator('input[name="idempotencyKey"]').inputValue();
   await expect(async () => {
     await button.focus();
     await expect(button).toBeFocused({ timeout: 250 });
@@ -47,10 +67,25 @@ async function post(actor, buttonName) {
         new URL(candidate.url()).pathname === "/workspace/hr/timesheets/action",
       { timeout: 20_000 },
     ),
-    actor.page.waitForNavigation({ timeout: 20_000, waitUntil: "domcontentloaded" }),
     button.click(),
   ]);
-  expect(response.status()).toBe(303);
+  const location = await postLocation(response, routeBacked);
+  await expect
+    .poll(
+      () =>
+        actor.page
+          .locator('input[name="idempotencyKey"]')
+          .evaluateAll(
+            (inputs, consumedKey) =>
+              inputs.some(
+                (input) => input instanceof HTMLInputElement && input.value === consumedKey,
+              ),
+            submittedIdempotencyKey,
+          ),
+      { timeout: 20_000 },
+    )
+    .toBe(false);
+  await expect(actor.page).toHaveURL(new URL(location, actor.origin).toString());
   await expect(actor.page.locator("#timesheet-result")).toBeFocused();
 }
 
@@ -248,16 +283,94 @@ test("employee creates, edits, submits, and reloads a rendered weekly Timesheet"
     await expect(actor.page.locator(".leave-status")).toHaveText("Submitted");
     await expect(actor.page.getByRole("heading", { name: "Version history" })).toBeVisible();
     await expect(actor.page.getByText("Version 1: Submitted")).toBeVisible();
+    const timesheetId = new URL(actor.page.url()).pathname.split("/").at(-1);
+    expect(timesheetId).toMatch(/^[0-9a-f-]+$/);
 
     await actor.page.reload();
     await expect(actor.page.locator(".leave-status")).toHaveText("Submitted");
     await expect(actor.page.getByText("Bounded internal work")).toBeVisible();
+
+    await actor.page.goto(actor.origin);
+    const compactTimesheetRow = actor.page
+      .locator('[data-widget-definition="hr.timesheet.mine"]')
+      .locator(`a[href^="/workspace/hr/timesheets/by-id/${timesheetId}?"]`);
+    const compactTimesheetFocusId = `mission-control.my-timesheets.${timesheetId}`;
+    await expect(compactTimesheetRow).toHaveAttribute("id", compactTimesheetFocusId);
+    await expect(compactTimesheetRow).toHaveAttribute(
+      "href",
+      `/workspace/hr/timesheets/by-id/${timesheetId}?returnTo=own&originFocusId=${compactTimesheetFocusId}&returnSurface=mission-control`,
+    );
+    await compactTimesheetRow.click();
+    const compactTimesheetDetail = actor.page.getByRole("dialog", {
+      exact: true,
+      name: "Timesheet detail",
+    });
+    await expect(compactTimesheetDetail).toBeVisible();
+    await compactTimesheetDetail
+      .getByRole("button", { exact: true, name: "Close Timesheet detail" })
+      .click();
+    await expect(actor.page).toHaveURL(actor.origin);
+    await expect(actor.page.locator(`[id="${compactTimesheetFocusId}"]`)).toBeFocused();
+
     await actor.page.setViewportSize({ height: 844, width: 390 });
     expect(
       await actor.page.evaluate(
         () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
       ),
     ).toBe(true);
+  } finally {
+    await closeActors(actor);
+  }
+});
+
+test("own Timesheet cursor survives draft edit and submission", async ({ browser }) => {
+  const actor = await openActor(browser, fixture.employmentEmployeeOrigin);
+  const cursorPeriodStart = "2099-12-31";
+  const cursorTimesheetId = "ffffffff-ffff-8fff-bfff-ffffffffffff";
+  try {
+    await actor.page.goto(`${actor.origin}/workspace/hr/timesheets`);
+    await actor.page.getByLabel("Period starts").fill("2029-04-02");
+    await actor.page.getByLabel("Period ends").fill("2029-04-08");
+    await post(actor, "Create Timesheet draft");
+    const timesheetId = new URL(actor.page.url()).searchParams.get("edit");
+    expect(timesheetId).toMatch(/^[0-9a-f-]+$/);
+
+    const cursorQuery = new URLSearchParams({
+      cursorPeriodStart,
+      cursorTimesheetId,
+      edit: timesheetId,
+    });
+    await actor.page.goto(`${actor.origin}/workspace/hr/timesheets?${cursorQuery}`);
+    const editHref = await actor.page
+      .locator(`a[href*="edit=${timesheetId}"]`)
+      .first()
+      .getAttribute("href");
+    expect(new URL(editHref, actor.origin).searchParams.get("cursorPeriodStart")).toBe(
+      cursorPeriodStart,
+    );
+    expect(new URL(editHref, actor.origin).searchParams.get("cursorTimesheetId")).toBe(
+      cursorTimesheetId,
+    );
+
+    await actor.page.getByLabel("Work date").first().fill("2029-04-02");
+    await actor.page.getByLabel("Minutes").first().fill("480");
+    await actor.page.getByLabel("Description").first().fill("Cursor continuity");
+    await post(actor, "Save Timesheet draft");
+    expect(new URL(actor.page.url()).searchParams.get("cursorPeriodStart")).toBe(cursorPeriodStart);
+    expect(new URL(actor.page.url()).searchParams.get("cursorTimesheetId")).toBe(cursorTimesheetId);
+
+    await post(actor, "Submit Timesheet");
+    expect(new URL(actor.page.url()).searchParams.get("cursorPeriodStart")).toBe(cursorPeriodStart);
+    expect(new URL(actor.page.url()).searchParams.get("cursorTimesheetId")).toBe(cursorTimesheetId);
+    const backHref = await actor.page
+      .getByRole("link", { exact: true, name: "Back to Timesheets" })
+      .getAttribute("href");
+    expect(new URL(backHref, actor.origin).searchParams.get("cursorPeriodStart")).toBe(
+      cursorPeriodStart,
+    );
+    expect(new URL(backHref, actor.origin).searchParams.get("cursorTimesheetId")).toBe(
+      cursorTimesheetId,
+    );
   } finally {
     await closeActors(actor);
   }
@@ -336,8 +449,11 @@ test("manager decides assigned Timesheets and tenant settings alter rejection be
       "2029-02-05",
       "Approval journey",
     );
-    await manager.page.goto(`${manager.origin}/workspace/my-work`);
-    const approval = manager.page
+    await manager.page.goto(`${manager.origin}/workspace/hr`);
+    await manager.page.getByRole("link", { exact: true, name: "Open My Work" }).click();
+    const focusedMyWork = manager.page.getByRole("dialog", { exact: true, name: "My Work" });
+    await expect(focusedMyWork).toBeVisible();
+    const approval = focusedMyWork
       .getByRole("listitem")
       .filter({ hasText: "2029-02-05 to 2029-02-11" });
     await expect(approval).toContainText("Needs review");
@@ -346,8 +462,38 @@ test("manager decides assigned Timesheets and tenant settings alter rejection be
     await expect(manager.page.getByRole("button", { name: "Reject Timesheet" })).toBeVisible();
     await manager.page.getByLabel("Approval note").fill("Reviewed current work-time facts");
     await post(manager, "Approve Timesheet");
-    await expect(manager.page.locator(".leave-status")).toHaveText("Approved");
-    await expect(manager.page.getByText("Version 1: Approved")).toBeVisible();
+    const decisionDialog = manager.page.getByRole("dialog", {
+      exact: true,
+      name: "Timesheet detail",
+    });
+    await expect(decisionDialog.locator(".leave-status")).toHaveText("Approved");
+    await expect(decisionDialog.getByText("Version 1: Approved")).toBeVisible();
+    await expect
+      .poll(() => new URL(manager.page.url()).searchParams.get("returnContext"))
+      .toBe("my-work");
+    expect(new URL(manager.page.url()).searchParams.get("returnTo")).toBeNull();
+    await expect
+      .poll(() => new URL(manager.page.url()).searchParams.get("returnSurface"))
+      .toBe("hr-mission-control");
+    const focusedDetail = manager.page.getByRole("dialog", {
+      exact: true,
+      name: "Timesheet detail",
+    });
+    await expect(
+      focusedDetail.locator('[data-focus-workspace="hr-timesheet-my-work"]'),
+    ).toHaveAttribute("data-focus-layout", "master-detail");
+    await expect(focusedDetail.locator(".history-list li").first()).toContainText(
+      "Approved — 8h 0m",
+    );
+    await manager.page.goBack();
+    await expect(manager.page.getByRole("dialog", { exact: true, name: "My Work" })).toBeVisible();
+    await expect(manager.page).toHaveURL(/\/workspace\/my-work\?/);
+    await manager.page.goForward();
+    await expect(
+      manager.page
+        .getByRole("dialog", { exact: true, name: "Timesheet detail" })
+        .locator('[data-focus-workspace="hr-timesheet-my-work"]'),
+    ).toHaveAttribute("data-focus-layout", "master-detail");
 
     await employee.page.goto(
       `${employee.origin}/workspace/hr/timesheets/by-id/${approvedId}?returnTo=own`,

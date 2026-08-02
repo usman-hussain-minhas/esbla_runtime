@@ -14,12 +14,14 @@ interface LeaveApprovalActionProps {
   readonly expectedVersion: number;
   readonly idempotencyKey: string;
   readonly leaveRequestId: string;
+  readonly successHref?: string;
 }
 
 export function LeaveApprovalAction({
   expectedVersion,
   idempotencyKey,
   leaveRequestId,
+  successHref,
 }: LeaveApprovalActionProps) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
@@ -64,8 +66,7 @@ export function LeaveApprovalAction({
         setState(result.state);
         return;
       }
-      router.push(buildHrLeaveDetailHref(result.leaveRequestId, "my-work"));
-      router.refresh();
+      router.push(successHref ?? buildHrLeaveDetailHref(result.leaveRequestId, "my-work"));
     } catch {
       setState(approveFormStateForError(new Error("unavailable")));
     } finally {

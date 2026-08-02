@@ -32,6 +32,7 @@ interface RouteBackedWidgetNavigation {
   readonly clearDirty: () => void;
   readonly close: () => void;
   readonly confirmNestedNavigation: () => boolean;
+  readonly focusHashTarget: (hash: string) => void;
 }
 
 const focusableSelector = [
@@ -42,7 +43,30 @@ const focusableSelector = [
   "textarea:not([disabled])",
   '[tabindex]:not([tabindex="-1"])',
 ].join(",");
+const RESULT_FOCUS_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+){1,8}$/;
+const ROUTE_BACKED_POST_RESPONSE_HEADER = "x-esbla-route-backed-post-response";
+const ROUTE_BACKED_REFRESH_PARAMETER = "__esblaRouteRefresh";
+const ROUTE_BACKED_REFRESH_TOKEN_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RouteBackedWidgetNavigationContext = createContext<RouteBackedWidgetNavigation | null>(null);
+
+function parseRouteBackedPostResponse(value: unknown): string | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.length !== 1 || keys[0] !== "location") return null;
+  return typeof record.location === "string" &&
+    record.location.startsWith("/") &&
+    !record.location.startsWith("//")
+    ? record.location
+    : null;
+}
+
+function withRouteBackedRefreshToken(target: string): string {
+  const destination = new URL(target, window.location.origin);
+  destination.searchParams.set(ROUTE_BACKED_REFRESH_PARAMETER, window.crypto.randomUUID());
+  return `${destination.pathname}${destination.search}${destination.hash}`;
+}
 
 export function RouteBackedWidgetOverlay({
   browserBackMode = "close-origin",
@@ -93,6 +117,21 @@ export function RouteBackedWidgetOverlay({
   }, []);
   const clearDirty = useCallback(() => {
     dirty.current = false;
+  }, []);
+  const focusHashTarget = useCallback((hash: string) => {
+    if (!hash.startsWith("#")) return;
+    let targetId: string;
+    try {
+      targetId = decodeURIComponent(hash.slice(1));
+    } catch {
+      return;
+    }
+    const root = dialog.current;
+    if (!root || !targetId) return;
+    const target = document.getElementById(targetId);
+    if (target instanceof HTMLElement && root.contains(target)) {
+      target.focus({ preventScroll: true });
+    }
   }, []);
   const close = useCallback(() => {
     if (
@@ -299,8 +338,8 @@ export function RouteBackedWidgetOverlay({
   }, [mounted, routeIdentity]);
 
   const navigation = useMemo(
-    () => ({ clearDirty, close, confirmNestedNavigation }),
-    [clearDirty, close, confirmNestedNavigation],
+    () => ({ clearDirty, close, confirmNestedNavigation, focusHashTarget }),
+    [clearDirty, close, confirmNestedNavigation, focusHashTarget],
   );
   if (!mounted) return null;
   return createPortal(
@@ -367,20 +406,35 @@ export function RouteBackedWidgetPostForm({
   action,
   children,
   className,
+  resultFocusId,
 }: {
   readonly action: string;
   readonly children: ReactNode;
   readonly className?: string;
+  readonly resultFocusId?: string;
 }) {
   const router = useRouter();
+  const searchParameters = useSearchParams();
+  const refreshToken = searchParameters.get(ROUTE_BACKED_REFRESH_PARAMETER);
   const navigation = useContext(RouteBackedWidgetNavigationContext);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  useEffect(() => {
+    if (!refreshToken || !ROUTE_BACKED_REFRESH_TOKEN_PATTERN.test(refreshToken)) return;
+    const canonical = new URL(window.location.href);
+    canonical.searchParams.delete(ROUTE_BACKED_REFRESH_PARAMETER);
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${canonical.pathname}${canonical.search}${canonical.hash}`,
+    );
+  }, [refreshToken]);
   if (
     !action.startsWith("/") ||
     action.startsWith("//") ||
     action.includes("?") ||
-    action.includes("#")
+    action.includes("#") ||
+    (resultFocusId !== undefined && !RESULT_FOCUS_ID_PATTERN.test(resultFocusId))
   ) {
     throw new Error("Route-backed widget form action is invalid");
   }
@@ -402,13 +456,29 @@ export function RouteBackedWidgetPostForm({
         body: parameters,
         cache: "no-store",
         credentials: "same-origin",
+        headers: { [ROUTE_BACKED_POST_RESPONSE_HEADER]: "json" },
         method: "POST",
         redirect: "follow",
       });
-      const destination = new URL(response.url, window.location.origin);
+      let destination: URL;
+      let hasNavigationReceipt = false;
+      if (response.redirected) {
+        destination = new URL(response.url, window.location.origin);
+      } else {
+        if (
+          response.status !== 200 ||
+          response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !==
+            "application/json"
+        ) {
+          throw new Error("Unsafe route-backed form response");
+        }
+        const location = parseRouteBackedPostResponse(await response.json());
+        if (!location) throw new Error("Unsafe route-backed form response");
+        destination = new URL(location, window.location.origin);
+        hasNavigationReceipt = true;
+      }
       if (
         !response.ok ||
-        !response.redirected ||
         destination.origin !== window.location.origin ||
         !destination.pathname.startsWith("/") ||
         destination.pathname.startsWith("//")
@@ -416,7 +486,16 @@ export function RouteBackedWidgetPostForm({
         throw new Error("Unsafe route-backed form response");
       }
       navigation?.clearDirty();
-      router.push(`${destination.pathname}${destination.search}${destination.hash}`);
+      const resultHash =
+        destination.hash || (resultFocusId ? `#${encodeURIComponent(resultFocusId)}` : "");
+      const target = `${destination.pathname}${destination.search}${resultHash}`;
+      const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      navigation?.focusHashTarget(resultHash);
+      if (target === current && hasNavigationReceipt) {
+        router.replace(withRouteBackedRefreshToken(target), { scroll: false });
+      } else if (target === current) router.refresh();
+      else if (destination.pathname === window.location.pathname) router.replace(target);
+      else router.push(target);
     } catch {
       setError("The action could not be completed. Review current values and try again.");
     } finally {
@@ -428,6 +507,7 @@ export function RouteBackedWidgetPostForm({
       action={action}
       aria-busy={submitting}
       className={className}
+      data-route-backed-post="true"
       data-route-submitting={submitting ? "true" : "false"}
       method="post"
       onSubmit={submit}

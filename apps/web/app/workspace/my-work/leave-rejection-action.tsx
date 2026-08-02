@@ -14,12 +14,14 @@ interface LeaveRejectionActionProps {
   readonly expectedVersion: number;
   readonly idempotencyKey: string;
   readonly leaveRequestId: string;
+  readonly successHref?: string;
 }
 
 export function LeaveRejectionAction({
   expectedVersion,
   idempotencyKey,
   leaveRequestId,
+  successHref,
 }: LeaveRejectionActionProps) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
@@ -73,8 +75,7 @@ export function LeaveRejectionAction({
         setState(result.state);
         return;
       }
-      router.push(buildHrLeaveDetailHref(result.leaveRequestId, "my-work"));
-      router.refresh();
+      router.push(successHref ?? buildHrLeaveDetailHref(result.leaveRequestId, "my-work"));
     } catch {
       setState(rejectFormStateForError(new Error("unavailable")));
     } finally {

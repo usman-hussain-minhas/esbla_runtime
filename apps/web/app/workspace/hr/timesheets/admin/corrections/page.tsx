@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import type { ReactNode } from "react";
 import { loadOwnTimesheets } from "../../../../../../lib/hr-timesheet";
 import {
   buildTimesheetCorrectionDetailHref,
@@ -6,12 +7,45 @@ import {
   TimesheetUiError,
   timesheetStateForError,
 } from "../../../../../../lib/hr-timesheet-core";
+import {
+  buildNestedRouteBackedWidgetHref,
+  getRouteBackedWidgetOriginParameters,
+  type RouteBackedWidgetOrigin,
+} from "../../../../../../lib/route-backed-widget-navigation-core";
+import { RouteBackedWidgetGetForm } from "../../../../../../theme/zen-theme/v1/route-backed-widget-overlay";
 
 interface TimesheetCorrectionsPageProps {
+  readonly focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  readonly mode?: "focus" | "standalone" | undefined;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
+function CorrectionLookupForm({
+  children,
+  focusOrigin,
+}: Readonly<{ children: ReactNode; focusOrigin?: RouteBackedWidgetOrigin | undefined }>) {
+  if (!focusOrigin)
+    return (
+      <form className="leave-request-form" method="get">
+        {children}
+      </form>
+    );
+  const origin = getRouteBackedWidgetOriginParameters(focusOrigin);
+  return (
+    <RouteBackedWidgetGetForm
+      action="/workspace/hr/timesheets/admin/corrections"
+      className="leave-request-form"
+    >
+      <input name="originFocusId" type="hidden" value={origin.originFocusId} />
+      <input name="returnSurface" type="hidden" value={origin.returnSurface} />
+      {children}
+    </RouteBackedWidgetGetForm>
+  );
+}
+
 export default async function TimesheetCorrectionsPage({
+  focusOrigin,
+  mode = "standalone",
   searchParams,
 }: TimesheetCorrectionsPageProps) {
   const [parameters, state] = await Promise.all([searchParams, loadOwnTimesheets()]);
@@ -28,7 +62,10 @@ export default async function TimesheetCorrectionsPage({
       lookupInvalid = true;
     }
   }
-  if (correctionHref) redirect(correctionHref);
+  if (correctionHref)
+    redirect(
+      focusOrigin ? buildNestedRouteBackedWidgetHref(correctionHref, focusOrigin) : correctionHref,
+    );
   const unavailable =
     state.status === "error" && state.kind !== "denied"
       ? state
@@ -36,9 +73,11 @@ export default async function TimesheetCorrectionsPage({
 
   return (
     <section aria-labelledby="timesheet-corrections-heading" className="work-surface">
-      <a className="text-command detail-back" href="/workspace/hr">
-        Back to HR
-      </a>
+      {mode === "standalone" ? (
+        <a className="text-command detail-back" href="/workspace/hr">
+          Back to HR
+        </a>
+      ) : null}
       <header className="surface-heading">
         <div>
           <p className="surface-label">Timesheet</p>
@@ -56,7 +95,7 @@ export default async function TimesheetCorrectionsPage({
         </div>
       ) : null}
       {canCreateCorrection ? (
-        <form className="leave-request-form" method="get">
+        <CorrectionLookupForm focusOrigin={focusOrigin}>
           <div className="form-field">
             <label htmlFor="timesheet-correction-id">Timesheet ID</label>
             <input
@@ -79,7 +118,7 @@ export default async function TimesheetCorrectionsPage({
           <button className="command-button command-button-primary" type="submit">
             Open Timesheet
           </button>
-        </form>
+        </CorrectionLookupForm>
       ) : (
         <div className="form-error-summary" role="alert">
           <h2>{unavailable.title}</h2>

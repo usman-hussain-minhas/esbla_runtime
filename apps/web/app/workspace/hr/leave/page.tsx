@@ -1,4 +1,4 @@
-import type { HrLeaveRequest, HrLeaveRequestCursor } from "@esbla/contracts/hr-leave-api";
+import type { HrLeaveRequest } from "@esbla/contracts/hr-leave-api";
 import { ArrowRight, CalendarDays, Plus } from "lucide-react";
 import Link from "next/link";
 import { getOwnLeaveRequests } from "../../../../lib/hr-leave-list";
@@ -7,6 +7,7 @@ import {
   buildHrLeaveListHref,
   buildHrLeaveNewHref,
   type HrLeaveFocusNavigation,
+  parseHrLeaveListCursor,
 } from "../../../../lib/hr-leave-navigation-core";
 
 interface LeaveListPageProps {
@@ -21,18 +22,6 @@ const categoryLabels = {
   sick: "Sick",
   unpaid: "Unpaid",
 } as const;
-
-function single(value: string | string[] | undefined): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function cursorFrom(searchParams: Record<string, string | string[] | undefined>) {
-  const leaveRequestId = single(searchParams.cursorLeaveRequestId);
-  const submittedAt = single(searchParams.cursorSubmittedAt);
-  if (!leaveRequestId && !submittedAt) return undefined;
-  if (!leaveRequestId || !submittedAt) throw new Error("Incomplete leave-request cursor");
-  return { leaveRequestId, submittedAt } satisfies HrLeaveRequestCursor;
-}
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", {
@@ -65,7 +54,7 @@ export default async function HrLeaveListPage({
   searchParams,
 }: LeaveListPageProps) {
   const parameters = await searchParams;
-  const cursor = cursorFrom(parameters);
+  const cursor = parseHrLeaveListCursor(parameters);
   const page = await getOwnLeaveRequests(cursor);
 
   return (
@@ -134,6 +123,7 @@ export default async function HrLeaveListPage({
                         request.leaveRequestId,
                         focusNavigation?.returnContext ?? "leave-list",
                         focusNavigation?.originFocusId,
+                        cursor,
                       )}
                       prefetch={false}
                     >
