@@ -7,11 +7,24 @@ import { basename, join } from "node:path";
 const commandArguments = process.argv.slice(2);
 const oneRestartOnExit75 = commandArguments[0] === "--one-restart-on-exit-75";
 if (oneRestartOnExit75) commandArguments.shift();
-const [command, ...args] = commandArguments;
+const [command, ...providedArgs] = commandArguments;
 
 if (!command) {
   throw new Error("Usage: node scripts/test/with-postgres.mjs <command> [...args]");
 }
+
+const defaultIntegrationTestTimeoutMs = 15_000;
+const hasExplicitTestTimeout = providedArgs.some(
+  (argument) =>
+    argument === "--testTimeout" ||
+    argument.startsWith("--testTimeout=") ||
+    argument === "--test-timeout" ||
+    argument.startsWith("--test-timeout="),
+);
+const args =
+  basename(command) === "vitest" && providedArgs[0] === "run" && !hasExplicitTestTimeout
+    ? [...providedArgs, `--testTimeout=${defaultIntegrationTestTimeoutMs}`]
+    : providedArgs;
 
 const setupForceAfterMs = 2_000;
 const readinessTimeoutMs = 15_000;
