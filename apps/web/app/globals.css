@@ -1961,7 +1961,7 @@ textarea:focus-visible,
 
 .zen-widget-overlay {
   align-items: stretch;
-  background: var(--surface-canvas);
+  background: var(--bg-base);
   display: flex;
   bottom: var(--zen-visual-block-end);
   left: var(--zen-visual-inline-start);

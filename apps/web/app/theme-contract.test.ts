@@ -78,7 +78,7 @@ describe("Esbla Theme v1 host contract", () => {
     );
     for (const source of intercepted) {
       expect(source).toContain("RouteBackedWidgetOverlay");
-      expect(source).toContain("RouteBackedWidgetFullScreenFace");
+      expect(source).toMatch(/RouteBackedWidget(?:FocusWorkspace|FullScreenFace)/);
       expect(source).toContain("parseRouteBackedWidgetOrigin");
     }
   });
@@ -132,6 +132,34 @@ describe("Esbla Theme v1 host contract", () => {
     }
     expect(sources[2]).toContain("loadAttendanceDetail");
     expect(sources[5]).toContain("loadShiftDetail");
+  });
+
+  it("covers every Employment and Workforce catalogue face with route-backed focus workspaces", async () => {
+    const sources = await Promise.all(
+      [
+        "./@modal/(.)workspace/hr/employment/page.tsx",
+        "./@modal/(.)workspace/hr/employment/admin/page.tsx",
+        "./@modal/(.)workspace/hr/employment/by-id/[employmentRecordId]/page.tsx",
+        "./@modal/(.)workspace/hr/profile/page.tsx",
+        "./@modal/(.)workspace/hr/profile/admin/page.tsx",
+        "./@modal/(.)workspace/hr/profile/direct-reports/page.tsx",
+        "./@modal/(.)workspace/hr/profile/by-id/[workerProfileId]/page.tsx",
+      ].map((path) => readFile(new URL(path, import.meta.url), "utf8")),
+    );
+
+    for (const source of sources) {
+      expect(source).toContain("RouteBackedWidgetOverlay");
+      expect(source).toContain("RouteBackedWidgetFocusWorkspace");
+      expect(source).toContain("parseRouteBackedWidgetOrigin");
+    }
+    for (const detail of [sources[2], sources[6]]) {
+      expect(detail).toContain('"master-detail"');
+      expect(detail).toContain("RouteBackedWidgetNestedBackLink");
+      expect(detail).toContain("withoutRouteBackedWidgetOrigin");
+      expect(detail).toContain('browserBackMode={masterKind ? "return-master" : "close-origin"}');
+    }
+    expect(sources[2]).toContain("loadEmploymentDetail");
+    expect(sources[6]).toContain("loadAuthorizedWorkforceProfileDetail");
   });
 
   it("renders the ratified Timesheet Draft definition as the current domain form", async () => {

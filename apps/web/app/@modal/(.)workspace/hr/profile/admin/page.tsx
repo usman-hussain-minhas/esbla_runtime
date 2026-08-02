@@ -1,35 +1,35 @@
-import { parseRouteBackedWidgetOrigin } from "../../../../../lib/route-backed-widget-navigation-core";
+import { parseRouteBackedWidgetOrigin } from "../../../../../../lib/route-backed-widget-navigation-core";
 import {
   RouteBackedWidgetFocusPane,
   RouteBackedWidgetFocusWorkspace,
   RouteBackedWidgetOverlay,
-} from "../../../../../theme/zen-theme/v1/route-backed-widget-overlay";
-import EmploymentPage from "../../../../workspace/hr/employment/page";
+} from "../../../../../../theme/zen-theme/v1/route-backed-widget-overlay";
+import WorkforceProfileAdminPage from "../../../../../workspace/hr/profile/admin/page";
 
 interface Props {
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
-export default async function InterceptedEmploymentPage({ searchParams }: Props) {
+export default async function InterceptedWorkforceAdminPage({ searchParams }: Props) {
   const parameters = await searchParams;
   const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr");
   return (
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}
-      label="Employment facts"
+      label="Workforce administration"
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace
         activePane="master"
-        closeLabel="Close employment facts"
+        closeLabel="Close Workforce administration"
         fallbackHref={origin.fallbackHref}
         layout="single"
-        workspaceId="hr-employment-list"
+        workspaceId="hr-workforce-admin"
       >
         <RouteBackedWidgetFocusPane kind="master">
-          <EmploymentPage
+          <WorkforceProfileAdminPage
             focusOrigin={origin}
-            mode="focus-master"
+            mode="focus"
             searchParams={Promise.resolve(parameters)}
           />
         </RouteBackedWidgetFocusPane>

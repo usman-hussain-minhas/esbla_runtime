@@ -9,8 +9,14 @@ import {
   type WorkforceListView,
   workforceListDetailHref,
 } from "../../../../lib/hr-workforce-profile-list-core";
+import {
+  type RouteBackedWidgetOrigin,
+  withoutRouteBackedWidgetOrigin,
+} from "../../../../lib/route-backed-widget-navigation-core";
+import { RouteBackedWidgetLink } from "../../../../theme/zen-theme/v1/route-backed-widget-link";
 
 interface AuthorizedWorkforceListProps {
+  readonly focusOrigin?: RouteBackedWidgetOrigin | undefined;
   readonly searchParams: Record<string, string | string[] | undefined>;
   readonly view: WorkforceListView;
 }
@@ -34,12 +40,14 @@ function formatDateTime(value: string) {
 function WorkforceRow({
   assignedAt,
   canCreateEmployment,
+  focusOrigin,
   index,
   profile,
   view,
 }: Readonly<{
   assignedAt?: string;
   canCreateEmployment: boolean;
+  focusOrigin?: RouteBackedWidgetOrigin | undefined;
   index: number;
   profile: HrWorkforceProfile;
   view: WorkforceListView;
@@ -50,6 +58,9 @@ function WorkforceRow({
     view === "workforce" &&
     ((profile.workforceStatus === "active" && profile.principalLinked) ||
       (profile.workforceStatus === "draft" && !profile.principalLinked));
+  const startEmploymentHref = `/workspace/hr/employment/admin?workerProfileId=${encodeURIComponent(
+    profile.workerProfileId,
+  )}`;
   return (
     <tr>
       <td data-label="Profile">{label}</td>
@@ -66,22 +77,22 @@ function WorkforceRow({
       ) : null}
       <td data-label="Actions">
         <div className="work-queue-actions">
-          <a
+          <RouteBackedWidgetLink
             className="text-command work-detail-link"
+            focusOrigin={focusOrigin}
             href={workforceListDetailHref(profile.workerProfileId, view)}
           >
             View details
             <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
-          </a>
+          </RouteBackedWidgetLink>
           {canStartEmployment ? (
-            <a
+            <RouteBackedWidgetLink
               className="text-command"
-              href={`/workspace/hr/employment/admin?workerProfileId=${encodeURIComponent(
-                profile.workerProfileId,
-              )}`}
+              focusOrigin={focusOrigin}
+              href={startEmploymentHref}
             >
               Start employment record
-            </a>
+            </RouteBackedWidgetLink>
           ) : null}
         </div>
       </td>
@@ -89,19 +100,26 @@ function WorkforceRow({
   );
 }
 
-function StatusFilters({ navigation }: Readonly<{ navigation: WorkforceListNavigation }>) {
+function StatusFilters({
+  focusOrigin,
+  navigation,
+}: Readonly<{
+  focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  navigation: WorkforceListNavigation;
+}>) {
   if (navigation.view !== "workforce") return null;
   return (
     <nav aria-label="Workforce status filters" className="work-queue-actions">
       {(Object.keys(statusLabels) as HrWorkforceStatus[]).map((status) => (
-        <a
-          aria-current={navigation.status === status ? "page" : undefined}
+        <RouteBackedWidgetLink
+          ariaCurrent={navigation.status === status ? "page" : undefined}
           className="text-command"
+          focusOrigin={focusOrigin}
           href={buildWorkforceListHref({ status, view: "workforce" }, null)}
           key={status}
         >
           {statusLabels[status]}
-        </a>
+        </RouteBackedWidgetLink>
       ))}
     </nav>
   );
@@ -120,11 +138,16 @@ export function AuthorizedWorkforceListLoading({ view }: Readonly<{ view: Workfo
 }
 
 export async function AuthorizedWorkforceList({
+  focusOrigin,
   searchParams,
   view,
 }: AuthorizedWorkforceListProps) {
+  const productSearch = withoutRouteBackedWidgetOrigin(searchParams) as Record<
+    string,
+    string | string[] | undefined
+  >;
   const [state, employment] = await Promise.all([
-    loadAuthorizedWorkforceList(searchParams, view),
+    loadAuthorizedWorkforceList(productSearch, view),
     view === "workforce" ? loadEmploymentList({ pageSize: "1" }) : Promise.resolve(null),
   ]);
   const canCreateEmployment =
@@ -147,7 +170,7 @@ export async function AuthorizedWorkforceList({
       : `No ${statusLabels[navigation.view === "workforce" ? navigation.status : "active"].toLowerCase()} workforce profiles`;
   return (
     <div>
-      <StatusFilters navigation={navigation} />
+      <StatusFilters focusOrigin={focusOrigin} navigation={navigation} />
       {page.items.length === 0 ? (
         <div className="empty-worklist">
           <span aria-hidden="true" className="empty-worklist-icon">
@@ -177,6 +200,7 @@ export async function AuthorizedWorkforceList({
                     <WorkforceRow
                       assignedAt={item.relationship.effectiveAt}
                       canCreateEmployment={canCreateEmployment}
+                      focusOrigin={focusOrigin}
                       index={index}
                       key={item.profile.workerProfileId}
                       profile={item.profile}
@@ -186,6 +210,7 @@ export async function AuthorizedWorkforceList({
                 : page.items.map((profile, index) => (
                     <WorkforceRow
                       canCreateEmployment={canCreateEmployment}
+                      focusOrigin={focusOrigin}
                       index={index}
                       key={profile.workerProfileId}
                       profile={profile}
@@ -199,16 +224,24 @@ export async function AuthorizedWorkforceList({
       {page.nextCursor || navigation.cursor ? (
         <nav aria-label="Workforce list pages" className="list-pagination">
           {navigation.cursor ? (
-            <a className="text-command" href={buildWorkforceListHref(navigation, null)}>
+            <RouteBackedWidgetLink
+              className="text-command"
+              focusOrigin={focusOrigin}
+              href={buildWorkforceListHref(navigation, null)}
+            >
               Start over
-            </a>
+            </RouteBackedWidgetLink>
           ) : (
             <span />
           )}
           {page.nextCursor ? (
-            <a className="text-command" href={buildWorkforceListHref(navigation, page.nextCursor)}>
+            <RouteBackedWidgetLink
+              className="text-command"
+              focusOrigin={focusOrigin}
+              href={buildWorkforceListHref(navigation, page.nextCursor)}
+            >
               Next page
-            </a>
+            </RouteBackedWidgetLink>
           ) : null}
         </nav>
       ) : null}

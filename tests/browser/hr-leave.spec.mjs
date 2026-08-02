@@ -3889,8 +3889,17 @@ test("Employment facts progress through immutable versions and persist for the e
       .locator(".leave-table tbody tr")
       .filter({ hasText: "BROWSER-EMPLOYMENT-001" });
     await expect(eligibleWorker).toHaveCount(1);
-    await eligibleWorker.getByRole("link", { name: "Start employment record" }).click();
+    const startEmployment = eligibleWorker.getByRole("link", { name: "Start employment record" });
+    const startEmploymentHref = await startEmployment.getAttribute("href");
+    expect(startEmploymentHref).toMatch(
+      /^\/workspace\/hr\/employment\/admin\?workerProfileId=[0-9a-f-]{36}$/,
+    );
+    await startEmployment.click();
+    await expect(operator.page).toHaveURL(
+      /\/workspace\/hr\/employment\/admin\?workerProfileId=[0-9a-f-]{36}$/,
+    );
     const workerProfileInput = operator.page.getByLabel("Worker Profile ID");
+    await expect(workerProfileInput).toHaveValue(/^[0-9a-f-]{36}$/);
     const workerProfileId = await workerProfileInput.inputValue();
     expect(workerProfileId).toMatch(/^[0-9a-f-]{36}$/);
     await submitEmploymentForm(
@@ -4074,8 +4083,18 @@ test("tenant admin configures and controls Employment without record access", as
       .locator(".leave-table tbody tr")
       .filter({ hasText: "BROWSER-EMPLOYMENT-CONTROL-001" });
     await expect(eligibleWorker).toHaveCount(1);
-    await eligibleWorker.getByRole("link", { name: "Start employment record" }).click();
-    const workerProfileId = await operator.page.getByLabel("Worker Profile ID").inputValue();
+    const startEmployment = eligibleWorker.getByRole("link", { name: "Start employment record" });
+    await expect(startEmployment).toHaveAttribute(
+      "href",
+      /^\/workspace\/hr\/employment\/admin\?workerProfileId=[0-9a-f-]{36}$/,
+    );
+    await startEmployment.click();
+    await expect(operator.page).toHaveURL(
+      /\/workspace\/hr\/employment\/admin\?workerProfileId=[0-9a-f-]{36}$/,
+    );
+    const workerProfileInput = operator.page.getByLabel("Worker Profile ID");
+    await expect(workerProfileInput).toHaveValue(/^[0-9a-f-]{36}$/);
+    const workerProfileId = await workerProfileInput.inputValue();
     expect(workerProfileId).toMatch(/^[0-9a-f-]{36}$/);
     await submitEmploymentForm(
       operator,
@@ -4972,6 +4991,183 @@ test("Shift and Attendance catalogue faces preserve exact routes and current aut
       contentType: "image/png",
       path: focusEvidencePath,
     });
+    expect(operator.diagnostics.external).toEqual([]);
+    expect(operator.diagnostics.page).toEqual([]);
+    expect(operator.diagnostics.server).toEqual([]);
+    expect(operator.diagnostics.console).toEqual([]);
+  } finally {
+    await operator.page
+      .goto(`${operator.origin}/studio/surfaces/surface.mission-control/personal`)
+      .catch(() => undefined);
+    const reset = operator.page.getByRole("button", { name: "Restore tenant layout" });
+    if (await reset.isEnabled().catch(() => false)) {
+      operator.page.once("dialog", (dialog) => dialog.accept());
+      await reset.click().catch(() => undefined);
+    }
+    await closeActors(operator);
+  }
+});
+
+test("Employment and Workforce catalogue faces preserve focus workspace continuity", async ({
+  browser,
+}, testInfo) => {
+  const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
+  try {
+    await operator.page.setViewportSize({ height: 900, width: 1_280 });
+    await operator.page.goto(`${operator.origin}/studio/surfaces/surface.mission-control/personal`);
+    for (const displayName of [
+      "Employment Administration Queue",
+      "Workforce Administration Queue",
+    ]) {
+      const add = operator.page.getByRole("button", { name: `Add ${displayName}` });
+      await expect(add).toBeVisible();
+      await add.click();
+    }
+    const saveResponse = operator.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/presentation/surfaces/surface.mission-control",
+    );
+    await operator.page.getByRole("button", { name: "Save personal layout" }).click();
+    expect((await saveResponse).status()).toBe(200);
+    await operator.page.goto(operator.origin);
+
+    await operator.page
+      .locator('[data-widget-definition="hr.employment.admin-queue"]')
+      .getByRole("link", { name: "Open Employment Administration Queue" })
+      .press("Enter");
+    const employmentAdmin = operator.page.getByRole("dialog", {
+      exact: true,
+      name: "Employment administration",
+    });
+    await expect(employmentAdmin).toBeVisible();
+    const employmentWorkspace = employmentAdmin.locator(
+      '[data-focus-workspace="hr-employment-admin"]',
+    );
+    await expect(employmentWorkspace).toHaveAttribute("data-focus-layout", "single");
+    const employmentHistoryLinks = employmentAdmin.getByRole("link", {
+      name: "View immutable history",
+    });
+    const employmentRecordCount = await employmentHistoryLinks.count();
+    const invalidIdempotency = employmentAdmin
+      .locator('form[action="/workspace/hr/employment/action"]')
+      .first()
+      .locator('input[name="idempotencyKey"]');
+    await employmentAdmin.getByLabel("Worker Profile ID").fill(employmentActionWorkerProfileId);
+    await invalidIdempotency.evaluate((input) => {
+      input.value = "invalid";
+    });
+    await employmentAdmin.getByRole("button", { name: "Create employment record" }).click();
+    await expect(employmentAdmin).toBeVisible();
+    await expect(employmentAdmin.locator("#employment-result")).toContainText(
+      "Review the submitted employment facts",
+    );
+    await expect(employmentAdmin.locator("#employment-result")).toBeFocused();
+    await expect(operator.page).toHaveURL(
+      /\/workspace\/hr\/employment\/admin\?(?=.*result=validation)(?=.*originFocusId=mission-control\..+\.full-screen)(?=.*returnSurface=mission-control)/,
+    );
+    await expect(employmentHistoryLinks).toHaveCount(employmentRecordCount);
+    await employmentAdmin.getByLabel("Worker Profile ID").fill(employmentActionWorkerProfileId);
+    await submitEmploymentForm(
+      operator,
+      employmentAdmin.getByRole("button", { name: "Create employment record" }),
+    );
+    await expect(employmentAdmin).toBeVisible();
+    await expect(operator.page).toHaveURL(
+      /\/workspace\/hr\/employment\/admin\?(?=.*result=success)(?=.*originFocusId=mission-control\..+\.full-screen)(?=.*returnSurface=mission-control)/,
+    );
+    await expect(employmentHistoryLinks).toHaveCount(employmentRecordCount + 1);
+    await employmentHistoryLinks.first().click();
+    const employmentDetail = operator.page.getByRole("dialog", {
+      exact: true,
+      name: "Employment detail",
+    });
+    await expect(employmentDetail).toBeVisible();
+    await expect(
+      employmentDetail.locator('[data-focus-workspace="hr-employment-admin-detail"]'),
+    ).toHaveAttribute("data-focus-layout", "single");
+    await employmentDetail
+      .getByRole("link", { name: "Back to employment administration" })
+      .press("Enter");
+    await expect(employmentAdmin).toBeVisible();
+    await employmentAdmin
+      .getByRole("button", { name: "Close Employment administration" })
+      .press("Enter");
+    await expect(operator.page).toHaveURL(operator.origin);
+    await waitForShellHydration(operator);
+
+    await operator.page.goto(`${operator.origin}/workspace/hr`);
+    await operator.page
+      .locator('[data-widget-definition="hr.employment.current-facts"]')
+      .getByRole("link", { name: "Open Current Employment Facts" })
+      .press("Enter");
+    const employmentFacts = operator.page.getByRole("dialog", {
+      exact: true,
+      name: "Employment facts",
+    });
+    await expect(employmentFacts).toBeVisible();
+    await employmentFacts.getByRole("link", { name: "View facts and history" }).first().click();
+    await expect(employmentDetail).toBeVisible();
+    const employmentListWorkspace = employmentDetail.locator(
+      '[data-focus-workspace="hr-employment-list"]',
+    );
+    await expect(employmentListWorkspace).toHaveAttribute("data-focus-layout", "master-detail");
+    await expect(employmentListWorkspace.locator('[data-focus-pane="master"]')).toBeVisible();
+    await expect(employmentListWorkspace.locator('[data-focus-pane="detail"]')).toBeVisible();
+    await employmentDetail.getByRole("link", { name: "Back to employment records" }).press("Enter");
+    await expect(employmentFacts).toBeVisible();
+    await employmentFacts.getByRole("button", { name: "Close employment facts" }).press("Enter");
+    await expect(operator.page).toHaveURL(`${operator.origin}/workspace/hr`);
+    await operator.page.goto(operator.origin);
+    await waitForShellHydration(operator);
+
+    await operator.page
+      .locator('[data-widget-definition="hr.workforce.admin-queue"]')
+      .getByRole("link", { name: "Open Workforce Administration Queue" })
+      .press("Enter");
+    await expect(operator.page).toHaveURL(
+      /\/workspace\/hr\/profile\/admin\?(?=.*originFocusId=mission-control\..+\.full-screen)(?=.*returnSurface=mission-control)/,
+    );
+    const workforceAdmin = operator.page.getByRole("dialog", {
+      exact: true,
+      name: "Workforce administration",
+    });
+    await expect(workforceAdmin).toBeVisible();
+    await workforceAdmin.getByRole("link", { name: "View details" }).first().press("Enter");
+    const workforceDetail = operator.page.getByRole("dialog", {
+      exact: true,
+      name: "Workforce profile detail",
+    });
+    const workforceWorkspace = workforceDetail.locator(
+      '[data-focus-workspace="hr-workforce-admin"]',
+    );
+    await expect(workforceDetail).toBeVisible();
+    await expect(workforceWorkspace).toHaveAttribute("data-focus-layout", "master-detail");
+    await expect(workforceWorkspace.locator('[data-focus-pane="master"]')).toBeVisible();
+    await expect(workforceWorkspace.locator('[data-focus-pane="detail"]')).toBeVisible();
+
+    await operator.page.setViewportSize({ height: 844, width: 390 });
+    await expect(workforceWorkspace.locator('[data-focus-pane="master"]')).toBeHidden();
+    await expect(workforceWorkspace.locator('[data-focus-pane="detail"]')).toBeVisible();
+    const overlayBackgroundAlpha = await workforceDetail.evaluate((overlay) => {
+      const color = getComputedStyle(overlay).backgroundColor;
+      if (color.startsWith("rgb(")) return 1;
+      const match = color.match(/^rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)$/);
+      return match ? Number(match[1]) : 0;
+    });
+    expect(overlayBackgroundAlpha).toBe(1);
+    expect(
+      await operator.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+    const evidencePath = testInfo.outputPath("employment-workforce-focus-workspaces.png");
+    await operator.page.screenshot({ fullPage: false, path: evidencePath });
+    await testInfo.attach("employment-workforce-focus-workspaces", {
+      contentType: "image/png",
+      path: evidencePath,
+    });
+    await workforceDetail
+      .getByRole("button", { name: "Close Workforce profile detail" })
+      .press("Enter");
+    await expect(operator.page).toHaveURL(operator.origin);
     expect(operator.diagnostics.external).toEqual([]);
     expect(operator.diagnostics.page).toEqual([]);
     expect(operator.diagnostics.server).toEqual([]);

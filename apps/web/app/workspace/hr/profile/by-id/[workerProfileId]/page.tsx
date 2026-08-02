@@ -6,6 +6,7 @@ import type {
 } from "@esbla/contracts";
 import { ArrowLeft, BadgeCheck, Clock3, FileClock, TriangleAlert } from "lucide-react";
 import { notFound } from "next/navigation";
+import type { ReactNode } from "react";
 import { loadAuthorizedWorkforceProfileDetail } from "../../../../../../lib/hr-workforce-profile-detail";
 import {
   buildWorkforceDetailHistoryHref,
@@ -13,10 +14,19 @@ import {
   workforceDetailReturnLink,
 } from "../../../../../../lib/hr-workforce-profile-detail-core";
 import { loadAuthorizedWorkforceList } from "../../../../../../lib/hr-workforce-profile-list";
+import {
+  type RouteBackedWidgetOrigin,
+  withoutRouteBackedWidgetOrigin,
+} from "../../../../../../lib/route-backed-widget-navigation-core";
+import { RouteBackedWidgetLink } from "../../../../../../theme/zen-theme/v1/route-backed-widget-link";
 import { WorkforceProfileMaintenance } from "./workforce-profile-maintenance";
 
 interface WorkforceProfileDetailPageProps {
+  readonly focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  readonly leadingControl?: ReactNode;
+  readonly mode?: "focus" | "standalone";
   readonly params: Promise<{ workerProfileId: string }>;
+  readonly preloadedState?: Awaited<ReturnType<typeof loadAuthorizedWorkforceProfileDetail>>;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
@@ -51,10 +61,12 @@ function relationshipLabel(event: HrWorkforceRelationshipHistory) {
 
 function HistoryNavigation({
   detail,
+  focusOrigin,
   history,
   navigation,
 }: Readonly<{
   detail: HrWorkforceProfileDetail;
+  focusOrigin?: RouteBackedWidgetOrigin | undefined;
   history: "relationship" | "status";
   navigation: WorkforceDetailNavigation;
 }>) {
@@ -69,8 +81,9 @@ function HistoryNavigation({
   return (
     <nav aria-label={`${label} pages`} className="work-queue-actions">
       {currentCursor ? (
-        <a
+        <RouteBackedWidgetLink
           className="text-command"
+          focusOrigin={focusOrigin}
           href={buildWorkforceDetailHistoryHref(
             detail.workerProfileId,
             navigation,
@@ -80,11 +93,12 @@ function HistoryNavigation({
           )}
         >
           Start {label} over
-        </a>
+        </RouteBackedWidgetLink>
       ) : null}
       {nextCursor ? (
-        <a
+        <RouteBackedWidgetLink
           className="text-command"
+          focusOrigin={focusOrigin}
           href={buildWorkforceDetailHistoryHref(
             detail.workerProfileId,
             navigation,
@@ -94,18 +108,22 @@ function HistoryNavigation({
           )}
         >
           Next {label}
-        </a>
+        </RouteBackedWidgetLink>
       ) : null}
     </nav>
   );
 }
 
 function FailureState({
+  leadingControl,
   message,
+  mode,
   returnLink,
   title,
 }: Readonly<{
   message: string;
+  leadingControl?: ReactNode;
+  mode: "focus" | "standalone";
   returnLink: ReturnType<typeof workforceDetailReturnLink>;
   title: string;
 }>) {
@@ -114,10 +132,13 @@ function FailureState({
       aria-labelledby="workforce-detail-failure-heading"
       className="work-surface leave-detail-surface"
     >
-      <a className="text-command detail-back" href={returnLink.href}>
-        <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
-        {returnLink.label}
-      </a>
+      {leadingControl ??
+        (mode === "standalone" ? (
+          <a className="text-command detail-back" href={returnLink.href}>
+            <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
+            {returnLink.label}
+          </a>
+        ) : null)}
       <div className="leave-list-error" role="alert">
         <span aria-hidden="true" className="empty-worklist-icon">
           <TriangleAlert size={27} strokeWidth={1.6} />
@@ -130,15 +151,33 @@ function FailureState({
 }
 
 export default async function WorkforceProfileDetailPage({
+  focusOrigin,
+  leadingControl,
+  mode = "standalone",
   params,
+  preloadedState,
   searchParams,
 }: WorkforceProfileDetailPageProps) {
   const [{ workerProfileId }, parameters] = await Promise.all([params, searchParams]);
-  const state = await loadAuthorizedWorkforceProfileDetail(workerProfileId, parameters);
+  const productParameters = withoutRouteBackedWidgetOrigin(parameters) as Record<
+    string,
+    string | string[] | undefined
+  >;
+  const state =
+    preloadedState ??
+    (await loadAuthorizedWorkforceProfileDetail(workerProfileId, productParameters));
   const returnLink = workforceDetailReturnLink(state.navigation.returnContext);
   if (state.status === "not_found") notFound();
   if (state.status !== "success") {
-    return <FailureState message={state.message} returnLink={returnLink} title={state.title} />;
+    return (
+      <FailureState
+        leadingControl={leadingControl}
+        message={state.message}
+        mode={mode}
+        returnLink={returnLink}
+        title={state.title}
+      />
+    );
   }
   const { detail, navigation } = state;
   const maintenanceAdmission = await loadAuthorizedWorkforceList(
@@ -150,10 +189,13 @@ export default async function WorkforceProfileDetailPage({
       aria-labelledby="workforce-detail-heading"
       className="work-surface leave-detail-surface"
     >
-      <a className="text-command detail-back" href={returnLink.href}>
-        <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
-        {returnLink.label}
-      </a>
+      {leadingControl ??
+        (mode === "standalone" ? (
+          <a className="text-command detail-back" href={returnLink.href}>
+            <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
+            {returnLink.label}
+          </a>
+        ) : null)}
       <header className="surface-heading leave-detail-heading">
         <div>
           <p className="surface-label">Workforce Profile</p>
@@ -220,7 +262,12 @@ export default async function WorkforceProfileDetailPage({
                 ))}
               </ol>
             )}
-            <HistoryNavigation detail={detail} history="status" navigation={navigation} />
+            <HistoryNavigation
+              detail={detail}
+              focusOrigin={focusOrigin}
+              history="status"
+              navigation={navigation}
+            />
           </div>
         </section>
         <section aria-labelledby="relationship-history-heading" className="leave-detail-section">
@@ -252,7 +299,12 @@ export default async function WorkforceProfileDetailPage({
               ))}
             </ol>
           )}
-          <HistoryNavigation detail={detail} history="relationship" navigation={navigation} />
+          <HistoryNavigation
+            detail={detail}
+            focusOrigin={focusOrigin}
+            history="relationship"
+            navigation={navigation}
+          />
         </section>
       </div>
     </section>

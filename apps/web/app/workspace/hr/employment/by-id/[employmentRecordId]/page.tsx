@@ -1,21 +1,32 @@
 import { ArrowLeft, BriefcaseBusiness, Clock3, FileClock, TriangleAlert } from "lucide-react";
 import { notFound } from "next/navigation";
+import type { ReactNode } from "react";
 import { loadEmploymentDetail } from "../../../../../../lib/hr-employment-record";
 import { hasEmploymentAction } from "../../../../../../lib/hr-employment-record-core";
+import type { RouteBackedWidgetOrigin } from "../../../../../../lib/route-backed-widget-navigation-core";
+import { RouteBackedWidgetLink } from "../../../../../../theme/zen-theme/v1/route-backed-widget-link";
 
 interface EmploymentDetailPageProps {
+  readonly focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  readonly leadingControl?: ReactNode;
+  readonly mode?: "focus" | "standalone";
   readonly params: Promise<{ employmentRecordId: string }>;
+  readonly preloadedState?: Awaited<ReturnType<typeof loadEmploymentDetail>>;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
 const statusLabel = { active: "Active", draft: "Draft", ended: "Ended" } as const;
 
 export default async function EmploymentDetailPage({
+  focusOrigin,
+  leadingControl,
+  mode = "standalone",
   params,
+  preloadedState,
   searchParams,
 }: EmploymentDetailPageProps) {
   const [{ employmentRecordId }, parameters] = await Promise.all([params, searchParams]);
-  const state = await loadEmploymentDetail(employmentRecordId, parameters);
+  const state = preloadedState ?? (await loadEmploymentDetail(employmentRecordId, parameters));
   const canList = hasEmploymentAction(state.authorizedActions, "list_authorized");
   const canAdminister = (["create_record", "create_version", "end_record"] as const).some(
     (action) => hasEmploymentAction(state.authorizedActions, action),
@@ -26,10 +37,13 @@ export default async function EmploymentDetailPage({
   if (state.status !== "success") {
     return (
       <section aria-labelledby="employment-detail-failure" className="work-surface">
-        <a className="text-command detail-back" href={backHref}>
-          <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
-          {backLabel}
-        </a>
+        {leadingControl ??
+          (mode === "standalone" ? (
+            <a className="text-command detail-back" href={backHref}>
+              <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
+              {backLabel}
+            </a>
+          ) : null)}
         <div className="leave-list-error" role="alert">
           <span aria-hidden="true" className="empty-worklist-icon">
             <TriangleAlert size={27} strokeWidth={1.6} />
@@ -47,10 +61,13 @@ export default async function EmploymentDetailPage({
       aria-labelledby="employment-detail-heading"
       className="work-surface leave-detail-surface"
     >
-      <a className="text-command detail-back" href={backHref}>
-        <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
-        {backLabel}
-      </a>
+      {leadingControl ??
+        (mode === "standalone" ? (
+          <a className="text-command detail-back" href={backHref}>
+            <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
+            {backLabel}
+          </a>
+        ) : null)}
       <header className="surface-heading leave-detail-heading">
         <div>
           <p className="surface-label">Employment Record</p>
@@ -63,12 +80,13 @@ export default async function EmploymentDetailPage({
       </header>
       {canAdminister ? (
         <div className="work-queue-actions">
-          <a
+          <RouteBackedWidgetLink
             className="command-button command-button-primary"
+            focusOrigin={focusOrigin}
             href="/workspace/hr/employment/admin"
           >
             Manage employment records
-          </a>
+          </RouteBackedWidgetLink>
         </div>
       ) : null}
 
@@ -155,16 +173,21 @@ export default async function EmploymentDetailPage({
           )}
           {record.history.nextCursor ? (
             <nav aria-label="Employment history pages" className="work-queue-actions">
-              <a
+              <RouteBackedWidgetLink
                 className="text-command"
+                focusOrigin={focusOrigin}
                 href={`/workspace/hr/employment/by-id/${encodeURIComponent(
                   record.employmentRecordId,
                 )}?cursorVersion=${record.history.nextCursor.version}&cursorEmploymentRecordVersionId=${encodeURIComponent(
                   record.history.nextCursor.employmentRecordVersionId,
-                )}`}
+                )}${
+                  parameters.returnTo === "list" || parameters.returnTo === "admin"
+                    ? `&returnTo=${parameters.returnTo}`
+                    : ""
+                }`}
               >
                 Next history
-              </a>
+              </RouteBackedWidgetLink>
             </nav>
           ) : null}
         </section>

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { HrEmploymentListCursor, HrEmploymentRecordSummary } from "@esbla/contracts";
 import { BriefcaseBusiness } from "lucide-react";
 import { cookies } from "next/headers";
+import type { ReactNode } from "react";
 import {
   EMPLOYMENT_MUTATION_RECEIPT_COOKIE,
   type EmploymentMutationReceipt,
@@ -12,9 +13,17 @@ import {
   hasEmploymentAction,
   parseEmploymentWorkerSelection,
 } from "../../../../../lib/hr-employment-record-core";
+import {
+  getRouteBackedWidgetOriginParameters,
+  type RouteBackedWidgetOrigin,
+} from "../../../../../lib/route-backed-widget-navigation-core";
+import { RouteBackedWidgetLink } from "../../../../../theme/zen-theme/v1/route-backed-widget-link";
+import { RouteBackedWidgetPostForm } from "../../../../../theme/zen-theme/v1/route-backed-widget-overlay";
 import { EmploymentResult } from "../result";
 
 interface EmploymentAdminPageProps {
+  readonly focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  readonly mode?: "focus" | "standalone";
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
@@ -56,9 +65,39 @@ function employmentAdminHref(
   return `/workspace/hr/employment/admin${value ? `?${value}` : ""}`;
 }
 
-function CreateRecordForm({ workerProfileId }: Readonly<{ workerProfileId: string | undefined }>) {
+function EmploymentActionForm({
+  children,
+  focusOrigin,
+}: Readonly<{ children: ReactNode; focusOrigin?: RouteBackedWidgetOrigin | undefined }>) {
+  if (!focusOrigin) {
+    return (
+      <form action="/workspace/hr/employment/action" className="leave-request-form" method="post">
+        {children}
+      </form>
+    );
+  }
+  const encodedOrigin = getRouteBackedWidgetOriginParameters(focusOrigin);
   return (
-    <form action="/workspace/hr/employment/action" className="leave-request-form" method="post">
+    <RouteBackedWidgetPostForm
+      action="/workspace/hr/employment/action"
+      className="leave-request-form"
+    >
+      <input name="originFocusId" type="hidden" value={encodedOrigin.originFocusId} />
+      <input name="returnSurface" type="hidden" value={encodedOrigin.returnSurface} />
+      {children}
+    </RouteBackedWidgetPostForm>
+  );
+}
+
+function CreateRecordForm({
+  focusOrigin,
+  workerProfileId,
+}: Readonly<{
+  focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  workerProfileId: string | undefined;
+}>) {
+  return (
+    <EmploymentActionForm focusOrigin={focusOrigin}>
       <input name="operation" type="hidden" value="create_record" />
       <input name="idempotencyKey" type="hidden" value={randomUUID()} />
       <div className="form-field">
@@ -79,21 +118,31 @@ function CreateRecordForm({ workerProfileId }: Readonly<{ workerProfileId: strin
         </p>
       </div>
       <div className="work-queue-actions">
-        <a className="command-button" href="/workspace/hr/profile/admin">
+        <RouteBackedWidgetLink
+          className="command-button"
+          focusOrigin={focusOrigin}
+          href="/workspace/hr/profile/admin"
+        >
           Open Workforce directory
-        </a>
+        </RouteBackedWidgetLink>
         <button className="command-button command-button-primary" type="submit">
           Create employment record
         </button>
       </div>
-    </form>
+    </EmploymentActionForm>
   );
 }
 
-function VersionFields({ record }: Readonly<{ record: HrEmploymentRecordSummary }>) {
+function VersionFields({
+  focusOrigin,
+  record,
+}: Readonly<{
+  focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  record: HrEmploymentRecordSummary;
+}>) {
   const prefix = record.employmentRecordId;
   return (
-    <form action="/workspace/hr/employment/action" className="leave-request-form" method="post">
+    <EmploymentActionForm focusOrigin={focusOrigin}>
       <input name="operation" type="hidden" value="create_version" />
       <input name="idempotencyKey" type="hidden" value={randomUUID()} />
       <input name="employmentRecordId" type="hidden" value={record.employmentRecordId} />
@@ -131,14 +180,20 @@ function VersionFields({ record }: Readonly<{ record: HrEmploymentRecordSummary 
           ? "Establish first effective version"
           : "Append effective successor"}
       </button>
-    </form>
+    </EmploymentActionForm>
   );
 }
 
-function EndFields({ record }: Readonly<{ record: HrEmploymentRecordSummary }>) {
+function EndFields({
+  focusOrigin,
+  record,
+}: Readonly<{
+  focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  record: HrEmploymentRecordSummary;
+}>) {
   if (!record.currentVersion) return null;
   return (
-    <form action="/workspace/hr/employment/action" className="leave-request-form" method="post">
+    <EmploymentActionForm focusOrigin={focusOrigin}>
       <input name="operation" type="hidden" value="end_record" />
       <input name="idempotencyKey" type="hidden" value={randomUUID()} />
       <input name="employmentRecordId" type="hidden" value={record.employmentRecordId} />
@@ -156,15 +211,19 @@ function EndFields({ record }: Readonly<{ record: HrEmploymentRecordSummary }>) 
       <button className="command-button command-button-danger" type="submit">
         End employment record
       </button>
-    </form>
+    </EmploymentActionForm>
   );
 }
 
 function ManualVersionForm({
+  focusOrigin,
   receipt,
-}: Readonly<{ receipt: EmploymentRecordMutationReceipt | null }>) {
+}: Readonly<{
+  focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  receipt: EmploymentRecordMutationReceipt | null;
+}>) {
   return (
-    <form action="/workspace/hr/employment/action" className="leave-request-form" method="post">
+    <EmploymentActionForm focusOrigin={focusOrigin}>
       <input name="operation" type="hidden" value="create_version" />
       <input name="idempotencyKey" type="hidden" value={randomUUID()} />
       <div className="form-grid-two">
@@ -227,13 +286,19 @@ function ManualVersionForm({
       <button className="command-button command-button-primary" type="submit">
         Append exact effective version
       </button>
-    </form>
+    </EmploymentActionForm>
   );
 }
 
-function ManualEndForm({ receipt }: Readonly<{ receipt: EmploymentRecordMutationReceipt | null }>) {
+function ManualEndForm({
+  focusOrigin,
+  receipt,
+}: Readonly<{
+  focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  receipt: EmploymentRecordMutationReceipt | null;
+}>) {
   return (
-    <form action="/workspace/hr/employment/action" className="leave-request-form" method="post">
+    <EmploymentActionForm focusOrigin={focusOrigin}>
       <input name="operation" type="hidden" value="end_record" />
       <input name="idempotencyKey" type="hidden" value={randomUUID()} />
       <div className="form-grid-two">
@@ -278,11 +343,15 @@ function ManualEndForm({ receipt }: Readonly<{ receipt: EmploymentRecordMutation
       <button className="command-button command-button-danger" type="submit">
         End exact employment record
       </button>
-    </form>
+    </EmploymentActionForm>
   );
 }
 
-export default async function EmploymentAdminPage({ searchParams }: EmploymentAdminPageProps) {
+export default async function EmploymentAdminPage({
+  focusOrigin,
+  mode = "standalone",
+  searchParams,
+}: EmploymentAdminPageProps) {
   const [parameters, cookieStore] = await Promise.all([searchParams, cookies()]);
   let workerProfileId: string | undefined;
   let invalidWorkerSelection = false;
@@ -325,15 +394,16 @@ export default async function EmploymentAdminPage({ searchParams }: EmploymentAd
   const hasCursor =
     typeof parameters.cursorCreatedAt === "string" &&
     typeof parameters.cursorEmploymentRecordId === "string";
-
   return (
     <section aria-labelledby="employment-admin-heading" className="work-surface leave-form-surface">
-      <a
-        className="text-command detail-back"
-        href={canList ? "/workspace/hr/employment" : "/workspace/hr"}
-      >
-        {canList ? "Back to employment records" : "Back to HR"}
-      </a>
+      {mode === "standalone" ? (
+        <a
+          className="text-command detail-back"
+          href={canList ? "/workspace/hr/employment" : "/workspace/hr"}
+        >
+          {canList ? "Back to employment records" : "Back to HR"}
+        </a>
+      ) : null}
       <header className="surface-heading">
         <div>
           <p className="surface-label">HR administration</p>
@@ -401,7 +471,7 @@ export default async function EmploymentAdminPage({ searchParams }: EmploymentAd
                 <BriefcaseBusiness aria-hidden="true" size={20} strokeWidth={1.7} />
                 <h2 id="employment-create-heading">Create a draft record</h2>
               </div>
-              <CreateRecordForm workerProfileId={workerProfileId} />
+              <CreateRecordForm focusOrigin={focusOrigin} workerProfileId={workerProfileId} />
             </section>
           ) : null}
 
@@ -416,11 +486,13 @@ export default async function EmploymentAdminPage({ searchParams }: EmploymentAd
                   </p>
                   {canCreateVersion ? (
                     <ManualVersionForm
+                      focusOrigin={focusOrigin}
                       receipt={recordReceipt?.status === "ended" ? null : recordReceipt}
                     />
                   ) : null}
                   {canEnd ? (
                     <ManualEndForm
+                      focusOrigin={focusOrigin}
                       receipt={recordReceipt?.status === "active" ? recordReceipt : null}
                     />
                   ) : null}
@@ -441,27 +513,31 @@ export default async function EmploymentAdminPage({ searchParams }: EmploymentAd
                           </p>
                         </div>
                         {canViewDetail ? (
-                          <a
+                          <RouteBackedWidgetLink
                             className="text-command"
-                            href={`/workspace/hr/employment/by-id/${encodeURIComponent(
+                            focusHref={`/workspace/hr/employment/by-id/${encodeURIComponent(
                               record.employmentRecordId,
-                            )}`}
+                            )}?returnTo=admin`}
+                            focusOrigin={focusOrigin}
+                            href={`/workspace/hr/employment/by-id/${encodeURIComponent(record.employmentRecordId)}`}
                           >
                             View immutable history
-                          </a>
+                          </RouteBackedWidgetLink>
                         ) : null}
                       </div>
                       {canCreateVersion &&
                       (record.status === "draft" ||
                         (record.status === "active" && record.currentVersion?.effectiveTo)) ? (
-                        <VersionFields record={record} />
+                        <VersionFields focusOrigin={focusOrigin} record={record} />
                       ) : canCreateVersion && record.status === "active" ? (
                         <p className="field-hint">
                           This head is open ended and immutable. End the record rather than
                           overlapping it with another effective version.
                         </p>
                       ) : null}
-                      {canEnd && record.status === "active" ? <EndFields record={record} /> : null}
+                      {canEnd && record.status === "active" ? (
+                        <EndFields focusOrigin={focusOrigin} record={record} />
+                      ) : null}
                     </li>
                   ))}
                 </ol>
@@ -469,19 +545,24 @@ export default async function EmploymentAdminPage({ searchParams }: EmploymentAd
               {hasTenantList && (employment.page.nextCursor || hasCursor) ? (
                 <nav aria-label="Employment record pages" className="list-pagination">
                   {hasCursor ? (
-                    <a className="text-command" href={employmentAdminHref(null, workerProfileId)}>
+                    <RouteBackedWidgetLink
+                      className="text-command"
+                      focusOrigin={focusOrigin}
+                      href={employmentAdminHref(null, workerProfileId)}
+                    >
                       Start over
-                    </a>
+                    </RouteBackedWidgetLink>
                   ) : (
                     <span />
                   )}
                   {employment.page.nextCursor ? (
-                    <a
+                    <RouteBackedWidgetLink
                       className="text-command"
+                      focusOrigin={focusOrigin}
                       href={employmentAdminHref(employment.page.nextCursor, workerProfileId)}
                     >
                       Next page
-                    </a>
+                    </RouteBackedWidgetLink>
                   ) : null}
                 </nav>
               ) : null}
