@@ -24,6 +24,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   type CSSProperties,
+  Fragment,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
@@ -37,14 +39,22 @@ import {
   resolvePresentationBreakpointLayout,
 } from "../../../../../lib/presentation-layout-core";
 import {
+  beginSurfaceEditorInteraction,
   createPersonalSurfaceEditorState,
   isPersonalSurfaceWidgetRemovable,
   personalSurfaceEditorReducer,
+  type SurfaceEditorInteractionMode,
+  type SurfaceEditorInteractionSession,
+  stepSurfaceEditorInteraction,
   surfaceEditorKeyboardAction,
+  updateSurfaceEditorInteraction,
 } from "../../../../../lib/surface-editor-core";
 import { prepareRouteHeadingFocus } from "../../../../../theme/zen-theme/v1/chrome/zen-navigation-chrome";
+import { SurfaceGeometryControls } from "../surface-geometry-controls";
 
 type PreviewMode = "desktop" | "phone" | "tablet";
+
+const KEYBOARD_INTERACTION_POINTER_ID = -1;
 
 const PREVIEW_OPTIONS = [
   { columns: 12, icon: Monitor, id: "desktop", label: "Desktop" },
@@ -93,16 +103,8 @@ export function PersonalSurfaceEditor({
   const [remoteIssue, setRemoteIssue] = useState<string | null>(null);
   const [accessLost, setAccessLost] = useState(false);
   const [phoneViewport, setPhoneViewport] = useState(false);
-  const drag = useRef<{
-    columnStep: number;
-    instanceId: string;
-    mode: "move" | "resize";
-    pointerId: number;
-    rowStep: number;
-    x: number;
-    y: number;
-  } | null>(null);
-  const suppressClick = useRef(false);
+  const [interaction, setInteraction] = useState<SurfaceEditorInteractionSession | null>(null);
+  const interactionRef = useRef<SurfaceEditorInteractionSession | null>(null);
   const editable = initialWorkspace.editable && !accessLost;
   const layout = useMemo(
     () => resolvePresentationBreakpointLayout(state.placements, previewMode),
@@ -231,9 +233,15 @@ export function PersonalSurfaceEditor({
     }
   }
 
-  function beginDrag(
+  function setActiveInteraction(next: SurfaceEditorInteractionSession | null) {
+    interactionRef.current = next;
+    setInteraction(next);
+  }
+
+  function beginInteraction(
     event: ReactPointerEvent<HTMLButtonElement>,
     instanceId: string,
+    mode: SurfaceEditorInteractionMode,
     columnCount: number,
   ) {
     if (!editable || phoneViewport || previewMode !== "desktop") return;
@@ -245,50 +253,120 @@ export function PersonalSurfaceEditor({
     const columnGap = Number.parseFloat(computed.columnGap) || 0;
     const rowGap = Number.parseFloat(computed.rowGap) || 0;
     const rowHeight = Number.parseFloat(computed.gridAutoRows) || 48;
-    const target = event.target instanceof Element ? event.target : undefined;
-    suppressClick.current = false;
-    drag.current = {
+    const started = beginSurfaceEditorInteraction(state, {
       columnStep: (bounds.width - columnGap * (columnCount - 1)) / columnCount + columnGap,
       instanceId,
-      mode: target?.closest("[data-resize-handle]") ? "resize" : "move",
+      mode,
       pointerId: event.pointerId,
       rowStep: rowHeight + rowGap,
-      x: event.clientX,
-      y: event.clientY,
-    };
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+    });
+    if (!started) return;
+    setActiveInteraction(started);
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
-  function finishDrag(event: ReactPointerEvent<HTMLButtonElement>) {
-    const started = drag.current;
-    drag.current = null;
+  function previewInteraction(event: ReactPointerEvent<HTMLButtonElement>) {
+    const started = interactionRef.current;
     if (!started || started.pointerId !== event.pointerId) return;
-    const horizontal = Math.round((event.clientX - started.x) / started.columnStep);
-    const vertical = Math.round((event.clientY - started.y) / started.rowStep);
-    suppressClick.current = horizontal !== 0 || vertical !== 0;
-    dispatch(
-      started.mode === "resize"
-        ? {
-            columnSpanDelta: horizontal,
-            instanceId: started.instanceId,
-            rowSpanDelta: vertical,
-            type: "resize",
-          }
-        : {
-            columnDelta: horizontal,
-            instanceId: started.instanceId,
-            rowDelta: vertical,
-            type: "move",
-          },
+    setActiveInteraction(
+      updateSurfaceEditorInteraction(state, started, {
+        clientX: event.clientX,
+        clientY: event.clientY,
+      }),
     );
   }
 
-  function cancelDrag(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (drag.current?.pointerId === event.pointerId) {
-      drag.current = null;
-      suppressClick.current = false;
-    }
+  function finishInteraction(event: ReactPointerEvent<HTMLButtonElement>) {
+    const started = interactionRef.current;
+    if (!started || started.pointerId !== event.pointerId) return;
+    const completed = updateSurfaceEditorInteraction(state, started, {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
+    setActiveInteraction(null);
+    dispatch({ interaction: completed, type: "commit_interaction" });
   }
+
+  function cancelInteraction(pointerId?: number) {
+    const started = interactionRef.current;
+    if (!started || (pointerId !== undefined && started.pointerId !== pointerId)) return;
+    setActiveInteraction(null);
+    dispatch({ interaction: started, type: "cancel_interaction" });
+  }
+
+  function toggleKeyboardInteraction(instanceId: string, mode: SurfaceEditorInteractionMode) {
+    if (!editable || phoneViewport || previewMode !== "desktop") return;
+    const active = interactionRef.current;
+    if (active) {
+      if (
+        active.pointerId === KEYBOARD_INTERACTION_POINTER_ID &&
+        active.instanceId === instanceId &&
+        active.mode === mode
+      ) {
+        setActiveInteraction(null);
+        dispatch({ interaction: active, type: "commit_interaction" });
+      }
+      return;
+    }
+    dispatch({ instanceId, type: "select" });
+    const started = beginSurfaceEditorInteraction(state, {
+      columnStep: 1,
+      instanceId,
+      mode,
+      pointerId: KEYBOARD_INTERACTION_POINTER_ID,
+      rowStep: 1,
+      startClientX: 0,
+      startClientY: 0,
+    });
+    if (started) setActiveInteraction(started);
+  }
+
+  function stepKeyboardInteraction(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    instanceId: string,
+    mode: SurfaceEditorInteractionMode,
+  ) {
+    const active = interactionRef.current;
+    if (
+      !active ||
+      active.pointerId !== KEYBOARD_INTERACTION_POINTER_ID ||
+      active.instanceId !== instanceId ||
+      active.mode !== mode
+    ) {
+      return;
+    }
+    const delta = {
+      ArrowDown: [0, 1],
+      ArrowLeft: [-1, 0],
+      ArrowRight: [1, 0],
+      ArrowUp: [0, -1],
+    }[event.key];
+    if (!delta) return;
+    event.preventDefault();
+    setActiveInteraction(
+      stepSurfaceEditorInteraction(state, active, {
+        horizontalDelta: delta[0] ?? 0,
+        verticalDelta: delta[1] ?? 0,
+      }),
+    );
+  }
+
+  useEffect(() => {
+    if (!interaction) return;
+    const cancelOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      const started = interactionRef.current;
+      if (!started) return;
+      interactionRef.current = null;
+      setInteraction(null);
+      dispatch({ interaction: started, type: "cancel_interaction" });
+    };
+    window.addEventListener("keydown", cancelOnEscape);
+    return () => window.removeEventListener("keydown", cancelOnEscape);
+  }, [interaction]);
 
   return (
     <section aria-labelledby="surface-editor-heading" className="surface-editor-shell">
@@ -408,18 +486,42 @@ export function PersonalSurfaceEditor({
                   Arrow keys move. Shift + Arrow keys resize. Pointer dragging uses the same
                   collision rules.
                 </p>
+                <SurfaceGeometryControls
+                  disabled={!editable || busy}
+                  onMove={(columnDelta, rowDelta) =>
+                    dispatch({
+                      columnDelta,
+                      instanceId: selected.instanceId,
+                      rowDelta,
+                      type: "move",
+                    })
+                  }
+                  onResize={(columnSpanDelta, rowSpanDelta) =>
+                    dispatch({
+                      columnSpanDelta,
+                      instanceId: selected.instanceId,
+                      rowSpanDelta,
+                      type: "resize",
+                    })
+                  }
+                  placement={selected}
+                />
                 <p className="surface-editor-muted">
                   This widget has no configurable presentation options in V1.
                 </p>
-                <button
-                  className="surface-editor-remove"
-                  disabled={!editable || busy || !selectedRemovable}
-                  onClick={() => dispatch({ type: "remove_selected" })}
-                  type="button"
-                >
-                  <Trash2 aria-hidden="true" size={16} />
-                  Remove from surface
-                </button>
+                <div className="surface-editor-selection-actions">
+                  <button
+                    aria-label="Remove from surface"
+                    className="surface-editor-remove"
+                    disabled={!editable || busy || !selectedRemovable}
+                    onClick={() => dispatch({ type: "remove_selected" })}
+                    title="Remove from surface"
+                    type="button"
+                  >
+                    <Trash2 aria-hidden="true" size={15} />
+                    <span>Remove</span>
+                  </button>
+                </div>
                 {!selectedRemovable ? (
                   <p className="surface-editor-muted">
                     This widget is required by the current surface.
@@ -429,6 +531,19 @@ export function PersonalSurfaceEditor({
             ) : (
               <p className="surface-editor-muted">Select a widget in the preview to edit it.</p>
             )}
+            {state.lastRemoved ? (
+              <button
+                aria-label="Undo removed widget"
+                className="surface-editor-undo"
+                disabled={!editable || busy}
+                onClick={() => dispatch({ type: "undo_remove" })}
+                title="Undo removed widget"
+                type="button"
+              >
+                <RotateCcw aria-hidden="true" size={15} />
+                <span>Undo removed widget</span>
+              </button>
+            ) : null}
           </section>
         </aside>
 
@@ -477,78 +592,143 @@ export function PersonalSurfaceEditor({
                   placement.widgetDefinitionVersion,
                 );
                 const selectedNow = placement.instanceId === state.selectedInstanceId;
+                const activeInteraction =
+                  interaction?.instanceId === placement.instanceId ? interaction : null;
+                const displayedPlacement = activeInteraction?.proposal ?? placement;
                 return (
-                  <button
-                    aria-label={`${definition.displayName}, ${placement.columnSpan} columns by ${placement.rowSpan} rows, column ${placement.column}, row ${placement.row}`}
-                    aria-pressed={selectedNow}
-                    className="surface-editor-widget"
-                    data-selected={selectedNow ? "true" : "false"}
-                    key={placement.instanceId}
-                    onKeyDown={(event) => {
-                      if (!editable || phoneViewport || previewMode !== "desktop") return;
-                      const next = surfaceEditorKeyboardAction(state, {
-                        instanceId: placement.instanceId,
-                        key: event.key,
-                        shiftKey: event.shiftKey,
-                      });
-                      if (next !== state) {
-                        event.preventDefault();
-                        dispatch(
-                          event.shiftKey
-                            ? {
-                                columnSpanDelta:
-                                  event.key === "ArrowRight"
-                                    ? 1
-                                    : event.key === "ArrowLeft"
-                                      ? -1
-                                      : 0,
-                                instanceId: placement.instanceId,
-                                rowSpanDelta:
-                                  event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0,
-                                type: "resize",
-                              }
-                            : {
-                                columnDelta:
-                                  event.key === "ArrowRight"
-                                    ? 1
-                                    : event.key === "ArrowLeft"
-                                      ? -1
-                                      : 0,
-                                instanceId: placement.instanceId,
-                                rowDelta:
-                                  event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0,
-                                type: "move",
-                              },
-                        );
-                      }
-                    }}
-                    onPointerDown={(event) =>
-                      beginDrag(event, placement.instanceId, layout.columnCount)
-                    }
-                    onPointerCancel={cancelDrag}
-                    onPointerUp={finishDrag}
-                    onClick={() => {
-                      if (suppressClick.current) {
-                        suppressClick.current = false;
-                        return;
-                      }
-                      dispatch({ instanceId: placement.instanceId, type: "select" });
-                    }}
-                    style={placementStyle(placement)}
-                    tabIndex={phoneViewport ? -1 : 0}
-                    type="button"
-                  >
-                    <span className="surface-editor-widget-handle">
-                      <Grip aria-hidden="true" size={15} />
-                    </span>
-                    <span
-                      aria-hidden="true"
-                      className="surface-editor-widget-resize-handle"
-                      data-resize-handle="true"
-                    />
-                    <strong>{definition.displayName}</strong>
-                    <small>{definition.widgetKind.replace("_", " ")}</small>
-                  </button>
+                  <Fragment key={placement.instanceId}>
+                    {activeInteraction ? (
+                      <div
+                        aria-hidden="true"
+                        className="surface-editor-widget-placeholder"
+                        style={placementStyle(placement)}
+                      />
+                    ) : null}
+                    <div
+                      className="surface-editor-widget"
+                      data-interaction-active={activeInteraction ? "true" : "false"}
+                      data-interaction-valid={activeInteraction?.valid ?? undefined}
+                      data-selected={selectedNow ? "true" : "false"}
+                      style={placementStyle(displayedPlacement)}
+                    >
+                      <button
+                        aria-label={`${definition.displayName}, ${displayedPlacement.columnSpan} columns by ${displayedPlacement.rowSpan} rows, column ${displayedPlacement.column}, row ${displayedPlacement.row}`}
+                        aria-pressed={selectedNow}
+                        className="surface-editor-widget-select"
+                        onClick={() =>
+                          dispatch({ instanceId: placement.instanceId, type: "select" })
+                        }
+                        onKeyDown={(event) => {
+                          if (!editable || phoneViewport || previewMode !== "desktop") return;
+                          const next = surfaceEditorKeyboardAction(state, {
+                            instanceId: placement.instanceId,
+                            key: event.key,
+                            shiftKey: event.shiftKey,
+                          });
+                          if (next !== state) {
+                            event.preventDefault();
+                            dispatch(
+                              event.shiftKey
+                                ? {
+                                    columnSpanDelta:
+                                      event.key === "ArrowRight"
+                                        ? 1
+                                        : event.key === "ArrowLeft"
+                                          ? -1
+                                          : 0,
+                                    instanceId: placement.instanceId,
+                                    rowSpanDelta:
+                                      event.key === "ArrowDown"
+                                        ? 1
+                                        : event.key === "ArrowUp"
+                                          ? -1
+                                          : 0,
+                                    type: "resize",
+                                  }
+                                : {
+                                    columnDelta:
+                                      event.key === "ArrowRight"
+                                        ? 1
+                                        : event.key === "ArrowLeft"
+                                          ? -1
+                                          : 0,
+                                    instanceId: placement.instanceId,
+                                    rowDelta:
+                                      event.key === "ArrowDown"
+                                        ? 1
+                                        : event.key === "ArrowUp"
+                                          ? -1
+                                          : 0,
+                                    type: "move",
+                                  },
+                            );
+                          }
+                        }}
+                        tabIndex={phoneViewport ? -1 : 0}
+                        type="button"
+                      >
+                        <strong>{definition.displayName}</strong>
+                        <small>{definition.widgetKind.replace("_", " ")}</small>
+                      </button>
+                      <button
+                        aria-label={`Move ${definition.displayName}`}
+                        aria-pressed={
+                          activeInteraction?.pointerId === KEYBOARD_INTERACTION_POINTER_ID &&
+                          activeInteraction.mode === "move"
+                        }
+                        className="surface-editor-widget-handle"
+                        disabled={!editable || phoneViewport || previewMode !== "desktop"}
+                        onClick={(event) => {
+                          if (event.detail === 0) {
+                            toggleKeyboardInteraction(placement.instanceId, "move");
+                          }
+                        }}
+                        onKeyDown={(event) =>
+                          stepKeyboardInteraction(event, placement.instanceId, "move")
+                        }
+                        onPointerCancel={(event) => cancelInteraction(event.pointerId)}
+                        onPointerDown={(event) =>
+                          beginInteraction(event, placement.instanceId, "move", layout.columnCount)
+                        }
+                        onPointerMove={previewInteraction}
+                        onPointerUp={finishInteraction}
+                        title={`Move ${definition.displayName}`}
+                        type="button"
+                      >
+                        <Grip aria-hidden="true" size={15} />
+                      </button>
+                      <button
+                        aria-label={`Resize ${definition.displayName}`}
+                        aria-pressed={
+                          activeInteraction?.pointerId === KEYBOARD_INTERACTION_POINTER_ID &&
+                          activeInteraction.mode === "resize"
+                        }
+                        className="surface-editor-widget-resize-handle"
+                        disabled={!editable || phoneViewport || previewMode !== "desktop"}
+                        onClick={(event) => {
+                          if (event.detail === 0) {
+                            toggleKeyboardInteraction(placement.instanceId, "resize");
+                          }
+                        }}
+                        onKeyDown={(event) =>
+                          stepKeyboardInteraction(event, placement.instanceId, "resize")
+                        }
+                        onPointerCancel={(event) => cancelInteraction(event.pointerId)}
+                        onPointerDown={(event) =>
+                          beginInteraction(
+                            event,
+                            placement.instanceId,
+                            "resize",
+                            layout.columnCount,
+                          )
+                        }
+                        onPointerMove={previewInteraction}
+                        onPointerUp={finishInteraction}
+                        title={`Resize ${definition.displayName}`}
+                        type="button"
+                      />
+                    </div>
+                  </Fragment>
                 );
               })}
               {layout.placements.length === 0 ? (
@@ -559,13 +739,13 @@ export function PersonalSurfaceEditor({
               ) : null}
             </div>
           </div>
-          {state.issue || state.announcement ? (
+          {interaction || state.issue || state.announcement ? (
             <p
               aria-live="polite"
               className="surface-editor-local-status"
-              data-status={state.issue ? "error" : "update"}
+              data-status={interaction?.issue || state.issue ? "error" : "update"}
             >
-              {state.issue ?? state.announcement}
+              {interaction?.announcement ?? state.issue ?? state.announcement}
             </p>
           ) : null}
           <p className="surface-editor-phone-note">

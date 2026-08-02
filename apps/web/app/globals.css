@@ -1380,18 +1380,73 @@ button.surface-editor-icon-button {
   padding: 4px 7px;
 }
 
-.surface-editor-remove {
+.surface-editor-selection-actions {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+}
+
+.surface-editor-remove,
+.surface-editor-undo {
   align-items: center;
   background: transparent;
-  border: 1px solid color-mix(in oklab, var(--danger), transparent 40%);
-  border-radius: 10px;
-  color: var(--danger);
+  border: 1px solid var(--line-mid);
+  border-radius: 9px;
+  color: var(--text-soft);
   cursor: pointer;
-  display: flex;
-  gap: 8px;
+  display: inline-flex;
+  font-size: 11px;
+  gap: 6px;
   justify-content: center;
   margin-top: 7px;
-  min-height: 38px;
+  min-height: 30px;
+  padding: 5px 9px;
+}
+
+.surface-editor-remove {
+  color: var(--danger);
+}
+
+.surface-editor-remove:disabled,
+.surface-editor-undo:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.surface-editor-geometry {
+  border: 0;
+  display: grid;
+  gap: 7px;
+  grid-template-columns: 1fr 1fr;
+  margin: 3px 0 0;
+  padding: 0;
+}
+
+.surface-editor-geometry legend {
+  color: var(--text-muted);
+  font-size: 11px;
+  grid-column: 1 / -1;
+  margin-bottom: 3px;
+}
+
+.surface-editor-geometry label {
+  display: grid;
+  gap: 4px;
+}
+
+.surface-editor-geometry label > span {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.surface-editor-geometry input {
+  background: var(--surface-panel);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  color: var(--text-main);
+  min-width: 0;
+  padding: 6px 7px;
+  width: 100%;
 }
 
 .surface-editor-stage {
@@ -1477,19 +1532,33 @@ button.surface-editor-icon-button {
   border: 1px solid var(--line-soft);
   border-radius: 14px;
   box-shadow: 0 9px 24px color-mix(in oklab, var(--text-main), transparent 93%);
-  cursor: grab;
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  padding: 15px;
   position: relative;
   text-align: left;
   touch-action: none;
+  transition:
+    border-color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard),
+    opacity var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-standard);
 }
 
-.surface-editor-widget:active {
-  cursor: grabbing;
+.surface-editor-widget-select {
+  align-items: flex-start;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 15px;
+  text-align: left;
+  width: 100%;
 }
 
 .surface-editor-widget[data-selected="true"] {
@@ -1497,6 +1566,35 @@ button.surface-editor-icon-button {
   box-shadow:
     0 0 0 2px var(--accent-soft),
     0 12px 30px color-mix(in oklab, var(--accent), transparent 82%);
+}
+
+.surface-editor-widget[data-interaction-active="true"] {
+  opacity: 0.75;
+  transform: translateY(-3px) scale(1.01);
+  z-index: 3;
+}
+
+.surface-editor-widget[data-interaction-active="true"][data-interaction-valid="true"] {
+  border-color: var(--success);
+  box-shadow:
+    0 0 0 3px color-mix(in oklab, var(--success), transparent 78%),
+    0 18px 34px color-mix(in oklab, var(--text-main), transparent 82%);
+}
+
+.surface-editor-widget[data-interaction-active="true"][data-interaction-valid="false"] {
+  background:
+    linear-gradient(color-mix(in oklab, var(--danger), transparent 88%)), var(--surface-widget);
+  border-color: var(--danger);
+  box-shadow:
+    0 0 0 3px color-mix(in oklab, var(--danger), transparent 80%),
+    0 18px 34px color-mix(in oklab, var(--text-main), transparent 84%);
+}
+
+.surface-editor-widget-placeholder {
+  background: color-mix(in oklab, var(--accent-soft), transparent 40%);
+  border: 1px dashed var(--accent);
+  border-radius: 14px;
+  pointer-events: none;
 }
 
 .surface-editor-widget strong {
@@ -1513,13 +1611,30 @@ button.surface-editor-icon-button {
 }
 
 .surface-editor-widget-handle {
+  align-items: center;
+  background: var(--surface-panel);
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
   color: var(--text-muted);
+  cursor: grab;
+  display: inline-flex;
+  height: 28px;
+  justify-content: center;
+  padding: 0;
   position: absolute;
-  right: 10px;
-  top: 10px;
+  right: 8px;
+  top: 8px;
+  width: 28px;
+  z-index: 2;
+}
+
+.surface-editor-widget-handle:active {
+  cursor: grabbing;
 }
 
 .surface-editor-widget-resize-handle {
+  background: transparent;
+  border: 0;
   border-block-end: 2px solid var(--text-muted);
   border-inline-end: 2px solid var(--text-muted);
   bottom: 10px;
@@ -1528,6 +1643,13 @@ button.surface-editor-icon-button {
   position: absolute;
   right: 10px;
   width: 14px;
+  z-index: 2;
+}
+
+.surface-editor-widget-handle:disabled,
+.surface-editor-widget-resize-handle:disabled {
+  cursor: default;
+  opacity: 0.42;
 }
 
 .surface-editor-empty {
@@ -3203,6 +3325,11 @@ textarea:focus-visible,
 }
 
 @media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 1ms;
+    --motion-standard: 1ms;
+  }
+
   *,
   *::before,
   *::after {
@@ -3487,8 +3614,7 @@ textarea:focus-visible,
     padding: 10px;
   }
 
-  .surface-editor-widget {
-    cursor: default;
+  .surface-editor-widget-select {
     padding: 12px;
   }
 
@@ -3502,8 +3628,8 @@ textarea:focus-visible,
   }
 }
 
-.surface-editor-viewport-phone .surface-editor-widget {
-  cursor: default;
+.surface-editor-viewport-phone .surface-editor-widget-select {
+  padding: 12px;
 }
 
 .surface-editor-viewport-phone .surface-editor-widget-handle,
