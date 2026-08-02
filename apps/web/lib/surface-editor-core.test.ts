@@ -1,10 +1,15 @@
 import { getZenV1RegisteredSurfacePlacements, getZenV1SurfaceContract } from "@esbla/contracts";
 import { describe, expect, it } from "vitest";
 import {
+  beginSurfaceEditorInteraction,
+  cancelSurfaceEditorInteraction,
+  commitSurfaceEditorInteraction,
   createPersonalSurfaceEditorState,
   isPersonalSurfaceWidgetRemovable,
   personalSurfaceEditorReducer,
+  stepSurfaceEditorInteraction,
   surfaceEditorKeyboardAction,
+  updateSurfaceEditorInteraction,
 } from "./surface-editor-core";
 
 describe("personal surface editor core", () => {
@@ -140,5 +145,145 @@ describe("personal surface editor core", () => {
     expect(collision.placements).toEqual(collisionSelected.placements);
     expect(collision.issue).toBe("That position is occupied.");
     expect(collision.overlayVersion).toBe(3);
+  });
+
+  it("previews one snapped pointer interaction without mutating the draft, then commits once", () => {
+    const initial = createPersonalSurfaceEditorState({
+      availablePlacements: available,
+      effectivePlacements: available,
+      overlayVersion: 4,
+      surfaceId: "surface.mission-control",
+    });
+    const started = beginSurfaceEditorInteraction(initial, {
+      columnStep: 80,
+      instanceId: "mission-control.my-profile",
+      mode: "move",
+      pointerId: 7,
+      rowStep: 56,
+      startClientX: 100,
+      startClientY: 100,
+    });
+    expect(started).toBeDefined();
+    if (!started) throw new Error("Expected a surface interaction session");
+
+    const preview = updateSurfaceEditorInteraction(initial, started, {
+      clientX: 100,
+      clientY: 156,
+    });
+    expect(preview.proposal).toMatchObject({
+      column: 5,
+      columnSpan: 4,
+      row: 8,
+      rowSpan: 3,
+    });
+    expect(preview.valid).toBe(true);
+    expect(preview.changed).toBe(true);
+    expect(initial.dirty).toBe(false);
+    expect(initial.placements).toEqual(available);
+
+    const committed = commitSurfaceEditorInteraction(initial, preview);
+    expect(
+      committed.placements.find(({ instanceId }) => instanceId === "mission-control.my-profile"),
+    ).toMatchObject({ row: 8 });
+    expect(committed.dirty).toBe(true);
+    expect(committed.announcement).toBe("Dropped My Profile at column 5, row 8.");
+  });
+
+  it("steps a keyboard-picked handle before one explicit drop", () => {
+    const initial = createPersonalSurfaceEditorState({
+      availablePlacements: available,
+      effectivePlacements: available,
+      overlayVersion: 4,
+      surfaceId: "surface.mission-control",
+    });
+    const started = beginSurfaceEditorInteraction(initial, {
+      columnStep: 1,
+      instanceId: "mission-control.my-profile",
+      mode: "move",
+      pointerId: -1,
+      rowStep: 1,
+      startClientX: 0,
+      startClientY: 0,
+    });
+    expect(started).toBeDefined();
+    if (!started) throw new Error("Expected a keyboard interaction session");
+
+    const stepped = stepSurfaceEditorInteraction(initial, started, {
+      horizontalDelta: 0,
+      verticalDelta: 1,
+    });
+    expect(stepped.proposal).toMatchObject({ column: 5, row: 8 });
+    expect(stepped.announcement).toBe("My Profile move target column 5, row 8 is available.");
+    expect(initial.placements).toEqual(available);
+
+    const dropped = commitSurfaceEditorInteraction(initial, stepped);
+    expect(
+      dropped.placements.find(({ instanceId }) => instanceId === "mission-control.my-profile"),
+    ).toMatchObject({ row: 8 });
+  });
+
+  it("exposes an invalid snapped footprint and cancellation without moving the draft", () => {
+    const initial = createPersonalSurfaceEditorState({
+      availablePlacements: available,
+      effectivePlacements: available,
+      overlayVersion: 2,
+      surfaceId: "surface.mission-control",
+    });
+    const started = beginSurfaceEditorInteraction(initial, {
+      columnStep: 80,
+      instanceId: "mission-control.my-work",
+      mode: "move",
+      pointerId: 9,
+      rowStep: 56,
+      startClientX: 0,
+      startClientY: 0,
+    });
+    expect(started).toBeDefined();
+    if (!started) throw new Error("Expected a surface interaction session");
+
+    const collision = updateSurfaceEditorInteraction(initial, started, {
+      clientX: 0,
+      clientY: 168,
+    });
+    expect(collision.proposal).toMatchObject({ row: 4 });
+    expect(collision.valid).toBe(false);
+    expect(collision.issue).toBe("That position is occupied.");
+    expect(commitSurfaceEditorInteraction(initial, collision).placements).toEqual(
+      initial.placements,
+    );
+
+    const cancelled = cancelSurfaceEditorInteraction(initial, collision);
+    expect(cancelled.placements).toEqual(initial.placements);
+    expect(cancelled.dirty).toBe(false);
+    expect(cancelled.announcement).toBe("Cancelled moving My Work. It remains at column 1, row 1.");
+  });
+
+  it("undoes the latest personal removal at its exact draft geometry before save", () => {
+    const initial = createPersonalSurfaceEditorState({
+      availablePlacements: available,
+      effectivePlacements: available,
+      overlayVersion: 0,
+      surfaceId: "surface.mission-control",
+    });
+    const selected = personalSurfaceEditorReducer(initial, {
+      instanceId: "mission-control.my-leave",
+      type: "select",
+    });
+    const moved = personalSurfaceEditorReducer(selected, {
+      columnDelta: 0,
+      instanceId: "mission-control.my-leave",
+      rowDelta: 7,
+      type: "move",
+    });
+    const removed = personalSurfaceEditorReducer(moved, { type: "remove_selected" });
+    expect(removed.lastRemoved?.placement.instanceId).toBe("mission-control.my-leave");
+    expect(removed.lastRemoved?.placement.row).toBe(11);
+
+    const restored = personalSurfaceEditorReducer(removed, { type: "undo_remove" });
+    expect(
+      restored.placements.find(({ instanceId }) => instanceId === "mission-control.my-leave"),
+    ).toMatchObject({ row: 11 });
+    expect(restored.lastRemoved).toBeNull();
+    expect(restored.announcement).toBe("Restored My Leave Requests to this draft.");
   });
 });

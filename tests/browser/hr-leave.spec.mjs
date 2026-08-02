@@ -193,8 +193,6 @@ async function openNotifications(actor) {
     name: /^Notifications(?:, \d+ unread)?$/,
   });
   if (await directLauncher.isVisible()) {
-    await directLauncher.focus();
-    await expect(directLauncher).toBeFocused();
     await directLauncher.press("Enter");
   } else {
     const systemLauncher = actor.page.getByRole("button", {
@@ -1268,26 +1266,113 @@ test("personal Surface Editor saves pointer and keyboard layout changes and fail
     const profileWidget = employee.page.getByRole("button", {
       name: /My Profile, 4 columns by 3 rows/,
     });
-    await expect(profileWidget).toBeVisible();
-    await profileWidget.scrollIntoViewIfNeeded();
-    const profileBox = await profileWidget.boundingBox();
-    if (!profileBox) throw new Error("Surface Editor profile widget has no pointer target");
-    const pointerPosition = {
-      x: profileBox.width / 2,
-      y: Math.min(40, profileBox.height / 2),
-    };
-    await profileWidget.hover({
-      position: pointerPosition,
+    const profileFrame = employee.page.locator(".surface-editor-widget").filter({
+      has: employee.page.getByRole("button", { name: /^My Profile, / }),
     });
+    const leaveFrame = employee.page
+      .getByRole("button", { name: /My Leave Requests, / })
+      .locator("..");
+    await expect(profileWidget).toBeVisible();
+    await expect(leaveFrame).toBeVisible();
+    await profileWidget.scrollIntoViewIfNeeded();
+    const initialReducedMotion = await employee.page
+      .locator("html")
+      .getAttribute("data-reduced-motion");
+    expect(initialReducedMotion).toMatch(/^(auto|reduce)$/);
+    const motionAppearance = await openAppearance(employee);
+    if (initialReducedMotion === "reduce") {
+      const automaticMotionResponse = employee.page.waitForResponse(
+        (response) => new URL(response.url()).pathname === "/presentation/preferences",
+      );
+      await motionAppearance.getByRole("button", { name: "Reduce motion" }).click();
+      expect((await automaticMotionResponse).status()).toBe(200);
+    }
+    await expect(employee.page.locator("html")).toHaveAttribute("data-reduced-motion", "auto");
+    await motionAppearance.getByRole("button", { name: "Close appearance settings" }).click();
+    await employee.page.emulateMedia({ reducedMotion: "no-preference" });
+    await expect(profileFrame).toHaveCSS("transition-duration", /0\.12s/);
+    await employee.page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(profileFrame).toHaveCSS("transition-duration", /0\.001s/);
+    await employee.page.emulateMedia({ reducedMotion: "no-preference" });
+    if (initialReducedMotion === "reduce") {
+      const restoreMotionAppearance = await openAppearance(employee);
+      const reducedMotionResponse = employee.page.waitForResponse(
+        (response) => new URL(response.url()).pathname === "/presentation/preferences",
+      );
+      await restoreMotionAppearance.getByRole("button", { name: "Reduce motion" }).click();
+      expect((await reducedMotionResponse).status()).toBe(200);
+      await expect(employee.page.locator("html")).toHaveAttribute("data-reduced-motion", "reduce");
+      await restoreMotionAppearance
+        .getByRole("button", { name: "Close appearance settings" })
+        .click();
+    }
+    const profileMove = employee.page.getByRole("button", {
+      exact: true,
+      name: "Move My Profile",
+    });
+    const profileMoveBox = await profileMove.boundingBox();
+    const leaveFrameBox = await leaveFrame.boundingBox();
+    const profileFrameBox = await profileFrame.boundingBox();
+    if (!profileMoveBox || !leaveFrameBox || !profileFrameBox) {
+      throw new Error("Surface Editor collision targets have no pointer geometry");
+    }
+    await employee.page.mouse.move(
+      profileMoveBox.x + profileMoveBox.width / 2,
+      profileMoveBox.y + profileMoveBox.height / 2,
+    );
     await employee.page.mouse.down();
     await employee.page.mouse.move(
-      profileBox.x + pointerPosition.x,
-      profileBox.y + pointerPosition.y + 56,
+      profileMoveBox.x + profileMoveBox.width / 2 + leaveFrameBox.x - profileFrameBox.x,
+      profileMoveBox.y + profileMoveBox.height / 2 + leaveFrameBox.y - profileFrameBox.y,
     );
+    await expect(profileFrame).toHaveAttribute("data-interaction-valid", "false");
+    await expect(employee.page.getByText(/That position is occupied\./)).toBeVisible();
+    await employee.page.keyboard.press("Escape");
     await employee.page.mouse.up();
-    await expect(profileWidget).toHaveCSS("grid-row-start", "8");
-    await expect(employee.page.getByText("My Profile moved to column 5, row 8.")).toBeVisible();
-    const resizeHandle = profileWidget.locator(".surface-editor-widget-resize-handle");
+    await expect(profileFrame).toHaveCSS("grid-row-start", "7");
+    await expect(
+      employee.page.getByText("Cancelled moving My Profile. It remains at column 5, row 7."),
+    ).toBeVisible();
+
+    await employee.page.mouse.move(
+      profileMoveBox.x + profileMoveBox.width / 2,
+      profileMoveBox.y + profileMoveBox.height / 2,
+    );
+    await employee.page.mouse.down();
+    await employee.page.mouse.move(
+      profileMoveBox.x + profileMoveBox.width / 2,
+      profileMoveBox.y + profileMoveBox.height / 2 + 56,
+    );
+    await expect(profileFrame).toHaveAttribute("data-interaction-active", "true");
+    await expect(profileFrame).toHaveAttribute("data-interaction-valid", "true");
+    await expect(profileFrame).toHaveCSS("opacity", "0.75");
+    await expect(employee.page.locator(".surface-editor-widget-placeholder")).toHaveCount(1);
+    await expect(
+      employee.page.getByText("My Profile move target column 5, row 8 is available."),
+    ).toBeVisible();
+    await employee.page.mouse.up();
+    await expect(profileFrame).toHaveCSS("grid-row-start", "8");
+    await expect(employee.page.getByText("Dropped My Profile at column 5, row 8.")).toBeVisible();
+    await profileMove.focus();
+    await expect(profileMove).toBeFocused();
+    await profileMove.press("Enter");
+    await expect(profileMove).toHaveAttribute("aria-pressed", "true");
+    await expect(employee.page.getByText("Picked up My Profile to move.")).toBeVisible();
+    await profileMove.press("ArrowDown");
+    await expect(profileFrame).toHaveCSS("grid-row-start", "9");
+    await expect(
+      employee.page.getByText("My Profile move target column 5, row 9 is available."),
+    ).toBeVisible();
+    await profileMove.press("Escape");
+    await expect(profileMove).toHaveAttribute("aria-pressed", "false");
+    await expect(profileFrame).toHaveCSS("grid-row-start", "8");
+    await expect(
+      employee.page.getByText("Cancelled moving My Profile. It remains at column 5, row 8."),
+    ).toBeVisible();
+    const resizeHandle = employee.page.getByRole("button", {
+      exact: true,
+      name: "Resize My Profile",
+    });
     const resizeBox = await resizeHandle.boundingBox();
     if (!resizeBox) throw new Error("Surface Editor profile widget has no pointer resize target");
     await employee.page.mouse.move(
@@ -1299,17 +1384,37 @@ test("personal Surface Editor saves pointer and keyboard layout changes and fail
       resizeBox.x + resizeBox.width / 2,
       resizeBox.y + resizeBox.height / 2 + 56,
     );
+    await expect(profileFrame).toHaveAttribute("data-interaction-valid", "true");
+    await expect(
+      employee.page.getByText("My Profile resize target 4 columns by 4 rows is available."),
+    ).toBeVisible();
     await employee.page.mouse.up();
     const resizedProfile = employee.page.getByRole("button", {
       name: /My Profile, 4 columns by 4 rows/,
     });
     await expect(resizedProfile).toBeVisible();
     await expect(
-      employee.page.getByText("My Profile resized to 4 columns by 4 rows."),
+      employee.page.getByText("Dropped My Profile at 4 columns by 4 rows."),
     ).toBeVisible();
-    await resizedProfile.press("ArrowDown");
-    await expect(resizedProfile).toHaveCSS("grid-row-start", "9");
+    await resizeHandle.focus();
+    await expect(resizeHandle).toBeFocused();
+    await resizeHandle.press("Enter");
+    await expect(resizeHandle).toHaveAttribute("aria-pressed", "true");
+    await resizeHandle.press("ArrowUp");
+    await expect(
+      employee.page.getByText("My Profile resize target 4 columns by 3 rows is available."),
+    ).toBeVisible();
+    await resizeHandle.press("Escape");
+    await expect(resizeHandle).toHaveAttribute("aria-pressed", "false");
+    await expect(resizedProfile).toBeVisible();
+    const profileRow = employee.page.getByRole("spinbutton", { name: "My Profile row" });
+    await profileRow.fill("9");
+    await expect(resizedProfile.locator("..")).toHaveCSS("grid-row-start", "9");
     await expect(employee.page.getByText("My Profile moved to column 5, row 9.")).toBeVisible();
+    await resizedProfile.press("ArrowDown");
+    await expect(resizedProfile.locator("..")).toHaveCSS("grid-row-start", "10");
+    await resizedProfile.press("ArrowUp");
+    await expect(resizedProfile.locator("..")).toHaveCSS("grid-row-start", "9");
     await expect(employee.page.getByText("Unsaved changes", { exact: true })).toBeVisible();
 
     const save = employee.page.getByRole("button", { name: "Save personal layout" });
@@ -1322,7 +1427,7 @@ test("personal Surface Editor saves pointer and keyboard layout changes and fail
     await expect(employee.page.getByText("Saved", { exact: true })).toBeVisible();
     await employee.page.reload();
     await expect(
-      employee.page.getByRole("button", { name: /My Profile, 4 columns by 4 rows/ }),
+      employee.page.getByRole("button", { name: /My Profile, 4 columns by 4 rows/ }).locator(".."),
     ).toHaveCSS("grid-row-start", "9");
     const desktopEvidencePath = testInfo.outputPath("surface-editor-personal-desktop.png");
     await employee.page.screenshot({ fullPage: false, path: desktopEvidencePath });
@@ -1351,12 +1456,23 @@ test("personal Surface Editor saves pointer and keyboard layout changes and fail
     staleEditor.diagnostics.console.length = 0;
     await staleEditor.page.getByRole("button", { name: "Reload" }).click();
     await expect(
-      staleEditor.page.getByRole("button", { name: /My Profile, 4 columns by 4 rows/ }),
+      staleEditor.page
+        .getByRole("button", { name: /My Profile, 4 columns by 4 rows/ })
+        .locator(".."),
     ).toHaveCSS("grid-row-start", "9");
     await closeActors(staleEditor);
     staleEditor = undefined;
 
     await employee.page.getByRole("button", { name: /My Profile, 4 columns by 4 rows/ }).click();
+    await employee.page.getByRole("button", { name: "Remove from surface" }).click();
+    const undoRemoved = employee.page.getByRole("button", { name: "Undo removed widget" });
+    await expect(undoRemoved).toBeVisible();
+    await undoRemoved.click();
+    await expect(
+      employee.page.getByRole("button", { name: /My Profile, / }).locator(".."),
+    ).toHaveCSS("grid-row-start", "9");
+    await expect(employee.page.getByText("Restored My Profile to this draft.")).toBeVisible();
+    await employee.page.getByRole("button", { name: /My Profile, / }).click();
     await employee.page.getByRole("button", { name: "Remove from surface" }).click();
     const removeResponse = employee.page.waitForResponse(
       (response) =>
@@ -2382,7 +2498,7 @@ test("Tenant Base Surface Editor separates draft, validation, publish and rollba
     });
     await expect(profileWidget).toBeVisible();
     await profileWidget.press("ArrowDown");
-    await expect(profileWidget).toHaveCSS("grid-row-start", "8");
+    await expect(profileWidget.locator("..")).toHaveCSS("grid-row-start", "8");
     await expect(admin.page.getByText("Unsaved draft changes", { exact: true })).toBeVisible();
 
     const draftResponse = admin.page.waitForResponse(
@@ -2466,7 +2582,7 @@ test("Tenant Base Surface Editor separates draft, validation, publish and rollba
     await admin.page.reload();
     await expect(tenantSurfaceFact(admin.page, "Published base")).toHaveText("v3");
     await expect(
-      admin.page.getByRole("button", { name: /My Profile, 4 columns by 3 rows/ }),
+      admin.page.getByRole("button", { name: /My Profile, 4 columns by 3 rows/ }).locator(".."),
     ).toHaveCSS("grid-row-start", "7");
 
     const desktopPath = testInfo.outputPath("surface-editor-tenant-base-desktop.png");
