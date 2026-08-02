@@ -51,12 +51,13 @@ export default async function InterceptedLeaveDetailPage({
         : undefined;
   const masterHref = focusNavigation ? buildHrLeaveListHref(focusNavigation) : fallbackHref;
   const showMaster = Boolean(focusNavigation) && detailResult.kind !== "error";
-  const leadingControl = showMaster ? (
-    <RouteBackedWidgetNestedBackLink href={masterHref}>
-      <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
-      Back to requests
-    </RouteBackedWidgetNestedBackLink>
-  ) : undefined;
+  const leadingControl =
+    showMaster || returnLink ? (
+      <RouteBackedWidgetNestedBackLink href={masterHref}>
+        <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
+        {showMaster ? "Back to requests" : returnLink?.label}
+      </RouteBackedWidgetNestedBackLink>
+    ) : undefined;
   return (
     <RouteBackedWidgetOverlay
       browserBackMode={showMaster ? "return-master" : "close-origin"}
@@ -82,7 +83,7 @@ export default async function InterceptedLeaveDetailPage({
         ) : null}
         <RouteBackedWidgetFocusPane kind="detail">
           {detailResult.kind === "error" ? (
-            <HrLeaveDetailError mode="overlay" />
+            <HrLeaveDetailError leadingControl={leadingControl} mode="overlay" />
           ) : detailResult.kind === "detail" ? (
             <HrLeaveRequestDetailFace
               detail={detailResult.detail}

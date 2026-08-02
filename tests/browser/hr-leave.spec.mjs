@@ -701,6 +701,26 @@ test("Leave focus workspace fails closed after authorization loss, deactivation 
     await expect(missingOverlay.locator('[data-focus-pane="detail"]')).toBeVisible();
     await expect(missingOverlay).not.toContainText(detailReason);
 
+    const assignedMissingCard = await openAssignedWork(manager, leaveRequestId);
+    await assignedMissingCard
+      .locator(`a[href="/workspace/hr/leave/${leaveRequestId}?returnContext=my-work"]`)
+      .press("Enter");
+    await expect(manager.page).toHaveURL(
+      `${manager.origin}/workspace/hr/leave/${leaveRequestId}?returnContext=my-work`,
+    );
+    await expect(
+      manager.page.getByRole("heading", { name: "Leave request not found" }),
+    ).toBeVisible();
+    const returnToMyWork = manager.page.getByRole("link", {
+      exact: true,
+      name: "Back to My Work",
+    });
+    await expect(returnToMyWork).toHaveAttribute("href", "/workspace/my-work");
+    await expect(manager.page.getByRole("dialog")).toHaveCount(0);
+    await expect(manager.page.locator("main")).not.toContainText(detailReason);
+    await returnToMyWork.press("Enter");
+    await expect(manager.page).toHaveURL(`${manager.origin}/workspace/my-work`);
+
     await setForcedMissingLeaveRequest(null);
     forcedMissing = false;
     await setEmployeeLeavePresentationEligibility(true, [

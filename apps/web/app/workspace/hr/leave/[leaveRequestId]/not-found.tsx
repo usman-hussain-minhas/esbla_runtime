@@ -1,5 +1,13 @@
+"use client";
+
 import { ArrowLeft, FileQuestion } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
+import {
+  getHrLeaveReturnLink,
+  HR_LEAVE_CANONICAL_HOST_LINK,
+  parseHrLeaveReturnContext,
+} from "../../../../../lib/hr-leave-navigation-core";
 
 interface HrLeaveDetailNotFoundProps {
   readonly leadingControl?: ReactNode;
@@ -10,6 +18,10 @@ export default function HrLeaveDetailNotFound({
   leadingControl,
   mode = "standalone",
 }: HrLeaveDetailNotFoundProps = {}) {
+  const searchParams = useSearchParams();
+  const returnLink =
+    getHrLeaveReturnLink(parseHrLeaveReturnContext(searchParams.get("returnContext"))) ??
+    HR_LEAVE_CANONICAL_HOST_LINK;
   return (
     <section
       aria-labelledby="leave-detail-missing-heading"
@@ -19,9 +31,9 @@ export default function HrLeaveDetailNotFound({
     >
       <div className="leave-detail-leading-control">
         {leadingControl ?? (
-          <a className="text-command detail-back" href="/workspace/hr/leave">
+          <a className="text-command detail-back" href={returnLink.href}>
             <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
-            Back to My Leave Requests
+            {returnLink.label}
           </a>
         )}
       </div>
