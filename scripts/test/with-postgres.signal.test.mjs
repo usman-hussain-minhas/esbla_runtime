@@ -470,6 +470,57 @@ test("with-postgres deletes the root only after foreground close", {
   });
 });
 
+test("with-postgres gives Vitest integration runs one bounded default timeout", {
+  timeout: 30_000,
+}, async () => {
+  const cases = [
+    {
+      expected: ["run", "--maxWorkers=1", "--testTimeout=15000"],
+      provided: ["run", "--maxWorkers=1"],
+    },
+    {
+      expected: ["run", "--testTimeout=9000", "subject.test.ts"],
+      provided: ["run", "--testTimeout=9000", "subject.test.ts"],
+    },
+    {
+      expected: ["run", "--testTimeout", "12000", "subject.test.ts"],
+      provided: ["run", "--testTimeout", "12000", "subject.test.ts"],
+    },
+    {
+      expected: ["watch", "run"],
+      provided: ["watch", "run"],
+    },
+    {
+      expected: ["list", "run"],
+      provided: ["list", "run"],
+    },
+    {
+      commandName: "test-runner",
+      expected: ["run"],
+      provided: ["run"],
+    },
+  ];
+
+  for (const testCase of cases) {
+    const subject = await fixture();
+    const marker = join(subject.root, "vitest-arguments.json");
+    const fakeVitest = join(subject.root, testCase.commandName ?? "vitest");
+    await writeFile(
+      fakeVitest,
+      `#!/usr/bin/env node\nrequire("node:fs").writeFileSync(${JSON.stringify(marker)}, JSON.stringify(process.argv.slice(2)))\n`,
+      { mode: 0o700 },
+    );
+    const run = launch(subject, undefined, fakeVitest, testCase.provided);
+    await verifyWithCleanup(subject, run, async () => {
+      assert.deepEqual(await closeWithin(run), { code: 0, signal: null });
+      assert.deepEqual(JSON.parse(await readFile(marker, "utf8")), testCase.expected);
+      assertSanitized(run, subject);
+      assert.match(await receipt(subject), /postgres:SIGINT\npostgres:close\n/);
+      assert.deepEqual(await readdir(subject.wrapperTemp), []);
+    });
+  }
+});
+
 test("with-postgres allows a bounded cooperative fast shutdown before emergency escalation", {
   timeout: 20_000,
 }, async () => {
