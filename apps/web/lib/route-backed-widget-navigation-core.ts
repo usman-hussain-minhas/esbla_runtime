@@ -130,6 +130,19 @@ export function parseOptionalRouteBackedWidgetOrigin(
   });
 }
 
+export function withoutRouteBackedWidgetOrigin(
+  search: Search,
+): Record<string, string | string[] | undefined> {
+  return Object.fromEntries(
+    Object.entries(search)
+      .filter(([key]) => key !== "originFocusId" && key !== "returnSurface")
+      .map(([key, value]) => [
+        key,
+        typeof value === "string" || value === undefined ? value : [...value],
+      ]),
+  );
+}
+
 function parseScrollOffset(value: unknown): number | undefined {
   return typeof value === "number" &&
     Number.isSafeInteger(value) &&

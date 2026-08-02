@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { FormEvent, ReactNode } from "react";
 import {
   createContext,
@@ -52,6 +52,9 @@ export function RouteBackedWidgetOverlay({
   returnFocusId,
 }: RouteBackedWidgetOverlayProps) {
   const safeFallbackHref = parseRouteBackedWidgetFallbackHref(fallbackHref) ?? "/";
+  const pathname = usePathname();
+  const searchParameters = useSearchParams();
+  const routeIdentity = `${pathname}?${searchParameters.toString()}`;
   const dialog = useRef<HTMLDivElement>(null);
   const dirty = useRef(false);
   const exitRequested = useRef(false);
@@ -277,6 +280,23 @@ export function RouteBackedWidgetOverlay({
     requestFreshOrigin,
     returnFocusId,
   ]);
+
+  useEffect(() => {
+    const liveRouteIdentity = `${window.location.pathname}?${window.location.search.slice(1)}`;
+    if (!mounted || routeIdentity !== liveRouteIdentity || !window.location.hash.startsWith("#")) {
+      return;
+    }
+    let targetId: string;
+    try {
+      targetId = decodeURIComponent(window.location.hash.slice(1));
+    } catch {
+      return;
+    }
+    const target = document.getElementById(targetId);
+    if (target instanceof HTMLElement && dialog.current?.contains(target)) {
+      target.focus({ preventScroll: true });
+    }
+  }, [mounted, routeIdentity]);
 
   const navigation = useMemo(
     () => ({ clearDirty, close, confirmNestedNavigation }),

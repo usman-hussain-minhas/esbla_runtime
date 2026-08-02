@@ -1,24 +1,36 @@
 import { ArrowRight, BriefcaseBusiness, FileClock, TriangleAlert } from "lucide-react";
 import { loadEmploymentList } from "../../../../lib/hr-employment-record";
 import { hasEmploymentAction } from "../../../../lib/hr-employment-record-core";
+import type { RouteBackedWidgetOrigin } from "../../../../lib/route-backed-widget-navigation-core";
+import { RouteBackedWidgetLink } from "../../../../theme/zen-theme/v1/route-backed-widget-link";
 
 interface EmploymentPageProps {
+  readonly focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  readonly mode?: "focus-master" | "standalone";
+  readonly preloadedState?: Awaited<ReturnType<typeof loadEmploymentList>>;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
 const statusLabel = { active: "Active", draft: "Draft", ended: "Ended" } as const;
 
-export default async function EmploymentPage({ searchParams }: EmploymentPageProps) {
-  const state = await loadEmploymentList(await searchParams);
+export default async function EmploymentPage({
+  focusOrigin,
+  mode = "standalone",
+  preloadedState,
+  searchParams,
+}: EmploymentPageProps) {
+  const state = preloadedState ?? (await loadEmploymentList(await searchParams));
   const canAdminister = (["create_record", "create_version", "end_record"] as const).some(
     (action) => hasEmploymentAction(state.authorizedActions, action),
   );
   const canViewDetail = hasEmploymentAction(state.authorizedActions, "view_detail");
   return (
     <section aria-labelledby="employment-heading" className="work-surface">
-      <a className="text-command detail-back" href="/workspace/hr">
-        Back to HR
-      </a>
+      {mode === "standalone" ? (
+        <a className="text-command detail-back" href="/workspace/hr">
+          Back to HR
+        </a>
+      ) : null}
       <header className="surface-heading">
         <div>
           <p className="surface-label">Employment Record</p>
@@ -45,12 +57,13 @@ export default async function EmploymentPage({ searchParams }: EmploymentPagePro
           </section>
           {canAdminister ? (
             <div className="work-queue-actions">
-              <a
+              <RouteBackedWidgetLink
                 className="command-button command-button-primary"
+                focusOrigin={focusOrigin}
                 href="/workspace/hr/employment/admin"
               >
                 Employment administration
-              </a>
+              </RouteBackedWidgetLink>
             </div>
           ) : null}
         </>
@@ -62,24 +75,26 @@ export default async function EmploymentPage({ searchParams }: EmploymentPagePro
           <h2 id="employment-empty">No employment records</h2>
           <p>No employment facts are available through your current authorized view.</p>
           {canAdminister ? (
-            <a
+            <RouteBackedWidgetLink
               className="command-button command-button-primary"
+              focusOrigin={focusOrigin}
               href="/workspace/hr/employment/admin"
             >
               Open employment administration
-            </a>
+            </RouteBackedWidgetLink>
           ) : null}
         </section>
       ) : (
         <>
           <div className="work-queue-actions">
             {canAdminister ? (
-              <a
+              <RouteBackedWidgetLink
                 className="command-button command-button-primary"
+                focusOrigin={focusOrigin}
                 href="/workspace/hr/employment/admin"
               >
                 Employment administration
-              </a>
+              </RouteBackedWidgetLink>
             ) : null}
           </div>
           <ol aria-label="Authorized employment records" className="work-queue">
@@ -101,16 +116,18 @@ export default async function EmploymentPage({ searchParams }: EmploymentPagePro
                 </div>
                 {canViewDetail ? (
                   <div className="work-queue-actions">
-                    <a
+                    <RouteBackedWidgetLink
                       className="text-command"
-                      href={`/workspace/hr/employment/by-id/${encodeURIComponent(
+                      focusHref={`/workspace/hr/employment/by-id/${encodeURIComponent(
                         record.employmentRecordId,
-                      )}`}
+                      )}?returnTo=list`}
+                      focusOrigin={focusOrigin}
+                      href={`/workspace/hr/employment/by-id/${encodeURIComponent(record.employmentRecordId)}`}
                     >
                       <FileClock aria-hidden="true" size={15} strokeWidth={1.8} />
                       View facts and history
                       <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
-                    </a>
+                    </RouteBackedWidgetLink>
                   </div>
                 ) : null}
               </li>
@@ -118,8 +135,9 @@ export default async function EmploymentPage({ searchParams }: EmploymentPagePro
           </ol>
           {state.page.nextCursor ? (
             <nav aria-label="Employment record pages" className="work-queue-actions">
-              <a
+              <RouteBackedWidgetLink
                 className="text-command"
+                focusOrigin={focusOrigin}
                 href={`/workspace/hr/employment?cursorCreatedAt=${encodeURIComponent(
                   state.page.nextCursor.createdAt,
                 )}&cursorEmploymentRecordId=${encodeURIComponent(
@@ -127,7 +145,7 @@ export default async function EmploymentPage({ searchParams }: EmploymentPagePro
                 )}`}
               >
                 Next records
-              </a>
+              </RouteBackedWidgetLink>
             </nav>
           ) : null}
         </>

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Suspense } from "react";
 import { getWorkforceOnboardingStorageKey } from "../../../../../lib/hr-workforce-profile";
+import type { RouteBackedWidgetOrigin } from "../../../../../lib/route-backed-widget-navigation-core";
 import {
   AuthorizedWorkforceList,
   AuthorizedWorkforceListLoading,
@@ -8,18 +9,24 @@ import {
 import { WorkforceProfileOnboarding } from "./workforce-profile-onboarding";
 
 interface WorkforceProfileAdminPageProps {
+  readonly focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  readonly mode?: "focus" | "focus-master" | "standalone";
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
 export default async function WorkforceProfileAdminPage({
+  focusOrigin,
+  mode = "standalone",
   searchParams,
 }: WorkforceProfileAdminPageProps) {
   const parameters = await searchParams;
   return (
     <section aria-labelledby="workforce-admin-heading" className="work-surface leave-form-surface">
-      <a className="text-command detail-back" href="/workspace/hr">
-        Back to HR
-      </a>
+      {mode === "standalone" ? (
+        <a className="text-command detail-back" href="/workspace/hr">
+          Back to HR
+        </a>
+      ) : null}
       <header className="surface-heading">
         <div>
           <p className="surface-label">Workforce Admin</p>
@@ -30,10 +37,12 @@ export default async function WorkforceProfileAdminPage({
           </p>
         </div>
       </header>
-      <WorkforceProfileOnboarding
-        idempotencyKeys={{ activate: randomUUID(), create: randomUUID(), link: randomUUID() }}
-        storageKey={getWorkforceOnboardingStorageKey()}
-      />
+      {mode === "focus-master" ? null : (
+        <WorkforceProfileOnboarding
+          idempotencyKeys={{ activate: randomUUID(), create: randomUUID(), link: randomUUID() }}
+          storageKey={getWorkforceOnboardingStorageKey()}
+        />
+      )}
       <section aria-labelledby="workforce-directory-heading" className="leave-detail-section">
         <header className="surface-heading">
           <div>
@@ -45,7 +54,11 @@ export default async function WorkforceProfileAdminPage({
           </div>
         </header>
         <Suspense fallback={<AuthorizedWorkforceListLoading view="workforce" />}>
-          <AuthorizedWorkforceList searchParams={parameters} view="workforce" />
+          <AuthorizedWorkforceList
+            focusOrigin={focusOrigin}
+            searchParams={parameters}
+            view="workforce"
+          />
         </Suspense>
       </section>
     </section>

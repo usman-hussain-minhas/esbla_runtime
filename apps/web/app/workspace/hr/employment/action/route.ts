@@ -9,6 +9,11 @@ import {
   validateEmploymentAction,
 } from "../../../../../lib/hr-employment-record-core";
 import { isSameOriginSubmission } from "../../../../../lib/hr-leave-submit-core";
+import {
+  buildNestedRouteBackedWidgetHref,
+  parseOptionalRouteBackedWidgetOrigin,
+  type RouteBackedWidgetOrigin,
+} from "../../../../../lib/route-backed-widget-navigation-core";
 
 export const dynamic = "force-dynamic";
 
@@ -43,9 +48,11 @@ function redirect(
   result: string,
   requestUrl: string,
   sealedReceipt?: string,
+  origin?: RouteBackedWidgetOrigin,
 ): Response {
   const query = new URLSearchParams({ result });
-  const location = `${path}?${query}#employment-result`;
+  const target = `${path}?${query}`;
+  const location = `${origin ? buildNestedRouteBackedWidgetHref(target, origin) : target}#employment-result`;
   const headers: Record<string, string> = {
     ...baseResponseHeaders,
     location,
@@ -93,9 +100,13 @@ export async function POST(request: Request): Promise<Response> {
     return redirect("/workspace/hr/employment", "validation", request.url);
   }
 
+  const presentationOrigin = parseOptionalRouteBackedWidgetOrigin(value);
+  delete value.originFocusId;
+  delete value.returnSurface;
   const path = destination(value.operation);
   const validation = validateEmploymentAction(value);
-  if (!validation.ok) return redirect(path, validation.state.kind, request.url);
+  if (!validation.ok)
+    return redirect(path, validation.state.kind, request.url, undefined, presentationOrigin);
   try {
     const result = await executeEmploymentAction(validation.value);
     return redirect(
@@ -103,8 +114,15 @@ export async function POST(request: Request): Promise<Response> {
       "success",
       request.url,
       sealEmploymentMutationReceipt(validation.value, result),
+      presentationOrigin,
     );
   } catch (error) {
-    return redirect(path, employmentStateForError(error).kind, request.url);
+    return redirect(
+      path,
+      employmentStateForError(error).kind,
+      request.url,
+      undefined,
+      presentationOrigin,
+    );
   }
 }

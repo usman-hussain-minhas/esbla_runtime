@@ -10,7 +10,10 @@ interface EmploymentResultProps {
 
 export function EmploymentResult({ message, success }: EmploymentResultProps) {
   const result = useRef<HTMLDivElement>(null);
-  useEffect(() => result.current?.focus(), []);
+  const resultIdentity = `${success ? "success" : "failure"}:${message}`;
+  useEffect(() => {
+    if (resultIdentity) result.current?.focus();
+  }, [resultIdentity]);
   return (
     <div
       className={success ? "success-banner" : "form-error-summary"}

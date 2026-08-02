@@ -1,8 +1,12 @@
 import { ArrowRight, BadgeCheck, LoaderCircle, UserRoundX } from "lucide-react";
 import { Suspense } from "react";
 import { loadOwnWorkforceProfile } from "../../../../lib/hr-workforce-profile";
+import type { RouteBackedWidgetOrigin } from "../../../../lib/route-backed-widget-navigation-core";
+import { RouteBackedWidgetLink } from "../../../../theme/zen-theme/v1/route-backed-widget-link";
 
-async function ProfilePanel() {
+async function ProfilePanel({
+  focusOrigin,
+}: Readonly<{ focusOrigin?: RouteBackedWidgetOrigin | undefined }>) {
   const state = await loadOwnWorkforceProfile();
   if (state.status !== "success") {
     return (
@@ -39,13 +43,14 @@ async function ProfilePanel() {
           </div>
         </dl>
         <div className="work-queue-actions">
-          <a
+          <RouteBackedWidgetLink
             className="text-command"
+            focusOrigin={focusOrigin}
             href={`/workspace/hr/profile/by-id/${encodeURIComponent(state.profile.workerProfileId)}?returnContext=own`}
           >
             View profile history
             <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
-          </a>
+          </RouteBackedWidgetLink>
         </div>
       </section>
     </div>
@@ -64,15 +69,23 @@ function ProfileLoading() {
   );
 }
 
-export default function OwnWorkforceProfilePage() {
+export default function OwnWorkforceProfilePage({
+  focusOrigin,
+  mode = "standalone",
+}: Readonly<{
+  focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  mode?: "focus" | "standalone";
+}>) {
   return (
     <section
       aria-labelledby="workforce-profile-heading"
       className="work-surface leave-detail-surface"
     >
-      <a className="text-command detail-back" href="/workspace/hr">
-        Back to HR
-      </a>
+      {mode === "standalone" ? (
+        <a className="text-command detail-back" href="/workspace/hr">
+          Back to HR
+        </a>
+      ) : null}
       <header className="surface-heading">
         <div>
           <p className="surface-label">Own Workforce</p>
@@ -81,7 +94,7 @@ export default function OwnWorkforceProfilePage() {
         </div>
       </header>
       <Suspense fallback={<ProfileLoading />}>
-        <ProfilePanel />
+        <ProfilePanel focusOrigin={focusOrigin} />
       </Suspense>
     </section>
   );

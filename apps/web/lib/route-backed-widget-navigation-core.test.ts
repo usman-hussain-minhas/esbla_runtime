@@ -8,6 +8,7 @@ import {
   parseRouteBackedWidgetOrigin,
   parseRouteBackedWidgetReturnFocus,
   serializeRouteBackedWidgetReturnFocus,
+  withoutRouteBackedWidgetOrigin,
 } from "./route-backed-widget-navigation-core";
 
 describe("route-backed widget navigation", () => {
@@ -148,5 +149,15 @@ describe("route-backed widget navigation", () => {
         returnFocusId: "mission-control.my-work.full-screen",
       }),
     ).toThrow();
+  });
+
+  it("strips the presentation envelope before strict Product query parsing", () => {
+    expect(
+      withoutRouteBackedWidgetOrigin({
+        originFocusId: "mission-control.workforce-admin.full-screen",
+        returnSurface: "mission-control",
+        status: "active",
+      }),
+    ).toEqual({ status: "active" });
   });
 });

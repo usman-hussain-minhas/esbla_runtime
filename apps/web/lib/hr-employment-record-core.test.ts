@@ -564,6 +564,32 @@ describe("Employment Record rendered boundary", () => {
     );
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
+    fetchSpy.mockResolvedValueOnce(
+      Response.json(createdMutation, {
+        headers: { "idempotent-replayed": "false" },
+        status: 201,
+      }),
+    );
+    const contextualForm = new URLSearchParams(form);
+    contextualForm.set("originFocusId", "mission-control.employment-admin.full-screen");
+    contextualForm.set("returnSurface", "mission-control");
+    const contextual = await submitEmploymentAction(
+      new Request("http://localhost:3000/workspace/hr/employment/action", {
+        body: contextualForm,
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          host: "localhost:3000",
+          origin: "http://localhost:3000",
+          "sec-fetch-site": "same-origin",
+        },
+        method: "POST",
+      }),
+    );
+    expect(contextual.headers.get("location")).toBe(
+      "/workspace/hr/employment/admin?result=success&originFocusId=mission-control.employment-admin.full-screen&returnSurface=mission-control#employment-result",
+    );
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       Response.json(
         {

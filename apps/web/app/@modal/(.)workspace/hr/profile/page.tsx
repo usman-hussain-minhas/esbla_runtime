@@ -1,6 +1,7 @@
 import { parseRouteBackedWidgetOrigin } from "../../../../../lib/route-backed-widget-navigation-core";
 import {
-  RouteBackedWidgetFullScreenFace,
+  RouteBackedWidgetFocusPane,
+  RouteBackedWidgetFocusWorkspace,
   RouteBackedWidgetOverlay,
 } from "../../../../../theme/zen-theme/v1/route-backed-widget-overlay";
 import OwnWorkforceProfilePage from "../../../../workspace/hr/profile/page";
@@ -17,12 +18,17 @@ export default async function InterceptedProfilePage({ searchParams }: Props) {
       label="Workforce profile"
       returnFocusId={origin.returnFocusId}
     >
-      <RouteBackedWidgetFullScreenFace
+      <RouteBackedWidgetFocusWorkspace
+        activePane="detail"
         closeLabel="Close workforce profile"
         fallbackHref={origin.fallbackHref}
+        layout="single"
+        workspaceId="hr-workforce-own"
       >
-        <OwnWorkforceProfilePage />
-      </RouteBackedWidgetFullScreenFace>
+        <RouteBackedWidgetFocusPane kind="detail">
+          <OwnWorkforceProfilePage focusOrigin={origin} mode="focus" />
+        </RouteBackedWidgetFocusPane>
+      </RouteBackedWidgetFocusWorkspace>
     </RouteBackedWidgetOverlay>
   );
 }
