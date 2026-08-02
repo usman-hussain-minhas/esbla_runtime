@@ -1,9 +1,21 @@
 import { randomUUID } from "node:crypto";
+import Link from "next/link";
+import type { ReactNode } from "react";
 import { loadAttendanceDetail } from "../../../../../../lib/hr-attendance";
 import { hasAttendanceAction } from "../../../../../../lib/hr-attendance-core";
+import {
+  buildNestedRouteBackedWidgetHref,
+  getRouteBackedWidgetOriginParameters,
+  type RouteBackedWidgetOrigin,
+} from "../../../../../../lib/route-backed-widget-navigation-core";
+import { RouteBackedWidgetPostForm } from "../../../../../../theme/zen-theme/v1/route-backed-widget-overlay";
 
 interface Props {
+  readonly focusOrigin?: RouteBackedWidgetOrigin;
+  readonly leadingControl?: ReactNode;
+  readonly mode?: "focus" | "standalone";
   readonly params: Promise<{ observationId: string }>;
+  readonly preloadedState?: Awaited<ReturnType<typeof loadAttendanceDetail>>;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 function one(value: string | string[] | undefined): string | undefined {
@@ -15,9 +27,17 @@ function displayInstant(value: string): string {
   );
 }
 
-export default async function AttendanceDetailPage({ params, searchParams }: Props) {
+export default async function AttendanceDetailPage({
+  focusOrigin,
+  leadingControl,
+  mode = "standalone",
+  params,
+  preloadedState,
+  searchParams,
+}: Props) {
   const [{ observationId }, parameters] = await Promise.all([params, searchParams]);
-  const state = await loadAttendanceDetail(observationId, parameters);
+  const state = preloadedState ?? (await loadAttendanceDetail(observationId, parameters));
+  const encodedOrigin = focusOrigin ? getRouteBackedWidgetOriginParameters(focusOrigin) : undefined;
   const back =
     one(parameters.returnTo) === "reports"
       ? "/workspace/hr/attendance/reports"
@@ -27,9 +47,12 @@ export default async function AttendanceDetailPage({ params, searchParams }: Pro
     one(parameters.cursorCorrectionVersion) === undefined;
   return (
     <section aria-labelledby="attendance-detail-heading" className="work-surface">
-      <a className="text-command detail-back" href={back}>
-        Back to attendance
-      </a>
+      {leadingControl ??
+        (mode === "standalone" ? (
+          <a className="text-command detail-back" href={back}>
+            Back to attendance
+          </a>
+        ) : null)}
       <header className="surface-heading">
         <div>
           <p className="surface-label">Attendance</p>
@@ -70,12 +93,28 @@ export default async function AttendanceDetailPage({ params, searchParams }: Pro
             </div>
           </dl>
           {currentHistoryPage && hasAttendanceAction(state.authorizedActions, "correct") ? (
-            <form
+            <RouteBackedWidgetPostForm
               action="/workspace/hr/attendance/action"
               className="leave-request-form"
-              method="post"
             >
               <h2>Append a correction</h2>
+              {encodedOrigin ? (
+                <>
+                  <input name="originFocusId" type="hidden" value={encodedOrigin.originFocusId} />
+                  <input name="returnSurface" type="hidden" value={encodedOrigin.returnSurface} />
+                  <input
+                    name="returnTo"
+                    type="hidden"
+                    value={one(parameters.returnTo) === "reports" ? "reports" : "own"}
+                  />
+                  {one(parameters.from) ? (
+                    <input name="from" type="hidden" value={one(parameters.from)} />
+                  ) : null}
+                  {one(parameters.to) ? (
+                    <input name="to" type="hidden" value={one(parameters.to)} />
+                  ) : null}
+                </>
+              ) : null}
               <input name="idempotencyKey" type="hidden" value={randomUUID()} />
               <input
                 name="observationId"
@@ -126,7 +165,7 @@ export default async function AttendanceDetailPage({ params, searchParams }: Pro
               <button className="command-button command-button-primary" type="submit">
                 Append correction
               </button>
-            </form>
+            </RouteBackedWidgetPostForm>
           ) : null}
           <section aria-labelledby="attendance-corrections-heading">
             <h2 id="attendance-corrections-heading">Correction history</h2>
@@ -149,19 +188,24 @@ export default async function AttendanceDetailPage({ params, searchParams }: Pro
               </ol>
             )}
             {state.detail.corrections.nextCursor ? (
-              <a
+              <Link
                 className="text-command"
-                href={`?${new URLSearchParams({
-                  ...(one(parameters.returnTo)
-                    ? { returnTo: one(parameters.returnTo) as string }
-                    : {}),
-                  cursorAttendanceCorrectionId:
-                    state.detail.corrections.nextCursor.attendanceCorrectionId,
-                  cursorCorrectionVersion: String(state.detail.corrections.nextCursor.version),
-                })}`}
+                href={(() => {
+                  const href = `/workspace/hr/attendance/by-id/${encodeURIComponent(
+                    observationId,
+                  )}?${new URLSearchParams({
+                    ...(one(parameters.returnTo)
+                      ? { returnTo: one(parameters.returnTo) as string }
+                      : {}),
+                    cursorAttendanceCorrectionId:
+                      state.detail.corrections.nextCursor.attendanceCorrectionId,
+                    cursorCorrectionVersion: String(state.detail.corrections.nextCursor.version),
+                  })}`;
+                  return focusOrigin ? buildNestedRouteBackedWidgetHref(href, focusOrigin) : href;
+                })()}
               >
                 Older corrections
-              </a>
+              </Link>
             ) : null}
           </section>
         </>

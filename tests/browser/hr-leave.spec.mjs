@@ -213,6 +213,15 @@ async function openAppearance(actor) {
 }
 
 async function openNotifications(actor) {
+  const viewport = actor.page.viewportSize();
+  if (viewport) {
+    const responsiveClass =
+      viewport.width >= 1_100 ? "desktop" : viewport.width >= 768 ? "tablet" : "phone";
+    await expect(actor.page.locator(".zen-shell-chrome")).toHaveAttribute(
+      "data-responsive-class",
+      responsiveClass,
+    );
+  }
   const directLauncher = actor.page.getByRole("button", {
     name: /^Notifications(?:, \d+ unread)?$/,
   });
@@ -4592,17 +4601,47 @@ test("Shift roster renders across operator, employee and manager authority", asy
     );
     await submit(operator, "Publish exact roster");
 
-    await employee.page.setViewportSize({ width: 390, height: 844 });
-    await employee.page.goto(
-      `${employee.origin}/workspace/hr/shifts?from=2028-08-01&to=2028-08-07`,
+    await employee.page.setViewportSize({ height: 900, width: 1_280 });
+    await employee.page.goto(`${employee.origin}/workspace/hr`);
+    await employee.page.getByRole("link", { name: "Open My Published Shifts" }).press("Enter");
+    const shiftListOverlay = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "My shifts",
+    });
+    await expect(shiftListOverlay).toBeVisible();
+    await shiftListOverlay.getByLabel("From date").fill("2028-08-01");
+    await shiftListOverlay.getByLabel("Through date").fill("2028-08-07");
+    await shiftListOverlay.getByRole("button", { name: "Apply period" }).press("Enter");
+    await expect(shiftListOverlay).toBeVisible();
+    await expect(employee.page).toHaveURL(
+      /\/workspace\/hr\/shifts\?(?=.*originFocusId=hr-mission-control\.my-published-shifts\.full-screen)(?=.*returnSurface=hr-mission-control)(?=.*from=2028-08-01)(?=.*to=2028-08-07)/,
     );
-    await expect(employee.page.getByText("Asia/Karachi", { exact: true })).toBeVisible();
+    await expect(shiftListOverlay.getByText("Asia/Karachi", { exact: true })).toBeVisible();
+    await shiftListOverlay.getByRole("link", { name: "View persistent history" }).click();
+    const shiftDetailOverlay = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "Shift assignment",
+    });
+    const shiftWorkspace = shiftDetailOverlay.locator('[data-focus-workspace^="hr-shifts-"]');
+    await expect(shiftDetailOverlay).toBeVisible();
+    await expect(shiftWorkspace).toHaveAttribute("data-focus-layout", "master-detail");
+    await expect(shiftWorkspace.locator('[data-focus-pane="master"]')).toBeVisible();
+    await expect(shiftWorkspace.locator('[data-focus-pane="detail"]')).toBeVisible();
+    await shiftDetailOverlay.getByRole("link", { name: "Back to shifts" }).press("Enter");
+    await expect(shiftListOverlay).toBeVisible();
+
+    await employee.page.setViewportSize({ width: 390, height: 844 });
+    await shiftListOverlay.getByRole("link", { name: "View persistent history" }).click();
+    await expect(shiftDetailOverlay).toBeVisible();
+    await expect(shiftWorkspace.locator('[data-focus-pane="master"]')).toBeHidden();
+    await expect(shiftWorkspace.locator('[data-focus-pane="detail"]')).toBeVisible();
     expect(
       await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     ).toBe(true);
-    await employee.page.getByRole("link", { name: "View persistent history" }).click();
-    await expect(employee.page.getByRole("heading", { name: "Evidence history" })).toBeVisible();
-    await expect(employee.page.locator(".history-list strong")).toHaveText(["active"]);
+    await expect(
+      shiftDetailOverlay.getByRole("heading", { name: "Evidence history" }),
+    ).toBeVisible();
+    await expect(shiftDetailOverlay.locator(".history-list strong")).toHaveText(["active"]);
     await employee.page.reload();
     await expect(employee.page.locator(".history-list strong")).toHaveText(["active"]);
 
@@ -4712,25 +4751,68 @@ test("Attendance renders manual facts and persistent correction history by curre
     const record = operator.page.getByRole("button", { name: "Record attendance" });
     await record.focus();
     await operator.page.keyboard.press("Enter");
-    await expect(operator.page).toHaveURL(/\/workspace\/hr\/attendance\/by-id\/[0-9a-f-]+$/);
+    await expect(operator.page).toHaveURL(
+      /\/workspace\/hr\/attendance\/by-id\/[0-9a-f-]+\?returnTo=reports$/,
+    );
     const observationId = new URL(operator.page.url()).pathname.split("/").at(-1);
     expect(observationId).toMatch(fixtureId);
     await expect(operator.page.getByRole("heading", { name: "Append a correction" })).toBeVisible();
 
+    await employee.page.setViewportSize({ height: 900, width: 1_280 });
+    await employee.page.goto(`${employee.origin}/workspace/hr`);
+    await employee.page
+      .getByRole("link", { name: "Open My Attendance Observations" })
+      .press("Enter");
+    const attendanceListOverlay = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "My attendance",
+    });
+    await expect(attendanceListOverlay).toBeVisible();
+    await attendanceListOverlay.getByLabel("From date").fill("2028-08-01");
+    await attendanceListOverlay.getByLabel("Through date").fill("2028-08-07");
+    await attendanceListOverlay.getByRole("button", { name: "Apply period" }).press("Enter");
+    await expect(attendanceListOverlay).toBeVisible();
+    await expect(employee.page).toHaveURL(
+      /\/workspace\/hr\/attendance\?(?=.*originFocusId=hr-mission-control\.my-attendance\.full-screen)(?=.*returnSurface=hr-mission-control)(?=.*from=2028-08-01)(?=.*to=2028-08-07)/,
+    );
+    const employeeHistory = attendanceListOverlay.getByRole("link", {
+      name: "View correction history",
+    });
+    await employeeHistory.focus();
+    await employee.page.keyboard.press("Enter");
+    const attendanceDetailOverlay = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "Attendance detail",
+    });
+    const attendanceWorkspace = attendanceDetailOverlay.locator(
+      '[data-focus-workspace^="hr-attendance-"]',
+    );
+    await expect(attendanceDetailOverlay).toBeVisible();
+    await expect(attendanceWorkspace).toHaveAttribute("data-focus-layout", "master-detail");
+    await expect(attendanceWorkspace.locator('[data-focus-pane="master"]')).toBeVisible();
+    await expect(attendanceWorkspace.locator('[data-focus-pane="detail"]')).toBeVisible();
+    await expect(
+      attendanceDetailOverlay.getByRole("heading", { name: "Append a correction" }),
+    ).toHaveCount(0);
+    await attendanceDetailOverlay.getByRole("link", { name: "Back to attendance" }).press("Enter");
+    await expect(attendanceListOverlay).toBeVisible();
+
     await employee.page.setViewportSize({ height: 844, width: 390 });
-    await employee.page.goto(`${employee.origin}/workspace/hr/attendance?${period}`);
+    await attendanceListOverlay.getByRole("link", { name: "View correction history" }).click();
+    await expect(attendanceDetailOverlay).toBeVisible();
+    await expect(attendanceWorkspace.locator('[data-focus-pane="master"]')).toBeHidden();
+    await expect(attendanceWorkspace.locator('[data-focus-pane="detail"]')).toBeVisible();
     expect(
       await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     ).toBe(true);
-    const employeeHistory = employee.page.getByRole("link", { name: "View correction history" });
-    await employeeHistory.focus();
-    await employee.page.keyboard.press("Enter");
     await expect(employee.page).toHaveURL(
-      `${employee.origin}/workspace/hr/attendance/by-id/${observationId}?returnTo=own`,
+      new RegExp(
+        `/workspace/hr/attendance/by-id/${observationId}\\?(?=.*returnTo=own)(?=.*originFocusId=hr-mission-control\\.my-attendance\\.full-screen)(?=.*returnSurface=hr-mission-control)`,
+      ),
     );
-    await expect(employee.page.getByRole("heading", { name: "Append a correction" })).toHaveCount(
-      0,
-    );
+    await expect(
+      attendanceDetailOverlay.getByRole("heading", { name: "Append a correction" }),
+    ).toHaveCount(0);
 
     await manager.page.goto(`${manager.origin}/workspace/hr/attendance/reports?${period}`);
     await expect(
@@ -4746,7 +4828,9 @@ test("Attendance renders manual facts and persistent correction history by curre
     await correct.focus();
     await operator.page.keyboard.press("Enter");
     await expect(operator.page).toHaveURL(
-      `${operator.origin}/workspace/hr/attendance/by-id/${observationId}`,
+      new RegExp(
+        `/workspace/hr/attendance/by-id/${observationId}\\?(?=.*returnTo=reports)(?=.*originFocusId=route-backed-widget-fallback-focus)(?=.*returnSurface=hr-mission-control)`,
+      ),
     );
     await expect(
       operator.page.getByText("Rendered correction history", { exact: true }),
@@ -4824,6 +4908,69 @@ test("Shift and Attendance catalogue faces preserve exact routes and current aut
     await testInfo.attach("catalogue-shift-attendance-widgets", {
       contentType: "image/png",
       path: evidencePath,
+    });
+
+    await correctionQueue
+      .getByRole("link", { name: "Open Attendance Correction Queue" })
+      .press("Enter");
+    const attendanceReportsOverlay = operator.page.getByRole("dialog", {
+      exact: true,
+      name: "Attendance reports",
+    });
+    await expect(attendanceReportsOverlay).toBeVisible();
+    await attendanceReportsOverlay
+      .getByLabel("Worker profile ID")
+      .fill(shiftEmployeeWorkerProfileId);
+    await attendanceReportsOverlay.getByLabel("Observed instant").fill("2026-08-02T09:00:00.000Z");
+    await attendanceReportsOverlay.getByRole("button", { name: "Record attendance" }).click();
+    const attendanceDetailOverlay = operator.page.getByRole("dialog", {
+      exact: true,
+      name: "Attendance detail",
+    });
+    const attendanceFocusWorkspace = attendanceDetailOverlay.locator(
+      '[data-focus-workspace="hr-attendance-reports"]',
+    );
+    await expect(attendanceDetailOverlay).toBeVisible();
+    await expect(attendanceFocusWorkspace).toHaveAttribute("data-focus-layout", "master-detail");
+    await expect(attendanceFocusWorkspace.locator('[data-focus-pane="master"]')).toBeVisible();
+    await expect(attendanceFocusWorkspace.locator('[data-focus-pane="detail"]')).toBeVisible();
+    await expect(operator.page).toHaveURL(
+      /\/workspace\/hr\/attendance\/by-id\/[0-9a-f-]+\?(?=.*returnTo=reports)(?=.*originFocusId=mission-control\..+\.full-screen)(?=.*returnSurface=mission-control)/,
+    );
+    await attendanceDetailOverlay
+      .getByRole("button", { name: "Close Attendance detail" })
+      .press("Enter");
+    await expect(operator.page).toHaveURL(operator.origin);
+    await waitForShellHydration(operator);
+
+    await operator.page
+      .locator('[data-widget-definition="hr.shift.publish-queue"]')
+      .getByRole("link", { name: "Open Roster Publish Queue" })
+      .press("Enter");
+    const shiftReportsOverlay = operator.page.getByRole("dialog", {
+      exact: true,
+      name: "Report shifts",
+    });
+    await expect(shiftReportsOverlay).toBeVisible();
+    await shiftReportsOverlay.getByText("Create an exact roster period", { exact: true }).click();
+    await shiftReportsOverlay.getByLabel("Period start").fill("2029-01-01");
+    await shiftReportsOverlay.getByLabel("Period end").fill("2029-01-07");
+    await shiftReportsOverlay.getByRole("button", { name: "Create draft roster" }).click();
+    await expect(shiftReportsOverlay).toBeVisible();
+    await expect(
+      shiftReportsOverlay.getByRole("heading", { name: "Last Shift action receipt" }),
+    ).toBeVisible();
+    await expect(operator.page).toHaveURL(
+      /\/workspace\/hr\/shifts\/reports\?(?=.*result=success)(?=.*originFocusId=mission-control\..+\.full-screen)(?=.*returnSurface=mission-control)/,
+    );
+
+    const focusEvidencePath = testInfo.outputPath(
+      "catalogue-shift-attendance-focus-post-workspaces.png",
+    );
+    await operator.page.screenshot({ fullPage: false, path: focusEvidencePath });
+    await testInfo.attach("catalogue-shift-attendance-focus-post-workspaces", {
+      contentType: "image/png",
+      path: focusEvidencePath,
     });
     expect(operator.diagnostics.external).toEqual([]);
     expect(operator.diagnostics.page).toEqual([]);
@@ -4974,7 +5121,9 @@ test("complete default HR widgets render real attendance, expense, and direct-re
     await operator.page.getByLabel("Worker profile ID").fill(shiftEmployeeWorkerProfileId);
     await operator.page.getByLabel("Observed instant").fill(new Date().toISOString());
     await operator.page.getByRole("button", { name: "Record attendance" }).press("Enter");
-    await expect(operator.page).toHaveURL(/\/workspace\/hr\/attendance\/by-id\/[0-9a-f-]+$/);
+    await expect(operator.page).toHaveURL(
+      /\/workspace\/hr\/attendance\/by-id\/[0-9a-f-]+\?returnTo=reports$/,
+    );
 
     await admin.page.goto(`${admin.origin}/workspace/hr/expenses/settings`);
     const activationResponse = admin.page.waitForResponse(
@@ -4995,7 +5144,7 @@ test("complete default HR widgets render real attendance, expense, and direct-re
       "data-widget-definition",
       "hr.attendance.my-observations",
     );
-    await expect(attendance.getByText("Start", { exact: true })).toBeVisible();
+    await expect(attendance.getByText("Start", { exact: true }).first()).toBeVisible();
     await expect(
       attendance.getByRole("link", { name: "Open My Attendance Observations" }),
     ).toHaveAttribute(

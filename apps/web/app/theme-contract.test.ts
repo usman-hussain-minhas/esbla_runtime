@@ -72,7 +72,6 @@ describe("Esbla Theme v1 host contract", () => {
       [
         "./@modal/(.)workspace/hr/employment/page.tsx",
         "./@modal/(.)workspace/hr/profile/page.tsx",
-        "./@modal/(.)workspace/hr/shifts/page.tsx",
         "./@modal/(.)workspace/hr/timesheets/page.tsx",
         "./@modal/(.)workspace/my-work/page.tsx",
       ].map((path) => readFile(new URL(path, import.meta.url), "utf8")),
@@ -105,6 +104,34 @@ describe("Esbla Theme v1 host contract", () => {
     }
     expect(detail).toContain("RouteBackedWidgetNestedBackLink");
     expect(create).toContain("NewLeaveRequestPage");
+  });
+
+  it("uses adaptive focus workspaces for Attendance and Shift list-detail families", async () => {
+    const sources = await Promise.all(
+      [
+        "./@modal/(.)workspace/hr/attendance/page.tsx",
+        "./@modal/(.)workspace/hr/attendance/reports/page.tsx",
+        "./@modal/(.)workspace/hr/attendance/by-id/[observationId]/page.tsx",
+        "./@modal/(.)workspace/hr/shifts/page.tsx",
+        "./@modal/(.)workspace/hr/shifts/reports/page.tsx",
+        "./@modal/(.)workspace/hr/shifts/by-id/[shiftAssignmentId]/page.tsx",
+      ].map((path) => readFile(new URL(path, import.meta.url), "utf8")),
+    );
+
+    for (const source of sources) {
+      expect(source).toContain("RouteBackedWidgetOverlay");
+      expect(source).toContain("RouteBackedWidgetFocusWorkspace");
+      expect(source).toContain("parseRouteBackedWidgetOrigin");
+    }
+    for (const detail of [sources[2], sources[5]]) {
+      expect(detail).toContain('"master-detail"');
+      expect(detail).toContain("RouteBackedWidgetNestedBackLink");
+      expect(detail).toContain('detailState.status === "success"');
+      expect(detail).toContain('masterState?.status === "success"');
+      expect(detail).toContain('layout={showMaster ? "master-detail" : "single"}');
+    }
+    expect(sources[2]).toContain("loadAttendanceDetail");
+    expect(sources[5]).toContain("loadShiftDetail");
   });
 
   it("renders the ratified Timesheet Draft definition as the current domain form", async () => {

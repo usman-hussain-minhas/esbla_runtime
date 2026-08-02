@@ -62,10 +62,57 @@ export function buildRouteBackedWidgetHref(
   return `${route}?${parameters.toString()}`;
 }
 
+export function getRouteBackedWidgetOriginParameters(
+  origin: RouteBackedWidgetOrigin,
+): Readonly<{ originFocusId: string; returnSurface: "hr-mission-control" | "mission-control" }> {
+  if (!ORIGIN_FOCUS_PATTERN.test(origin.returnFocusId)) {
+    throw new Error("Route-backed widget origin is invalid");
+  }
+  const returnSurface =
+    origin.fallbackHref === "/"
+      ? "mission-control"
+      : origin.fallbackHref === "/workspace/hr"
+        ? "hr-mission-control"
+        : undefined;
+  if (!returnSurface) throw new Error("Nested route-backed widget origin is invalid");
+  return Object.freeze({ originFocusId: origin.returnFocusId, returnSurface });
+}
+
+export function buildNestedRouteBackedWidgetHref(
+  href: string,
+  origin: RouteBackedWidgetOrigin,
+): string {
+  if (!href.startsWith("/") || href.startsWith("//") || href.includes("#")) {
+    throw new Error("Nested route-backed widget destination is invalid");
+  }
+  const separator = href.indexOf("?");
+  const pathname = separator === -1 ? href : href.slice(0, separator);
+  if (!pathname || pathname.includes("?")) {
+    throw new Error("Nested route-backed widget destination is invalid");
+  }
+  const parameters = new URLSearchParams(separator === -1 ? "" : href.slice(separator + 1));
+  const encodedOrigin = getRouteBackedWidgetOriginParameters(origin);
+  parameters.set("originFocusId", encodedOrigin.originFocusId);
+  parameters.set("returnSurface", encodedOrigin.returnSurface);
+  return `${pathname}?${parameters.toString()}`;
+}
+
 export function parseRouteBackedWidgetOrigin(
   search: Search,
   canonicalFallback: "/" | "/workspace/hr",
 ): RouteBackedWidgetOrigin {
+  return (
+    parseOptionalRouteBackedWidgetOrigin(search) ??
+    Object.freeze({
+      fallbackHref: canonicalFallback,
+      returnFocusId: FALLBACK_FOCUS_ID,
+    })
+  );
+}
+
+export function parseOptionalRouteBackedWidgetOrigin(
+  search: Search,
+): RouteBackedWidgetOrigin | undefined {
   const returnSurface = one(search.returnSurface);
   const originFocusId = one(search.originFocusId);
   const fallbackHref =
@@ -73,11 +120,13 @@ export function parseRouteBackedWidgetOrigin(
       ? "/"
       : returnSurface === "hr-mission-control"
         ? "/workspace/hr"
-        : canonicalFallback;
+        : undefined;
+  if (!fallbackHref || !originFocusId || !ORIGIN_FOCUS_PATTERN.test(originFocusId)) {
+    return undefined;
+  }
   return Object.freeze({
     fallbackHref,
-    returnFocusId:
-      originFocusId && ORIGIN_FOCUS_PATTERN.test(originFocusId) ? originFocusId : FALLBACK_FOCUS_ID,
+    returnFocusId: originFocusId,
   });
 }
 

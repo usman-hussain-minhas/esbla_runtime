@@ -1,10 +1,31 @@
+import Link from "next/link";
 import { loadOwnAttendance } from "../../../../lib/hr-attendance";
+import {
+  buildNestedRouteBackedWidgetHref,
+  getRouteBackedWidgetOriginParameters,
+  type RouteBackedWidgetOrigin,
+} from "../../../../lib/route-backed-widget-navigation-core";
+import { RouteBackedWidgetGetForm } from "../../../../theme/zen-theme/v1/route-backed-widget-overlay";
 
 interface Props {
+  readonly focusOrigin?: RouteBackedWidgetOrigin;
+  readonly mode?: "focus-master" | "standalone";
+  readonly preloadedState?: Awaited<ReturnType<typeof loadOwnAttendance>>;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 function one(value: string | string[] | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+function attendanceDetailHref(
+  attendanceObservationId: string,
+  parameters: Record<string, string | string[] | undefined>,
+): string {
+  const query = new URLSearchParams({ returnTo: "own" });
+  const from = one(parameters.from);
+  const to = one(parameters.to);
+  if (from) query.set("from", from);
+  if (to) query.set("to", to);
+  return `/workspace/hr/attendance/by-id/${attendanceObservationId}?${query}`;
 }
 function displayInstant(value: string): string {
   return new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(
@@ -12,14 +33,22 @@ function displayInstant(value: string): string {
   );
 }
 
-export default async function OwnAttendancePage({ searchParams }: Props) {
+export default async function OwnAttendancePage({
+  focusOrigin,
+  mode = "standalone",
+  preloadedState,
+  searchParams,
+}: Props) {
   const parameters = await searchParams;
-  const state = await loadOwnAttendance(parameters);
+  const state = preloadedState ?? (await loadOwnAttendance(parameters));
+  const encodedOrigin = focusOrigin ? getRouteBackedWidgetOriginParameters(focusOrigin) : undefined;
   return (
     <section aria-labelledby="attendance-heading" className="work-surface">
-      <a className="text-command detail-back" href="/workspace/hr">
-        Back to HR
-      </a>
+      {mode === "standalone" ? (
+        <a className="text-command detail-back" href="/workspace/hr">
+          Back to HR
+        </a>
+      ) : null}
       <header className="surface-heading">
         <div>
           <p className="surface-label">Attendance</p>
@@ -29,7 +58,13 @@ export default async function OwnAttendancePage({ searchParams }: Props) {
           </p>
         </div>
       </header>
-      <form className="leave-request-form" method="get">
+      <RouteBackedWidgetGetForm action="/workspace/hr/attendance" className="leave-request-form">
+        {encodedOrigin ? (
+          <>
+            <input name="originFocusId" type="hidden" value={encodedOrigin.originFocusId} />
+            <input name="returnSurface" type="hidden" value={encodedOrigin.returnSurface} />
+          </>
+        ) : null}
         <div className="form-grid-two">
           <div className="form-field">
             <label htmlFor="attendance-from">From date</label>
@@ -48,7 +83,7 @@ export default async function OwnAttendancePage({ searchParams }: Props) {
         <button className="command-button command-button-primary" type="submit">
           Apply period
         </button>
-      </form>
+      </RouteBackedWidgetGetForm>
       {state.status === "error" ? (
         <div className="form-error-summary" role="alert">
           <h2>{state.title}</h2>
@@ -71,27 +106,37 @@ export default async function OwnAttendancePage({ searchParams }: Props) {
                     <p className="work-queue-dates">{observation.observationKind}</p>
                   </div>
                 </div>
-                <a
+                <Link
                   className="text-command"
-                  href={`/workspace/hr/attendance/by-id/${observation.attendanceObservationId}?returnTo=own`}
+                  href={
+                    focusOrigin
+                      ? buildNestedRouteBackedWidgetHref(
+                          attendanceDetailHref(observation.attendanceObservationId, parameters),
+                          focusOrigin,
+                        )
+                      : attendanceDetailHref(observation.attendanceObservationId, parameters)
+                  }
                 >
                   View correction history
-                </a>
+                </Link>
               </li>
             ))}
           </ol>
           {state.page.nextCursor ? (
-            <a
+            <Link
               className="text-command"
-              href={`?${new URLSearchParams({
-                ...(one(parameters.from) ? { from: one(parameters.from) as string } : {}),
-                ...(one(parameters.to) ? { to: one(parameters.to) as string } : {}),
-                cursorAttendanceObservationId: state.page.nextCursor.attendanceObservationId,
-                cursorObservedAt: state.page.nextCursor.observedAt,
-              })}`}
+              href={(() => {
+                const href = `/workspace/hr/attendance?${new URLSearchParams({
+                  ...(one(parameters.from) ? { from: one(parameters.from) as string } : {}),
+                  ...(one(parameters.to) ? { to: one(parameters.to) as string } : {}),
+                  cursorAttendanceObservationId: state.page.nextCursor.attendanceObservationId,
+                  cursorObservedAt: state.page.nextCursor.observedAt,
+                })}`;
+                return focusOrigin ? buildNestedRouteBackedWidgetHref(href, focusOrigin) : href;
+              })()}
             >
               Next attendance page
-            </a>
+            </Link>
           ) : null}
         </>
       )}

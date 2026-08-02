@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { ReactNode } from "react";
+import type { FormEvent, ReactNode } from "react";
 import {
   createContext,
   useCallback,
@@ -29,6 +29,7 @@ interface RouteBackedWidgetOverlayProps {
 }
 
 interface RouteBackedWidgetNavigation {
+  readonly clearDirty: () => void;
   readonly close: () => void;
   readonly confirmNestedNavigation: () => boolean;
 }
@@ -86,6 +87,9 @@ export function RouteBackedWidgetOverlay({
     if (!window.confirm("Discard unsaved changes and leave this view?")) return false;
     dirty.current = false;
     return true;
+  }, []);
+  const clearDirty = useCallback(() => {
+    dirty.current = false;
   }, []);
   const close = useCallback(() => {
     if (
@@ -275,8 +279,8 @@ export function RouteBackedWidgetOverlay({
   ]);
 
   const navigation = useMemo(
-    () => ({ close, confirmNestedNavigation }),
-    [close, confirmNestedNavigation],
+    () => ({ clearDirty, close, confirmNestedNavigation }),
+    [clearDirty, close, confirmNestedNavigation],
   );
   if (!mounted) return null;
   return createPortal(
@@ -296,6 +300,121 @@ export function RouteBackedWidgetOverlay({
       </div>
     </RouteBackedWidgetNavigationContext.Provider>,
     document.body,
+  );
+}
+
+export function RouteBackedWidgetGetForm({
+  action,
+  children,
+  className,
+}: {
+  readonly action: string;
+  readonly children: ReactNode;
+  readonly className?: string;
+}) {
+  const router = useRouter();
+  const navigation = useContext(RouteBackedWidgetNavigationContext);
+  if (
+    !action.startsWith("/") ||
+    action.startsWith("//") ||
+    action.includes("?") ||
+    action.includes("#")
+  ) {
+    throw new Error("Route-backed widget form action is invalid");
+  }
+  function submit(event: FormEvent<HTMLFormElement>) {
+    const parameters = new URLSearchParams();
+    for (const [key, value] of new FormData(event.currentTarget).entries()) {
+      if (typeof value !== "string" || parameters.has(key)) {
+        event.preventDefault();
+        return;
+      }
+      parameters.set(key, value);
+    }
+    event.preventDefault();
+    navigation?.clearDirty();
+    const query = parameters.toString();
+    router.push(query ? `${action}?${query}` : action);
+  }
+  return (
+    <form action={action} className={className} method="get" onSubmit={submit}>
+      {children}
+    </form>
+  );
+}
+
+export function RouteBackedWidgetPostForm({
+  action,
+  children,
+  className,
+}: {
+  readonly action: string;
+  readonly children: ReactNode;
+  readonly className?: string;
+}) {
+  const router = useRouter();
+  const navigation = useContext(RouteBackedWidgetNavigationContext);
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  if (
+    !action.startsWith("/") ||
+    action.startsWith("//") ||
+    action.includes("?") ||
+    action.includes("#")
+  ) {
+    throw new Error("Route-backed widget form action is invalid");
+  }
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitting) return;
+    const parameters = new URLSearchParams();
+    for (const [key, value] of new FormData(event.currentTarget).entries()) {
+      if (typeof value !== "string" || parameters.has(key)) {
+        setError("The action could not be submitted. Reload this view and try again.");
+        return;
+      }
+      parameters.set(key, value);
+    }
+    setError(null);
+    setSubmitting(true);
+    try {
+      const response = await fetch(action, {
+        body: parameters,
+        cache: "no-store",
+        credentials: "same-origin",
+        method: "POST",
+        redirect: "follow",
+      });
+      const destination = new URL(response.url, window.location.origin);
+      if (
+        !response.ok ||
+        !response.redirected ||
+        destination.origin !== window.location.origin ||
+        !destination.pathname.startsWith("/") ||
+        destination.pathname.startsWith("//")
+      ) {
+        throw new Error("Unsafe route-backed form response");
+      }
+      navigation?.clearDirty();
+      router.push(`${destination.pathname}${destination.search}${destination.hash}`);
+    } catch {
+      setError("The action could not be completed. Review current values and try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+  return (
+    <form
+      action={action}
+      aria-busy={submitting}
+      className={className}
+      data-route-submitting={submitting ? "true" : "false"}
+      method="post"
+      onSubmit={submit}
+    >
+      {error ? <p role="alert">{error}</p> : null}
+      {children}
+    </form>
   );
 }
 

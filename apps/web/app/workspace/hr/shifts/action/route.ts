@@ -13,6 +13,11 @@ import {
   validateShiftAction,
   validateShiftServiceAction,
 } from "../../../../../lib/hr-shift-assignment-core";
+import {
+  buildNestedRouteBackedWidgetHref,
+  parseOptionalRouteBackedWidgetOrigin,
+  type RouteBackedWidgetOrigin,
+} from "../../../../../lib/route-backed-widget-navigation-core";
 
 export const dynamic = "force-dynamic";
 const headers = { "cache-control": "no-store", "x-content-type-options": "nosniff" } as const;
@@ -33,12 +38,14 @@ function redirect(
   extra: Record<string, string> = {},
   sealed?: string,
   destination = "/workspace/hr/shifts/reports",
+  origin?: RouteBackedWidgetOrigin,
 ): Response {
   const query = new URLSearchParams({ ...extra, result });
+  const target = `${destination}?${query}`;
   return new Response(null, {
     headers: {
       ...headers,
-      location: `${destination}?${query}#shift-result`,
+      location: `${origin ? buildNestedRouteBackedWidgetHref(target, origin) : target}#shift-result`,
       "set-cookie": receiptCookie(requestUrl, sealed),
     },
     status: 303,
@@ -108,8 +115,19 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
   }
+  const presentationOrigin = parseOptionalRouteBackedWidgetOrigin(value);
+  delete value.originFocusId;
+  delete value.returnSurface;
   const validation = validateShiftAction(value);
-  if (!validation.ok) return redirect(validation.state.kind, request.url);
+  if (!validation.ok)
+    return redirect(
+      validation.state.kind,
+      request.url,
+      {},
+      undefined,
+      undefined,
+      presentationOrigin,
+    );
   try {
     const result = await executeShiftAction(validation.value);
     const extra =
@@ -128,8 +146,17 @@ export async function POST(request: Request): Promise<Response> {
       request.url,
       extra,
       sealShiftMutationReceipt(validation.value, result),
+      undefined,
+      presentationOrigin,
     );
   } catch (error) {
-    return redirect(shiftStateForError(error).kind, request.url);
+    return redirect(
+      shiftStateForError(error).kind,
+      request.url,
+      {},
+      undefined,
+      undefined,
+      presentationOrigin,
+    );
   }
 }
