@@ -2,8 +2,11 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
   buildHrLeaveDetailHref,
+  buildHrLeaveListHref,
+  buildHrLeaveNewHref,
   getHrLeaveReturnLink,
   HR_LEAVE_CANONICAL_HOST_LINK,
+  parseHrLeaveOriginFocusId,
   parseHrLeaveReturnContext,
 } from "./hr-leave-navigation-core";
 
@@ -82,6 +85,50 @@ describe("HR leave closed navigation", () => {
     );
   });
 
+  it("preserves the exact originating surface across list, new and detail routes", () => {
+    const navigation = {
+      originFocusId: `mission-control.my-leave.${leaveRequestId}`,
+      returnContext: "mission-control" as const,
+    };
+
+    expect(buildHrLeaveListHref(navigation)).toBe(
+      `/workspace/hr/leave?originFocusId=mission-control.my-leave.${leaveRequestId}&returnSurface=mission-control`,
+    );
+    expect(buildHrLeaveNewHref(navigation)).toBe(
+      `/workspace/hr/leave/new?returnContext=mission-control&originFocusId=mission-control.my-leave.${leaveRequestId}`,
+    );
+    expect(
+      buildHrLeaveDetailHref(leaveRequestId, navigation.returnContext, navigation.originFocusId),
+    ).toBe(
+      `/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control&originFocusId=mission-control.my-leave.${leaveRequestId}`,
+    );
+    expect(parseHrLeaveOriginFocusId(navigation.originFocusId)).toBe(navigation.originFocusId);
+  });
+
+  it("keeps standalone list navigation canonical and rejects unsafe focus identifiers", () => {
+    expect(buildHrLeaveListHref()).toBe("/workspace/hr/leave");
+    expect(buildHrLeaveListHref({ returnContext: "leave-list" })).toBe("/workspace/hr/leave");
+    expect(buildHrLeaveNewHref()).toBe("/workspace/hr/leave/new");
+    expect(
+      buildHrLeaveListHref(undefined, {
+        leaveRequestId,
+        submittedAt: "2026-08-02T01:02:03.000Z",
+      }),
+    ).toBe(
+      `/workspace/hr/leave?cursorLeaveRequestId=${leaveRequestId}&cursorSubmittedAt=2026-08-02T01%3A02%3A03.000Z`,
+    );
+
+    for (const originFocusId of ["../outside", "two..dots", "/absolute", "https://bad"]) {
+      expect(parseHrLeaveOriginFocusId(originFocusId)).toBeUndefined();
+      expect(() =>
+        buildHrLeaveNewHref({ originFocusId, returnContext: "mission-control" }),
+      ).toThrow("Leave origin focus ID is invalid");
+    }
+    expect(() => buildHrLeaveNewHref({ returnContext: "mission-control" })).toThrow(
+      "Leave origin focus ID is required",
+    );
+  });
+
   it("provides source-only wiring checks for five entrypoints and dead flags", async () => {
     const [list, form, detail, detailFace, myWork, approval, rejection] = await Promise.all(
       [
@@ -95,11 +142,14 @@ describe("HR leave closed navigation", () => {
       ].map(async (path) => await readFile(new URL(path, import.meta.url), "utf8")),
     );
 
-    expect(form).toContain('buildHrLeaveDetailHref(result.leaveRequestId, "leave-list")');
+    expect(form).toContain("buildHrLeaveDetailHref(");
+    expect(form).toContain('focusNavigation?.returnContext ?? "leave-list"');
+    expect(form).toContain("focusNavigation?.originFocusId");
     expect(form).toContain("decodeHrLeaveSubmitTransport(");
     expect(form).toContain("router.replace(");
     expect(form).not.toContain("parseHrLeaveSubmitTransport");
-    expect(list).toContain('buildHrLeaveDetailHref(request.leaveRequestId, "leave-list")');
+    expect(list).toContain("buildHrLeaveDetailHref(");
+    expect(list).toContain('focusNavigation?.returnContext ?? "leave-list"');
     expect(list).toContain("View details");
     expect(myWork).toContain('buildHrLeaveDetailHref(item.leaveRequestId, "my-work")');
     expect(approval).toContain('buildHrLeaveDetailHref(result.leaveRequestId, "my-work")');

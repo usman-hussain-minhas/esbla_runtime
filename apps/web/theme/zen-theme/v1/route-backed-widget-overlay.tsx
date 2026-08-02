@@ -1,8 +1,17 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   parseRouteBackedWidgetFallbackHref,
@@ -12,10 +21,16 @@ import {
 import { SemanticIcon } from "./semantic-icons";
 
 interface RouteBackedWidgetOverlayProps {
+  readonly browserBackMode?: "close-origin" | "return-master";
   readonly children: ReactNode;
   readonly fallbackHref: string;
   readonly label: string;
   readonly returnFocusId: string;
+}
+
+interface RouteBackedWidgetNavigation {
+  readonly close: () => void;
+  readonly confirmNestedNavigation: () => boolean;
 }
 
 const focusableSelector = [
@@ -26,9 +41,10 @@ const focusableSelector = [
   "textarea:not([disabled])",
   '[tabindex]:not([tabindex="-1"])',
 ].join(",");
-const RouteBackedWidgetCloseContext = createContext<(() => void) | null>(null);
+const RouteBackedWidgetNavigationContext = createContext<RouteBackedWidgetNavigation | null>(null);
 
 export function RouteBackedWidgetOverlay({
+  browserBackMode = "close-origin",
   children,
   fallbackHref,
   label,
@@ -65,6 +81,12 @@ export function RouteBackedWidgetOverlay({
     },
     [navigateToFreshOrigin],
   );
+  const confirmNestedNavigation = useCallback(() => {
+    if (!dirty.current) return true;
+    if (!window.confirm("Discard unsaved changes and leave this view?")) return false;
+    dirty.current = false;
+    return true;
+  }, []);
   const close = useCallback(() => {
     if (
       dirty.current &&
@@ -72,8 +94,12 @@ export function RouteBackedWidgetOverlay({
     ) {
       return;
     }
-    requestFreshOrigin(-2);
-  }, [requestFreshOrigin]);
+    if (browserBackMode === "close-origin") requestFreshOrigin(-2);
+    else {
+      exitRequested.current = true;
+      navigateToFreshOrigin();
+    }
+  }, [browserBackMode, navigateToFreshOrigin, requestFreshOrigin]);
 
   useEffect(() => {
     setMounted(true);
@@ -114,8 +140,9 @@ export function RouteBackedWidgetOverlay({
     const token = guardToken.current ?? window.crypto.randomUUID();
     guardToken.current = token;
     if (
-      !window.history.state ||
-      (window.history.state as Record<string, unknown>).__esblaRouteBackedWidgetGuard !== token
+      browserBackMode === "close-origin" &&
+      (!window.history.state ||
+        (window.history.state as Record<string, unknown>).__esblaRouteBackedWidgetGuard !== token)
     ) {
       window.history.pushState(
         {
@@ -126,7 +153,6 @@ export function RouteBackedWidgetOverlay({
         window.location.href,
       );
     }
-
     function handleKeys(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -175,9 +201,15 @@ export function RouteBackedWidgetOverlay({
         typeof event.state === "object" && event.state !== null
           ? (event.state as Record<string, unknown>)
           : undefined;
-      if (state?.__esblaRouteBackedWidgetGuard === token) return;
+      if (browserBackMode === "close-origin" && state?.__esblaRouteBackedWidgetGuard === token) {
+        return;
+      }
       if (exitRequested.current) {
         navigateToFreshOrigin();
+        return;
+      }
+      if (browserBackMode === "return-master") {
+        if (!confirmNestedNavigation()) window.history.forward();
         return;
       }
       if (
@@ -220,11 +252,23 @@ export function RouteBackedWidgetOverlay({
         });
       }
     };
-  }, [close, mounted, navigateToFreshOrigin, requestFreshOrigin, returnFocusId]);
+  }, [
+    browserBackMode,
+    close,
+    confirmNestedNavigation,
+    mounted,
+    navigateToFreshOrigin,
+    requestFreshOrigin,
+    returnFocusId,
+  ]);
 
+  const navigation = useMemo(
+    () => ({ close, confirmNestedNavigation }),
+    [close, confirmNestedNavigation],
+  );
   if (!mounted) return null;
   return createPortal(
-    <RouteBackedWidgetCloseContext.Provider value={close}>
+    <RouteBackedWidgetNavigationContext.Provider value={navigation}>
       <div
         aria-label={label}
         aria-modal="true"
@@ -238,7 +282,7 @@ export function RouteBackedWidgetOverlay({
       >
         {children}
       </div>
-    </RouteBackedWidgetCloseContext.Provider>,
+    </RouteBackedWidgetNavigationContext.Provider>,
     document.body,
   );
 }
@@ -251,14 +295,15 @@ export function RouteBackedWidgetOverlayCloseButton({
   readonly label: string;
 }) {
   const router = useRouter();
-  const overlayClose = useContext(RouteBackedWidgetCloseContext);
+  const overlayNavigation = useContext(RouteBackedWidgetNavigationContext);
   const safeFallbackHref = parseRouteBackedWidgetFallbackHref(fallbackHref) ?? "/";
   return (
     <button
       aria-label={label}
-      className="icon-command"
+      className="chrome-button zen-focus-close-button"
+      data-tooltip="Close"
       onClick={() => {
-        if (overlayClose) overlayClose();
+        if (overlayNavigation) overlayNavigation.close();
         else if (window.history.length > 1) router.back();
         else router.replace(safeFallbackHref);
       }}
@@ -267,6 +312,73 @@ export function RouteBackedWidgetOverlayCloseButton({
     >
       <SemanticIcon aria-hidden="true" semanticKey="x" size={17} />
     </button>
+  );
+}
+
+export function RouteBackedWidgetNestedBackLink({
+  children,
+  className = "text-command",
+  href,
+}: {
+  readonly children: ReactNode;
+  readonly className?: string;
+  readonly href: string;
+}) {
+  const navigation = useContext(RouteBackedWidgetNavigationContext);
+  return (
+    <Link
+      className={className}
+      href={href}
+      onClick={(event) => {
+        if (navigation && !navigation.confirmNestedNavigation()) event.preventDefault();
+      }}
+    >
+      {children}
+    </Link>
+  );
+}
+
+export function RouteBackedWidgetFocusPane({
+  children,
+  kind,
+}: {
+  readonly children: ReactNode;
+  readonly kind: "detail" | "master";
+}) {
+  return (
+    <div className={`zen-focus-pane zen-focus-pane-${kind}`} data-focus-pane={kind}>
+      {children}
+    </div>
+  );
+}
+
+export function RouteBackedWidgetFocusWorkspace({
+  activePane,
+  children,
+  closeLabel,
+  fallbackHref,
+  layout,
+  workspaceId,
+}: {
+  readonly activePane: "detail" | "master";
+  readonly children: ReactNode;
+  readonly closeLabel: string;
+  readonly fallbackHref: string;
+  readonly layout: "master-detail" | "single";
+  readonly workspaceId: string;
+}) {
+  return (
+    <div
+      className="zen-focus-workspace"
+      data-active-pane={activePane}
+      data-focus-layout={layout}
+      data-focus-workspace={workspaceId}
+    >
+      <div className="zen-widget-full-screen-close">
+        <RouteBackedWidgetOverlayCloseButton fallbackHref={fallbackHref} label={closeLabel} />
+      </div>
+      {children}
+    </div>
   );
 }
 
@@ -281,10 +393,15 @@ export function RouteBackedWidgetFullScreenFace({
 }) {
   return (
     <div className="zen-widget-full-screen-face">
-      <div className="zen-widget-full-screen-close">
-        <RouteBackedWidgetOverlayCloseButton fallbackHref={fallbackHref} label={closeLabel} />
-      </div>
-      {children}
+      <RouteBackedWidgetFocusWorkspace
+        activePane="detail"
+        closeLabel={closeLabel}
+        fallbackHref={fallbackHref}
+        layout="single"
+        workspaceId="single"
+      >
+        <RouteBackedWidgetFocusPane kind="detail">{children}</RouteBackedWidgetFocusPane>
+      </RouteBackedWidgetFocusWorkspace>
     </div>
   );
 }

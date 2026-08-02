@@ -3,14 +3,20 @@
 import { LoaderCircle, Send, TriangleAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { buildHrLeaveDetailHref } from "../../../../../lib/hr-leave-navigation-core";
+import {
+  buildHrLeaveDetailHref,
+  buildHrLeaveListHref,
+  type HrLeaveFocusNavigation,
+} from "../../../../../lib/hr-leave-navigation-core";
 import {
   decodeHrLeaveSubmitTransport,
   INITIAL_HR_LEAVE_SUBMIT_STATE,
   submitFormStateForError,
 } from "../../../../../lib/hr-leave-submit-core";
+import { RouteBackedWidgetNestedBackLink } from "../../../../../theme/zen-theme/v1/route-backed-widget-overlay";
 
 interface LeaveRequestFormProps {
+  readonly focusNavigation?: HrLeaveFocusNavigation;
   readonly idempotencyKey: string;
 }
 
@@ -32,7 +38,7 @@ function SubmitButton({ pending }: { readonly pending: boolean }) {
   );
 }
 
-export function LeaveRequestForm({ idempotencyKey }: LeaveRequestFormProps) {
+export function LeaveRequestForm({ focusNavigation, idempotencyKey }: LeaveRequestFormProps) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [state, setState] = useState(INITIAL_HR_LEAVE_SUBMIT_STATE);
@@ -65,7 +71,13 @@ export function LeaveRequestForm({ idempotencyKey }: LeaveRequestFormProps) {
         setState(result.state);
         return;
       }
-      router.replace(buildHrLeaveDetailHref(result.leaveRequestId, "leave-list"));
+      router.replace(
+        buildHrLeaveDetailHref(
+          result.leaveRequestId,
+          focusNavigation?.returnContext ?? "leave-list",
+          focusNavigation?.originFocusId,
+        ),
+      );
     } catch {
       setState(submitFormStateForError(new Error("unavailable")));
     } finally {
@@ -172,9 +184,15 @@ export function LeaveRequestForm({ idempotencyKey }: LeaveRequestFormProps) {
       </div>
 
       <div className="form-actions">
-        <a className="text-command" href="/workspace/hr/leave">
-          Cancel
-        </a>
+        {focusNavigation ? (
+          <RouteBackedWidgetNestedBackLink href={buildHrLeaveListHref(focusNavigation)}>
+            Cancel
+          </RouteBackedWidgetNestedBackLink>
+        ) : (
+          <a className="text-command" href={buildHrLeaveListHref()}>
+            Cancel
+          </a>
+        )}
         <SubmitButton pending={pending} />
       </div>
     </form>

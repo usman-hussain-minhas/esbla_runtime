@@ -267,7 +267,9 @@ async function submitLeave(actor, values) {
   const match = new URL(actor.page.url()).pathname.match(/\/workspace\/hr\/leave\/([^/]+)$/);
   expect(match?.[1]).toBeTruthy();
   const leaveRequestId = match?.[1] ?? "";
-  await expect(actor.page.locator(".leave-status")).toHaveText("Submitted");
+  await expect(actor.page.locator("[data-leave-detail-face] .leave-status")).toHaveText(
+    "Submitted",
+  );
   await expect(actor.page.getByRole("heading", { name: "Evidence history" })).toBeVisible();
   await expect(actor.page.locator(".leave-history-item strong")).toHaveText(["Submitted"]);
   return leaveRequestId;
@@ -461,6 +463,114 @@ test("employee Profile and Leave-list widgets render as responsive route-backed 
       },
       testInfo,
     );
+  } finally {
+    await closeActors(employee);
+  }
+});
+
+test("Leave focus workspace preserves origin, nested Back, dirty guard and mobile single pane", async ({
+  browser,
+}, testInfo) => {
+  const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
+  try {
+    await employee.page.setViewportSize({ height: 800, width: 1_280 });
+    await employee.page.goto(`${employee.origin}/workspace/hr`);
+    await waitForShellHydration(employee);
+    await employee.page
+      .getByRole("link", { exact: true, name: "View all My Leave Requests" })
+      .press("Enter");
+
+    const listOverlay = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "My leave requests",
+    });
+    await expect(listOverlay).toBeVisible();
+    await listOverlay.getByRole("link", { exact: true, name: "New request" }).press("Enter");
+
+    const newOverlay = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "New leave request",
+    });
+    const workspace = newOverlay.locator('[data-focus-workspace="hr-leave"]');
+    await expect(newOverlay).toBeVisible();
+    await expect(employee.page).toHaveURL(
+      `${employee.origin}/workspace/hr/leave/new?returnContext=hr-mission-control&originFocusId=hr-mission-control.my-leave.full-screen`,
+    );
+    await expect(workspace).toHaveAttribute("data-focus-layout", "master-detail");
+    await expect(workspace.locator('[data-focus-pane="master"]')).toBeVisible();
+    await expect(workspace.locator('[data-focus-pane="detail"]')).toBeVisible();
+    await expect(
+      newOverlay.getByRole("link", { exact: true, name: "Back to requests" }),
+    ).toBeVisible();
+    await expect(newOverlay.getByRole("button", { name: "Close new leave request" })).toBeVisible();
+
+    const desktopPath = testInfo.outputPath("leave-new-focus-workspace-desktop.png");
+    await employee.page.screenshot({ fullPage: false, path: desktopPath });
+    await testInfo.attach("leave-new-focus-workspace-desktop", {
+      contentType: "image/png",
+      path: desktopPath,
+    });
+
+    await employee.page.getByLabel("Reason").fill("Unsaved focus workspace draft");
+    const dismissedPrompt = new Promise((resolve) => {
+      employee.page.once("dialog", async (dialog) => {
+        resolve(dialog.message());
+        await dialog.dismiss();
+      });
+    });
+    await newOverlay.getByRole("link", { exact: true, name: "Back to requests" }).click();
+    expect(await dismissedPrompt).toBe("Discard unsaved changes and leave this view?");
+    await expect(newOverlay).toBeVisible();
+    await expect(employee.page.getByLabel("Reason")).toHaveValue("Unsaved focus workspace draft");
+
+    const acceptedPrompt = new Promise((resolve) => {
+      employee.page.once("dialog", async (dialog) => {
+        resolve(dialog.message());
+        await dialog.accept();
+      });
+    });
+    await newOverlay.getByRole("link", { exact: true, name: "Back to requests" }).click();
+    expect(await acceptedPrompt).toBe("Discard unsaved changes and leave this view?");
+    await expect(listOverlay).toBeVisible();
+    await expect(employee.page).toHaveURL(
+      `${employee.origin}/workspace/hr/leave?originFocusId=hr-mission-control.my-leave.full-screen&returnSurface=hr-mission-control`,
+    );
+
+    await employee.page.setViewportSize({ height: 844, width: 390 });
+    await listOverlay.getByRole("link", { exact: true, name: "New request" }).press("Enter");
+    await expect(newOverlay).toBeVisible();
+    await expect(workspace.locator('[data-focus-pane="master"]')).toBeHidden();
+    await expect(workspace.locator('[data-focus-pane="detail"]')).toBeVisible();
+    expect(
+      await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+    const mobilePath = testInfo.outputPath("leave-new-focus-workspace-mobile.png");
+    await employee.page.screenshot({ fullPage: false, path: mobilePath });
+    await testInfo.attach("leave-new-focus-workspace-mobile", {
+      contentType: "image/png",
+      path: mobilePath,
+    });
+
+    await employee.page.goBack();
+    await expect(listOverlay).toBeVisible();
+    await expect(employee.page).toHaveURL(
+      `${employee.origin}/workspace/hr/leave?originFocusId=hr-mission-control.my-leave.full-screen&returnSurface=hr-mission-control`,
+    );
+
+    await listOverlay.getByRole("link", { exact: true, name: "New request" }).press("Enter");
+    const revalidatedOrigin = employee.page.waitForResponse(
+      (response) =>
+        response.request().isNavigationRequest() &&
+        response.url() === `${employee.origin}/workspace/hr`,
+    );
+    await newOverlay.getByRole("button", { name: "Close new leave request" }).press("Enter");
+    expect((await revalidatedOrigin).status()).toBe(200);
+    await employee.page.waitForLoadState("load");
+    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr`);
+    await expect(employee.page.getByRole("dialog")).toHaveCount(0);
+    await expect(
+      employee.page.locator("#hr-mission-control\\.my-leave\\.full-screen"),
+    ).toBeFocused();
   } finally {
     await closeActors(employee);
   }
@@ -2954,6 +3064,38 @@ test("employee submits, manager approves, and employee reloads durable rendered 
     const overlay = employee.page.getByRole("dialog", { name: "Leave request detail" });
     await expect(overlay).toBeVisible();
     await expect(overlay).toBeFocused();
+    const focusWorkspace = overlay.locator('[data-focus-workspace="hr-leave"]');
+    await expect(focusWorkspace).toBeVisible();
+    await expect(focusWorkspace.locator('[data-focus-pane="master"]')).toBeVisible();
+    await expect(focusWorkspace.locator('[data-focus-pane="detail"]')).toBeVisible();
+    const focusGeometry = await focusWorkspace.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      const master = element.querySelector('[data-focus-pane="master"]');
+      const detail = element.querySelector('[data-focus-pane="detail"]');
+      const masterBounds = master?.getBoundingClientRect();
+      const detailBounds = detail?.getBoundingClientRect();
+      return {
+        borderTopWidth: style.borderTopWidth,
+        detailStartsAfterMaster: Boolean(
+          masterBounds && detailBounds && detailBounds.left >= masterBounds.right,
+        ),
+        height: Math.round(bounds.height),
+        masterWidth: Math.round(masterBounds?.width ?? 0),
+        width: Math.round(bounds.width),
+        x: Math.round(bounds.x),
+        y: Math.round(bounds.y),
+      };
+    });
+    expect(focusGeometry).toEqual({
+      borderTopWidth: "0px",
+      detailStartsAfterMaster: true,
+      height: 800,
+      masterWidth: 512,
+      width: 1_280,
+      x: 0,
+      y: 0,
+    });
     await expect(overlay.locator('[data-leave-detail-face="overlay"]')).toBeVisible();
     await expect(employee.page.locator(".esbla-shell")).toHaveAttribute("aria-hidden", "true");
     await expect(employee.page.locator(".esbla-shell")).toHaveAttribute("inert", "");
@@ -2970,10 +3112,15 @@ test("employee submits, manager approves, and employee reloads durable rendered 
       contentType: "image/png",
       path: overlayEvidencePath,
     });
-    await employee.page.keyboard.press("Shift+Tab");
-    await expect(overlay.getByRole("button", { name: "Close leave request detail" })).toBeFocused();
     await employee.page.keyboard.press("Tab");
-    await expect(overlay.getByRole("button", { name: "Close leave request detail" })).toBeFocused();
+    const closeDetail = overlay.getByRole("button", { name: "Close leave request detail" });
+    await expect(closeDetail).toBeFocused();
+    await employee.page.keyboard.press("Shift+Tab");
+    await expect(
+      overlay.getByRole("link", { exact: true, name: "Back to requests" }),
+    ).toBeFocused();
+    await employee.page.keyboard.press("Tab");
+    await expect(closeDetail).toBeFocused();
     const revalidatedOrigin = employee.page.waitForResponse(
       (response) =>
         response.request().isNavigationRequest() && response.url() === `${employee.origin}/`,
