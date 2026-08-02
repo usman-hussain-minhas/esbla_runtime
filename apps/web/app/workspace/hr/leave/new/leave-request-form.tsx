@@ -89,6 +89,7 @@ export function LeaveRequestForm({ focusNavigation, idempotencyKey }: LeaveReque
     <form
       action="/workspace/hr/leave/new/submit"
       className="leave-request-form"
+      data-route-dirty-submit="retain"
       method="post"
       noValidate
       onSubmit={submit}

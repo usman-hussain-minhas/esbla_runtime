@@ -87,6 +87,7 @@ const notificationProjector = createNotificationProjector(
     onDiagnostic: ({ code }) => process.stderr.write(`${code}\n`),
   },
 );
+let forcedMissingLeaveRequestId;
 const server = createServer({
   authenticate: createDevelopmentAuthenticator({
     environment: "test",
@@ -97,6 +98,9 @@ const server = createServer({
   notificationProjectorWake: notificationProjector.wake,
   pool: applicationPool,
   runtimeEnvironment: "test",
+  testOverrides: {
+    leaveRequestDetailNotFound: (leaveRequestId) => leaveRequestId === forcedMissingLeaveRequestId,
+  },
 });
 server.addHook("onClose", async () => {
   await notificationProjector.stop();
@@ -267,7 +271,7 @@ async function requireActorReady(origin, label, web, pathname = "/workspace/hr/l
   throw new Error(`Web persona ${label} did not become ready`);
 }
 
-async function restartWebPersona(persona) {
+async function restartWebPersona(persona, principalIdOverride) {
   const current = webPersonas.get(persona);
   if (!current?.restartSpec || current.settled || closing) {
     throw new Error("Web restart target is unavailable");
@@ -291,7 +295,14 @@ async function restartWebPersona(persona) {
     throw new Error("Web restart stop receipt is invalid");
   }
   const { label, origin, principalId, projectRoot, tenantId } = current.restartSpec;
-  const replacement = startWebPersona(persona, origin, principalId, label, projectRoot, tenantId);
+  const replacement = startWebPersona(
+    persona,
+    origin,
+    principalIdOverride ?? principalId,
+    label,
+    projectRoot,
+    tenantId,
+  );
   await requireActorReady(origin, label, replacement);
 }
 
@@ -315,6 +326,38 @@ server.post("/__esbla-test-control/restart-web", async (request, reply) => {
   }
   await restartWebPersona(request.body.persona);
   return { status: "restarted" };
+});
+
+server.post("/__esbla-test-control/employee-session-principal", async (request, reply) => {
+  if (!testControlAuthorized(request)) return await reply.code(404).send({ status: "not_found" });
+  if (
+    !hasExactKeys(request.body, ["principal"]) ||
+    (request.body.principal !== "alternate" && request.body.principal !== "employee")
+  ) {
+    return await reply.code(400).send({ status: "invalid" });
+  }
+  await restartWebPersona(
+    "employee",
+    request.body.principal === "employee"
+      ? fixture.employeePrincipalId
+      : fixture.employmentEmployeePrincipalId,
+  );
+  return { status: "restarted" };
+});
+
+server.post("/__esbla-test-control/leave-detail-missing", async (request, reply) => {
+  if (!testControlAuthorized(request)) return await reply.code(404).send({ status: "not_found" });
+  if (
+    !hasExactKeys(request.body, ["leaveRequestId"]) ||
+    (request.body.leaveRequestId !== null &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        request.body.leaveRequestId,
+      ))
+  ) {
+    return await reply.code(400).send({ status: "invalid" });
+  }
+  forcedMissingLeaveRequestId = request.body.leaveRequestId ?? undefined;
+  return { status: "updated" };
 });
 
 server.post("/__esbla-test-control/leave-presentation-eligibility", async (request, reply) => {

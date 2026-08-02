@@ -1,15 +1,30 @@
 import { ArrowLeft, FileQuestion } from "lucide-react";
+import type { ReactNode } from "react";
 
-export default function HrLeaveDetailNotFound() {
+interface HrLeaveDetailNotFoundProps {
+  readonly leadingControl?: ReactNode;
+  readonly mode?: "overlay" | "standalone";
+}
+
+export default function HrLeaveDetailNotFound({
+  leadingControl,
+  mode = "standalone",
+}: HrLeaveDetailNotFoundProps = {}) {
   return (
     <section
       aria-labelledby="leave-detail-missing-heading"
-      className="work-surface leave-detail-surface"
+      className={`work-surface leave-detail-surface ${
+        mode === "overlay" ? "leave-detail-overlay-face" : ""
+      }`}
     >
-      <a className="text-command detail-back" href="/workspace/my-work">
-        <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
-        Back to My Work
-      </a>
+      <div className="leave-detail-leading-control">
+        {leadingControl ?? (
+          <a className="text-command detail-back" href="/workspace/hr/leave">
+            <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
+            Back to My Leave Requests
+          </a>
+        )}
+      </div>
       <div className="empty-worklist leave-detail-missing">
         <span aria-hidden="true" className="empty-worklist-icon">
           <FileQuestion size={27} strokeWidth={1.6} />

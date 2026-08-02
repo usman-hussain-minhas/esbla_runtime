@@ -44,6 +44,30 @@ async function setEmployeeLeavePresentationEligibility(active, capabilities) {
   ).toEqual({ status: "updated" });
 }
 
+async function setForcedMissingLeaveRequest(leaveRequestId) {
+  expect(
+    await testControl("/__esbla-test-control/leave-detail-missing", { leaveRequestId }),
+  ).toEqual({ status: "updated" });
+}
+
+async function setEmployeeSessionPrincipal(principal) {
+  expect(
+    await testControl("/__esbla-test-control/employee-session-principal", { principal }),
+  ).toEqual({
+    status: "restarted",
+  });
+}
+
+function consumeCooperativeRestartDiagnostics(actor, fromIndex) {
+  const diagnostics = actor.diagnostics.console.splice(fromIndex);
+  expect(
+    diagnostics.every(
+      (message) => message === "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    ),
+    "the cooperative web restart emits only bounded connection-refused diagnostics",
+  ).toBe(true);
+}
+
 async function setEmployeeWorkforcePresentationEligibility(eligible) {
   expect(
     await testControl("/__esbla-test-control/workforce-presentation-eligibility", {
@@ -512,6 +536,18 @@ test("Leave focus workspace preserves origin, nested Back, dirty guard and mobil
     });
 
     await employee.page.getByLabel("Reason").fill("Unsaved focus workspace draft");
+    const failedSubmission = employee.page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/workspace/hr/leave/new/submit" &&
+        response.request().method() === "POST",
+    );
+    await newOverlay.getByRole("button", { name: "Submit request" }).click();
+    expect((await failedSubmission).status()).toBe(400);
+    await expect(newOverlay.getByRole("alert")).toContainText("Review the highlighted fields.");
+    expect(employee.diagnostics.console).toEqual([
+      "Failed to load resource: the server responded with a status of 400 (Bad Request)",
+    ]);
+    employee.diagnostics.console.length = 0;
     const dismissedPrompt = new Promise((resolve) => {
       employee.page.once("dialog", async (dialog) => {
         resolve(dialog.message());
@@ -557,6 +593,15 @@ test("Leave focus workspace preserves origin, nested Back, dirty guard and mobil
       `${employee.origin}/workspace/hr/leave?originFocusId=hr-mission-control.my-leave.full-screen&returnSurface=hr-mission-control`,
     );
 
+    await employee.page.goForward();
+    await expect(newOverlay).toBeVisible();
+    await expect(employee.page).toHaveURL(
+      `${employee.origin}/workspace/hr/leave/new?returnContext=hr-mission-control&originFocusId=hr-mission-control.my-leave.full-screen`,
+    );
+    await expect(workspace.locator('[data-focus-pane="master"]')).toBeHidden();
+    await employee.page.goBack();
+    await expect(listOverlay).toBeVisible();
+
     await listOverlay.getByRole("link", { exact: true, name: "New request" }).press("Enter");
     const revalidatedOrigin = employee.page.waitForResponse(
       (response) =>
@@ -573,6 +618,116 @@ test("Leave focus workspace preserves origin, nested Back, dirty guard and mobil
     ).toBeFocused();
   } finally {
     await closeActors(employee);
+  }
+});
+
+test("Leave focus workspace fails closed after authorization loss, deactivation and stale detail", async ({
+  browser,
+}) => {
+  const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
+  const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
+  let eligibilityChanged = false;
+  let forcedMissing = false;
+  let leaveRequestId;
+  let sessionChanged = false;
+  const detailReason = "Focus fail-closed proof";
+  try {
+    leaveRequestId = await submitLeave(employee, {
+      endDate: "2027-03-09",
+      reason: detailReason,
+      startDate: "2027-03-09",
+    });
+    const openFromCurrentList = async () => {
+      await employee.page.goto(`${employee.origin}/workspace/hr`);
+      await employee.page
+        .getByRole("link", { exact: true, name: "View all My Leave Requests" })
+        .press("Enter");
+      const listOverlay = employee.page.getByRole("dialog", {
+        exact: true,
+        name: "My leave requests",
+      });
+      await expect(listOverlay).toBeVisible();
+      const detailLink = listOverlay.locator(`a[href*="/workspace/hr/leave/${leaveRequestId}?"]`);
+      await expect(detailLink).toBeVisible();
+      return detailLink;
+    };
+    const expectSafeError = async (actor) => {
+      const overlay = actor.page.getByRole("dialog", {
+        exact: true,
+        name: "Leave request detail",
+      });
+      await expect(overlay).toBeVisible();
+      await expect(overlay.locator('[data-focus-workspace="hr-leave"]')).toHaveAttribute(
+        "data-focus-layout",
+        "single",
+      );
+      await expect(overlay.getByRole("alert")).toContainText("Request details could not be loaded");
+      await expect(overlay).not.toContainText(detailReason);
+    };
+
+    let detailLink = await openFromCurrentList();
+    let restartDiagnosticsStart = employee.diagnostics.console.length;
+    await setEmployeeSessionPrincipal("alternate");
+    sessionChanged = true;
+    await detailLink.press("Enter");
+    await expectSafeError(employee);
+    consumeCooperativeRestartDiagnostics(employee, restartDiagnosticsStart);
+    restartDiagnosticsStart = employee.diagnostics.console.length;
+    await setEmployeeSessionPrincipal("employee");
+    sessionChanged = false;
+
+    detailLink = await openFromCurrentList();
+    consumeCooperativeRestartDiagnostics(employee, restartDiagnosticsStart);
+    await setEmployeeLeavePresentationEligibility(false, ["hr.leave.list_own", "hr.leave.view"]);
+    eligibilityChanged = true;
+    await detailLink.press("Enter");
+    await expectSafeError(employee);
+
+    await setEmployeeLeavePresentationEligibility(true, ["hr.leave.list_own", "hr.leave.view"]);
+    await restartEmployeeApplication();
+    detailLink = await openFromCurrentList();
+    await setForcedMissingLeaveRequest(leaveRequestId);
+    forcedMissing = true;
+    await detailLink.press("Enter");
+    const missingOverlay = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "Leave request detail",
+    });
+    await expect(missingOverlay).toBeVisible();
+    await expect(
+      missingOverlay.getByRole("heading", { name: "Leave request not found" }),
+    ).toBeVisible();
+    await expect(missingOverlay.locator('[data-focus-pane="master"]')).toBeVisible();
+    await expect(missingOverlay.locator('[data-focus-pane="detail"]')).toBeVisible();
+    await expect(missingOverlay).not.toContainText(detailReason);
+
+    await setForcedMissingLeaveRequest(null);
+    forcedMissing = false;
+    await setEmployeeLeavePresentationEligibility(true, [
+      "hr.leave.list_own",
+      "hr.leave.submit",
+      "hr.leave.view",
+    ]);
+    eligibilityChanged = false;
+    const assignedCard = await openAssignedWork(manager, leaveRequestId);
+    await assignedCard.getByRole("button", { name: "Approve leave request" }).click();
+    await assignedCard.getByRole("button", { name: "Confirm approval" }).click();
+    await expectHistory(manager, "Approved", ["Submitted", "Approved"]);
+  } finally {
+    if (forcedMissing) await setForcedMissingLeaveRequest(null).catch(() => undefined);
+    if (sessionChanged) {
+      const restartDiagnosticsStart = employee.diagnostics.console.length;
+      await setEmployeeSessionPrincipal("employee").catch(() => undefined);
+      consumeCooperativeRestartDiagnostics(employee, restartDiagnosticsStart);
+    }
+    if (eligibilityChanged) {
+      await setEmployeeLeavePresentationEligibility(true, [
+        "hr.leave.list_own",
+        "hr.leave.submit",
+        "hr.leave.view",
+      ]).catch(() => undefined);
+    }
+    await closeActors(employee, manager);
   }
 });
 
@@ -1818,7 +1973,13 @@ test("eligible catalogue faces add through Surface Editor and render from real s
       const reset = actor.page.getByRole("button", { name: "Restore tenant layout" });
       if (await reset.isEnabled().catch(() => false)) {
         actor.page.once("dialog", (dialog) => dialog.accept());
-        await reset.click().catch(() => undefined);
+        const resetResponse = actor.page.waitForResponse(
+          (response) =>
+            new URL(response.url()).pathname ===
+            "/presentation/surfaces/surface.mission-control/reset",
+        );
+        await reset.click();
+        expect((await resetResponse).status()).toBe(200);
       }
     }
     await closeActors(...actors);
@@ -1939,7 +2100,13 @@ test("Timesheet and Expense catalogue faces add through Surface Editor and rende
       const reset = actor.page.getByRole("button", { name: "Restore tenant layout" });
       if (await reset.isEnabled().catch(() => false)) {
         actor.page.once("dialog", (dialog) => dialog.accept());
-        await reset.click().catch(() => undefined);
+        const resetResponse = actor.page.waitForResponse(
+          (response) =>
+            new URL(response.url()).pathname ===
+            "/presentation/surfaces/surface.mission-control/reset",
+        );
+        await reset.click();
+        expect((await resetResponse).status()).toBe(200);
       }
     }
     if (expenseReactivated) {

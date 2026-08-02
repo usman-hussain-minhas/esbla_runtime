@@ -137,16 +137,20 @@ export function RouteBackedWidgetOverlay({
     document.documentElement.style.overflow = "hidden";
     document.body.style.overflow = "hidden";
     activeFace.focus();
-    const token = guardToken.current ?? window.crypto.randomUUID();
+    const historyState =
+      typeof window.history.state === "object" && window.history.state !== null
+        ? (window.history.state as Record<string, unknown>)
+        : undefined;
+    const existingToken =
+      typeof historyState?.__esblaRouteBackedWidgetGuard === "string"
+        ? historyState.__esblaRouteBackedWidgetGuard
+        : undefined;
+    const token = guardToken.current ?? existingToken ?? window.crypto.randomUUID();
     guardToken.current = token;
-    if (
-      browserBackMode === "close-origin" &&
-      (!window.history.state ||
-        (window.history.state as Record<string, unknown>).__esblaRouteBackedWidgetGuard !== token)
-    ) {
+    if (browserBackMode === "close-origin" && existingToken !== token) {
       window.history.pushState(
         {
-          ...(window.history.state as Record<string, unknown> | null),
+          ...historyState,
           __esblaRouteBackedWidgetGuard: token,
         },
         "",
@@ -188,8 +192,16 @@ export function RouteBackedWidgetOverlay({
         dirty.current = true;
       }
     }
-    function markSubmitted() {
-      dirty.current = false;
+    function markSubmitted(event: SubmitEvent) {
+      if (
+        event.target instanceof HTMLFormElement &&
+        event.target.dataset.routeDirtySubmit === "retain"
+      ) {
+        return;
+      }
+      queueMicrotask(() => {
+        if (!event.defaultPrevented) dirty.current = false;
+      });
     }
     function handleBeforeUnload(event: BeforeUnloadEvent) {
       if (!dirty.current || exitRequested.current) return;

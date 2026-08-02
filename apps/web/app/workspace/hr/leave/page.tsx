@@ -135,6 +135,7 @@ export default async function HrLeaveListPage({
                         focusNavigation?.returnContext ?? "leave-list",
                         focusNavigation?.originFocusId,
                       )}
+                      prefetch={false}
                     >
                       View details
                       <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />

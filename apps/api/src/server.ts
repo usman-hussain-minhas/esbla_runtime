@@ -239,6 +239,9 @@ export interface CreateServerOptions {
   readonly notificationProjectorWake?: () => void;
   readonly pool: Pool;
   readonly runtimeEnvironment?: "development" | "production" | "test";
+  readonly testOverrides?: {
+    readonly leaveRequestDetailNotFound?: (leaveRequestId: string) => boolean;
+  };
 }
 
 function operationContext(request: FastifyRequest): OperationContext {
@@ -334,6 +337,9 @@ function workspaceTaskPageResponse<T extends { createdAt: string; taskId: string
 }
 
 export function createServer(options: CreateServerOptions): FastifyInstance {
+  if (options.testOverrides && options.runtimeEnvironment !== "test") {
+    throw new Error("API test overrides require the test runtime");
+  }
   const server = Fastify({
     ajv: {
       customOptions: {
@@ -1748,6 +1754,9 @@ export function createServer(options: CreateServerOptions): FastifyInstance {
       },
     },
     async (request) => {
+      if (options.testOverrides?.leaveRequestDetailNotFound?.(request.params.leaveRequestId)) {
+        throw new HrLeaveError("LEAVE_NOT_FOUND", "Leave request was not found");
+      }
       const detail = await getLeaveRequestDetail(
         options.pool,
         operationContext(request),

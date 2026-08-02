@@ -1,5 +1,4 @@
 import { ArrowLeft } from "lucide-react";
-import { notFound } from "next/navigation";
 import { getLeaveRequestDetail } from "../../../../../../lib/hr-leave-detail";
 import {
   buildHrLeaveListHref,
@@ -15,7 +14,9 @@ import {
   RouteBackedWidgetNestedBackLink,
   RouteBackedWidgetOverlay,
 } from "../../../../../../theme/zen-theme/v1/route-backed-widget-overlay";
+import HrLeaveDetailError from "../../../../../workspace/hr/leave/[leaveRequestId]/error";
 import { HrLeaveRequestDetailFace } from "../../../../../workspace/hr/leave/[leaveRequestId]/leave-request-detail-face";
+import HrLeaveDetailNotFound from "../../../../../workspace/hr/leave/[leaveRequestId]/not-found";
 import HrLeaveRequestPage from "../../../../../workspace/hr/leave/page";
 
 interface InterceptedLeaveDetailPageProps {
@@ -31,8 +32,14 @@ export default async function InterceptedLeaveDetailPage({
   const returnContext = parseHrLeaveReturnContext(parameters.returnContext);
   const returnLink = getHrLeaveReturnLink(returnContext);
   const originFocusId = parseHrLeaveOriginFocusId(parameters.originFocusId);
-  const detail = await getLeaveRequestDetail(leaveRequestId);
-  if (!detail) notFound();
+  const detailResult = await (async () => {
+    try {
+      const detail = await getLeaveRequestDetail(leaveRequestId);
+      return detail ? ({ detail, kind: "detail" } as const) : ({ kind: "not-found" } as const);
+    } catch {
+      return { kind: "error" } as const;
+    }
+  })();
 
   const fallbackHref = returnLink?.href ?? HR_LEAVE_CANONICAL_HOST_LINK.href;
   const focusNavigation: HrLeaveFocusNavigation | undefined =
@@ -43,9 +50,16 @@ export default async function InterceptedLeaveDetailPage({
         ? { originFocusId, returnContext }
         : undefined;
   const masterHref = focusNavigation ? buildHrLeaveListHref(focusNavigation) : fallbackHref;
+  const showMaster = Boolean(focusNavigation) && detailResult.kind !== "error";
+  const leadingControl = showMaster ? (
+    <RouteBackedWidgetNestedBackLink href={masterHref}>
+      <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
+      Back to requests
+    </RouteBackedWidgetNestedBackLink>
+  ) : undefined;
   return (
     <RouteBackedWidgetOverlay
-      browserBackMode={focusNavigation ? "return-master" : "close-origin"}
+      browserBackMode={showMaster ? "return-master" : "close-origin"}
       fallbackHref={fallbackHref}
       label="Leave request detail"
       returnFocusId={originFocusId ?? "leave-detail-fallback-focus"}
@@ -54,10 +68,10 @@ export default async function InterceptedLeaveDetailPage({
         activePane="detail"
         closeLabel="Close leave request detail"
         fallbackHref={fallbackHref}
-        layout={focusNavigation ? "master-detail" : "single"}
+        layout={showMaster ? "master-detail" : "single"}
         workspaceId="hr-leave"
       >
-        {focusNavigation ? (
+        {showMaster && focusNavigation ? (
           <RouteBackedWidgetFocusPane kind="master">
             <HrLeaveRequestPage
               focusNavigation={focusNavigation}
@@ -67,18 +81,17 @@ export default async function InterceptedLeaveDetailPage({
           </RouteBackedWidgetFocusPane>
         ) : null}
         <RouteBackedWidgetFocusPane kind="detail">
-          <HrLeaveRequestDetailFace
-            detail={detail}
-            leadingControl={
-              focusNavigation ? (
-                <RouteBackedWidgetNestedBackLink href={masterHref}>
-                  <ArrowLeft aria-hidden="true" size={16} strokeWidth={1.8} />
-                  Back to requests
-                </RouteBackedWidgetNestedBackLink>
-              ) : undefined
-            }
-            mode="overlay"
-          />
+          {detailResult.kind === "error" ? (
+            <HrLeaveDetailError mode="overlay" />
+          ) : detailResult.kind === "detail" ? (
+            <HrLeaveRequestDetailFace
+              detail={detailResult.detail}
+              leadingControl={leadingControl}
+              mode="overlay"
+            />
+          ) : (
+            <HrLeaveDetailNotFound leadingControl={leadingControl} mode="overlay" />
+          )}
         </RouteBackedWidgetFocusPane>
       </RouteBackedWidgetFocusWorkspace>
     </RouteBackedWidgetOverlay>
