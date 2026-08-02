@@ -71,7 +71,6 @@ describe("Esbla Theme v1 host contract", () => {
     const intercepted = await Promise.all(
       [
         "./@modal/(.)workspace/hr/employment/page.tsx",
-        "./@modal/(.)workspace/hr/leave/page.tsx",
         "./@modal/(.)workspace/hr/profile/page.tsx",
         "./@modal/(.)workspace/hr/shifts/page.tsx",
         "./@modal/(.)workspace/hr/timesheets/page.tsx",
@@ -83,6 +82,29 @@ describe("Esbla Theme v1 host contract", () => {
       expect(source).toContain("RouteBackedWidgetFullScreenFace");
       expect(source).toContain("parseRouteBackedWidgetOrigin");
     }
+  });
+
+  it("uses one route-backed Leave focus workspace across list, detail and new faces", async () => {
+    const [list, detail, create] = await Promise.all([
+      readFile(new URL("./@modal/(.)workspace/hr/leave/page.tsx", import.meta.url), "utf8"),
+      readFile(
+        new URL("./@modal/(.)workspace/hr/leave/[leaveRequestId]/page.tsx", import.meta.url),
+        "utf8",
+      ),
+      readFile(new URL("./@modal/(.)workspace/hr/leave/new/page.tsx", import.meta.url), "utf8"),
+    ]);
+
+    for (const source of [list, detail, create]) {
+      expect(source).toContain("RouteBackedWidgetOverlay");
+      expect(source).toContain("RouteBackedWidgetFocusWorkspace");
+      expect(source).toContain('workspaceId="hr-leave"');
+    }
+    for (const source of [detail, create]) {
+      expect(source).toContain('"master-detail"');
+      expect(source).toContain("HrLeaveRequestPage");
+    }
+    expect(detail).toContain("RouteBackedWidgetNestedBackLink");
+    expect(create).toContain("NewLeaveRequestPage");
   });
 
   it("renders the ratified Timesheet Draft definition as the current domain form", async () => {

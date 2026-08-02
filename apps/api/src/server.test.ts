@@ -32,6 +32,19 @@ describe("runtime probes", () => {
     expect(query).not.toHaveBeenCalled();
   });
 
+  it("rejects browser-only test overrides outside the test runtime", () => {
+    expect(() =>
+      createServer({
+        authenticate: createDevelopmentAuthenticator({ secret }),
+        logger: false,
+        pool: { query: vi.fn() } as unknown as Pool,
+        testOverrides: {
+          leaveRequestDetailNotFound: () => true,
+        },
+      }),
+    ).toThrow("API test overrides require the test runtime");
+  });
+
   it("reports readiness only after PostgreSQL answers", async () => {
     const { query, server } = testServer();
     const response = await server.inject({ method: "GET", url: "/ready" });

@@ -1,9 +1,17 @@
 import type { HrLeaveRequest, HrLeaveRequestCursor } from "@esbla/contracts/hr-leave-api";
 import { ArrowRight, CalendarDays, Plus } from "lucide-react";
+import Link from "next/link";
 import { getOwnLeaveRequests } from "../../../../lib/hr-leave-list";
-import { buildHrLeaveDetailHref } from "../../../../lib/hr-leave-navigation-core";
+import {
+  buildHrLeaveDetailHref,
+  buildHrLeaveListHref,
+  buildHrLeaveNewHref,
+  type HrLeaveFocusNavigation,
+} from "../../../../lib/hr-leave-navigation-core";
 
 interface LeaveListPageProps {
+  readonly focusNavigation?: HrLeaveFocusNavigation;
+  readonly mode?: "focus-master" | "standalone";
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
@@ -51,21 +59,20 @@ function dateRange(request: HrLeaveRequest) {
     : `${start} - ${formatDate(request.endDate)}`;
 }
 
-function nextPageHref(cursor: HrLeaveRequestCursor) {
-  const parameters = new URLSearchParams({
-    cursorLeaveRequestId: cursor.leaveRequestId,
-    cursorSubmittedAt: cursor.submittedAt,
-  });
-  return `/workspace/hr/leave?${parameters.toString()}`;
-}
-
-export default async function HrLeaveListPage({ searchParams }: LeaveListPageProps) {
+export default async function HrLeaveListPage({
+  focusNavigation,
+  mode = "standalone",
+  searchParams,
+}: LeaveListPageProps) {
   const parameters = await searchParams;
   const cursor = cursorFrom(parameters);
   const page = await getOwnLeaveRequests(cursor);
 
   return (
-    <section aria-labelledby="leave-list-heading" className="work-surface leave-list-surface">
+    <section
+      aria-labelledby="leave-list-heading"
+      className={`work-surface leave-list-surface leave-list-${mode}`}
+    >
       <header className="surface-heading leave-list-heading">
         <div>
           <p className="surface-label">HR</p>
@@ -74,10 +81,13 @@ export default async function HrLeaveListPage({ searchParams }: LeaveListPagePro
         </div>
         <div className="surface-heading-actions">
           <span className="work-count">{page.items.length} shown</span>
-          <a className="command-button command-button-primary" href="/workspace/hr/leave/new">
+          <Link
+            className="command-button command-button-primary"
+            href={buildHrLeaveNewHref(focusNavigation)}
+          >
             <Plus aria-hidden="true" size={17} strokeWidth={1.8} />
             New request
-          </a>
+          </Link>
         </div>
       </header>
 
@@ -118,13 +128,18 @@ export default async function HrLeaveListPage({ searchParams }: LeaveListPagePro
                     </time>
                   </td>
                   <td data-label="Actions">
-                    <a
+                    <Link
                       className="text-command work-detail-link"
-                      href={buildHrLeaveDetailHref(request.leaveRequestId, "leave-list")}
+                      href={buildHrLeaveDetailHref(
+                        request.leaveRequestId,
+                        focusNavigation?.returnContext ?? "leave-list",
+                        focusNavigation?.originFocusId,
+                      )}
+                      prefetch={false}
                     >
                       View details
                       <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
-                    </a>
+                    </Link>
                   </td>
                 </tr>
               ))}
@@ -136,16 +151,19 @@ export default async function HrLeaveListPage({ searchParams }: LeaveListPagePro
       {page.nextCursor || cursor ? (
         <nav aria-label="Leave request pages" className="list-pagination">
           {cursor ? (
-            <a className="text-command" href="/workspace/hr/leave">
+            <Link className="text-command" href={buildHrLeaveListHref(focusNavigation)}>
               Start over
-            </a>
+            </Link>
           ) : (
             <span />
           )}
           {page.nextCursor ? (
-            <a className="text-command" href={nextPageHref(page.nextCursor)}>
+            <Link
+              className="text-command"
+              href={buildHrLeaveListHref(focusNavigation, page.nextCursor)}
+            >
               Next page
-            </a>
+            </Link>
           ) : null}
         </nav>
       ) : null}

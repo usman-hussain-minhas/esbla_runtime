@@ -1,8 +1,17 @@
 "use client";
 
 import { RefreshCw, TriangleAlert } from "lucide-react";
+import type { ReactNode } from "react";
 
-export default function HrLeaveDetailError() {
+interface HrLeaveDetailErrorProps {
+  readonly leadingControl?: ReactNode;
+  readonly mode?: "overlay" | "standalone";
+}
+
+export default function HrLeaveDetailError({
+  leadingControl,
+  mode = "standalone",
+}: HrLeaveDetailErrorProps = {}) {
   function retry() {
     // Re-enter the server-only signing boundary after an upstream recovery.
     window.location.reload();
@@ -11,8 +20,11 @@ export default function HrLeaveDetailError() {
   return (
     <section
       aria-labelledby="leave-detail-error-heading"
-      className="work-surface leave-detail-surface"
+      className={`work-surface leave-detail-surface ${
+        mode === "overlay" ? "leave-detail-overlay-face" : ""
+      }`}
     >
+      {leadingControl ? <div className="leave-detail-leading-control">{leadingControl}</div> : null}
       <header className="surface-heading leave-detail-heading">
         <div>
           <p className="surface-label">HR leave request</p>
