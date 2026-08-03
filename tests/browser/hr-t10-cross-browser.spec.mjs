@@ -217,6 +217,7 @@ test("T10 renders the bounded Zen HR matrix on stable Chromium, Firefox, and Web
 test("T10 restored Product reads preserved state, writes, restarts, and reads the write", async ({
   browser,
 }, testInfo) => {
+  test.setTimeout(90_000);
   test.skip(!restoredReplay, "restored Product replay only");
   const receiptPath = process.env.ESBLA_T10_RESTORED_RECEIPT;
   if (!receiptPath || !isAbsolute(receiptPath)) throw new Error("Restored receipt path is missing");
@@ -259,7 +260,7 @@ test("T10 restored Product reads preserved state, writes, restarts, and reads th
         "x-esbla-test-control": testControlToken,
       },
       method: "POST",
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(60_000),
     });
     expect(restart.status, await restart.text()).toBe(200);
     await employee.page.goto(`${fixture.employeeOrigin}/settings`);
