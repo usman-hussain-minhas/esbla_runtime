@@ -181,6 +181,20 @@ async function closeActors(...actors) {
     .toBe(true);
 }
 
+async function restoreTenantLayout(actor, surfaceId = "surface.mission-control") {
+  const reset = actor.page.getByRole("button", { name: "Restore tenant layout" });
+  if (!(await reset.isEnabled().catch(() => false))) return;
+  const resetPath = `/presentation/surfaces/${surfaceId}/reset`;
+  actor.page.once("dialog", (dialog) => dialog.accept());
+  const resetResponse = actor.page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" && new URL(response.url()).pathname === resetPath,
+  );
+  await reset.click();
+  expect((await resetResponse).status()).toBe(200);
+  await expect(reset).toBeDisabled();
+}
+
 async function openAppearance(actor) {
   const directLauncher = actor.page.getByRole("button", {
     exact: true,
@@ -1537,17 +1551,7 @@ test("personal Surface Editor saves pointer and keyboard layout changes and fail
       employee.page.getByRole("heading", { name: "Shape your Mission Control" }),
     ).toBeFocused();
 
-    const reset = employee.page.getByRole("button", { name: "Restore tenant layout" });
-    if (await reset.isEnabled()) {
-      employee.page.once("dialog", (dialog) => dialog.accept());
-      const resetResponse = employee.page.waitForResponse(
-        (response) =>
-          new URL(response.url()).pathname ===
-          "/presentation/surfaces/surface.mission-control/reset",
-      );
-      await reset.click();
-      expect((await resetResponse).status()).toBe(200);
-    }
+    await restoreTenantLayout(employee);
 
     staleEditor = await openActor(browser, fixture.employeeOrigin, "stale personal editor");
     await staleEditor.page.goto(
@@ -1920,11 +1924,7 @@ test("personal Surface Editor saves pointer and keyboard layout changes and fail
     }
     await employee.page.setViewportSize({ height: 900, width: 1_280 }).catch(() => undefined);
     await employee.page.reload().catch(() => undefined);
-    const reset = employee.page.getByRole("button", { name: "Restore tenant layout" });
-    if (await reset.isEnabled().catch(() => false)) {
-      employee.page.once("dialog", (dialog) => dialog.accept());
-      await reset.click().catch(() => undefined);
-    }
+    await restoreTenantLayout(employee);
     await closeActors(employee);
   }
 });
@@ -1999,17 +1999,7 @@ test("eligible catalogue faces add through Surface Editor and render from real s
       await actor.page
         .goto(`${actor.origin}/studio/surfaces/surface.mission-control/personal`)
         .catch(() => undefined);
-      const reset = actor.page.getByRole("button", { name: "Restore tenant layout" });
-      if (await reset.isEnabled().catch(() => false)) {
-        actor.page.once("dialog", (dialog) => dialog.accept());
-        const resetResponse = actor.page.waitForResponse(
-          (response) =>
-            new URL(response.url()).pathname ===
-            "/presentation/surfaces/surface.mission-control/reset",
-        );
-        await reset.click();
-        expect((await resetResponse).status()).toBe(200);
-      }
+      await restoreTenantLayout(actor);
     }
     await closeActors(...actors);
   }
@@ -2059,14 +2049,17 @@ test("Timesheet and Expense catalogue faces add through Surface Editor and rende
   };
   try {
     await admin.page.goto(`${admin.origin}/workspace/hr/expenses/settings`);
+    const expenseStatus = admin.page.locator(".leave-status");
+    await expect(expenseStatus).toHaveText(/^(Active|Inactive)$/);
     const activateExpense = admin.page.getByRole("button", {
       exact: true,
       name: "Activate Expense Claim",
     });
-    if (await activateExpense.isVisible()) {
+    if ((await expenseStatus.textContent()) === "Inactive") {
+      await expect(activateExpense).toBeVisible();
       await runExpenseServiceAction("Activate Expense Claim");
       expenseReactivated = true;
-      await expect(admin.page.locator(".leave-status")).toHaveText("Active");
+      await expect(expenseStatus).toHaveText("Active");
     }
 
     await addAndSave(manager, ["Assigned Timesheets", "Assigned Expense Claims"]);
@@ -2129,17 +2122,7 @@ test("Timesheet and Expense catalogue faces add through Surface Editor and rende
       await actor.page
         .goto(`${actor.origin}/studio/surfaces/surface.mission-control/personal`)
         .catch(() => undefined);
-      const reset = actor.page.getByRole("button", { name: "Restore tenant layout" });
-      if (await reset.isEnabled().catch(() => false)) {
-        actor.page.once("dialog", (dialog) => dialog.accept());
-        const resetResponse = actor.page.waitForResponse(
-          (response) =>
-            new URL(response.url()).pathname ===
-            "/presentation/surfaces/surface.mission-control/reset",
-        );
-        await reset.click();
-        expect((await resetResponse).status()).toBe(200);
-      }
+      await restoreTenantLayout(actor);
     }
     if (expenseReactivated) {
       await admin.page.goto(`${admin.origin}/workspace/hr/expenses/settings`);
@@ -5029,11 +5012,7 @@ test("Shift and Attendance catalogue faces preserve exact routes and current aut
     await operator.page
       .goto(`${operator.origin}/studio/surfaces/surface.mission-control/personal`)
       .catch(() => undefined);
-    const reset = operator.page.getByRole("button", { name: "Restore tenant layout" });
-    if (await reset.isEnabled().catch(() => false)) {
-      operator.page.once("dialog", (dialog) => dialog.accept());
-      await reset.click().catch(() => undefined);
-    }
+    await restoreTenantLayout(operator);
     await closeActors(operator);
   }
 });
@@ -5206,11 +5185,7 @@ test("Employment and Workforce catalogue faces preserve focus workspace continui
     await operator.page
       .goto(`${operator.origin}/studio/surfaces/surface.mission-control/personal`)
       .catch(() => undefined);
-    const reset = operator.page.getByRole("button", { name: "Restore tenant layout" });
-    if (await reset.isEnabled().catch(() => false)) {
-      operator.page.once("dialog", (dialog) => dialog.accept());
-      await reset.click().catch(() => undefined);
-    }
+    await restoreTenantLayout(operator);
     await closeActors(operator);
   }
 });
@@ -5347,11 +5322,7 @@ test("Leave catalogue faces preserve employee and assigned-manager journeys", as
       await actor.page
         .goto(`${actor.origin}/studio/surfaces/surface.mission-control/personal`)
         .catch(() => undefined);
-      const reset = actor.page.getByRole("button", { name: "Restore tenant layout" });
-      if (await reset.isEnabled().catch(() => false)) {
-        actor.page.once("dialog", (dialog) => dialog.accept());
-        await reset.click().catch(() => undefined);
-      }
+      await restoreTenantLayout(actor);
     }
     await closeActors(...actors);
   }
