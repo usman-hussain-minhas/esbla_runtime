@@ -1,12 +1,24 @@
 import { randomUUID } from "node:crypto";
+import type { ReactNode } from "react";
+import { parseAssignedProviderMasterCursorParameters } from "../../../../../../lib/assigned-provider-core";
 import { loadTimesheetDetail } from "../../../../../../lib/hr-timesheet";
 import {
   hasTimesheetAction,
+  parseOwnTimesheetCursor,
   TIMESHEET_CORRECTIONS_SURFACE_PATH,
 } from "../../../../../../lib/hr-timesheet-core";
+import {
+  getRouteBackedWidgetOriginParameters,
+  type RouteBackedWidgetOrigin,
+  withoutRouteBackedWidgetOrigin,
+} from "../../../../../../lib/route-backed-widget-navigation-core";
+import { RouteBackedWidgetLink } from "../../../../../../theme/zen-theme/v1/route-backed-widget-link";
+import { RouteBackedWidgetPostForm } from "../../../../../../theme/zen-theme/v1/route-backed-widget-overlay";
 import { TimesheetResult } from "../../result";
 
 interface Props {
+  readonly focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  readonly leadingControl?: ReactNode;
   readonly params: Promise<{ timesheetId: string }>;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
@@ -29,20 +41,70 @@ function label(value: string): string {
 function minutes(value: number): string {
   return `${Math.floor(value / 60)}h ${value % 60}m`;
 }
-export default async function TimesheetDetailPage({ params, searchParams }: Props) {
+
+function TimesheetActionForm({
+  children,
+  className,
+  focusOrigin,
+}: Readonly<{
+  children: ReactNode;
+  className?: string | undefined;
+  focusOrigin?: RouteBackedWidgetOrigin | undefined;
+}>) {
+  if (!focusOrigin) {
+    return (
+      <form action="/workspace/hr/timesheets/action" className={className} method="post">
+        {children}
+      </form>
+    );
+  }
+  const origin = getRouteBackedWidgetOriginParameters(focusOrigin);
+  return (
+    <RouteBackedWidgetPostForm
+      action="/workspace/hr/timesheets/action"
+      resultFocusId="timesheet-result"
+      {...(className === undefined ? {} : { className })}
+    >
+      <input name="originFocusId" type="hidden" value={origin.originFocusId} />
+      <input name="returnSurface" type="hidden" value={origin.returnSurface} />
+      {children}
+    </RouteBackedWidgetPostForm>
+  );
+}
+
+export default async function TimesheetDetailPage({
+  focusOrigin,
+  leadingControl,
+  params,
+  searchParams,
+}: Props) {
   const [{ timesheetId }, parameters] = await Promise.all([params, searchParams]);
-  const state = await loadTimesheetDetail(timesheetId, parameters);
+  const productParameters = withoutRouteBackedWidgetOrigin(parameters);
+  const state = await loadTimesheetDetail(timesheetId, productParameters);
   const returnTo = one(parameters.returnTo);
   const returnContext = one(parameters.returnContext);
   const fromMyWork = returnTo === "my-work" || returnContext === "my-work";
   const fromCorrections = returnTo === "corrections";
+  const masterCursorParameters = fromMyWork
+    ? parseAssignedProviderMasterCursorParameters(parameters)
+    : {};
+  const ownCursor = returnTo === "own" ? parseOwnTimesheetCursor(parameters) : undefined;
+  const ownCursorParameters = ownCursor
+    ? {
+        cursorPeriodStart: ownCursor.periodStart,
+        cursorTimesheetId: ownCursor.timesheetId,
+      }
+    : {};
+  const backQuery = new URLSearchParams(
+    fromMyWork ? masterCursorParameters : ownCursorParameters,
+  ).toString();
   const back =
     returnTo === "own"
-      ? "/workspace/hr/timesheets"
+      ? `/workspace/hr/timesheets${backQuery ? `?${backQuery}` : ""}`
       : fromCorrections
         ? TIMESHEET_CORRECTIONS_SURFACE_PATH
         : fromMyWork
-          ? "/workspace/my-work"
+          ? `/workspace/my-work${backQuery ? `?${backQuery}` : ""}`
           : "/workspace/hr";
   const result = one(parameters.result);
   const detail = state.status === "success" ? state.detail : null;
@@ -60,13 +122,15 @@ export default async function TimesheetDetailPage({ params, searchParams }: Prop
     hasTimesheetAction(state.authorizedActions, "create_correction");
   return (
     <section aria-labelledby="timesheet-detail-heading" className="work-surface">
-      <a className="text-command detail-back" href={back}>
-        {fromMyWork
-          ? "Back to My Work"
-          : fromCorrections
-            ? "Back to Timesheet corrections"
-            : "Back to Timesheets"}
-      </a>
+      {leadingControl ?? (
+        <a className="text-command detail-back" href={back}>
+          {fromMyWork
+            ? "Back to My Work"
+            : fromCorrections
+              ? "Back to Timesheet corrections"
+              : "Back to Timesheets"}
+        </a>
+      )}
       <header className="surface-heading">
         <div>
           <p className="surface-label">Timesheet</p>
@@ -140,22 +204,33 @@ export default async function TimesheetDetailPage({ params, searchParams }: Prop
                   <strong>
                     Version {item.version}: {label(item.status)}
                   </strong>
+                  {" — "}
                   <span>{minutes(item.totalMinutes)}</span>
                   {item.decisionNote ? <p>{item.decisionNote}</p> : null}
                 </li>
               ))}
             </ol>
             {state.detail.history?.nextCursor ? (
-              <a
+              <RouteBackedWidgetLink
                 className="text-command"
+                focusHref={`/workspace/hr/timesheets/by-id/${timesheetId}?${new URLSearchParams({
+                  ...(fromMyWork
+                    ? { returnContext: "my-work" }
+                    : { returnTo: fromCorrections ? "corrections" : "own" }),
+                  ...(fromMyWork ? masterCursorParameters : ownCursorParameters),
+                  cursorTimesheetVersionId: state.detail.history.nextCursor.timesheetVersionId,
+                  cursorVersion: String(state.detail.history.nextCursor.version),
+                })}`}
+                focusOrigin={focusOrigin}
                 href={`?${new URLSearchParams({
                   ...(fromMyWork ? { returnContext: "my-work" } : returnTo ? { returnTo } : {}),
+                  ...(fromMyWork ? masterCursorParameters : ownCursorParameters),
                   cursorTimesheetVersionId: state.detail.history.nextCursor.timesheetVersionId,
                   cursorVersion: String(state.detail.history.nextCursor.version),
                 })}`}
               >
                 Older Timesheet versions
-              </a>
+              </RouteBackedWidgetLink>
             ) : null}
           </section>
           {canCreateCorrection ? (
@@ -168,11 +243,7 @@ export default async function TimesheetDetailPage({ params, searchParams }: Prop
                 This preserves the terminal version and creates one empty successor draft for the
                 employee to complete and submit.
               </p>
-              <form
-                action="/workspace/hr/timesheets/action"
-                className="leave-request-form"
-                method="post"
-              >
+              <TimesheetActionForm className="leave-request-form" focusOrigin={focusOrigin}>
                 <input name="operation" type="hidden" value="create_correction" />
                 <input name="timesheetId" type="hidden" value={state.detail.timesheetId} />
                 <input name="idempotencyKey" type="hidden" value={randomUUID()} />
@@ -191,7 +262,7 @@ export default async function TimesheetDetailPage({ params, searchParams }: Prop
                 <button className="command-button command-button-primary" type="submit">
                   Create correction draft
                 </button>
-              </form>
+              </TimesheetActionForm>
             </section>
           ) : null}
           {canApprove || canReject ? (
@@ -202,11 +273,7 @@ export default async function TimesheetDetailPage({ params, searchParams }: Prop
                 recorded.
               </p>
               {canApprove ? (
-                <form
-                  action="/workspace/hr/timesheets/action"
-                  className="leave-request-form"
-                  method="post"
-                >
+                <TimesheetActionForm className="leave-request-form" focusOrigin={focusOrigin}>
                   <input name="operation" type="hidden" value="approve" />
                   <input name="timesheetId" type="hidden" value={state.detail.timesheetId} />
                   <input name="idempotencyKey" type="hidden" value={randomUUID()} />
@@ -226,6 +293,9 @@ export default async function TimesheetDetailPage({ params, searchParams }: Prop
                     value={state.detail.currentVersion.rowVersion}
                   />
                   <input name="returnTo" type="hidden" value={fromMyWork ? "my-work" : "detail"} />
+                  {Object.entries(masterCursorParameters).map(([name, value]) => (
+                    <input key={name} name={name} type="hidden" value={value} />
+                  ))}
                   <div className="form-field">
                     <label htmlFor="timesheet-approval-note">Approval note</label>
                     <textarea id="timesheet-approval-note" maxLength={2000} name="decisionNote" />
@@ -233,14 +303,10 @@ export default async function TimesheetDetailPage({ params, searchParams }: Prop
                   <button className="command-button command-button-primary" type="submit">
                     Approve Timesheet
                   </button>
-                </form>
+                </TimesheetActionForm>
               ) : null}
               {canReject ? (
-                <form
-                  action="/workspace/hr/timesheets/action"
-                  className="leave-request-form"
-                  method="post"
-                >
+                <TimesheetActionForm className="leave-request-form" focusOrigin={focusOrigin}>
                   <input name="operation" type="hidden" value="reject" />
                   <input name="timesheetId" type="hidden" value={state.detail.timesheetId} />
                   <input name="idempotencyKey" type="hidden" value={randomUUID()} />
@@ -260,6 +326,9 @@ export default async function TimesheetDetailPage({ params, searchParams }: Prop
                     value={state.detail.currentVersion.rowVersion}
                   />
                   <input name="returnTo" type="hidden" value={fromMyWork ? "my-work" : "detail"} />
+                  {Object.entries(masterCursorParameters).map(([name, value]) => (
+                    <input key={name} name={name} type="hidden" value={value} />
+                  ))}
                   <div className="form-field">
                     <label htmlFor="timesheet-rejection-note">Rejection note</label>
                     <textarea
@@ -275,7 +344,7 @@ export default async function TimesheetDetailPage({ params, searchParams }: Prop
                   <button className="command-button command-button-danger" type="submit">
                     Reject Timesheet
                   </button>
-                </form>
+                </TimesheetActionForm>
               ) : null}
             </section>
           ) : null}

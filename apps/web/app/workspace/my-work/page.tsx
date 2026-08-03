@@ -5,18 +5,27 @@ import type { HrTimesheetListItem } from "@esbla/contracts/hr-timesheet-api";
 import type { AssignedWorkspaceTaskSummary } from "@esbla/contracts/workspace-task-api";
 import { ArrowRight, ClipboardCheck, Clock3 } from "lucide-react";
 import { LeaveApprovalAction } from "../../../components/leave-approval-action";
-import { loadAssignedProviderView } from "../../../lib/assigned-provider-core";
+import {
+  loadAssignedProviderView,
+  toAssignedProviderMasterCursorParameters,
+} from "../../../lib/assigned-provider-core";
 import { getAssignedExpenseClaims } from "../../../lib/hr-expense-claim";
 import { getAssignedLeaveRequests } from "../../../lib/hr-leave-assigned-list";
-import { buildHrLeaveDetailHref } from "../../../lib/hr-leave-navigation-core";
 import { getAssignedTimesheets } from "../../../lib/hr-timesheet";
+import {
+  buildNestedRouteBackedWidgetHref,
+  type RouteBackedWidgetOrigin,
+  withoutRouteBackedWidgetOrigin,
+} from "../../../lib/route-backed-widget-navigation-core";
 import { getAssignedWorkspaceTasks } from "../../../lib/workspace-task-assigned-list";
+import { RouteBackedWidgetLink } from "../../../theme/zen-theme/v1/route-backed-widget-link";
 import { LeaveRejectionAction } from "./leave-rejection-action";
 import { TaskCompleteAction } from "./task-complete-action";
 
 export const dynamic = "force-dynamic";
 
 interface MyWorkPageProps {
+  readonly focusOrigin?: RouteBackedWidgetOrigin | undefined;
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
@@ -92,7 +101,26 @@ function minutes(value: number): string {
   return `${Math.floor(value / 60)}h ${value % 60}m`;
 }
 
-function TimesheetQueueItem({ item }: { readonly item: HrTimesheetListItem }) {
+function assignedDetailHref(
+  pathname: string,
+  masterCursorParameters: Readonly<Record<string, string>>,
+): string {
+  const query = new URLSearchParams({
+    returnContext: "my-work",
+    ...masterCursorParameters,
+  });
+  return `${pathname}?${query}`;
+}
+
+function TimesheetQueueItem({
+  focusOrigin,
+  item,
+  masterCursorParameters,
+}: {
+  readonly focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  readonly item: HrTimesheetListItem;
+  readonly masterCursorParameters: Readonly<Record<string, string>>;
+}) {
   return (
     <li className="work-queue-item" key={item.workItemId}>
       <div className="work-queue-primary">
@@ -125,13 +153,17 @@ function TimesheetQueueItem({ item }: { readonly item: HrTimesheetListItem }) {
         </div>
       </dl>
       <div className="work-queue-actions">
-        <a
+        <RouteBackedWidgetLink
           className="text-command work-detail-link"
-          href={`/workspace/hr/timesheets/by-id/${item.timesheetId}?returnContext=my-work`}
+          focusOrigin={focusOrigin}
+          href={assignedDetailHref(
+            `/workspace/hr/timesheets/by-id/${item.timesheetId}`,
+            masterCursorParameters,
+          )}
         >
           Review Timesheet
           <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
-        </a>
+        </RouteBackedWidgetLink>
       </div>
     </li>
   );
@@ -141,7 +173,15 @@ function expenseAmount(value: number, currency: string): string {
   return `${new Intl.NumberFormat("en").format(value)} ${currency} minor units`;
 }
 
-function ExpenseQueueItem({ item }: { readonly item: HrExpenseClaimListItem }) {
+function ExpenseQueueItem({
+  focusOrigin,
+  item,
+  masterCursorParameters,
+}: {
+  readonly focusOrigin?: RouteBackedWidgetOrigin | undefined;
+  readonly item: HrExpenseClaimListItem;
+  readonly masterCursorParameters: Readonly<Record<string, string>>;
+}) {
   return (
     <li className="work-queue-item" key={item.workItemId}>
       <div className="work-queue-primary">
@@ -172,13 +212,17 @@ function ExpenseQueueItem({ item }: { readonly item: HrExpenseClaimListItem }) {
         </div>
       </dl>
       <div className="work-queue-actions">
-        <a
+        <RouteBackedWidgetLink
           className="text-command work-detail-link"
-          href={`/workspace/hr/expenses/by-id/${item.expenseClaimId}?returnContext=my-work`}
+          focusOrigin={focusOrigin}
+          href={assignedDetailHref(
+            `/workspace/hr/expenses/by-id/${item.expenseClaimId}`,
+            masterCursorParameters,
+          )}
         >
           Review Expense Claim
           <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
-        </a>
+        </RouteBackedWidgetLink>
       </div>
     </li>
   );
@@ -196,14 +240,16 @@ function QueueNotice({ heading, summary }: { readonly heading: string; readonly 
   );
 }
 
-export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
+export default async function MyWorkPage({ focusOrigin, searchParams }: MyWorkPageProps) {
   const parameters = await searchParams;
+  const productParameters = withoutRouteBackedWidgetOrigin(parameters);
+  const masterCursorParameters = toAssignedProviderMasterCursorParameters(productParameters);
   const view = await loadAssignedProviderView({
     loadExpense: (cursor) => getAssignedExpenseClaims(cursor),
     loadHr: (cursor) => getAssignedLeaveRequests(cursor),
     loadTimesheet: (cursor) => getAssignedTimesheets(cursor),
     loadWorkspace: (cursor) => getAssignedWorkspaceTasks(cursor),
-    searchParams: parameters,
+    searchParams: productParameters,
   });
 
   return (
@@ -281,23 +327,39 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
                     </div>
                   </dl>
                   <div className="work-queue-actions">
-                    <a
-                      className="text-command work-detail-link"
-                      href={buildHrLeaveDetailHref(item.leaveRequestId, "my-work")}
-                    >
-                      Review details
-                      <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
-                    </a>
-                    <LeaveApprovalAction
-                      expectedVersion={item.version}
-                      idempotencyKey={randomUUID()}
-                      leaveRequestId={item.leaveRequestId}
-                    />
-                    <LeaveRejectionAction
-                      expectedVersion={item.version}
-                      idempotencyKey={randomUUID()}
-                      leaveRequestId={item.leaveRequestId}
-                    />
+                    {(() => {
+                      const detailHref = assignedDetailHref(
+                        `/workspace/hr/leave/${item.leaveRequestId}`,
+                        masterCursorParameters,
+                      );
+                      const successHref = focusOrigin
+                        ? buildNestedRouteBackedWidgetHref(detailHref, focusOrigin)
+                        : detailHref;
+                      return (
+                        <>
+                          <RouteBackedWidgetLink
+                            className="text-command work-detail-link"
+                            focusOrigin={focusOrigin}
+                            href={detailHref}
+                          >
+                            Review details
+                            <ArrowRight aria-hidden="true" size={15} strokeWidth={1.8} />
+                          </RouteBackedWidgetLink>
+                          <LeaveApprovalAction
+                            expectedVersion={item.version}
+                            idempotencyKey={randomUUID()}
+                            leaveRequestId={item.leaveRequestId}
+                            successHref={successHref}
+                          />
+                          <LeaveRejectionAction
+                            expectedVersion={item.version}
+                            idempotencyKey={randomUUID()}
+                            leaveRequestId={item.leaveRequestId}
+                            successHref={successHref}
+                          />
+                        </>
+                      );
+                    })()}
                   </div>
                 </li>
               ))}
@@ -317,7 +379,12 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
           ) : !view.timesheet.empty ? (
             <ol aria-label="Assigned Timesheet approvals" className="work-queue">
               {view.timesheet.page.items.map((item) => (
-                <TimesheetQueueItem item={item} key={item.workItemId} />
+                <TimesheetQueueItem
+                  focusOrigin={focusOrigin}
+                  item={item}
+                  key={item.workItemId}
+                  masterCursorParameters={masterCursorParameters}
+                />
               ))}
             </ol>
           ) : (
@@ -335,7 +402,12 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
           ) : !view.expense.empty ? (
             <ol aria-label="Assigned Expense Claim approvals" className="work-queue">
               {view.expense.page.items.map((item) => (
-                <ExpenseQueueItem item={item} key={item.workItemId} />
+                <ExpenseQueueItem
+                  focusOrigin={focusOrigin}
+                  item={item}
+                  key={item.workItemId}
+                  masterCursorParameters={masterCursorParameters}
+                />
               ))}
             </ol>
           ) : (
@@ -354,31 +426,51 @@ export default async function MyWorkPage({ searchParams }: MyWorkPageProps) {
       view.startOverHref ? (
         <nav aria-label="Assigned approval pages" className="list-pagination">
           {view.startOverHref ? (
-            <a className="text-command" href={view.startOverHref}>
+            <RouteBackedWidgetLink
+              className="text-command"
+              focusOrigin={focusOrigin}
+              href={view.startOverHref}
+            >
               Start over
-            </a>
+            </RouteBackedWidgetLink>
           ) : (
             <span />
           )}
           {view.nextApprovalsHref ? (
-            <a className="text-command" href={view.nextApprovalsHref}>
+            <RouteBackedWidgetLink
+              className="text-command"
+              focusOrigin={focusOrigin}
+              href={view.nextApprovalsHref}
+            >
               Next approvals
-            </a>
+            </RouteBackedWidgetLink>
           ) : null}
           {view.nextTasksHref ? (
-            <a className="text-command" href={view.nextTasksHref}>
+            <RouteBackedWidgetLink
+              className="text-command"
+              focusOrigin={focusOrigin}
+              href={view.nextTasksHref}
+            >
               Next tasks
-            </a>
+            </RouteBackedWidgetLink>
           ) : null}
           {view.nextTimesheetsHref ? (
-            <a className="text-command" href={view.nextTimesheetsHref}>
+            <RouteBackedWidgetLink
+              className="text-command"
+              focusOrigin={focusOrigin}
+              href={view.nextTimesheetsHref}
+            >
               Next Timesheets
-            </a>
+            </RouteBackedWidgetLink>
           ) : null}
           {view.nextExpensesHref ? (
-            <a className="text-command" href={view.nextExpensesHref}>
+            <RouteBackedWidgetLink
+              className="text-command"
+              focusOrigin={focusOrigin}
+              href={view.nextExpensesHref}
+            >
               Next Expense Claims
-            </a>
+            </RouteBackedWidgetLink>
           ) : null}
         </nav>
       ) : null}

@@ -1,3 +1,7 @@
+import {
+  ASSIGNED_PROVIDER_MASTER_CURSOR_KEYS,
+  parseAssignedProviderMasterCursorParameters,
+} from "../../../../../lib/assigned-provider-core";
 import { isSameOriginSubmission } from "../../../../../lib/hr-leave-submit-core";
 import {
   executeTimesheetAction,
@@ -5,30 +9,54 @@ import {
 } from "../../../../../lib/hr-timesheet";
 import {
   isTimesheetServiceOperation,
+  parseOwnTimesheetCursor,
   TIMESHEET_CORRECTIONS_SURFACE_PATH,
   type TimesheetAction,
   timesheetStateForError,
   validateTimesheetAction,
   validateTimesheetServiceAction,
 } from "../../../../../lib/hr-timesheet-core";
+import {
+  buildNestedRouteBackedWidgetHref,
+  parseOptionalRouteBackedWidgetOrigin,
+  type RouteBackedWidgetOrigin,
+} from "../../../../../lib/route-backed-widget-navigation-core";
 
 export const dynamic = "force-dynamic";
 const headers = { "cache-control": "no-store", "x-content-type-options": "nosniff" } as const;
+const ROUTE_BACKED_POST_RESPONSE_HEADER = "x-esbla-route-backed-post-response";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const OWN_CURSOR_KEYS = ["cursorPeriodStart", "cursorTimesheetId"] as const;
+const OWN_CURSOR_OPERATIONS = new Set(["create", "edit_draft", "submit"]);
 
-function destination(action: TimesheetAction, success: boolean, timesheetId?: string): string {
+function destination(
+  action: TimesheetAction,
+  success: boolean,
+  timesheetId?: string,
+  masterCursorParameters: Readonly<Record<string, string>> = {},
+  ownCursorParameters: Readonly<Record<string, string>> = {},
+): string {
   const selectedId = timesheetId ?? ("timesheetId" in action ? action.timesheetId : undefined);
   if (action.operation === "create" || action.operation === "edit_draft") {
     const query = new URLSearchParams({
       result: success ? "current" : "operational_error",
       ...(selectedId ? { edit: selectedId } : {}),
+      ...ownCursorParameters,
     });
     return `/workspace/hr/timesheets?${query}`;
   }
   if (action.operation === "submit") {
     return success && selectedId
-      ? `/workspace/hr/timesheets/by-id/${selectedId}?returnTo=own&result=current`
-      : `/workspace/hr/timesheets?edit=${selectedId ?? ""}&result=operational_error`;
+      ? `/workspace/hr/timesheets/by-id/${selectedId}?${new URLSearchParams({
+          returnTo: "own",
+          result: "current",
+          ...ownCursorParameters,
+        })}`
+      : `/workspace/hr/timesheets?${new URLSearchParams({
+          edit: selectedId ?? "",
+          result: "operational_error",
+          ...ownCursorParameters,
+        })}`;
   }
   if (action.operation === "create_correction") {
     return selectedId
@@ -40,16 +68,26 @@ function destination(action: TimesheetAction, success: boolean, timesheetId?: st
   if (action.operation === "approve" || action.operation === "reject") {
     const query = new URLSearchParams({
       result: success ? "current" : "operational_error",
-      returnTo: action.returnTo,
+      ...(action.returnTo === "my-work"
+        ? { returnContext: "my-work", ...masterCursorParameters }
+        : { returnTo: action.returnTo }),
     });
     return selectedId
       ? `/workspace/hr/timesheets/by-id/${selectedId}?${query}`
       : "/workspace/my-work?result=operational_error";
   }
-  return "/workspace/hr/timesheets?result=operational_error";
+  return `/workspace/hr/timesheets?${new URLSearchParams({
+    result: "operational_error",
+    ...ownCursorParameters,
+  })}`;
 }
 
-function failedDestination(value: Readonly<Record<string, string>>, kind: string): string {
+function failedDestination(
+  value: Readonly<Record<string, string>>,
+  kind: string,
+  masterCursorParameters: Readonly<Record<string, string>> = {},
+  ownCursorParameters: Readonly<Record<string, string>> = {},
+): string {
   const rawTimesheetId = value.timesheetId;
   const selectedId =
     typeof rawTimesheetId === "string" && UUID.test(rawTimesheetId)
@@ -58,6 +96,7 @@ function failedDestination(value: Readonly<Record<string, string>>, kind: string
   const query = new URLSearchParams({
     result: kind,
     ...(selectedId ? { edit: selectedId } : {}),
+    ...ownCursorParameters,
   });
   if (
     selectedId &&
@@ -66,7 +105,8 @@ function failedDestination(value: Readonly<Record<string, string>>, kind: string
   ) {
     return `/workspace/hr/timesheets/by-id/${selectedId}?${new URLSearchParams({
       result: kind,
-      returnTo: "my-work",
+      returnContext: "my-work",
+      ...masterCursorParameters,
     })}`;
   }
   if (selectedId && value.operation === "create_correction" && value.returnTo === "corrections") {
@@ -78,12 +118,18 @@ function failedDestination(value: Readonly<Record<string, string>>, kind: string
   return `/workspace/hr/timesheets?${query}`;
 }
 
-function redirect(location: string): Response {
-  const target = `${location}#timesheet-result`;
+function redirect(request: Request, location: string, origin?: RouteBackedWidgetOrigin): Response {
+  const destination = origin ? buildNestedRouteBackedWidgetHref(location, origin) : location;
+  const target = `${destination}#timesheet-result`;
+  if (request.headers.get(ROUTE_BACKED_POST_RESPONSE_HEADER) === "json") {
+    return Response.json({ location: target }, { headers, status: 200 });
+  }
   return new Response(null, { headers: { ...headers, location: target }, status: 303 });
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const respond = (location: string, origin?: RouteBackedWidgetOrigin) =>
+    redirect(request, location, origin);
   if (
     !isSameOriginSubmission(
       request.url,
@@ -115,29 +161,85 @@ export async function POST(request: Request): Promise<Response> {
       value[key] = entry;
     }
   } catch {
-    return redirect("/workspace/hr/timesheets?result=validation");
+    return respond("/workspace/hr/timesheets?result=validation");
+  }
+  const presentationOrigin = parseOptionalRouteBackedWidgetOrigin(value);
+  delete value.originFocusId;
+  delete value.returnSurface;
+  let masterCursorParameters: Readonly<Record<string, string>> = {};
+  let ownCursorParameters: Readonly<Record<string, string>> = {};
+  if (
+    (value.operation === "approve" || value.operation === "reject") &&
+    value.returnTo === "my-work"
+  ) {
+    try {
+      masterCursorParameters = parseAssignedProviderMasterCursorParameters(value);
+    } catch {
+      for (const key of ASSIGNED_PROVIDER_MASTER_CURSOR_KEYS) delete value[key];
+      return respond(failedDestination(value, "validation"), presentationOrigin);
+    }
+    for (const key of ASSIGNED_PROVIDER_MASTER_CURSOR_KEYS) delete value[key];
+  }
+  if (OWN_CURSOR_KEYS.some((key) => Object.hasOwn(value, key))) {
+    if (!OWN_CURSOR_OPERATIONS.has(value.operation ?? "")) {
+      return respond(failedDestination(value, "validation"), presentationOrigin);
+    }
+    try {
+      const cursor = parseOwnTimesheetCursor(value);
+      if (!cursor) throw 0;
+      ownCursorParameters = {
+        cursorPeriodStart: cursor.periodStart,
+        cursorTimesheetId: cursor.timesheetId,
+      };
+    } catch {
+      for (const key of OWN_CURSOR_KEYS) delete value[key];
+      return respond(failedDestination(value, "validation"), presentationOrigin);
+    }
+    for (const key of OWN_CURSOR_KEYS) delete value[key];
   }
   if (isTimesheetServiceOperation(value.operation)) {
     const validation = validateTimesheetServiceAction(value);
     if (!validation.ok) {
-      return redirect(`/workspace/hr/timesheets/settings?result=${validation.state.kind}`);
+      return respond(`/workspace/hr/timesheets/settings?result=${validation.state.kind}`);
     }
     try {
       await executeTimesheetServiceAction(validation.value);
-      return redirect("/workspace/hr/timesheets/settings?result=current");
+      return respond("/workspace/hr/timesheets/settings?result=current");
     } catch (error) {
-      return redirect(
+      return respond(
         `/workspace/hr/timesheets/settings?result=${timesheetStateForError(error).kind}`,
       );
     }
   }
   const validation = validateTimesheetAction(value);
-  if (!validation.ok) return redirect(failedDestination(value, validation.state.kind));
+  if (!validation.ok)
+    return respond(
+      failedDestination(value, validation.state.kind, masterCursorParameters, ownCursorParameters),
+      presentationOrigin,
+    );
   try {
     const result = await executeTimesheetAction(validation.value);
-    return redirect(destination(validation.value, true, result.timesheetId));
+    return respond(
+      destination(
+        validation.value,
+        true,
+        result.timesheetId,
+        masterCursorParameters,
+        ownCursorParameters,
+      ),
+      presentationOrigin,
+    );
   } catch (error) {
     const state = timesheetStateForError(error);
-    return redirect(destination(validation.value, false).replace("operational_error", state.kind));
+    return respond(
+      destination(
+        validation.value,
+        false,
+        undefined,
+        masterCursorParameters,
+        ownCursorParameters,
+      ).replace("operational_error", state.kind),
+      presentationOrigin,
+    );
   }
 }

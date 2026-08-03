@@ -134,6 +134,44 @@ describe("Esbla Theme v1 host contract", () => {
     expect(sources[5]).toContain("loadShiftDetail");
   });
 
+  it("keeps Expense, Timesheet, corrections, and My Work inside their route-backed focus origin", async () => {
+    const [expenseList, expenseDetail, timesheetList, timesheetDetail, corrections, myWork] =
+      await Promise.all(
+        [
+          "./@modal/(.)workspace/hr/expenses/page.tsx",
+          "./@modal/(.)workspace/hr/expenses/by-id/[expenseClaimId]/page.tsx",
+          "./@modal/(.)workspace/hr/timesheets/page.tsx",
+          "./@modal/(.)workspace/hr/timesheets/by-id/[timesheetId]/page.tsx",
+          "./@modal/(.)workspace/hr/timesheets/admin/corrections/page.tsx",
+          "./@modal/(.)workspace/my-work/page.tsx",
+        ].map((path) => readFile(new URL(path, import.meta.url), "utf8")),
+      );
+
+    for (const source of [
+      expenseList,
+      expenseDetail,
+      timesheetList,
+      timesheetDetail,
+      corrections,
+      myWork,
+    ]) {
+      expect(source).toContain("RouteBackedWidgetOverlay");
+      expect(source).toContain("RouteBackedWidgetFocusWorkspace");
+      expect(source).toContain("parseRouteBackedWidgetOrigin");
+    }
+    for (const detail of [expenseDetail, timesheetDetail]) {
+      expect(detail).toContain('"master-detail"');
+      expect(detail).toContain('"single"');
+      expect(detail).toContain("RouteBackedWidgetNestedBackLink");
+      expect(detail).toContain("MyWorkPage");
+    }
+    expect(expenseDetail).toContain("ExpensesPage");
+    expect(timesheetDetail).toContain("TimesheetsPage");
+    expect(timesheetDetail).toContain("TIMESHEET_CORRECTIONS_SURFACE_PATH");
+    expect(corrections).toContain("TimesheetCorrectionsPage");
+    expect(myWork).toContain("MyWorkPage");
+  });
+
   it("covers every Employment and Workforce catalogue face with route-backed focus workspaces", async () => {
     const sources = await Promise.all(
       [

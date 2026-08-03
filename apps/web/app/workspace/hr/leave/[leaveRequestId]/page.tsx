@@ -2,8 +2,10 @@ import { ArrowLeft } from "lucide-react";
 import { notFound } from "next/navigation";
 import { getLeaveRequestDetail } from "../../../../../lib/hr-leave-detail";
 import {
+  buildHrLeaveListHref,
   getHrLeaveReturnLink,
   HR_LEAVE_CANONICAL_HOST_LINK,
+  parseHrLeaveListCursor,
   parseHrLeaveReturnContext,
 } from "../../../../../lib/hr-leave-navigation-core";
 import { HrLeaveRequestDetailFace } from "./leave-request-detail-face";
@@ -20,7 +22,15 @@ export default async function HrLeaveDetailPage({ params, searchParams }: HrLeav
     searchParams,
   ]);
   const returnContext = parseHrLeaveReturnContext(parameters.returnContext);
-  const returnLink = getHrLeaveReturnLink(returnContext) ?? HR_LEAVE_CANONICAL_HOST_LINK;
+  const listCursor =
+    returnContext === "leave-list" ? parseHrLeaveListCursor(parameters) : undefined;
+  const returnLink =
+    returnContext === "leave-list" && listCursor
+      ? {
+          href: buildHrLeaveListHref(undefined, listCursor),
+          label: HR_LEAVE_CANONICAL_HOST_LINK.label,
+        }
+      : (getHrLeaveReturnLink(returnContext) ?? HR_LEAVE_CANONICAL_HOST_LINK);
   if (!detail) notFound();
 
   return (

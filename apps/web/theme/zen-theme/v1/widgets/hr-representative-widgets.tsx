@@ -16,7 +16,10 @@ import { getAssignedExpenseClaims, loadOwnExpenseClaims } from "../../../../lib/
 import { hasExpenseAction } from "../../../../lib/hr-expense-claim-core";
 import { getAssignedLeaveRequests } from "../../../../lib/hr-leave-assigned-list";
 import { getOwnLeaveRequests } from "../../../../lib/hr-leave-list";
-import { buildHrLeaveDetailHref } from "../../../../lib/hr-leave-navigation-core";
+import {
+  buildHrLeaveDetailHref,
+  buildHrLeaveNewHref,
+} from "../../../../lib/hr-leave-navigation-core";
 import { loadOwnShifts, loadRosterShifts } from "../../../../lib/hr-shift-assignment";
 import { hasShiftAction } from "../../../../lib/hr-shift-assignment-core";
 import { getAssignedTimesheets, loadOwnTimesheets } from "../../../../lib/hr-timesheet";
@@ -25,7 +28,10 @@ import { loadOwnWorkforceProfile } from "../../../../lib/hr-workforce-profile";
 import { loadAuthorizedWorkforceList } from "../../../../lib/hr-workforce-profile-list";
 import type { ResponsivePresentationWidgetPlacement } from "../../../../lib/presentation-layout-core";
 import { settlePresentationWidgetProviders } from "../../../../lib/presentation-widget-provider-core";
-import { buildRouteBackedWidgetHref } from "../../../../lib/route-backed-widget-navigation-core";
+import {
+  buildNestedRouteBackedWidgetHref,
+  buildRouteBackedWidgetHref,
+} from "../../../../lib/route-backed-widget-navigation-core";
 import { getAssignedWorkspaceTasks } from "../../../../lib/workspace-task-assigned-list";
 import {
   getRegisteredSurfaceInstance,
@@ -152,6 +158,25 @@ function WidgetFrame({
   );
 }
 
+function compactWidgetFocusId(
+  placement: ResponsivePresentationWidgetPlacement,
+  subjectId: string,
+): string {
+  return `${placement.desktop.instanceId}.${subjectId}`;
+}
+
+function compactWidgetHref(
+  destination: string,
+  surfaceId: SurfaceDefinition["id"],
+  placement: ResponsivePresentationWidgetPlacement,
+  subjectId: string,
+): string {
+  return buildNestedRouteBackedWidgetHref(destination, {
+    fallbackHref: surfaceId === "surface.mission-control" ? "/" : "/workspace/hr",
+    returnFocusId: compactWidgetFocusId(placement, subjectId),
+  });
+}
+
 function FailureState({
   content,
   definition,
@@ -247,9 +272,15 @@ export async function WorkforceProfileWidget({ placement, surfaceId }: Represent
           </p>
           <Link
             className="text-command"
-            href={`/workspace/hr/profile/by-id/${encodeURIComponent(
+            href={compactWidgetHref(
+              `/workspace/hr/profile/by-id/${encodeURIComponent(
+                result.profile.workerProfileId,
+              )}?returnContext=own`,
+              surfaceId,
+              placement,
               result.profile.workerProfileId,
-            )}?returnContext=own`}
+            )}
+            id={compactWidgetFocusId(placement, result.profile.workerProfileId)}
           >
             View profile history
             <ArrowRight aria-hidden="true" size={15} />
@@ -415,19 +446,14 @@ export async function LeaveAssignedWidget({ placement, surfaceId }: Representati
           <ol aria-label="Assigned Leave approvals" className="zen-widget-list">
             {items.map((item, index) => {
               const focusId = `${placement.desktop.instanceId}.${item.leaveRequestId}`;
+              const detailHref = buildHrLeaveDetailHref(
+                item.leaveRequestId,
+                surfaceId === "surface.mission-control" ? "mission-control" : "hr-mission-control",
+                focusId,
+              );
               return (
                 <li className="zen-widget-work-row" key={item.workItemId}>
-                  <Link
-                    className="zen-widget-row"
-                    href={buildHrLeaveDetailHref(
-                      item.leaveRequestId,
-                      surfaceId === "surface.mission-control"
-                        ? "mission-control"
-                        : "hr-mission-control",
-                      focusId,
-                    )}
-                    id={focusId}
-                  >
+                  <Link className="zen-widget-row" href={detailHref} id={focusId}>
                     <span className="leave-status leave-status-submitted">Submitted</span>
                     <span>
                       <strong>{item.employeeDisplayName}</strong>
@@ -443,6 +469,7 @@ export async function LeaveAssignedWidget({ placement, surfaceId }: Representati
                         expectedVersion={item.version}
                         idempotencyKey={randomUUID()}
                         leaveRequestId={item.leaveRequestId}
+                        successHref={detailHref}
                       />
                     </div>
                   ) : null}
@@ -599,7 +626,15 @@ export function LeaveRequestFormWidget({ placement, surfaceId }: RepresentativeW
             Choose a Leave category and inclusive start and end dates. Balances, accruals and
             partial days are outside this service.
           </p>
-          <Link className="text-command" href="/workspace/hr/leave/new">
+          <Link
+            className="text-command"
+            href={buildHrLeaveNewHref({
+              originFocusId: `${placement.desktop.instanceId}.new-request`,
+              returnContext:
+                surfaceId === "surface.mission-control" ? "mission-control" : "hr-mission-control",
+            })}
+            id={`${placement.desktop.instanceId}.new-request`}
+          >
             Start Leave request
             <ArrowRight aria-hidden="true" size={15} />
           </Link>
@@ -656,9 +691,15 @@ export async function AttendanceObservationsWidget({
             <li key={observation.attendanceObservationId}>
               <Link
                 className="zen-widget-row"
-                href={`/workspace/hr/attendance/by-id/${encodeURIComponent(
+                href={compactWidgetHref(
+                  `/workspace/hr/attendance/by-id/${encodeURIComponent(
+                    observation.attendanceObservationId,
+                  )}?returnTo=own`,
+                  surfaceId,
+                  placement,
                   observation.attendanceObservationId,
-                )}?returnTo=own`}
+                )}
+                id={compactWidgetFocusId(placement, observation.attendanceObservationId)}
               >
                 <span className="leave-status leave-status-active">
                   {observation.observationKind === "presence_start" ? "Start" : "End"}
@@ -712,9 +753,15 @@ export async function ExpenseClaimsWidget({ placement, surfaceId }: Representati
             <li key={claim.expenseClaimId}>
               <Link
                 className="zen-widget-row"
-                href={`/workspace/hr/expenses/by-id/${encodeURIComponent(
+                href={compactWidgetHref(
+                  `/workspace/hr/expenses/by-id/${encodeURIComponent(
+                    claim.expenseClaimId,
+                  )}?returnTo=own`,
+                  surfaceId,
+                  placement,
                   claim.expenseClaimId,
-                )}?returnTo=own`}
+                )}
+                id={compactWidgetFocusId(placement, claim.expenseClaimId)}
               >
                 <span className={`leave-status leave-status-${claim.status}`}>{claim.status}</span>
                 <span>
@@ -824,9 +871,15 @@ export async function AssignedExpenseClaimsWidget({
               <li key={claim.workItemId}>
                 <Link
                   className="zen-widget-row"
-                  href={`/workspace/hr/expenses/by-id/${encodeURIComponent(
+                  href={compactWidgetHref(
+                    `/workspace/hr/expenses/by-id/${encodeURIComponent(
+                      claim.expenseClaimId,
+                    )}?returnContext=my-work`,
+                    surfaceId,
+                    placement,
                     claim.expenseClaimId,
-                  )}?returnContext=my-work`}
+                  )}
+                  id={compactWidgetFocusId(placement, claim.expenseClaimId)}
                 >
                   <span className="leave-status leave-status-submitted">Submitted</span>
                   <span>
@@ -850,6 +903,8 @@ export async function AssignedExpenseClaimsWidget({
 async function expenseClaimModeWidget(
   definition: PresentationWidgetDefinition,
   mode: "corrections" | "draft",
+  placement: ResponsivePresentationWidgetPlacement,
+  surfaceId: SurfaceDefinition["id"],
 ): Promise<Readonly<{ content: ReactNode; state: PresentationWidgetState }>> {
   const result = await loadOwnExpenseClaims({ pageSize: "5" });
   const requiredActions =
@@ -921,9 +976,15 @@ async function expenseClaimModeWidget(
             <li key={claim.expenseClaimId}>
               <Link
                 className="zen-widget-row"
-                href={`/workspace/hr/expenses/by-id/${encodeURIComponent(
+                href={compactWidgetHref(
+                  `/workspace/hr/expenses/by-id/${encodeURIComponent(
+                    claim.expenseClaimId,
+                  )}?returnTo=own`,
+                  surfaceId,
+                  placement,
                   claim.expenseClaimId,
-                )}?returnTo=own`}
+                )}
+                id={compactWidgetFocusId(placement, claim.expenseClaimId)}
               >
                 <span className={`leave-status leave-status-${claim.status}`}>{claim.status}</span>
                 <span>
@@ -950,7 +1011,12 @@ async function expenseClaimModeWidget(
 
 export async function ExpenseDraftWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
   const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.expense.draft");
-  const { content, state } = await expenseClaimModeWidget(definition, "draft");
+  const { content, state } = await expenseClaimModeWidget(
+    definition,
+    "draft",
+    placement,
+    surfaceId,
+  );
   return (
     <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
       {content}
@@ -963,7 +1029,12 @@ export async function ExpenseCorrectionsWidget({
   surfaceId,
 }: RepresentativeWidgetProps) {
   const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.expense.corrections");
-  const { content, state } = await expenseClaimModeWidget(definition, "corrections");
+  const { content, state } = await expenseClaimModeWidget(
+    definition,
+    "corrections",
+    placement,
+    surfaceId,
+  );
   return (
     <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
       {content}
@@ -1023,9 +1094,15 @@ export async function DirectReportsWidget({ placement, surfaceId }: Representati
             <li key={profile.workerProfileId}>
               <Link
                 className="zen-widget-row"
-                href={`/workspace/hr/profile/by-id/${encodeURIComponent(
+                href={compactWidgetHref(
+                  `/workspace/hr/profile/by-id/${encodeURIComponent(
+                    profile.workerProfileId,
+                  )}?returnContext=direct-reports`,
+                  surfaceId,
+                  placement,
                   profile.workerProfileId,
-                )}?returnContext=direct-reports`}
+                )}
+                id={compactWidgetFocusId(placement, profile.workerProfileId)}
               >
                 <span className={`leave-status leave-status-${profile.workforceStatus}`}>
                   {profile.workforceStatus}
@@ -1083,9 +1160,13 @@ export async function EmploymentFactsWidget({ placement, surfaceId }: Representa
             <li key={record.employmentRecordId}>
               <Link
                 className="zen-widget-row"
-                href={`/workspace/hr/employment/by-id/${encodeURIComponent(
+                href={compactWidgetHref(
+                  `/workspace/hr/employment/by-id/${encodeURIComponent(record.employmentRecordId)}`,
+                  surfaceId,
+                  placement,
                   record.employmentRecordId,
-                )}`}
+                )}
+                id={compactWidgetFocusId(placement, record.employmentRecordId)}
               >
                 <span className={`leave-status leave-status-${record.status}`}>
                   {record.status}
@@ -1118,6 +1199,8 @@ export async function EmploymentFactsWidget({ placement, surfaceId }: Representa
 async function workforceQueueContent(
   definition: PresentationWidgetDefinition,
   status: "active" | "draft" | "terminated",
+  placement: ResponsivePresentationWidgetPlacement,
+  surfaceId: SurfaceDefinition["id"],
 ): Promise<Readonly<{ content: ReactNode; state: PresentationWidgetState }>> {
   const result = await loadAuthorizedWorkforceList({ status }, "workforce");
   const page =
@@ -1167,9 +1250,15 @@ async function workforceQueueContent(
             <li key={profile.workerProfileId}>
               <Link
                 className="zen-widget-row"
-                href={`/workspace/hr/profile/by-id/${encodeURIComponent(
+                href={compactWidgetHref(
+                  `/workspace/hr/profile/by-id/${encodeURIComponent(
+                    profile.workerProfileId,
+                  )}?returnContext=admin`,
+                  surfaceId,
+                  placement,
                   profile.workerProfileId,
-                )}?returnContext=admin`}
+                )}
+                id={compactWidgetFocusId(placement, profile.workerProfileId)}
               >
                 <span className={`leave-status leave-status-${profile.workforceStatus}`}>
                   {profile.workforceStatus}
@@ -1196,7 +1285,7 @@ export async function WorkforceAdminQueueWidget({
   surfaceId,
 }: RepresentativeWidgetProps) {
   const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.workforce.admin-queue");
-  const { content, state } = await workforceQueueContent(definition, "draft");
+  const { content, state } = await workforceQueueContent(definition, "draft", placement, surfaceId);
   return (
     <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
       {content}
@@ -1290,6 +1379,8 @@ export async function WorkforceStatusReportingWidget({
 async function employmentListWidget(
   definition: PresentationWidgetDefinition,
   mode: "admin" | "history",
+  placement: ResponsivePresentationWidgetPlacement,
+  surfaceId: SurfaceDefinition["id"],
 ): Promise<Readonly<{ content: ReactNode; state: PresentationWidgetState }>> {
   const result = await loadEmploymentList({ pageSize: "5" });
   if (result.status !== "success") {
@@ -1327,13 +1418,17 @@ async function employmentListWidget(
             <li key={record.employmentRecordId}>
               <Link
                 className="zen-widget-row"
-                href={
+                href={compactWidgetHref(
                   mode === "admin"
                     ? "/workspace/hr/employment/admin"
                     : `/workspace/hr/employment/by-id/${encodeURIComponent(
                         record.employmentRecordId,
-                      )}`
-                }
+                      )}`,
+                  surfaceId,
+                  placement,
+                  record.employmentRecordId,
+                )}
+                id={compactWidgetFocusId(placement, record.employmentRecordId)}
               >
                 <span className={`leave-status leave-status-${record.status}`}>
                   {record.status}
@@ -1364,7 +1459,7 @@ export async function EmploymentAdminQueueWidget({
   surfaceId,
 }: RepresentativeWidgetProps) {
   const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.employment.admin-queue");
-  const { content, state } = await employmentListWidget(definition, "admin");
+  const { content, state } = await employmentListWidget(definition, "admin", placement, surfaceId);
   return (
     <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
       {content}
@@ -1374,7 +1469,12 @@ export async function EmploymentAdminQueueWidget({
 
 export async function EmploymentHistoryWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
   const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.employment.history");
-  const { content, state } = await employmentListWidget(definition, "history");
+  const { content, state } = await employmentListWidget(
+    definition,
+    "history",
+    placement,
+    surfaceId,
+  );
   return (
     <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
       {content}
@@ -1472,6 +1572,8 @@ function missingCurrentShiftAuthority(
 async function rosterWidgetAuthority(
   definition: PresentationWidgetDefinition,
   mode: "overview" | "publish",
+  placement: ResponsivePresentationWidgetPlacement,
+  surfaceId: SurfaceDefinition["id"],
 ): Promise<Readonly<{ content: ReactNode; state: PresentationWidgetState }>> {
   const result = await loadRosterShifts({
     rosterVersionId: DISCOVERY_ROSTER_VERSION_ID,
@@ -1527,7 +1629,16 @@ async function rosterWidgetAuthority(
         <ol aria-label="Available roster commands" className="zen-widget-list">
           {commands.map(([action, label]) => (
             <li key={action}>
-              <Link className="zen-widget-row" href="/workspace/hr/shifts/reports">
+              <Link
+                className="zen-widget-row"
+                href={compactWidgetHref(
+                  "/workspace/hr/shifts/reports",
+                  surfaceId,
+                  placement,
+                  action,
+                )}
+                id={compactWidgetFocusId(placement, action)}
+              >
                 <span className="leave-status leave-status-active">Available</span>
                 <span>
                   <strong>{label}</strong>
@@ -1546,7 +1657,12 @@ async function rosterWidgetAuthority(
 
 export async function RosterOverviewWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
   const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.shift.roster-overview");
-  const { content, state } = await rosterWidgetAuthority(definition, "overview");
+  const { content, state } = await rosterWidgetAuthority(
+    definition,
+    "overview",
+    placement,
+    surfaceId,
+  );
   return (
     <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
       {content}
@@ -1559,7 +1675,12 @@ export async function RosterPublishQueueWidget({
   surfaceId,
 }: RepresentativeWidgetProps) {
   const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.shift.publish-queue");
-  const { content, state } = await rosterWidgetAuthority(definition, "publish");
+  const { content, state } = await rosterWidgetAuthority(
+    definition,
+    "publish",
+    placement,
+    surfaceId,
+  );
   return (
     <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
       {content}
@@ -1577,6 +1698,8 @@ function missingCurrentAttendanceAuthority(
 async function attendanceReportWidget(
   definition: PresentationWidgetDefinition,
   mode: "corrections" | "reports",
+  placement: ResponsivePresentationWidgetPlacement,
+  surfaceId: SurfaceDefinition["id"],
 ): Promise<Readonly<{ content: ReactNode; state: PresentationWidgetState }>> {
   const result = await loadReportAttendance({ pageSize: "5" });
   const required =
@@ -1636,9 +1759,15 @@ async function attendanceReportWidget(
             <li key={observation.attendanceObservationId}>
               <Link
                 className="zen-widget-row"
-                href={`/workspace/hr/attendance/by-id/${encodeURIComponent(
+                href={compactWidgetHref(
+                  `/workspace/hr/attendance/by-id/${encodeURIComponent(
+                    observation.attendanceObservationId,
+                  )}?returnTo=reports`,
+                  surfaceId,
+                  placement,
                   observation.attendanceObservationId,
-                )}?returnTo=reports`}
+                )}
+                id={compactWidgetFocusId(placement, observation.attendanceObservationId)}
               >
                 <span className="leave-status leave-status-active">
                   {observation.observationKind === "presence_start" ? "Start" : "End"}
@@ -1664,7 +1793,12 @@ async function attendanceReportWidget(
 
 export async function AttendanceReportsWidget({ placement, surfaceId }: RepresentativeWidgetProps) {
   const { definition } = resolveRegisteredWidget(surfaceId, placement, "hr.attendance.reports");
-  const { content, state } = await attendanceReportWidget(definition, "reports");
+  const { content, state } = await attendanceReportWidget(
+    definition,
+    "reports",
+    placement,
+    surfaceId,
+  );
   return (
     <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
       {content}
@@ -1681,7 +1815,12 @@ export async function AttendanceCorrectionQueueWidget({
     placement,
     "hr.attendance.correction-queue",
   );
-  const { content, state } = await attendanceReportWidget(definition, "corrections");
+  const { content, state } = await attendanceReportWidget(
+    definition,
+    "corrections",
+    placement,
+    surfaceId,
+  );
   return (
     <WidgetFrame definition={definition} placement={placement} state={state} surfaceId={surfaceId}>
       {content}
@@ -1717,9 +1856,15 @@ export async function PublishedShiftsWidget({ placement, surfaceId }: Representa
             <li key={shift.shiftAssignmentId}>
               <Link
                 className="zen-widget-row"
-                href={`/workspace/hr/shifts/by-id/${encodeURIComponent(
+                href={compactWidgetHref(
+                  `/workspace/hr/shifts/by-id/${encodeURIComponent(
+                    shift.shiftAssignmentId,
+                  )}?returnTo=own`,
+                  surfaceId,
+                  placement,
                   shift.shiftAssignmentId,
-                )}?returnTo=own`}
+                )}
+                id={compactWidgetFocusId(placement, shift.shiftAssignmentId)}
               >
                 <span className="leave-status leave-status-active">Published</span>
                 <span>
@@ -1773,9 +1918,15 @@ export async function TimesheetsWidget({ placement, surfaceId }: RepresentativeW
             <li key={timesheet.timesheetId}>
               <Link
                 className="zen-widget-row"
-                href={`/workspace/hr/timesheets/by-id/${encodeURIComponent(
+                href={compactWidgetHref(
+                  `/workspace/hr/timesheets/by-id/${encodeURIComponent(
+                    timesheet.timesheetId,
+                  )}?returnTo=own`,
+                  surfaceId,
+                  placement,
                   timesheet.timesheetId,
-                )}?returnTo=own`}
+                )}
+                id={compactWidgetFocusId(placement, timesheet.timesheetId)}
               >
                 <span className={`leave-status leave-status-${timesheet.status}`}>
                   {timesheet.status}
@@ -1886,9 +2037,15 @@ export async function AssignedTimesheetsWidget({
               <li key={timesheet.timesheetId}>
                 <Link
                   className="zen-widget-row"
-                  href={`/workspace/hr/timesheets/by-id/${encodeURIComponent(
+                  href={compactWidgetHref(
+                    `/workspace/hr/timesheets/by-id/${encodeURIComponent(
+                      timesheet.timesheetId,
+                    )}?returnContext=my-work`,
+                    surfaceId,
+                    placement,
                     timesheet.timesheetId,
-                  )}?returnContext=my-work`}
+                  )}
+                  id={compactWidgetFocusId(placement, timesheet.timesheetId)}
                 >
                   <span className="leave-status leave-status-submitted">Submitted</span>
                   <span>
@@ -1957,9 +2114,15 @@ export async function TimesheetDraftWidget({ placement, surfaceId }: Representat
               <li key={timesheet.timesheetId}>
                 <Link
                   className="zen-widget-row"
-                  href={`/workspace/hr/timesheets/by-id/${encodeURIComponent(
+                  href={compactWidgetHref(
+                    `/workspace/hr/timesheets/by-id/${encodeURIComponent(
+                      timesheet.timesheetId,
+                    )}?returnTo=own`,
+                    surfaceId,
+                    placement,
                     timesheet.timesheetId,
-                  )}?returnTo=own`}
+                  )}
+                  id={compactWidgetFocusId(placement, timesheet.timesheetId)}
                 >
                   <span className="leave-status leave-status-draft">draft</span>
                   <span>
@@ -2023,7 +2186,16 @@ export async function TimesheetCorrectionsWidget({
             Open an approved or rejected Timesheet by its exact identifier. This face does not
             expose a tenant-wide Timesheet list.
           </p>
-          <Link className="text-command" href="/workspace/hr/timesheets/admin/corrections">
+          <Link
+            className="text-command"
+            href={compactWidgetHref(
+              "/workspace/hr/timesheets/admin/corrections",
+              surfaceId,
+              placement,
+              "corrections",
+            )}
+            id={compactWidgetFocusId(placement, "corrections")}
+          >
             Open Timesheet corrections
             <ArrowRight aria-hidden="true" size={15} />
           </Link>
@@ -2151,6 +2323,13 @@ export async function MyWorkWidget({ placement, surfaceId }: RepresentativeWidge
                     expectedVersion={item.version}
                     idempotencyKey={randomUUID()}
                     leaveRequestId={item.leaveRequestId}
+                    successHref={buildHrLeaveDetailHref(
+                      item.leaveRequestId,
+                      surfaceId === "surface.mission-control"
+                        ? "mission-control"
+                        : "hr-mission-control",
+                      `${placement.desktop.instanceId}.${item.leaveRequestId}`,
+                    )}
                   />
                 </div>
               ) : null}
@@ -2160,9 +2339,15 @@ export async function MyWorkWidget({ placement, surfaceId }: RepresentativeWidge
             <li key={item.workItemId}>
               <Link
                 className="zen-widget-row"
-                href={`/workspace/hr/timesheets/by-id/${encodeURIComponent(
+                href={compactWidgetHref(
+                  `/workspace/hr/timesheets/by-id/${encodeURIComponent(
+                    item.timesheetId,
+                  )}?returnContext=my-work`,
+                  surfaceId,
+                  placement,
                   item.timesheetId,
-                )}?returnContext=my-work`}
+                )}
+                id={compactWidgetFocusId(placement, item.timesheetId)}
               >
                 <span className="leave-status leave-status-submitted">Timesheet</span>
                 <span>
@@ -2179,9 +2364,15 @@ export async function MyWorkWidget({ placement, surfaceId }: RepresentativeWidge
             <li key={item.workItemId}>
               <Link
                 className="zen-widget-row"
-                href={`/workspace/hr/expenses/by-id/${encodeURIComponent(
+                href={compactWidgetHref(
+                  `/workspace/hr/expenses/by-id/${encodeURIComponent(
+                    item.expenseClaimId,
+                  )}?returnContext=my-work`,
+                  surfaceId,
+                  placement,
                   item.expenseClaimId,
-                )}?returnContext=my-work`}
+                )}
+                id={compactWidgetFocusId(placement, item.expenseClaimId)}
               >
                 <span className="leave-status leave-status-submitted">Expense</span>
                 <span>

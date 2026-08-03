@@ -1,4 +1,6 @@
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const RFC3339_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
 
 export type HrLeaveReturnContext =
   | "hr-mission-control"
@@ -18,6 +20,11 @@ export interface HrLeaveReturnLink {
   readonly label: string;
 }
 
+export interface HrLeaveListCursor {
+  readonly leaveRequestId: string;
+  readonly submittedAt: string;
+}
+
 export const HR_LEAVE_CANONICAL_HOST_LINK = Object.freeze({
   href: "/workspace/hr/leave",
   label: "Back to My Leave Requests",
@@ -32,6 +39,22 @@ function validateOriginFocusId(originFocusId: string | undefined): void {
   }
 }
 
+function isGregorianDate(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12 || day < 1) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= (daysInMonth[month - 1] ?? 0);
+}
+
+function isStrictTimestamp(value: string): boolean {
+  const match = RFC3339_PATTERN.exec(value);
+  return (
+    match !== null &&
+    isGregorianDate(Number(match[1]), Number(match[2]), Number(match[3])) &&
+    Number.isFinite(Date.parse(value))
+  );
+}
+
 function appendFocusNavigation(search: URLSearchParams, navigation: HrLeaveFocusNavigation): void {
   validateOriginFocusId(navigation.originFocusId);
   if (navigation.returnContext !== "leave-list" && !navigation.originFocusId) {
@@ -43,14 +66,11 @@ function appendFocusNavigation(search: URLSearchParams, navigation: HrLeaveFocus
 
 export function buildHrLeaveListHref(
   navigation?: HrLeaveFocusNavigation,
-  cursor?: { readonly leaveRequestId: string; readonly submittedAt: string },
+  cursor?: HrLeaveListCursor,
 ): string {
   const search = new URLSearchParams();
   if (cursor) {
-    if (
-      !UUID_PATTERN.test(cursor.leaveRequestId) ||
-      !Number.isFinite(Date.parse(cursor.submittedAt))
-    ) {
+    if (!UUID_PATTERN.test(cursor.leaveRequestId) || !isStrictTimestamp(cursor.submittedAt)) {
       throw new TypeError("Leave cursor is invalid");
     }
     search.set("cursorLeaveRequestId", cursor.leaveRequestId);
@@ -69,6 +89,28 @@ export function buildHrLeaveListHref(
   }
   const query = search.toString();
   return query ? `/workspace/hr/leave?${query}` : "/workspace/hr/leave";
+}
+
+export function parseHrLeaveListCursor(
+  search: Readonly<Record<string, string | readonly string[] | undefined>>,
+): HrLeaveListCursor | undefined {
+  const leaveRequestIdPresent = Object.hasOwn(search, "cursorLeaveRequestId");
+  const submittedAtPresent = Object.hasOwn(search, "cursorSubmittedAt");
+  if (!leaveRequestIdPresent && !submittedAtPresent) return undefined;
+  if (
+    !leaveRequestIdPresent ||
+    !submittedAtPresent ||
+    typeof search.cursorLeaveRequestId !== "string" ||
+    typeof search.cursorSubmittedAt !== "string" ||
+    !UUID_PATTERN.test(search.cursorLeaveRequestId) ||
+    !isStrictTimestamp(search.cursorSubmittedAt)
+  ) {
+    throw new TypeError("Leave cursor is invalid");
+  }
+  return Object.freeze({
+    leaveRequestId: search.cursorLeaveRequestId,
+    submittedAt: search.cursorSubmittedAt,
+  });
 }
 
 export function buildHrLeaveNewHref(navigation?: HrLeaveFocusNavigation): string {
@@ -91,6 +133,7 @@ export function buildHrLeaveDetailHref(
   leaveRequestId: string,
   returnContext: HrLeaveReturnContext,
   originFocusId?: string,
+  listCursor?: HrLeaveListCursor,
 ): string {
   if (!UUID_PATTERN.test(leaveRequestId)) throw new TypeError("Leave request ID is invalid");
   if (!parseHrLeaveReturnContext(returnContext)) {
@@ -99,6 +142,15 @@ export function buildHrLeaveDetailHref(
   validateOriginFocusId(originFocusId);
   const search = new URLSearchParams({ returnContext });
   if (originFocusId) search.set("originFocusId", originFocusId);
+  if (listCursor) {
+    const cursor = parseHrLeaveListCursor({
+      cursorLeaveRequestId: listCursor.leaveRequestId,
+      cursorSubmittedAt: listCursor.submittedAt,
+    });
+    if (!cursor) throw new TypeError("Leave cursor is invalid");
+    search.set("cursorLeaveRequestId", cursor.leaveRequestId);
+    search.set("cursorSubmittedAt", cursor.submittedAt);
+  }
   return `/workspace/hr/leave/${leaveRequestId}?${search}`;
 }
 

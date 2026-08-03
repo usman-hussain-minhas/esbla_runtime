@@ -309,7 +309,7 @@ async function submitLeave(actor, values) {
 }
 function assignedCard(page, leaveRequestId) {
   return page.locator('ol[aria-label="Assigned leave approvals"] > li').filter({
-    has: page.locator(`a[href="/workspace/hr/leave/${leaveRequestId}?returnContext=my-work"]`),
+    has: page.locator(`a[href^="/workspace/hr/leave/${leaveRequestId}?returnContext=my-work"]`),
   });
 }
 async function openAssignedWork(actor, leaveRequestId) {
@@ -2103,7 +2103,10 @@ test("Timesheet and Expense catalogue faces add through Surface Editor and rende
     await expect(corrections).toHaveAttribute("data-widget-state", "populated");
     await expect(
       corrections.getByRole("link", { exact: true, name: "Open Timesheet corrections" }),
-    ).toHaveAttribute("href", "/workspace/hr/timesheets/admin/corrections");
+    ).toHaveAttribute(
+      "href",
+      "/workspace/hr/timesheets/admin/corrections?originFocusId=mission-control.timesheet-corrections.corrections&returnSurface=mission-control",
+    );
 
     for (const [actor, name] of [
       [manager, "catalogue-timesheet-expense-manager.png"],
@@ -3468,9 +3471,15 @@ test("employee submits, manager approves, and employee reloads durable rendered 
     await expect(confirm).toBeFocused();
     await confirm.press("Enter");
     await expect(manager.page).toHaveURL(
-      `${fixture.managerOrigin}/workspace/hr/leave/${leaveRequestId}?returnContext=my-work`,
+      `${fixture.managerOrigin}/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control&originFocusId=mission-control.my-work.${leaveRequestId}`,
     );
     await expectHistory(manager, "Approved", ["Submitted", "Approved"]);
+    await manager.page
+      .getByRole("dialog", { name: "Leave request detail" })
+      .getByRole("button", { name: "Close leave request detail" })
+      .click();
+    await expect(manager.page).toHaveURL(fixture.managerOrigin);
+    await expect(manager.page.locator("main h1")).toBeFocused();
 
     await employee.page.reload();
     await employee.page.setViewportSize({ height: 844, width: 390 });
@@ -3527,7 +3536,14 @@ test("configured rejection note fails accessibly, then rejection persists after 
       reason: "Rendered rejection journey",
       startDate: "2027-03-11",
     });
-    const card = await openAssignedWork(manager, leaveRequestId);
+    await manager.page.goto(`${manager.origin}/workspace/hr`);
+    await manager.page.getByRole("link", { exact: true, name: "Open My Work" }).click();
+    const focusedMyWork = manager.page.getByRole("dialog", { exact: true, name: "My Work" });
+    await expect(focusedMyWork).toBeVisible();
+    const card = focusedMyWork.getByRole("listitem").filter({
+      hasText: "Rendered rejection journey",
+    });
+    await expect(card).toHaveCount(1);
     const reject = card.getByRole("button", { name: "Reject leave request" });
     await reject.focus();
     await manager.page.keyboard.press("Enter");
@@ -3559,8 +3575,20 @@ test("configured rejection note fails accessibly, then rejection persists after 
     await confirm.focus();
     await manager.page.keyboard.press("Enter");
     expect((await successResponse).status()).toBe(200);
-    await expect(manager.page).toHaveURL(
-      `${fixture.managerOrigin}/workspace/hr/leave/${leaveRequestId}?returnContext=my-work`,
+    await expect
+      .poll(() => new URL(manager.page.url()).searchParams.get("returnContext"))
+      .toBe("my-work");
+    await expect
+      .poll(() => new URL(manager.page.url()).searchParams.get("returnSurface"))
+      .toBe("hr-mission-control");
+    const focusedDetail = manager.page.getByRole("dialog", {
+      exact: true,
+      name: "Leave request detail",
+    });
+    await expect(focusedDetail).toBeVisible();
+    await expect(focusedDetail.locator('[data-focus-workspace="hr-leave"]')).toHaveAttribute(
+      "data-focus-layout",
+      "master-detail",
     );
     await expectHistory(manager, "Rejected", ["Submitted", "Rejected"]);
     await expect(manager.page.getByText(decisionNote, { exact: true })).toBeVisible();
@@ -4907,7 +4935,7 @@ test("Shift and Attendance catalogue faces preserve exact routes and current aut
     await expect(publishQueue.getByText("Create draft roster", { exact: true })).toBeVisible();
     await expect(publishQueue.getByRole("link", { name: /Create draft roster/ })).toHaveAttribute(
       "href",
-      "/workspace/hr/shifts/reports",
+      "/workspace/hr/shifts/reports?originFocusId=mission-control.roster-publish.create_roster&returnSurface=mission-control",
     );
     await expect(attendanceReports).toHaveAttribute("data-widget-state", "empty");
     await expect(
@@ -4956,9 +4984,11 @@ test("Shift and Attendance catalogue faces preserve exact routes and current aut
     await expect(operator.page).toHaveURL(
       /\/workspace\/hr\/attendance\/by-id\/[0-9a-f-]+\?(?=.*returnTo=reports)(?=.*originFocusId=mission-control\..+\.full-screen)(?=.*returnSurface=mission-control)/,
     );
+    const freshOriginLoaded = operator.page.waitForEvent("load");
     await attendanceDetailOverlay
       .getByRole("button", { name: "Close Attendance detail" })
       .press("Enter");
+    await freshOriginLoaded;
     await expect(operator.page).toHaveURL(operator.origin);
     await waitForShellHydration(operator);
 
@@ -5193,6 +5223,11 @@ test("Leave catalogue faces preserve employee and assigned-manager journeys", as
   const actors = [employee, manager];
   let employeeEligibilityChanged = false;
   try {
+    const leaveRequestId = await submitLeave(employee, {
+      endDate: "2029-10-01",
+      reason: "Assigned widget origin proof",
+      startDate: "2029-10-01",
+    });
     await manager.page.setViewportSize({ height: 900, width: 1_280 });
     await manager.page.goto(`${manager.origin}/studio/surfaces/surface.mission-control/personal`);
     const addAssigned = manager.page.getByRole("button", {
@@ -5217,14 +5252,35 @@ test("Leave catalogue faces preserve employee and assigned-manager journeys", as
       "href",
       "/workspace/my-work?originFocusId=mission-control.leave-assigned.full-screen&returnSurface=mission-control",
     );
-    if ((await assigned.getAttribute("data-widget-state")) === "populated") {
-      await expect(assigned.locator('a[href^="/workspace/hr/leave/"]').first()).toBeVisible();
-      await expect(assigned.getByRole("button", { name: "Approve leave request" })).toBeVisible();
-    } else {
-      await expect(
-        assigned.getByText("No assigned Leave approvals", { exact: true }),
-      ).toBeVisible();
-    }
+    await expect(assigned).toHaveAttribute("data-widget-state", "populated");
+    const decisionRow = assigned.locator(".zen-widget-work-row").filter({
+      has: manager.page.locator(`a[href^="/workspace/hr/leave/${leaveRequestId}?"]`),
+    });
+    await expect(decisionRow).toHaveCount(1);
+    const detailLink = decisionRow.locator('a[href^="/workspace/hr/leave/"]');
+    await expect(detailLink).toBeVisible();
+    const originFocusId = await detailLink.getAttribute("id");
+    expect(originFocusId).toBe(`mission-control.leave-assigned.${leaveRequestId}`);
+    const approve = decisionRow.getByRole("button", { name: "Approve leave request" });
+    await expect(approve).toBeVisible();
+    await approve.click();
+    const decisionResponse = manager.page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === `/workspace/my-work/leave/${leaveRequestId}/approve`,
+    );
+    await decisionRow.getByRole("button", { name: "Confirm approval" }).click();
+    expect((await decisionResponse).status()).toBe(200);
+    await expect(manager.page).toHaveURL(
+      `${manager.origin}/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control&originFocusId=${originFocusId}`,
+    );
+    await expect(manager.page.getByRole("dialog", { name: "Leave request detail" })).toBeVisible();
+    await manager.page
+      .getByRole("dialog", { name: "Leave request detail" })
+      .getByRole("button", { name: "Close leave request detail" })
+      .click();
+    await expect(manager.page).toHaveURL(manager.origin);
+    await expect(manager.page.locator("main h1")).toBeFocused();
 
     await employee.page.setViewportSize({ height: 900, width: 1_280 });
     await setEmployeeLeavePresentationEligibility(true, [
@@ -5265,7 +5321,7 @@ test("Leave catalogue faces preserve employee and assigned-manager journeys", as
     await expect(requestForm.getByText("Whole-day V1", { exact: true })).toBeVisible();
     await expect(requestForm.getByRole("link", { name: "Start Leave request" })).toHaveAttribute(
       "href",
-      "/workspace/hr/leave/new",
+      "/workspace/hr/leave/new?returnContext=mission-control&originFocusId=mission-control.leave-request.new-request",
     );
 
     for (const [name, actor] of [

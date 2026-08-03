@@ -16,13 +16,17 @@ import type {
 } from "@esbla/contracts/workspace-task-api";
 import { describe, expect, it, vi } from "vitest";
 import {
+  ASSIGNED_PROVIDER_MASTER_CURSOR_KEYS,
   type AssignedProvider,
   AssignedProviderCursorError,
   AssignedProviderUnavailableError,
+  fromAssignedProviderMasterCursorParameters,
   type LoadAssignedProviderViewOptions,
   loadAssignedProviderView,
   loadAssignedProviderWidgetView,
   parseAssignedProviderCursors,
+  parseAssignedProviderMasterCursorParameters,
+  toAssignedProviderMasterCursorParameters,
 } from "./assigned-provider-core";
 
 type AssignedExpensePage = Extract<HrExpenseClaimListResponse, { readonly kind: "assigned" }>;
@@ -225,6 +229,39 @@ describe("assigned provider core", () => {
       leaveRequestId: hrCurrent.leaveRequestId,
       submittedAt: "2024-02-29T23:30:00-02:00",
     });
+  });
+
+  it("round-trips all independent cursors through a collision-free detail-master namespace", () => {
+    const direct = searchParams(hrCurrent, workspaceCurrent, timesheetCurrent, expenseCurrent);
+    const master = toAssignedProviderMasterCursorParameters(direct);
+    expect(Object.keys(master)).toEqual(ASSIGNED_PROVIDER_MASTER_CURSOR_KEYS);
+    expect(master).toEqual({
+      masterCursorCreatedAt: workspaceCurrent.createdAt,
+      masterCursorExpenseClaimVersionId: expenseCurrent.expenseClaimVersionId,
+      masterCursorExpenseSubmittedAt: expenseCurrent.submittedAt,
+      masterCursorLeaveRequestId: hrCurrent.leaveRequestId,
+      masterCursorSubmittedAt: hrCurrent.submittedAt,
+      masterCursorTaskId: workspaceCurrent.taskId,
+      masterCursorTimesheetSubmittedAt: timesheetCurrent.submittedAt,
+      masterCursorTimesheetVersionId: timesheetCurrent.timesheetVersionId,
+    });
+    expect(fromAssignedProviderMasterCursorParameters(master)).toEqual(direct);
+    expect(parseAssignedProviderMasterCursorParameters(master)).toEqual(master);
+    expect(parseAssignedProviderMasterCursorParameters({ unrelated: "ignored" })).toEqual({});
+  });
+
+  it("fails closed when any detail-master cursor family is partial or non-scalar", () => {
+    expect(() =>
+      parseAssignedProviderMasterCursorParameters({
+        masterCursorLeaveRequestId: hrCurrent.leaveRequestId,
+      }),
+    ).toThrowError(AssignedProviderCursorError);
+    expect(() =>
+      parseAssignedProviderMasterCursorParameters({
+        masterCursorExpenseClaimVersionId: [expenseCurrent.expenseClaimVersionId],
+        masterCursorExpenseSubmittedAt: expenseCurrent.submittedAt,
+      }),
+    ).toThrowError(AssignedProviderCursorError);
   });
 
   it.each([

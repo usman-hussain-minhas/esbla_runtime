@@ -395,12 +395,11 @@ describe("Expense Claim rendered employee boundary", () => {
     ).toBe(
       `/v1/hr/expense-claims/assigned?pageSize=50&cursorExpenseClaimVersionId=${expenseClaimVersionId}&cursorSubmittedAt=2029-03-01T09%3A00%3A00.000Z`,
     );
-    expect(
-      buildOwnExpensePath({
-        cursorCreatedAt: "2029-03-01T09:00:00.000Z",
-        cursorExpenseClaimId: expenseClaimId,
-      }),
-    ).toBe(
+    const ownCursor = {
+      cursorCreatedAt: "2029-03-01T09:00:00.000Z",
+      cursorExpenseClaimId: expenseClaimId,
+    };
+    expect(buildOwnExpensePath(ownCursor)).toBe(
       `/v1/hr/expense-claims/own?cursorCreatedAt=2029-03-01T09%3A00%3A00.000Z&cursorExpenseClaimId=${expenseClaimId}`,
     );
     expect(() => buildOwnExpensePath({ cursorCreatedAt: "2029-03-01T09:00:00.000Z" })).toThrowError(
