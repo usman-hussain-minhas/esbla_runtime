@@ -1080,6 +1080,7 @@ async function readShortcutReplay(
   input: UpdatePresentationShortcutBody,
   subjectId: string,
   currentSet: PresentationShortcutSet,
+  eligibleTargets: readonly PresentationShortcutTarget[],
 ): Promise<UpdatePresentationShortcutResponse | null> {
   const priorEvidence = await transaction.client.query<{
     actor_principal_id: string;
@@ -1107,11 +1108,31 @@ async function readShortcutReplay(
   ) {
     throw new PlatformError("IDEMPOTENCY_CONFLICT", "Shortcut retry changed its semantics");
   }
+  let replaySet = currentSet;
+  if (currentSet.version < state.version) {
+    const refreshedStored = await loadStoredShortcutPatch(
+      transaction,
+      input.settingKey,
+      input.contextKind,
+      input.contextId,
+      "update",
+    );
+    replaySet = resolveShortcutSet(
+      input.settingKey,
+      input.contextKind,
+      input.contextId,
+      refreshedStored,
+      eligibleTargets,
+    );
+  }
+  if (replaySet.version < state.version) {
+    throw new PlatformError("IDEMPOTENCY_CONFLICT", "Shortcut retry state is unavailable");
+  }
   return {
     billingState: PRESENTATION_BILLING_STATE,
     evidenceEventId: replay.evidence_event_id,
     replayed: true,
-    set: currentSet,
+    set: replaySet,
   };
 }
 
@@ -1160,7 +1181,13 @@ export async function updateOwnPresentationShortcut(
         eligibleTargets,
       );
       const subjectId = shortcutSubjectId(context, input);
-      const priorReplay = await readShortcutReplay(transaction, input, subjectId, currentSet);
+      const priorReplay = await readShortcutReplay(
+        transaction,
+        input,
+        subjectId,
+        currentSet,
+        eligibleTargets,
+      );
       if (priorReplay) return priorReplay;
       const currentVersion = stored?.version ?? 0;
       if (currentVersion !== input.expectedVersion) {
@@ -1248,6 +1275,7 @@ export async function updateOwnPresentationShortcut(
             input,
             subjectId,
             concurrentSet,
+            eligibleTargets,
           );
           if (concurrentReplay) return concurrentReplay;
           throw new PlatformError("IDEMPOTENCY_CONFLICT", "Shortcut version has changed");
