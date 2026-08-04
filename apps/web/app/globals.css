@@ -41,7 +41,7 @@
   --zen-visual-inline-start: 0px;
   --grid-large: 80px;
   --grid-small: 20px;
-  --surface-frame-bottom: 126px;
+  --surface-frame-bottom: 0px;
   --surface-frame-left: 72px;
   --surface-frame-right: 72px;
   --surface-frame-top: 72px;
@@ -985,12 +985,46 @@ a.zen-shortcut-picker-link:focus-visible {
   scrollbar-color: var(--line-mid) transparent;
 }
 
+@media (min-width: 1100px) {
+  .surface-scroll[data-zen-scroll-rail="active"] {
+    scrollbar-width: none;
+  }
+
+  .surface-scroll[data-zen-scroll-rail="active"]::-webkit-scrollbar {
+    height: 0;
+    width: 0;
+  }
+}
+
 .mission-control-surface {
   margin: 0 auto;
   max-width: none;
   min-height: 100%;
-  padding: 36px clamp(18px, 4vw, 48px) 64px;
-  width: min(100%, 1920px);
+  padding: 0 0 calc(var(--edge) + var(--corner-button) + var(--corner-gap));
+  width: 100%;
+}
+
+@media (min-width: 1100px) {
+  .surface-frame:has(.mission-control-surface) {
+    background: color-mix(in oklab, var(--surface-panel) 64%, transparent);
+    border-block-start: 1px solid var(--line-soft);
+    border-inline: 1px solid var(--line-soft);
+    border-radius: var(--radius-panel) var(--radius-panel) 0 0;
+    box-shadow: 0 0 0 4px var(--bg-base);
+  }
+
+  .mission-control-surface {
+    padding: clamp(18px, 1.6vw, 24px) clamp(18px, 1.6vw, 24px)
+      calc(var(--edge) + var(--corner-button) + var(--corner-gap));
+  }
+}
+
+:root[data-high-contrast="true"] .surface-frame:has(.mission-control-surface) {
+  background: var(--bg-base);
+}
+
+.surface-frame:has(.mission-control-surface)::after {
+  display: none;
 }
 
 .mission-control-heading {
@@ -1799,6 +1833,86 @@ textarea:focus-visible,
 
 .zen-section-compact {
   display: none;
+}
+
+.zen-surface-scroll-rail {
+  height: min(max(var(--zen-scroll-rail-natural-height), 24px), 42dvh);
+  left: calc(var(--edge) + var(--safe-left) + var(--zen-visual-inline-start) + 10px);
+  position: fixed;
+  top: calc(var(--zen-visual-block-start) + (var(--zen-visual-block-size) / 2));
+  transform: translateY(-50%);
+  width: 36px;
+  z-index: 18;
+}
+
+.zen-surface-scroll-ticks {
+  align-content: space-between;
+  display: grid;
+  grid-template-rows: repeat(var(--zen-scroll-tick-count), 2px);
+  height: 100%;
+  justify-items: start;
+  pointer-events: none;
+}
+
+.zen-surface-scroll-ticks > span {
+  background: color-mix(in oklab, var(--text-soft), transparent 70%);
+  border-radius: 999px;
+  display: block;
+  height: 2px;
+  transition:
+    background var(--motion-fast) var(--ease-standard),
+    width var(--motion-fast) var(--ease-standard);
+  width: 8px;
+}
+
+.zen-surface-scroll-ticks > span[data-active="true"] {
+  background: color-mix(in oklab, var(--text-main), transparent 28%);
+  width: 10px;
+}
+
+.zen-surface-scroll-rail:hover .zen-surface-scroll-ticks > span[data-distance="mid"],
+.zen-surface-scroll-rail[data-focused="true"]
+  .zen-surface-scroll-ticks
+  > span[data-distance="mid"] {
+  width: 12px;
+}
+
+.zen-surface-scroll-rail:hover .zen-surface-scroll-ticks > span[data-distance="near"],
+.zen-surface-scroll-rail[data-focused="true"]
+  .zen-surface-scroll-ticks
+  > span[data-distance="near"] {
+  width: 18px;
+}
+
+.zen-surface-scroll-rail:hover .zen-surface-scroll-ticks > span[data-distance="current"],
+.zen-surface-scroll-rail[data-focused="true"]
+  .zen-surface-scroll-ticks
+  > span[data-distance="current"] {
+  background: var(--text-main);
+  width: 26px;
+}
+
+.zen-surface-scroll-input {
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  direction: ltr;
+  height: calc(100% + 16px);
+  inset: -8px 0 -8px -9px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 44px;
+  writing-mode: vertical-lr;
+}
+
+.zen-surface-scroll-input:focus {
+  outline: 0;
+}
+
+.zen-surface-scroll-rail[data-focused="true"] .zen-surface-scroll-ticks > span[data-active="true"] {
+  box-shadow: 0 0 0 2px var(--bg-base);
 }
 
 .widget-grid {
@@ -3142,7 +3256,7 @@ textarea:focus-visible,
     --corner-button: 46px;
     --corner-gap: 7px;
     --edge: 10px;
-    --surface-frame-bottom: 72px;
+    --surface-frame-bottom: 0px;
     --surface-frame-left: 10px;
     --surface-frame-right: 10px;
     --surface-frame-top: 62px;
@@ -3342,6 +3456,10 @@ textarea:focus-visible,
 }
 
 @media (max-width: 1099px) {
+  .zen-surface-scroll-rail {
+    display: none;
+  }
+
   .zen-shortcut-panel {
     bottom: calc(
       var(--edge) +
@@ -3516,7 +3634,7 @@ textarea:focus-visible,
   }
 
   .mission-control-surface {
-    padding: 28px 12px 56px;
+    padding: 28px 12px calc(var(--edge) + var(--corner-button) + var(--corner-gap));
   }
 
   .mission-control-heading {

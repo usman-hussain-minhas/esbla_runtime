@@ -437,7 +437,11 @@ export function TenantSurfaceEditor({
 
   return (
     <section aria-labelledby="surface-editor-heading" className="surface-editor-shell">
-      <header className="surface-editor-header">
+      <header
+        className="surface-editor-header"
+        data-zen-scroll-anchor="surface-editor-header"
+        data-zen-scroll-label="Tenant Base editor heading"
+      >
         <div>
           <p className="surface-label">Studio · Tenant base</p>
           <h1 id="surface-editor-heading">Publish the {surfaceName} base</h1>
@@ -495,7 +499,11 @@ export function TenantSurfaceEditor({
         </div>
       ) : null}
 
-      <div className="surface-editor-workbench tenant-surface-editor-workbench">
+      <div
+        className="surface-editor-workbench tenant-surface-editor-workbench"
+        data-zen-scroll-anchor="surface-editor-workbench"
+        data-zen-scroll-label="Tenant Base editor workspace"
+      >
         <aside
           aria-label="Tenant Base lifecycle and selection"
           className="surface-editor-inspector"

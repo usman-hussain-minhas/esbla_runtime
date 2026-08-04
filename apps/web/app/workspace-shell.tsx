@@ -11,7 +11,10 @@ import { loadOwnPresentationPreferences } from "../lib/presentation-preferences"
 import { loadOwnPresentationShortcuts } from "../lib/presentation-shortcuts";
 import { ZenShellChrome } from "../theme/zen-theme/v1/chrome/zen-shell-chrome";
 import type { ZenSurfaceEditDescriptor } from "../theme/zen-theme/v1/surfaces/zen-surface-edit-launcher";
+import { ZenSurfaceScrollRail } from "../theme/zen-theme/v1/surfaces/zen-surface-scroll-rail";
 import type { WorkspaceSurfaceKey } from "./workspace-surfaces";
+
+const WORKSPACE_SURFACE_SCROLL_OWNER_ID = "workspace-surface-scroll";
 
 interface WorkspaceShellProps {
   readonly children: ReactNode;
@@ -50,8 +53,11 @@ export async function WorkspaceShell({
         shortcutDiscovery={shortcuts}
       />
 
+      <ZenSurfaceScrollRail scrollOwnerId={WORKSPACE_SURFACE_SCROLL_OWNER_ID} />
       <main className="surface-frame">
-        <div className="surface-scroll">{children}</div>
+        <div className="surface-scroll" id={WORKSPACE_SURFACE_SCROLL_OWNER_ID}>
+          {children}
+        </div>
       </main>
     </div>
   );

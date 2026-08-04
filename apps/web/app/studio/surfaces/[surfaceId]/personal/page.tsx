@@ -29,7 +29,12 @@ export default async function PersonalSurfaceEditorPage({
       currentSurface={surfaceId === "surface.mission-control" ? "Mission Control" : "HR"}
     >
       <div className="surface-editor-page" id="surface-editor-content">
-        <nav aria-label="Surface editor breadcrumb" className="surface-editor-breadcrumb">
+        <nav
+          aria-label="Surface editor breadcrumb"
+          className="surface-editor-breadcrumb"
+          data-zen-scroll-anchor="surface-editor-breadcrumb"
+          data-zen-scroll-label="Surface editor location"
+        >
           <Link href={definition.route}>{surfaceName}</Link>
           <span aria-hidden="true">/</span>
           <span>Personal layout</span>
@@ -41,7 +46,12 @@ export default async function PersonalSurfaceEditorPage({
             surfaceName={surfaceName}
           />
         ) : (
-          <section className="surface-editor-unavailable" role="alert">
+          <section
+            className="surface-editor-unavailable"
+            data-zen-scroll-anchor="surface-editor-unavailable"
+            data-zen-scroll-label="Layout editor unavailable"
+            role="alert"
+          >
             <p className="surface-label">Studio · Personal layout</p>
             <h1>Layout editor unavailable</h1>
             <p>

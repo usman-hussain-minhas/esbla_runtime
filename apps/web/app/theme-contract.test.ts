@@ -24,13 +24,13 @@ describe("Esbla Theme v1 host contract", () => {
     expect(css).not.toContain("--corner-button: 42px");
     expect(css).toContain(".surface-frame::after");
     expect(css).not.toContain(".surface-frame::before");
-    expect(css).toContain("width: min(100%, 1920px)");
     expect(css).toContain(':root[data-high-contrast="true"] body');
     expect(css).not.toContain("linear-gradient(var(--bg-grid-line) 1px, transparent 1px)");
     expect(css).toContain("border: 0;\n  border-radius: 0;");
     expect(css).toContain("box-shadow: none;");
     expect(css).not.toContain("@media (max-width: 760px)");
     expect(css).not.toContain("@media (max-width: 980px)");
+    expect(css).not.toContain("!important");
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
   });
 
