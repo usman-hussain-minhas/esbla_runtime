@@ -370,7 +370,11 @@ export function PersonalSurfaceEditor({
 
   return (
     <section aria-labelledby="surface-editor-heading" className="surface-editor-shell">
-      <header className="surface-editor-header">
+      <header
+        className="surface-editor-header"
+        data-zen-scroll-anchor="surface-editor-header"
+        data-zen-scroll-label="Personal layout editor heading"
+      >
         <div>
           <p className="surface-label">Studio · Personal layout</p>
           <h1 id="surface-editor-heading">Shape your {surfaceName}</h1>
@@ -434,7 +438,11 @@ export function PersonalSurfaceEditor({
         </div>
       ) : null}
 
-      <div className="surface-editor-workbench">
+      <div
+        className="surface-editor-workbench"
+        data-zen-scroll-anchor="surface-editor-workbench"
+        data-zen-scroll-label="Personal layout editor workspace"
+      >
         <aside aria-label="Surface widgets and controls" className="surface-editor-inspector">
           <section>
             <div className="surface-editor-section-heading">

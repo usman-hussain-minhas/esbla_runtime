@@ -481,6 +481,350 @@ async function proveRepresentativeRouteBackedWidget(
   await expect(actor.page.locator(".esbla-shell")).not.toHaveAttribute("inert", "");
 }
 
+async function proveAdvancedSurfaceScrollRail(actor) {
+  const page = actor.page;
+  await page.setViewportSize({ height: 900, width: 1_440 });
+  await page.goto(`${actor.origin}/studio/surfaces/surface.hr.mission-control/personal`);
+  for (const displayName of [
+    "Employment Administration Queue",
+    "Employment History",
+    "Workforce Administration Queue",
+    "Workforce Status Reporting",
+  ]) {
+    const add = page.getByRole("button", { name: `Add ${displayName}` });
+    await expect(add).toBeVisible();
+    await add.click();
+  }
+  const saveResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/presentation/surfaces/surface.hr.mission-control",
+  );
+  await page.getByRole("button", { name: "Save personal layout" }).click();
+  expect((await saveResponse).status()).toBe(200);
+  await page.setViewportSize({ height: 420, width: 1_440 });
+  const editorScrollRail = page.getByRole("slider", { name: "Surface scroll position" });
+  await expect(editorScrollRail).toBeVisible();
+  expect(
+    await page
+      .locator(".zen-surface-scroll-ticks > span")
+      .evaluateAll((elements) =>
+        elements.map((element) => element.getAttribute("data-scroll-anchor")),
+      ),
+  ).toEqual(["surface-editor-breadcrumb", "surface-editor-header", "surface-editor-workbench"]);
+  await expect(page.locator(".surface-editor-viewport")).toHaveCSS("overflow", "auto");
+  await page.goto(`${actor.origin}/workspace/hr`);
+  await expect(page.getByRole("heading", { name: "People and work" })).toBeVisible();
+  const scrollRail = page.getByRole("slider", { name: "Surface scroll position" });
+  await expect(scrollRail).toBeVisible();
+  await expect(page.locator(".surface-scroll")).toHaveAttribute("data-zen-scroll-rail", "active");
+  expect(
+    await page
+      .locator(".surface-scroll")
+      .evaluate((element) => getComputedStyle(element).scrollbarWidth),
+  ).toBe("none");
+  const renderedWidgets = page.locator(".surface-scroll [data-surface-instance]");
+  const renderedRows = await renderedWidgets.evaluateAll((elements) => {
+    const candidates = elements
+      .map((element, sourceIndex) => ({
+        bounds: element.getBoundingClientRect(),
+        id: element.getAttribute("data-surface-instance"),
+        label: element.textContent?.trim() || element.getAttribute("data-surface-instance"),
+        sourceIndex,
+      }))
+      .sort(
+        (left, right) =>
+          left.bounds.top - right.bounds.top ||
+          left.bounds.left - right.bounds.left ||
+          left.sourceIndex - right.sourceIndex,
+      );
+    const rows = [];
+    for (const candidate of candidates) {
+      const current = rows.at(-1);
+      if (!current || Math.abs(candidate.bounds.top - current.top) > 2) {
+        rows.push({ candidates: [candidate], top: candidate.bounds.top });
+      } else {
+        current.candidates.push(candidate);
+      }
+    }
+    return rows.map((row, index) => {
+      const members = [...row.candidates].sort(
+        (left, right) =>
+          left.bounds.left - right.bounds.left || left.sourceIndex - right.sourceIndex,
+      );
+      return {
+        bottom: Math.max(...members.map(({ bounds }) => bounds.bottom)),
+        id: `row-${index + 1}:${members.map(({ id }) => id).join("+")}`,
+        top: Math.min(...members.map(({ bounds }) => bounds.top)),
+      };
+    });
+  });
+  const renderedRowCount = renderedRows.length;
+  await expect(page.locator(".zen-surface-scroll-ticks > span")).toHaveCount(renderedRowCount);
+  expect(
+    await page
+      .locator(".zen-surface-scroll-ticks > span")
+      .evaluateAll((elements) =>
+        elements.map((element) => element.getAttribute("data-scroll-anchor")),
+      ),
+  ).toEqual(renderedRows.map(({ id }) => id));
+  const anchorScrollTargets = await page
+    .locator(".surface-scroll")
+    .evaluate((scrollOwner, rows) => {
+      if (!(scrollOwner instanceof HTMLElement)) {
+        throw new Error("Surface scroll owner is unavailable");
+      }
+      const ownerBounds = scrollOwner.getBoundingClientRect();
+      const maximumScrollTop = scrollOwner.scrollHeight - scrollOwner.clientHeight;
+      const ownerStyle = getComputedStyle(scrollOwner);
+      const scrollPaddingStart = Number.parseFloat(ownerStyle.scrollPaddingBlockStart) || 0;
+      const scrollPaddingEnd = Number.parseFloat(ownerStyle.scrollPaddingBlockEnd) || 0;
+      return rows.map(({ bottom, top }) => {
+        const height = bottom - top;
+        const availableHeight = scrollOwner.clientHeight - scrollPaddingStart - scrollPaddingEnd;
+        const relativeTop = scrollOwner.scrollTop + top - ownerBounds.top - scrollPaddingStart;
+        return Math.max(
+          0,
+          Math.min(
+            maximumScrollTop,
+            height <= availableHeight ? relativeTop - (availableHeight - height) / 2 : relativeTop,
+          ),
+        );
+      });
+    }, renderedRows);
+  await expect(scrollRail).toHaveAttribute("aria-orientation", "vertical");
+  await expect(scrollRail).toHaveAttribute("max", String(renderedRowCount - 1));
+  expect(renderedRowCount).toBeGreaterThanOrEqual(2);
+  const lastChromeControl = page
+    .locator(
+      ".zen-shell-chrome a[href]:visible, .zen-shell-chrome button:not([disabled]):visible, .zen-shell-chrome input:not([disabled]):visible",
+    )
+    .last();
+  await lastChromeControl.focus();
+  await page.keyboard.press("Tab");
+  await expect(scrollRail).toBeFocused();
+  const scrollRailContainer = page.locator(".zen-surface-scroll-rail");
+  expect(
+    await scrollRailContainer.evaluate((element) => getComputedStyle(element).outlineStyle),
+  ).toBe("none");
+  await expect
+    .poll(async () =>
+      page
+        .locator('.zen-surface-scroll-ticks > span[data-active="true"]')
+        .evaluate((element) => getComputedStyle(element).width),
+    )
+    .toBe("26px");
+  const initialScrollTop = await page
+    .locator(".surface-scroll")
+    .evaluate((element) => element.scrollTop);
+
+  const setNativeRailValue = async (value) => {
+    await scrollRail.evaluate((element, nextValue) => {
+      if (!(element instanceof HTMLInputElement)) {
+        throw new Error("Surface scroll range is unavailable");
+      }
+      const nativeValueSetter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      if (!nativeValueSetter) throw new Error("Native range value setter is unavailable");
+      nativeValueSetter.call(element, String(nextValue));
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+    }, value);
+    await expect.poll(async () => Number(await scrollRail.inputValue())).toBe(value);
+    await expect
+      .poll(async () => {
+        const scrollTop = await page
+          .locator(".surface-scroll")
+          .evaluate((element) => element.scrollTop);
+        return Math.abs(scrollTop - (anchorScrollTargets[value] ?? scrollTop));
+      })
+      .toBeLessThan(2);
+  };
+
+  for (const [key, startIndex, expectedIndex] of [
+    ["ArrowLeft", renderedRowCount - 1, renderedRowCount - 2],
+    ["ArrowRight", 0, 1],
+    ["ArrowUp", renderedRowCount - 1, renderedRowCount - 2],
+    ["ArrowDown", 0, 1],
+  ]) {
+    await setNativeRailValue(startIndex);
+    const previousValueText = await scrollRail.getAttribute("aria-valuetext");
+    await scrollRail.press(key);
+    await expect.poll(async () => Number(await scrollRail.inputValue())).toBe(expectedIndex);
+    await expect(scrollRail).not.toHaveAttribute("aria-valuetext", previousValueText ?? "");
+  }
+
+  await scrollRail.press("End");
+  await expect
+    .poll(async () => {
+      const scrollTop = await page
+        .locator(".surface-scroll")
+        .evaluate((element) => element.scrollTop);
+      return Math.abs(scrollTop - (anchorScrollTargets.at(-1) ?? initialScrollTop));
+    })
+    .toBeLessThan(2);
+  const lastRowTarget = anchorScrollTargets.at(-1) ?? initialScrollTop;
+  const lastRowStartIndex = anchorScrollTargets.findIndex(
+    (target) => Math.abs(target - lastRowTarget) < 2,
+  );
+  await expect
+    .poll(async () => Number(await scrollRail.inputValue()))
+    .toBeGreaterThanOrEqual(lastRowStartIndex);
+  await scrollRail.press("Home");
+  await expect
+    .poll(async () => {
+      const scrollTop = await page
+        .locator(".surface-scroll")
+        .evaluate((element) => element.scrollTop);
+      return Math.abs(scrollTop - (anchorScrollTargets[0] ?? initialScrollTop));
+    })
+    .toBeLessThan(2);
+  await expect.poll(async () => Number(await scrollRail.inputValue())).toBe(0);
+  const railContainerBounds = await scrollRailContainer.boundingBox();
+  if (!railContainerBounds) throw new Error("Surface scroll rail container is unavailable");
+  const hoverIndex = Math.floor(renderedRowCount / 2);
+  const hoverOffset = Math.min(
+    railContainerBounds.height - 1,
+    (railContainerBounds.height * hoverIndex) / (renderedRowCount - 1),
+  );
+  await page.mouse.move(
+    railContainerBounds.x + railContainerBounds.width / 2,
+    railContainerBounds.y + hoverOffset,
+  );
+  const expectedHoverWidths = Array.from({ length: renderedRowCount }, (_, index) => {
+    const distance = Math.abs(index - hoverIndex);
+    if (distance === 0) return "26px";
+    if (distance === 1) return "18px";
+    if (distance === 2) return "12px";
+    return "8px";
+  });
+  await expect
+    .poll(async () =>
+      page
+        .locator(".zen-surface-scroll-ticks > span")
+        .evaluateAll((elements) => elements.map((element) => getComputedStyle(element).width)),
+    )
+    .toEqual(expectedHoverWidths);
+  await page.mouse.click(
+    railContainerBounds.x + railContainerBounds.width / 2,
+    railContainerBounds.y + railContainerBounds.height - 4,
+  );
+  await expect.poll(async () => Number(await scrollRail.inputValue())).toBe(renderedRowCount - 1);
+  await expect
+    .poll(async () => {
+      const scrollTop = await page
+        .locator(".surface-scroll")
+        .evaluate((element) => element.scrollTop);
+      return Math.abs(scrollTop - (anchorScrollTargets.at(-1) ?? initialScrollTop));
+    })
+    .toBeLessThan(2);
+  await page.mouse.click(
+    railContainerBounds.x + railContainerBounds.width / 2,
+    railContainerBounds.y + 4,
+  );
+  await expect.poll(async () => Number(await scrollRail.inputValue())).toBe(0);
+  await expect
+    .poll(async () => {
+      const scrollTop = await page
+        .locator(".surface-scroll")
+        .evaluate((element) => element.scrollTop);
+      return Math.abs(scrollTop - (anchorScrollTargets[0] ?? initialScrollTop));
+    })
+    .toBeLessThan(2);
+
+  const assistiveTargetIndex = Math.min(1, renderedRowCount - 1);
+  await setNativeRailValue(assistiveTargetIndex);
+  await expect(scrollRail).toHaveAttribute("aria-valuetext", /\S+/);
+  await expect
+    .poll(async () => {
+      const scrollTop = await page
+        .locator(".surface-scroll")
+        .evaluate((element) => element.scrollTop);
+      return Math.abs(scrollTop - (anchorScrollTargets[assistiveTargetIndex] ?? initialScrollTop));
+    })
+    .toBeLessThan(2);
+
+  const originalAccessibilityState = await page.locator("html").evaluate((element) => ({
+    highContrast: element.getAttribute("data-high-contrast"),
+    reducedMotion: element.getAttribute("data-reduced-motion"),
+  }));
+  await page.locator("html").evaluate((element) => {
+    element.dataset.highContrast = "true";
+    element.dataset.reducedMotion = "reduce";
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  expect(
+    await page.locator("body").evaluate((element) => getComputedStyle(element).backgroundImage),
+  ).toBe("none");
+  expect(
+    await page
+      .locator('.zen-surface-scroll-ticks > span[data-active="true"]')
+      .evaluate((element) => getComputedStyle(element).backgroundColor),
+  ).not.toBe("rgba(0, 0, 0, 0)");
+  expect(
+    await page.locator(".zen-surface-scroll-ticks > span").evaluateAll((elements) =>
+      elements.every((element) => {
+        const durations = getComputedStyle(element)
+          .transitionDuration.split(",")
+          .map((duration) => Number.parseFloat(duration) || 0);
+        return durations.every((duration) => duration <= 0.001);
+      }),
+    ),
+  ).toBe(true);
+  await page.locator("html").evaluate((element, original) => {
+    if (original.highContrast === null) delete element.dataset.highContrast;
+    else element.dataset.highContrast = original.highContrast;
+    if (original.reducedMotion === null) delete element.dataset.reducedMotion;
+    else element.dataset.reducedMotion = original.reducedMotion;
+  }, originalAccessibilityState);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+
+  await page.setViewportSize({ height: 420, width: 3_840 });
+  await expect(scrollRail).toBeVisible();
+  const wideSurfaceGeometry = await page.locator(".mission-control-surface").evaluate((surface) => {
+    const frame = surface.closest(".surface-frame");
+    if (!(frame instanceof HTMLElement)) throw new Error("Surface frame is unavailable");
+    const frameBounds = frame.getBoundingClientRect();
+    const surfaceBounds = surface.getBoundingClientRect();
+    return {
+      frameLeft: frameBounds.left,
+      frameRight: frameBounds.right,
+      frameWidth: frameBounds.width,
+      surfaceWidth: surfaceBounds.width,
+    };
+  });
+  expect(wideSurfaceGeometry.frameLeft).toBeGreaterThan(0);
+  expect(wideSurfaceGeometry.frameRight).toBeLessThan(3_840);
+  expect(
+    Math.abs(wideSurfaceGeometry.surfaceWidth - (wideSurfaceGeometry.frameWidth - 2)),
+  ).toBeLessThanOrEqual(1);
+
+  await page.setViewportSize({ height: 420, width: 1_100 });
+  await expect(scrollRail).toBeVisible();
+  await expect(page.locator(".surface-scroll")).toHaveAttribute("data-zen-scroll-rail", "active");
+  expect(
+    await page
+      .locator(".surface-scroll")
+      .evaluate((element) => getComputedStyle(element).scrollbarWidth),
+  ).toBe("none");
+  await page.setViewportSize({ height: 420, width: 1_099 });
+  await expect(page.locator(".zen-surface-scroll-rail")).toBeHidden();
+  expect(
+    await page
+      .locator(".surface-scroll")
+      .evaluate((element) => getComputedStyle(element).scrollbarWidth),
+  ).not.toBe("none");
+
+  await page.setViewportSize({ height: 768, width: 1_024 });
+  await expect(page.locator(".zen-surface-scroll-rail")).toBeHidden();
+  expect(
+    await page
+      .locator(".surface-scroll")
+      .evaluate((element) => getComputedStyle(element).scrollbarWidth),
+  ).not.toBe("none");
+}
+
 test("employee Profile and Leave-list widgets render as responsive route-backed products", async ({
   browser,
 }, testInfo) => {
@@ -853,25 +1197,71 @@ test("Mission Control reuses the real Leave widget and persists four independent
       .evaluate((surface) => {
         const frame = surface.closest(".surface-frame");
         if (!(frame instanceof HTMLElement)) throw new Error("Surface frame is unavailable");
+        const heading = surface.querySelector(".mission-control-heading");
+        const serviceGroupsControl = document.querySelector(".chrome-service-groups");
+        const settingsControl = document.querySelector('[aria-label="Universal Settings"]');
+        if (
+          !(heading instanceof HTMLElement) ||
+          !(serviceGroupsControl instanceof HTMLElement) ||
+          !(settingsControl instanceof HTMLElement)
+        ) {
+          throw new Error("Surface alignment controls are unavailable");
+        }
         const frameStyle = getComputedStyle(frame);
+        const frameBounds = frame.getBoundingClientRect();
+        const headingBounds = heading.getBoundingClientRect();
         return {
+          bodyBackgroundColor: getComputedStyle(document.body).backgroundColor,
           bodyBackgroundImage: getComputedStyle(document.body).backgroundImage,
+          frameBackgroundColor: frameStyle.backgroundColor,
           documentOverflow: getComputedStyle(document.documentElement).overflow,
-          frameBorderWidth: frameStyle.borderTopWidth,
+          frameBorderBottomWidth: frameStyle.borderBottomWidth,
+          frameBorderLeftWidth: frameStyle.borderLeftWidth,
+          frameBorderRightWidth: frameStyle.borderRightWidth,
+          frameBorderTopWidth: frameStyle.borderTopWidth,
+          frameLeft: frameBounds.left,
           frameRadius: frameStyle.borderRadius,
+          frameRight: frameBounds.right,
           frameShadow: frameStyle.boxShadow,
+          frameTop: frameBounds.top,
+          frameWidth: frameBounds.width,
+          headingLeft: headingBounds.left,
+          headingRight: headingBounds.right,
+          headingTop: headingBounds.top,
           scrollOwners: document.querySelectorAll(".surface-scroll").length,
+          serviceGroupsControlTop: serviceGroupsControl.getBoundingClientRect().top,
+          settingsControlRight: settingsControl.getBoundingClientRect().right,
           surfaceWidth: surface.getBoundingClientRect().width,
         };
       });
     expect(surfaceGeometry.scrollOwners).toBe(1);
     expect(surfaceGeometry.documentOverflow).toBe("hidden");
-    expect(surfaceGeometry.frameBorderWidth).toBe("0px");
-    expect(surfaceGeometry.frameRadius).toBe("0px");
-    expect(surfaceGeometry.frameShadow).toBe("none");
+    expect(surfaceGeometry.frameBorderTopWidth).toBe("1px");
+    expect(surfaceGeometry.frameBorderLeftWidth).toBe("1px");
+    expect(surfaceGeometry.frameBorderRightWidth).toBe("1px");
+    expect(surfaceGeometry.frameBorderBottomWidth).toBe("0px");
+    expect(surfaceGeometry.frameRadius).not.toBe("0px");
+    expect(surfaceGeometry.frameShadow).toMatch(/0px 0px 0px 4px/);
+    expect(surfaceGeometry.frameBackgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+    expect(surfaceGeometry.frameBackgroundColor).not.toBe(surfaceGeometry.bodyBackgroundColor);
     expect(surfaceGeometry.bodyBackgroundImage).toContain("radial-gradient");
     expect(surfaceGeometry.bodyBackgroundImage).not.toContain("linear-gradient");
-    expect(Math.abs(surfaceGeometry.surfaceWidth - 1_920)).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(surfaceGeometry.surfaceWidth - (surfaceGeometry.frameWidth - 2)),
+    ).toBeLessThanOrEqual(1);
+    expect(surfaceGeometry.headingLeft - surfaceGeometry.frameLeft).toBeGreaterThanOrEqual(18);
+    expect(surfaceGeometry.headingLeft - surfaceGeometry.frameLeft).toBeLessThanOrEqual(25);
+    expect(surfaceGeometry.headingTop - surfaceGeometry.frameTop).toBeGreaterThanOrEqual(18);
+    expect(surfaceGeometry.headingTop - surfaceGeometry.frameTop).toBeLessThanOrEqual(25);
+    expect(surfaceGeometry.frameRight - surfaceGeometry.headingRight).toBeGreaterThanOrEqual(18);
+    expect(surfaceGeometry.frameRight - surfaceGeometry.headingRight).toBeLessThanOrEqual(25);
+    expect(
+      Math.abs(surfaceGeometry.serviceGroupsControlTop - surfaceGeometry.frameTop),
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(surfaceGeometry.settingsControlRight - surfaceGeometry.frameRight),
+    ).toBeLessThanOrEqual(1);
+    await expect(employee.page.locator(".zen-surface-scroll-rail")).toHaveCount(0);
 
     const userControl = employee.page.getByRole("button", {
       exact: true,
@@ -998,6 +1388,62 @@ test("Mission Control reuses the real Leave widget and persists four independent
         '[data-surface-instance="hr-mission-control.my-leave"]:not([data-widget-state="loading"])',
       ),
     ).toHaveAttribute("data-widget-definition", "hr.leave.my-requests");
+    const hrAlignment = await employee.page
+      .locator(".mission-control-surface")
+      .evaluate((surface) => {
+        const frame = surface.closest(".surface-frame");
+        const heading = surface.querySelector(".mission-control-heading");
+        const contextualControl = document.querySelector(".chrome-contextual");
+        const serviceGroupsControl = document.querySelector(".chrome-service-groups");
+        const settingsControl = document.querySelector('[aria-label="Universal Settings"]');
+        if (
+          !(frame instanceof HTMLElement) ||
+          !(heading instanceof HTMLElement) ||
+          !(contextualControl instanceof HTMLElement) ||
+          !(serviceGroupsControl instanceof HTMLElement) ||
+          !(settingsControl instanceof HTMLElement)
+        ) {
+          throw new Error("HR surface alignment controls are unavailable");
+        }
+        const frameBounds = frame.getBoundingClientRect();
+        const headingBounds = heading.getBoundingClientRect();
+        return {
+          contextualControlLeft: contextualControl.getBoundingClientRect().left,
+          frameLeft: frameBounds.left,
+          frameRight: frameBounds.right,
+          frameTop: frameBounds.top,
+          headingLeft: headingBounds.left,
+          headingRight: headingBounds.right,
+          headingTop: headingBounds.top,
+          serviceGroupsControlTop: serviceGroupsControl.getBoundingClientRect().top,
+          settingsControlRight: settingsControl.getBoundingClientRect().right,
+        };
+      });
+    expect(hrAlignment.headingLeft - hrAlignment.frameLeft).toBeGreaterThanOrEqual(18);
+    expect(hrAlignment.headingLeft - hrAlignment.frameLeft).toBeLessThanOrEqual(25);
+    expect(hrAlignment.headingTop - hrAlignment.frameTop).toBeGreaterThanOrEqual(18);
+    expect(hrAlignment.headingTop - hrAlignment.frameTop).toBeLessThanOrEqual(25);
+    expect(hrAlignment.frameRight - hrAlignment.headingRight).toBeGreaterThanOrEqual(18);
+    expect(hrAlignment.frameRight - hrAlignment.headingRight).toBeLessThanOrEqual(25);
+    expect(Math.abs(hrAlignment.contextualControlLeft - hrAlignment.frameLeft)).toBeLessThanOrEqual(
+      1,
+    );
+    expect(
+      Math.abs(hrAlignment.serviceGroupsControlTop - hrAlignment.frameTop),
+    ).toBeLessThanOrEqual(1);
+    expect(Math.abs(hrAlignment.settingsControlRight - hrAlignment.frameRight)).toBeLessThanOrEqual(
+      1,
+    );
+    const railActor = await openActor(browser, fixture.operatorOrigin, "scroll rail operator");
+    try {
+      await proveAdvancedSurfaceScrollRail(railActor);
+    } finally {
+      await railActor.page
+        .goto(`${railActor.origin}/studio/surfaces/surface.hr.mission-control/personal`)
+        .catch(() => undefined);
+      await restoreTenantLayout(railActor, "surface.hr.mission-control").catch(() => undefined);
+      await closeActors(railActor);
+    }
     const contextualLauncher = employee.page.getByRole("button", {
       exact: true,
       name: "HR pages",
