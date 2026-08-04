@@ -12,6 +12,7 @@ export {
   presentationSurfaceDrafts,
   presentationSurfaceHeads,
   presentationSurfaceOverlays,
+  presentationSurfaceRegistry,
   presentationSurfaceSettings,
   presentationSurfaceVersions,
   principals,
