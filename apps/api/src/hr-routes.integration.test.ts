@@ -587,6 +587,54 @@ describe("Runtime environment boundary", () => {
     );
   }, 30_000);
 
+  it("fails startup before projector or listener side effects when an active surface is absent from the database mirror", async () => {
+    const referenced = await migrationPool.query<{ count: number }>(
+      `SELECT (
+         (SELECT count(*) FROM presentation_surface_versions
+          WHERE surface_id='surface.hr.mission-control') +
+         (SELECT count(*) FROM presentation_surface_settings
+          WHERE surface_id='surface.hr.mission-control')
+       )::integer AS count`,
+    );
+    expect(referenced.rows).toEqual([{ count: 0 }]);
+    const removed = await migrationPool.query(
+      `DELETE FROM presentation_surface_registry
+       WHERE surface_id='surface.hr.mission-control'`,
+    );
+    expect(removed.rowCount).toBe(1);
+    try {
+      const result = spawnSync(
+        process.execPath,
+        ["--conditions=development", "--import", "tsx", "src/main.ts"],
+        {
+          cwd: fileURLToPath(new URL("../", import.meta.url)),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            DATABASE_NOTIFICATION_PROJECTOR_URL:
+              "postgresql://invalid-projector.invalid/esbla_startup_must_not_connect",
+            ESBLA_DEV_AUTH_SECRET: secret,
+            NODE_ENV: "test",
+            PORT: "41999",
+          },
+          timeout: 20_000,
+        },
+      );
+      expect(result.status).toBe(1);
+      expect(result.signal).toBeNull();
+      expect(`${result.stdout}${result.stderr}`).toContain(
+        "Presentation surface persistence registry is invalid",
+      );
+      expect(`${result.stdout}${result.stderr}`).not.toContain("invalid-projector.invalid");
+      expect(`${result.stdout}${result.stderr}`).not.toContain("listening");
+    } finally {
+      await migrationPool.query(
+        `INSERT INTO presentation_surface_registry (surface_id)
+         VALUES ('surface.hr.mission-control')`,
+      );
+    }
+  }, 30_000);
+
   it("bounds and strips control characters from typed Problem Details", async () => {
     const problemServer = createServer({
       authenticate: () => {

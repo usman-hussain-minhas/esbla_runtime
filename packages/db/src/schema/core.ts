@@ -271,6 +271,10 @@ export const presentationShortcutUserPatches = pgTable(
   ],
 ).enableRLS();
 
+export const presentationSurfaceRegistry = pgTable("presentation_surface_registry", {
+  surfaceId: text("surface_id").primaryKey(),
+});
+
 export const presentationSurfaceVersions = pgTable(
   "presentation_surface_versions",
   {
@@ -293,6 +297,13 @@ export const presentationSurfaceVersions = pgTable(
       name: "presentation_surface_versions_pk",
     }),
     foreignKey({
+      columns: [table.surfaceId],
+      foreignColumns: [presentationSurfaceRegistry.surfaceId],
+      name: "presentation_surface_versions_registry_fk",
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    foreignKey({
       columns: [table.tenantId, table.publishedByPrincipalId],
       foreignColumns: [memberships.tenantId, memberships.principalId],
       name: "presentation_surface_versions_publisher_membership_fk",
@@ -307,10 +318,7 @@ export const presentationSurfaceVersions = pgTable(
       table.surfaceId,
       table.publishedAt,
     ),
-    check(
-      "presentation_surface_versions_surface_valid",
-      sql`${table.surfaceId} IN ('surface.mission-control', 'surface.hr.mission-control')`,
-    ),
+    index("presentation_surface_versions_surface_id_idx").on(table.surfaceId),
     check("presentation_surface_versions_base_version_positive", sql`${table.baseVersion} > 0`),
     check(
       "presentation_surface_versions_lineage_valid",
@@ -361,10 +369,6 @@ export const presentationSurfaceHeads = pgTable(
       name: "presentation_surface_heads_updater_membership_fk",
     }).onDelete("restrict"),
     check(
-      "presentation_surface_heads_surface_valid",
-      sql`${table.surfaceId} IN ('surface.mission-control', 'surface.hr.mission-control')`,
-    ),
-    check(
       "presentation_surface_heads_current_version_positive",
       sql`${table.currentBaseVersion} > 0`,
     ),
@@ -390,14 +394,18 @@ export const presentationSurfaceSettings = pgTable(
       name: "presentation_surface_settings_pk",
     }),
     foreignKey({
+      columns: [table.surfaceId],
+      foreignColumns: [presentationSurfaceRegistry.surfaceId],
+      name: "presentation_surface_settings_registry_fk",
+    })
+      .onUpdate("restrict")
+      .onDelete("restrict"),
+    foreignKey({
       columns: [table.tenantId, table.updatedByPrincipalId],
       foreignColumns: [memberships.tenantId, memberships.principalId],
       name: "presentation_surface_settings_updater_membership_fk",
     }).onDelete("restrict"),
-    check(
-      "presentation_surface_settings_surface_valid",
-      sql`${table.surfaceId} IN ('surface.mission-control', 'surface.hr.mission-control')`,
-    ),
+    index("presentation_surface_settings_surface_id_idx").on(table.surfaceId),
     check("presentation_surface_settings_version_positive", sql`${table.version} > 0`),
   ],
 ).enableRLS();
@@ -436,10 +444,6 @@ export const presentationSurfaceDrafts = pgTable(
       name: "presentation_surface_drafts_updater_membership_fk",
     }).onDelete("restrict"),
     index("presentation_surface_drafts_tenant_updated_idx").on(table.tenantId, table.updatedAt),
-    check(
-      "presentation_surface_drafts_surface_valid",
-      sql`${table.surfaceId} IN ('surface.mission-control', 'surface.hr.mission-control')`,
-    ),
     check(
       "presentation_surface_drafts_based_on_version_positive",
       sql`${table.basedOnVersion} > 0`,
@@ -494,10 +498,6 @@ export const presentationSurfaceOverlays = pgTable(
     index("presentation_surface_overlays_tenant_principal_idx").on(
       table.tenantId,
       table.principalId,
-    ),
-    check(
-      "presentation_surface_overlays_surface_valid",
-      sql`${table.surfaceId} IN ('surface.mission-control', 'surface.hr.mission-control')`,
     ),
     check("presentation_surface_overlays_base_version_positive", sql`${table.baseVersion} > 0`),
     check(

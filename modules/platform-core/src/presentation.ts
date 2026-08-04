@@ -85,7 +85,8 @@ import {
   ZEN_V1_SURFACE_CONTRACTS,
   zenV1SurfaceIds,
 } from "@esbla/contracts";
-import type { Pool } from "pg";
+import { acquireMigrationBarrierShared } from "@esbla/db";
+import type { Pool, PoolClient } from "pg";
 import type { OperationContext, TenantTransaction } from "./context.js";
 import { withTenantTransaction } from "./context.js";
 import { PlatformError } from "./errors.js";
@@ -176,6 +177,53 @@ export function assertPresentationCompositionRegistriesCurrent(
     }
   } catch {
     throw new PlatformError("SETTING_INVALID", "Presentation composition registry is invalid");
+  }
+}
+
+export async function assertPresentationSurfaceRegistryCurrent(
+  pool: Pool,
+  codeSurfaceIds: readonly string[] = zenV1SurfaceIds,
+): Promise<void> {
+  const invalidRegistry = () =>
+    new PlatformError("SETTING_INVALID", "Presentation surface persistence registry is invalid");
+  let client: PoolClient | undefined;
+  let transactionOpen = false;
+  let reusable = false;
+  try {
+    client = await pool.connect();
+    await client.query("BEGIN");
+    transactionOpen = true;
+    await acquireMigrationBarrierShared(client);
+    await client.query("SET LOCAL search_path = pg_catalog, public");
+    const result = await client.query<{ surface_id: unknown }>(
+      `SELECT surface_id
+       FROM public.presentation_surface_registry
+       ORDER BY surface_id`,
+    );
+    const databaseSurfaceIds = result.rows.map(({ surface_id }) => surface_id);
+    const codeSurfaceIdSet = new Set(codeSurfaceIds);
+    const databaseSurfaceIdSet = new Set(databaseSurfaceIds);
+    if (
+      codeSurfaceIdSet.size !== codeSurfaceIds.length ||
+      codeSurfaceIds.some(
+        (surfaceId) => typeof surfaceId !== "string" || surfaceId.trim().length === 0,
+      ) ||
+      databaseSurfaceIdSet.size !== databaseSurfaceIds.length ||
+      databaseSurfaceIds.some(
+        (surfaceId) => typeof surfaceId !== "string" || surfaceId.trim().length === 0,
+      ) ||
+      codeSurfaceIds.some((surfaceId) => !databaseSurfaceIdSet.has(surfaceId))
+    ) {
+      throw invalidRegistry();
+    }
+    await client.query("COMMIT");
+    transactionOpen = false;
+    reusable = true;
+  } catch {
+    if (transactionOpen && client) await client.query("ROLLBACK").catch(() => undefined);
+    throw invalidRegistry();
+  } finally {
+    client?.release(reusable ? undefined : true);
   }
 }
 

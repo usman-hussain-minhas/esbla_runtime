@@ -289,8 +289,13 @@ describe("core PostgreSQL foundation", () => {
       const legacyEntries = migrationJournal.entries.filter(
         ({ tag }) => String(tag).localeCompare("0029_wise_warbound") < 0,
       );
-      const upgradeEntries = migrationJournal.entries.filter(
-        ({ tag }) => String(tag).localeCompare("0029_wise_warbound") >= 0,
+      const preRegistryEntries = migrationJournal.entries.filter(
+        ({ tag }) =>
+          String(tag).localeCompare("0029_wise_warbound") >= 0 &&
+          String(tag).localeCompare("0036_presentation_surface_registry") < 0,
+      );
+      const registryEntries = migrationJournal.entries.filter(
+        ({ tag }) => String(tag).localeCompare("0036_presentation_surface_registry") >= 0,
       );
       for (const { tag } of legacyEntries) {
         const name = `${String(tag)}.sql`;
@@ -418,7 +423,61 @@ describe("core PostgreSQL foundation", () => {
         legacyClient.release();
       }
 
-      for (const { tag } of upgradeEntries) {
+      for (const { tag } of preRegistryEntries) {
+        const name = `${String(tag)}.sql`;
+        copyFileSync(join(migrationDirectory, name), join(legacyMigrationDirectory, name));
+      }
+      writeFileSync(
+        join(legacyMigrationDirectory, "meta", "_journal.json"),
+        `${JSON.stringify(
+          { ...migrationJournal, entries: [...legacyEntries, ...preRegistryEntries] },
+          null,
+          2,
+        )}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      );
+      await migrateDatabase(createDatabase(upgradePool), legacyMigrationDirectory);
+      await upgradePool.query(
+        "ALTER TABLE presentation_surface_settings NO FORCE ROW LEVEL SECURITY",
+      );
+      try {
+        await upgradePool.query(
+          `INSERT INTO presentation_surface_settings
+             (tenant_id,surface_id,personalization_enabled,version,updated_by_principal_id,updated_at)
+           VALUES ($1,'surface.mission-control',true,4,$2,$3)`,
+          [tenant, actor, updatedAt],
+        );
+      } finally {
+        await upgradePool.query(
+          "ALTER TABLE presentation_surface_settings FORCE ROW LEVEL SECURITY",
+        );
+      }
+      const preservedRowsBeforeRegistry = await upgradePool.query<{ state: string }>(
+        `SELECT jsonb_agg(
+                  jsonb_build_object('source',source,'row',stored)
+                  ORDER BY source
+                )::text AS state
+         FROM (
+           SELECT 'draft' AS source,to_jsonb(stored) AS stored
+           FROM presentation_surface_drafts stored
+           WHERE tenant_id=$1 AND surface_id='surface.mission-control'
+           UNION ALL
+           SELECT 'head',to_jsonb(stored) FROM presentation_surface_heads stored
+           WHERE tenant_id=$1 AND surface_id='surface.mission-control'
+           UNION ALL
+           SELECT 'overlay',to_jsonb(stored) FROM presentation_surface_overlays stored
+           WHERE tenant_id=$1 AND surface_id='surface.mission-control'
+           UNION ALL
+           SELECT 'setting',to_jsonb(stored) FROM presentation_surface_settings stored
+           WHERE tenant_id=$1 AND surface_id='surface.mission-control'
+           UNION ALL
+           SELECT 'version',to_jsonb(stored) FROM presentation_surface_versions stored
+           WHERE tenant_id=$1 AND surface_id='surface.mission-control'
+         ) preserved`,
+        [tenant],
+      );
+
+      for (const { tag } of registryEntries) {
         const name = `${String(tag)}.sql`;
         copyFileSync(join(migrationDirectory, name), join(legacyMigrationDirectory, name));
       }
@@ -428,6 +487,31 @@ describe("core PostgreSQL foundation", () => {
         { encoding: "utf8", mode: 0o600 },
       );
       await migrateDatabase(createDatabase(upgradePool), legacyMigrationDirectory);
+      const preservedRowsAfterRegistry = await upgradePool.query<{ state: string }>(
+        `SELECT jsonb_agg(
+                  jsonb_build_object('source',source,'row',stored)
+                  ORDER BY source
+                )::text AS state
+         FROM (
+           SELECT 'draft' AS source,to_jsonb(stored) AS stored
+           FROM presentation_surface_drafts stored
+           WHERE tenant_id=$1 AND surface_id='surface.mission-control'
+           UNION ALL
+           SELECT 'head',to_jsonb(stored) FROM presentation_surface_heads stored
+           WHERE tenant_id=$1 AND surface_id='surface.mission-control'
+           UNION ALL
+           SELECT 'overlay',to_jsonb(stored) FROM presentation_surface_overlays stored
+           WHERE tenant_id=$1 AND surface_id='surface.mission-control'
+           UNION ALL
+           SELECT 'setting',to_jsonb(stored) FROM presentation_surface_settings stored
+           WHERE tenant_id=$1 AND surface_id='surface.mission-control'
+           UNION ALL
+           SELECT 'version',to_jsonb(stored) FROM presentation_surface_versions stored
+           WHERE tenant_id=$1 AND surface_id='surface.mission-control'
+         ) preserved`,
+        [tenant],
+      );
+      expect(preservedRowsAfterRegistry.rows).toEqual(preservedRowsBeforeRegistry.rows);
 
       const readClient = await upgradePool.connect();
       let rows: QueryResult<{
@@ -561,7 +645,7 @@ describe("core PostgreSQL foundation", () => {
     if (cleanupErrors.length > 0) {
       throw new AggregateError(cleanupErrors, "Migration upgrade proof cleanup failed");
     }
-  }, 20_000);
+  }, 30_000);
 
   it("replays every migration once and forces RLS on every tenant-owned table", async () => {
     const migrations = await migrationPool.query<{ count: string }>(
@@ -651,6 +735,367 @@ describe("core PostgreSQL foundation", () => {
     ).rejects.toMatchObject({
       code: "42501",
     });
+  });
+
+  it("admits persisted surfaces through a read-only database mirror without weakening lineage or rollback safety", async () => {
+    const registered = await migrationPool.query<{ surface_id: string }>(
+      `SELECT surface_id
+       FROM presentation_surface_registry
+       ORDER BY surface_id`,
+    );
+    expect(registered.rows).toEqual([
+      { surface_id: "surface.hr.mission-control" },
+      { surface_id: "surface.hr.requests-and-claims" },
+      { surface_id: "surface.hr.time-and-scheduling" },
+      { surface_id: "surface.hr.workforce" },
+      { surface_id: "surface.mission-control" },
+    ]);
+    const registryStructure = await migrationPool.query<{
+      columns: string[];
+      owner: string;
+      primary_key: string;
+      row_security: boolean;
+    }>(
+      `SELECT ARRAY(
+                SELECT attribute.attname::text
+                FROM pg_catalog.pg_attribute attribute
+                WHERE attribute.attrelid='public.presentation_surface_registry'::regclass
+                  AND attribute.attnum > 0 AND NOT attribute.attisdropped
+                ORDER BY attribute.attnum
+              ) AS columns,
+              relation.relowner::regrole::text AS owner,
+              pg_catalog.pg_get_constraintdef(constraint_row.oid) AS primary_key,
+              relation.relrowsecurity AS row_security
+       FROM pg_catalog.pg_class relation
+       JOIN pg_catalog.pg_constraint constraint_row
+         ON constraint_row.conrelid=relation.oid AND constraint_row.contype='p'
+       WHERE relation.oid='public.presentation_surface_registry'::regclass`,
+    );
+    expect(registryStructure.rows).toEqual([
+      {
+        columns: ["surface_id"],
+        owner: "esbla_migrator",
+        primary_key: "PRIMARY KEY (surface_id)",
+        row_security: false,
+      },
+    ]);
+
+    const rootConstraints = await migrationPool.query<{
+      deferrable: boolean;
+      definition: string;
+      name: string;
+      validated: boolean;
+    }>(
+      `SELECT conname AS name,
+              pg_catalog.pg_get_constraintdef(oid) AS definition,
+              convalidated AS validated,
+              condeferrable AS deferrable
+       FROM pg_catalog.pg_constraint
+       WHERE conname = ANY($1::text[])
+       ORDER BY conname`,
+      [["presentation_surface_settings_registry_fk", "presentation_surface_versions_registry_fk"]],
+    );
+    expect(
+      rootConstraints.rows.map(({ deferrable, name, validated }) => ({
+        deferrable,
+        name,
+        validated,
+      })),
+    ).toEqual([
+      { deferrable: false, name: "presentation_surface_settings_registry_fk", validated: true },
+      { deferrable: false, name: "presentation_surface_versions_registry_fk", validated: true },
+    ]);
+    expect(
+      rootConstraints.rows.every(
+        ({ definition }) =>
+          definition.includes(
+            "FOREIGN KEY (surface_id) REFERENCES presentation_surface_registry(surface_id)",
+          ) &&
+          definition.includes("ON UPDATE RESTRICT") &&
+          definition.includes("ON DELETE RESTRICT"),
+      ),
+    ).toBe(true);
+
+    const rootIndexes = await migrationPool.query<{ definition: string; name: string }>(
+      `SELECT indexname AS name, indexdef AS definition
+       FROM pg_catalog.pg_indexes
+       WHERE schemaname='public' AND indexname = ANY($1::text[])
+       ORDER BY indexname`,
+      [
+        [
+          "presentation_surface_settings_surface_id_idx",
+          "presentation_surface_versions_surface_id_idx",
+        ],
+      ],
+    );
+    expect(rootIndexes.rows.map(({ name }) => name)).toEqual([
+      "presentation_surface_settings_surface_id_idx",
+      "presentation_surface_versions_surface_id_idx",
+    ]);
+    expect(rootIndexes.rows.every(({ definition }) => definition.endsWith("(surface_id)"))).toBe(
+      true,
+    );
+
+    const removedChecks = await migrationPool.query<{ name: string }>(
+      `SELECT conname AS name
+       FROM pg_catalog.pg_constraint
+       WHERE conname = ANY($1::text[])
+       ORDER BY conname`,
+      [
+        [
+          "presentation_surface_drafts_surface_valid",
+          "presentation_surface_heads_surface_valid",
+          "presentation_surface_overlays_surface_valid",
+          "presentation_surface_settings_surface_valid",
+          "presentation_surface_versions_surface_valid",
+        ],
+      ],
+    );
+    expect(removedChecks.rows).toEqual([]);
+
+    const lineage = await migrationPool.query<{ name: string; validated: boolean }>(
+      `SELECT conname AS name, convalidated AS validated
+       FROM pg_catalog.pg_constraint
+       WHERE conname = ANY($1::text[])
+       ORDER BY conname`,
+      [
+        [
+          "presentation_surface_drafts_based_on_fk",
+          "presentation_surface_heads_current_version_fk",
+          "presentation_surface_overlays_base_version_fk",
+          "presentation_surface_versions_based_on_fk",
+        ],
+      ],
+    );
+    expect(lineage.rows).toEqual([
+      { name: "presentation_surface_drafts_based_on_fk", validated: true },
+      { name: "presentation_surface_heads_current_version_fk", validated: true },
+      { name: "presentation_surface_overlays_base_version_fk", validated: true },
+      { name: "presentation_surface_versions_based_on_fk", validated: true },
+    ]);
+
+    const privileges = await migrationPool.query<{ actual: boolean[] }>(
+      `SELECT ARRAY[
+         has_table_privilege('esbla_app', 'presentation_surface_registry', 'SELECT'),
+         NOT has_table_privilege('esbla_app', 'presentation_surface_registry', 'INSERT'),
+         NOT has_table_privilege('esbla_app', 'presentation_surface_registry', 'UPDATE'),
+         NOT has_table_privilege('esbla_app', 'presentation_surface_registry', 'DELETE'),
+         NOT has_table_privilege('esbla_app', 'presentation_surface_registry', 'TRUNCATE'),
+         NOT has_table_privilege('esbla_app', 'presentation_surface_registry', 'REFERENCES'),
+         NOT has_table_privilege('esbla_app', 'presentation_surface_registry', 'TRIGGER'),
+         NOT EXISTS (
+           SELECT 1 FROM information_schema.table_privileges
+           WHERE table_schema='public' AND table_name='presentation_surface_registry'
+             AND grantee='PUBLIC'
+         ),
+         NOT has_table_privilege('esbla_notification_projector', 'presentation_surface_registry', 'SELECT'),
+         NOT has_table_privilege('esbla_notification_projector', 'presentation_surface_registry', 'INSERT'),
+         NOT has_table_privilege('esbla_notification_projector', 'presentation_surface_registry', 'UPDATE'),
+         NOT has_table_privilege('esbla_notification_projector', 'presentation_surface_registry', 'DELETE'),
+         NOT has_table_privilege('esbla_notification_projector', 'presentation_surface_registry', 'TRUNCATE'),
+         NOT has_table_privilege('esbla_notification_projector', 'presentation_surface_registry', 'REFERENCES'),
+         NOT has_table_privilege('esbla_notification_projector', 'presentation_surface_registry', 'TRIGGER')
+       ] AS actual`,
+    );
+    expect(privileges.rows).toEqual([{ actual: Array.from({ length: 15 }, () => true) }]);
+    expect(
+      (
+        await pool.query<{ surface_id: string }>(
+          "SELECT surface_id FROM presentation_surface_registry ORDER BY surface_id",
+        )
+      ).rows,
+    ).toEqual(registered.rows);
+    await expect(
+      pool.query(
+        "INSERT INTO presentation_surface_registry (surface_id) VALUES ('surface.unauthorized')",
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+
+    const transitivelyConstrainedTables = [
+      "presentation_surface_versions",
+      "presentation_surface_settings",
+      "presentation_surface_heads",
+      "presentation_surface_drafts",
+      "presentation_surface_overlays",
+    ] as const;
+    for (const tableName of transitivelyConstrainedTables) {
+      await migrationPool.query(`ALTER TABLE ${tableName} NO FORCE ROW LEVEL SECURITY`);
+    }
+    try {
+      const unknownSurfaceInserts: ReadonlyArray<{
+        text: string;
+        values: readonly unknown[];
+      }> = [
+        {
+          text: `INSERT INTO presentation_surface_versions
+                   (tenant_id,surface_id,base_version,based_on_version,definition_hash,layout,
+                    published_by_principal_id)
+                 VALUES ($1,'surface.unknown',1,NULL,$2,'[]'::jsonb,$3)`,
+          values: [ids.tenantA, "0".repeat(64), ids.managerA],
+        },
+        {
+          text: `INSERT INTO presentation_surface_settings
+                   (tenant_id,surface_id,personalization_enabled,version,updated_by_principal_id)
+                 VALUES ($1,'surface.unknown',true,1,$2)`,
+          values: [ids.tenantA, ids.managerA],
+        },
+        {
+          text: `INSERT INTO presentation_surface_heads
+                   (tenant_id,surface_id,current_base_version,row_version,updated_by_principal_id)
+                 VALUES ($1,'surface.unknown',1,1,$2)`,
+          values: [ids.tenantA, ids.managerA],
+        },
+        {
+          text: `INSERT INTO presentation_surface_drafts
+                   (tenant_id,surface_id,based_on_version,definition_hash,layout,version,
+                    updated_by_principal_id)
+                 VALUES ($1,'surface.unknown',1,$2,'[]'::jsonb,1,$3)`,
+          values: [ids.tenantA, "0".repeat(64), ids.managerA],
+        },
+        {
+          text: `INSERT INTO presentation_surface_overlays
+                   (tenant_id,principal_id,surface_id,base_version,layout,version,
+                    updated_by_principal_id)
+                 VALUES ($1,$2,'surface.unknown',1,'[]'::jsonb,1,$2)`,
+          values: [ids.tenantA, ids.managerA],
+        },
+      ];
+      for (const candidate of unknownSurfaceInserts) {
+        await expect(
+          migrationTenantTransaction(ids.tenantA, async (client) => {
+            await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [
+              ids.managerA,
+            ]);
+            return await client.query(candidate.text, [...candidate.values]);
+          }),
+        ).rejects.toMatchObject({ code: "23503" });
+      }
+    } finally {
+      for (const tableName of [...transitivelyConstrainedTables].reverse()) {
+        await migrationPool.query(`ALTER TABLE ${tableName} FORCE ROW LEVEL SECURITY`);
+      }
+    }
+
+    for (const tableName of transitivelyConstrainedTables) {
+      await migrationPool.query(`ALTER TABLE ${tableName} NO FORCE ROW LEVEL SECURITY`);
+    }
+    const rollbackProbes = transitivelyConstrainedTables.map((tableName) => ({
+      constraintName: `${tableName}_old_schema_probe`,
+      tableName,
+    }));
+    try {
+      await migrationPool.query(
+        `INSERT INTO presentation_surface_versions
+           (tenant_id,surface_id,base_version,based_on_version,definition_hash,layout,
+            published_by_principal_id)
+         VALUES ($1,'surface.hr.workforce',1,NULL,$2,'[]'::jsonb,$3)`,
+        [ids.tenantA, "0".repeat(64), ids.managerA],
+      );
+      await migrationPool.query(
+        `INSERT INTO presentation_surface_settings
+           (tenant_id,surface_id,personalization_enabled,version,updated_by_principal_id)
+         VALUES ($1,'surface.hr.workforce',true,1,$2)`,
+        [ids.tenantA, ids.managerA],
+      );
+      await migrationPool.query(
+        `INSERT INTO presentation_surface_heads
+           (tenant_id,surface_id,current_base_version,row_version,updated_by_principal_id)
+         VALUES ($1,'surface.hr.workforce',1,1,$2)`,
+        [ids.tenantA, ids.managerA],
+      );
+      await migrationPool.query(
+        `INSERT INTO presentation_surface_drafts
+           (tenant_id,surface_id,based_on_version,definition_hash,layout,version,
+            updated_by_principal_id)
+         VALUES ($1,'surface.hr.workforce',1,$2,'[]'::jsonb,1,$3)`,
+        [ids.tenantA, "0".repeat(64), ids.managerA],
+      );
+      await migrationPool.query(
+        `INSERT INTO presentation_surface_overlays
+           (tenant_id,principal_id,surface_id,base_version,layout,version,
+            updated_by_principal_id)
+         VALUES ($1,$2,'surface.hr.workforce',1,'[]'::jsonb,1,$2)`,
+        [ids.tenantA, ids.managerA],
+      );
+      const retainedStateSql = `SELECT jsonb_agg(
+                                        jsonb_build_object('source',source,'row',stored)
+                                        ORDER BY source
+                                      )::text AS state
+                                FROM (
+                                  SELECT 'drafts' AS source,to_jsonb(stored) AS stored
+                                  FROM presentation_surface_drafts stored
+                                  WHERE tenant_id=$1 AND surface_id='surface.hr.workforce'
+                                  UNION ALL
+                                  SELECT 'heads',to_jsonb(stored) FROM presentation_surface_heads stored
+                                  WHERE tenant_id=$1 AND surface_id='surface.hr.workforce'
+                                  UNION ALL
+                                  SELECT 'overlays',to_jsonb(stored) FROM presentation_surface_overlays stored
+                                  WHERE tenant_id=$1 AND surface_id='surface.hr.workforce'
+                                  UNION ALL
+                                  SELECT 'settings',to_jsonb(stored) FROM presentation_surface_settings stored
+                                  WHERE tenant_id=$1 AND surface_id='surface.hr.workforce'
+                                  UNION ALL
+                                  SELECT 'versions',to_jsonb(stored) FROM presentation_surface_versions stored
+                                  WHERE tenant_id=$1 AND surface_id='surface.hr.workforce'
+                                ) retained`;
+      const retainedBeforeRollback = await migrationPool.query<{ state: string }>(
+        retainedStateSql,
+        [ids.tenantA],
+      );
+      for (const { constraintName, tableName } of rollbackProbes) {
+        const rollbackClient = await migrationPool.connect();
+        try {
+          await rollbackClient.query("BEGIN");
+          await rollbackClient.query(
+            `ALTER TABLE ${tableName}
+             ADD CONSTRAINT ${constraintName}
+             CHECK (surface_id IN ('surface.mission-control', 'surface.hr.mission-control')) NOT VALID`,
+          );
+          await expect(
+            rollbackClient.query(`ALTER TABLE ${tableName} VALIDATE CONSTRAINT ${constraintName}`),
+          ).rejects.toMatchObject({ code: "23514" });
+          await rollbackClient.query("ROLLBACK");
+        } finally {
+          rollbackClient.release();
+        }
+      }
+      expect(
+        (
+          await migrationPool.query<{ name: string }>(
+            `SELECT conname AS name FROM pg_catalog.pg_constraint
+             WHERE conname = ANY($1::text[]) ORDER BY conname`,
+            [rollbackProbes.map(({ constraintName }) => constraintName)],
+          )
+        ).rows,
+      ).toEqual([]);
+      const retainedAfterRollback = await migrationPool.query<{ state: string }>(retainedStateSql, [
+        ids.tenantA,
+      ]);
+      expect(retainedAfterRollback.rows).toEqual(retainedBeforeRollback.rows);
+      expect(JSON.parse(retainedAfterRollback.rows[0]?.state ?? "[]")).toHaveLength(5);
+    } finally {
+      for (const { constraintName, tableName } of rollbackProbes) {
+        await migrationPool.query(
+          `ALTER TABLE ${tableName} DROP CONSTRAINT IF EXISTS ${constraintName}`,
+        );
+      }
+      for (const tableName of [
+        "presentation_surface_drafts",
+        "presentation_surface_heads",
+        "presentation_surface_overlays",
+        "presentation_surface_settings",
+        "presentation_surface_versions",
+      ]) {
+        await migrationPool.query(
+          `DELETE FROM ${tableName}
+           WHERE tenant_id=$1 AND surface_id='surface.hr.workforce'`,
+          [ids.tenantA],
+        );
+      }
+      for (const tableName of [...transitivelyConstrainedTables].reverse()) {
+        await migrationPool.query(`ALTER TABLE ${tableName} FORCE ROW LEVEL SECURITY`);
+      }
+    }
   });
 
   it("bounds versioned presentation storage with exact indexes, policies, grants and capability locking", async () => {

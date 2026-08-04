@@ -26,7 +26,7 @@ if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
 const [
   { createDatabasePool },
   { verifyHrNotificationTargets },
-  { createNotificationProjector },
+  { assertPresentationSurfaceRegistryCurrent, createNotificationProjector },
   { createDevelopmentAuthenticator },
   { createServer },
 ] = await Promise.all([
@@ -40,6 +40,12 @@ const [
 const pool = createDatabasePool(databaseUrl);
 const migrationReadPool = createDatabasePool(migrationDatabaseUrl);
 const notificationProjectorPool = createDatabasePool(notificationProjectorDatabaseUrl, { max: 2 });
+try {
+  await assertPresentationSurfaceRegistryCurrent(pool);
+} catch (error) {
+  await Promise.all([pool.end(), migrationReadPool.end(), notificationProjectorPool.end()]);
+  throw error;
+}
 const notificationProjector = createNotificationProjector(
   notificationProjectorPool,
   verifyHrNotificationTargets,
