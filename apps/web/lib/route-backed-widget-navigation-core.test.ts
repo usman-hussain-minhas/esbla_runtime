@@ -265,6 +265,16 @@ describe("route-backed widget navigation", () => {
       "/workspace/hr/attendance/by-id/record?returnTo=own&originFocusId=hr-mission-control.my-attendance.full-screen&returnSurface=surface.hr.mission-control&originWidgetDefinitionId=hr.attendance.my-observations",
     );
     expect(() => buildNestedRouteBackedWidgetHref("https://external.test", origin)).toThrow();
+    for (const destination of [
+      String.raw`/\attacker.example/path`,
+      "/\n/attacker.example/path",
+      "/\r/attacker.example/path",
+      "/\t/attacker.example/path",
+    ]) {
+      expect(() => buildNestedRouteBackedWidgetHref(destination, origin)).toThrow(
+        "Nested route-backed widget destination is invalid",
+      );
+    }
     const fallback = parseRouteBackedWidgetOrigin({}, "/workspace/hr", "/workspace/hr/attendance");
     expect(
       buildNestedRouteBackedWidgetHref("/workspace/hr/attendance?from=2028-08-01", fallback),

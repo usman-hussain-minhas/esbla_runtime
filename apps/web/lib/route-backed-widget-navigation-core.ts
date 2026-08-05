@@ -189,7 +189,26 @@ export function buildNestedRouteBackedWidgetHref(
   href: string,
   origin: RouteBackedWidgetOrigin,
 ): string {
-  if (!href.startsWith("/") || href.startsWith("//") || href.includes("#")) {
+  let destination: URL;
+  try {
+    destination = new URL(href, "https://esbla.invalid");
+  } catch {
+    throw new Error("Nested route-backed widget destination is invalid");
+  }
+  const hasControlCharacter = Array.from(href).some((character) => {
+    const codePoint = character.codePointAt(0);
+    return (
+      codePoint !== undefined && (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f))
+    );
+  });
+  if (
+    !href.startsWith("/") ||
+    href.startsWith("//") ||
+    href.includes("#") ||
+    href.includes("\\") ||
+    hasControlCharacter ||
+    destination.origin !== "https://esbla.invalid"
+  ) {
     throw new Error("Nested route-backed widget destination is invalid");
   }
   const separator = href.indexOf("?");
