@@ -13,7 +13,10 @@ interface Props {
 
 export default async function InterceptedLeavePage({ searchParams }: Props) {
   const parameters = await searchParams;
-  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr", "/workspace/hr/leave");
+  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr", [
+    "/workspace/hr/leave",
+    "/workspace/hr/leave/new",
+  ]);
   const focusNavigation = resolveHrLeaveInterceptedFocusNavigation(origin);
   return (
     <RouteBackedWidgetOverlay

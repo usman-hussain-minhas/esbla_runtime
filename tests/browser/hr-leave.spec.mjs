@@ -5805,6 +5805,28 @@ test("Leave catalogue faces preserve employee and assigned-manager journeys", as
       "href",
       "/workspace/hr/leave/new?returnContext=mission-control&originFocusId=mission-control.leave-request.new-request&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.leave.request-form",
     );
+    await requestForm.getByRole("link", { name: "Start Leave request" }).click();
+    const newLeaveOverlay = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "New leave request",
+    });
+    await expect(newLeaveOverlay).toBeVisible();
+    await newLeaveOverlay.getByRole("link", { exact: true, name: "Back to requests" }).click();
+    const leaveListOverlay = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "My leave requests",
+    });
+    await expect(leaveListOverlay).toBeVisible();
+    await expect(employee.page).toHaveURL(
+      `${employee.origin}/workspace/hr/leave?originFocusId=mission-control.leave-request.new-request&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.leave.request-form`,
+    );
+    await leaveListOverlay
+      .getByRole("button", { exact: true, name: "Close My leave requests" })
+      .click();
+    await expect(employee.page).toHaveURL(employee.origin);
+    await expect(
+      employee.page.locator("#mission-control\\.leave-request\\.new-request"),
+    ).toBeFocused();
 
     for (const [name, actor] of [
       ["catalogue-leave-manager", manager],
