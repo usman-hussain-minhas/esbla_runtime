@@ -7,8 +7,10 @@ import {
   parsePresentationSurfaceLayout,
   parsePresentationSurfaceRegisteredPlacementTemplates,
   parsePresentationWidgetPlacements,
+  parseZenV1SurfaceId,
   presentationWidgetPlacementSchema,
   type ZenV1SurfaceId,
+  zenV1SurfaceIds,
 } from "./platform-presentation-surface-api.js";
 
 export interface PresentationSurfaceBaseVersion {
@@ -182,13 +184,11 @@ export function parsePresentationSurfaceBaseVersion(
         safeInteger(value.basedOnVersion, 1, Number(value.baseVersion) - 1))
     ) ||
     typeof value.definitionHash !== "string" ||
-    !new RegExp(sha256Pattern).test(value.definitionHash) ||
-    (value.surfaceId !== "surface.mission-control" &&
-      value.surfaceId !== "surface.hr.mission-control")
+    !new RegExp(sha256Pattern).test(value.definitionHash)
   ) {
     throw new Error("Invalid presentation surface base version");
   }
-  const surfaceId = value.surfaceId;
+  const surfaceId = parseZenV1SurfaceId(value.surfaceId);
   const contract = getZenV1SurfaceContract(surfaceId);
   const placements = parseExactPresentationSurfacePlacementSet(surfaceId, value.placements);
   if (
@@ -221,13 +221,11 @@ export function parsePresentationSurfaceDraft(value: unknown): PresentationSurfa
     value.candidateBaseVersion !== Number(value.basedOnVersion) + 1 ||
     !safeInteger(value.draftVersion, 1) ||
     typeof value.definitionHash !== "string" ||
-    !new RegExp(sha256Pattern).test(value.definitionHash) ||
-    (value.surfaceId !== "surface.mission-control" &&
-      value.surfaceId !== "surface.hr.mission-control")
+    !new RegExp(sha256Pattern).test(value.definitionHash)
   ) {
     throw new Error("Invalid presentation surface draft");
   }
-  const surfaceId = value.surfaceId;
+  const surfaceId = parseZenV1SurfaceId(value.surfaceId);
   const contract = getZenV1SurfaceContract(surfaceId);
   if (value.definitionHash !== contract.definitionHash) {
     throw new Error("Presentation surface draft definition drift");
@@ -508,7 +506,7 @@ export function parseResetPresentationSurfaceOverlayResponse(
 }
 
 const presentationSurfaceIdSchema = {
-  enum: ["surface.hr.mission-control", "surface.mission-control"],
+  enum: zenV1SurfaceIds,
   type: "string",
 } as const;
 

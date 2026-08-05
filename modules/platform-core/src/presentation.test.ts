@@ -10,6 +10,7 @@ import {
   assertPresentationCompositionRegistriesCurrent,
   assertPresentationSurfaceRegistryCurrent,
   parsePresentationPreferenceInput,
+  parseSurfaceOverlayEvidenceState,
   presentationWidgetProviderRoleIsEligible,
   reconcileRequiredPresentationSurfacePlacements,
   resolvePresentationPreferences,
@@ -64,6 +65,21 @@ describe("presentation preference core", () => {
       "COMMIT",
     ]);
     expect(release).toHaveBeenCalledWith(undefined);
+
+    await expect(assertPresentationSurfaceRegistryCurrent(pool)).resolves.toBeUndefined();
+    for (const { surfaceId } of ZEN_V1_SURFACE_CONTRACTS) {
+      const index = registryRows.findIndex(({ surface_id: candidate }) => candidate === surfaceId);
+      if (index < 0) throw new Error(`Surface registry fixture is missing ${surfaceId}`);
+      const [removed] = registryRows.splice(index, 1);
+      if (!removed) throw new Error(`Surface registry fixture could not remove ${surfaceId}`);
+      try {
+        await expect(assertPresentationSurfaceRegistryCurrent(pool)).rejects.toThrow(
+          "Presentation surface persistence registry is invalid",
+        );
+      } finally {
+        registryRows.splice(index, 0, removed);
+      }
+    }
 
     await expect(
       assertPresentationSurfaceRegistryCurrent(pool, [
@@ -181,6 +197,61 @@ describe("presentation preference core", () => {
     expect(presentationWidgetProviderRoleIsEligible(admission, "unknown.provider", "manager")).toBe(
       false,
     );
+  });
+
+  it("replays historical two-surface evidence only for the two historical surfaces", () => {
+    const base = {
+      baseVersion: 1,
+      billingState: "non_billable",
+      expectedVersion: 0,
+      placements: [],
+      version: 1,
+    } as const;
+    const legacy = [
+      "c75bac3fed1b604fe9ebc9f39e1ccef45b2ad34570f5200ada0e8b77ab8b71fb",
+      "12e135cb9be3deeef974ec5af2362d7a8e68057bdba904976a29709afe601c36",
+    ];
+    const current = ZEN_V1_SURFACE_CONTRACTS.map(({ definitionHash }) => definitionHash);
+    const evidence = (
+      surfaceId: (typeof ZEN_V1_SURFACE_CONTRACTS)[number]["surfaceId"],
+      materializedBaseDefinitionHashes: readonly string[],
+    ) =>
+      JSON.stringify({
+        ...base,
+        materializedBaseDefinitionHashes,
+        surfaceId,
+      });
+
+    expect(
+      parseSurfaceOverlayEvidenceState(
+        evidence("surface.mission-control", legacy),
+        "surface.mission-control",
+      ).materializedBaseDefinitionHashes,
+    ).toEqual(legacy);
+    expect(
+      parseSurfaceOverlayEvidenceState(
+        evidence("surface.hr.mission-control", legacy),
+        "surface.hr.mission-control",
+      ).materializedBaseDefinitionHashes,
+    ).toEqual(legacy);
+    expect(
+      parseSurfaceOverlayEvidenceState(
+        evidence("surface.hr.workforce", current),
+        "surface.hr.workforce",
+      ).materializedBaseDefinitionHashes,
+    ).toEqual(current);
+    expect(() =>
+      parseSurfaceOverlayEvidenceState(
+        evidence("surface.hr.workforce", legacy),
+        "surface.hr.workforce",
+      ),
+    ).toThrow("Surface overlay retry evidence is invalid");
+    expect(() =>
+      parseSurfaceOverlayEvidenceState(
+        evidence("surface.mission-control", [legacy[0] ?? "", current[2] ?? ""]),
+        "surface.mission-control",
+      ),
+    ).toThrow("Surface overlay retry evidence is invalid");
   });
 
   it("rejects coupled or unrecognized appearance values", () => {

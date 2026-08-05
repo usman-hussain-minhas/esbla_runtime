@@ -7,8 +7,15 @@ import {
 } from "./zen-section-rail-core";
 
 describe("Zen surface section rail eligibility", () => {
-  it("registers exactly one overview section for each initial Mission Control surface", () => {
-    expect(ZEN_SURFACE_SECTION_REGISTRY).toEqual({
+  it("registers exactly one overview section for every active surface", () => {
+    expect(Object.keys(ZEN_SURFACE_SECTION_REGISTRY).sort()).toEqual([
+      "surface.hr.mission-control",
+      "surface.hr.requests-and-claims",
+      "surface.hr.time-and-scheduling",
+      "surface.hr.workforce",
+      "surface.mission-control",
+    ]);
+    expect(ZEN_SURFACE_SECTION_REGISTRY).toMatchObject({
       "surface.hr.mission-control": {
         sectionDefinitionVersion: 1,
         sections: [
@@ -92,6 +99,64 @@ describe("Zen surface section rail eligibility", () => {
         surfaceCanonicalHash: "d6a467292414d34beb296b81f2b40b50132f1ebd8fd040a9a6e2dc4d93c364e3",
         surfaceDefinitionHash: "c75bac3fed1b604fe9ebc9f39e1ccef45b2ad34570f5200ada0e8b77ab8b71fb",
       },
+    });
+    expect(ZEN_SURFACE_SECTION_REGISTRY["surface.hr.workforce"]).toMatchObject({
+      sections: [
+        {
+          headingId: "hr-workforce-heading",
+          widgetInstanceIds: [
+            "hr-workforce.my-profile",
+            "hr-workforce.direct-reports",
+            "hr-workforce.admin-queue",
+            "hr-workforce.status-reporting",
+            "hr-workforce.current-employment",
+            "hr-workforce.employment-history",
+            "hr-workforce.employment-admin-queue",
+          ],
+        },
+      ],
+      surfaceCanonicalHash: "d4c9e5727e17afd3b412b2625e362e9e022b69bd6082afebf263a70199a06895",
+      surfaceDefinitionHash: "8c945cf827e6949b3f454bd8afdea68351ebbd6de68062933a48845aa3af32c3",
+    });
+    expect(ZEN_SURFACE_SECTION_REGISTRY["surface.hr.time-and-scheduling"]).toMatchObject({
+      sections: [
+        {
+          headingId: "hr-time-and-scheduling-heading",
+          widgetInstanceIds: [
+            "hr-time-and-scheduling.my-published-shifts",
+            "hr-time-and-scheduling.roster-overview",
+            "hr-time-and-scheduling.publish-queue",
+            "hr-time-and-scheduling.my-attendance",
+            "hr-time-and-scheduling.attendance-reports",
+            "hr-time-and-scheduling.attendance-correction-queue",
+            "hr-time-and-scheduling.my-timesheets",
+            "hr-time-and-scheduling.timesheet-draft",
+            "hr-time-and-scheduling.timesheet-assigned",
+            "hr-time-and-scheduling.timesheet-corrections",
+          ],
+        },
+      ],
+      surfaceCanonicalHash: "bbd0d87dded7676e1894ecb6e644adf7803de1417c5b86c3e770c7955bc88f32",
+      surfaceDefinitionHash: "1308489fb489e2638eeafd8e57a9db7de08a8690cca247e69e8492014c3d4629",
+    });
+    expect(ZEN_SURFACE_SECTION_REGISTRY["surface.hr.requests-and-claims"]).toMatchObject({
+      sections: [
+        {
+          headingId: "hr-requests-and-claims-heading",
+          widgetInstanceIds: [
+            "hr-requests-and-claims.my-leave",
+            "hr-requests-and-claims.leave-request-form",
+            "hr-requests-and-claims.leave-assigned",
+            "hr-requests-and-claims.leave-history",
+            "hr-requests-and-claims.my-expenses",
+            "hr-requests-and-claims.expense-draft",
+            "hr-requests-and-claims.expense-assigned",
+            "hr-requests-and-claims.expense-corrections",
+          ],
+        },
+      ],
+      surfaceCanonicalHash: "879b2e93a964a5685392946ef6c5f8c79befea6a6f9328a28432a27dbf476259",
+      surfaceDefinitionHash: "2436f49c88ac0e71c1dca8c1c0d9027e86e5c8a92ee2a8a725c7ff19d2caebdc",
     });
   });
 

@@ -1,4 +1,4 @@
-import { parseZenV1SurfaceId } from "@esbla/contracts";
+import { getPresentationSemanticSurfaceDefinition, parseZenV1SurfaceId } from "@esbla/contracts";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { loadOwnPresentationPersonalSurfaceEditorWorkspace } from "../../../../../lib/presentation-surfaces";
@@ -21,8 +21,7 @@ export default async function PersonalSurfaceEditorPage({
   const workspace = await loadOwnPresentationPersonalSurfaceEditorWorkspace(surfaceId).catch(
     () => undefined,
   );
-  const surfaceName =
-    surfaceId === "surface.mission-control" ? "Mission Control" : "HR Mission Control";
+  const surfaceName = getPresentationSemanticSurfaceDefinition(surfaceId).label;
 
   return (
     <WorkspaceShell

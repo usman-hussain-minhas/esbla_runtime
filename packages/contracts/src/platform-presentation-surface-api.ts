@@ -5,7 +5,13 @@ import {
   validatePresentationWidgetRegistry,
 } from "./platform-presentation-widget.js";
 
-export const zenV1SurfaceIds = ["surface.mission-control", "surface.hr.mission-control"] as const;
+export const zenV1SurfaceIds = [
+  "surface.mission-control",
+  "surface.hr.mission-control",
+  "surface.hr.workforce",
+  "surface.hr.time-and-scheduling",
+  "surface.hr.requests-and-claims",
+] as const;
 export type ZenV1SurfaceId = (typeof zenV1SurfaceIds)[number];
 
 export interface PresentationSurfaceDefinition {
@@ -15,7 +21,12 @@ export interface PresentationSurfaceDefinition {
   readonly definitionHash: string;
   readonly id: ZenV1SurfaceId;
   readonly mediumColumnCount: 8;
-  readonly route: "/" | "/workspace/hr";
+  readonly route:
+    | "/"
+    | "/workspace/hr"
+    | "/workspace/hr/workforce"
+    | "/workspace/hr/time-and-scheduling"
+    | "/workspace/hr/requests-and-claims";
   readonly serviceGroup: "hr" | "universal";
 }
 
@@ -123,6 +134,36 @@ const HR_MISSION_CONTROL_SURFACE = {
   serviceGroup: "hr",
 } as const satisfies PresentationSurfaceDefinitionWithoutHash;
 
+const HR_WORKFORCE_SURFACE = {
+  baseVersion: 1,
+  columnCount: 12,
+  compactColumnCount: 4,
+  id: "surface.hr.workforce",
+  mediumColumnCount: 8,
+  route: "/workspace/hr/workforce",
+  serviceGroup: "hr",
+} as const satisfies PresentationSurfaceDefinitionWithoutHash;
+
+const HR_TIME_AND_SCHEDULING_SURFACE = {
+  baseVersion: 1,
+  columnCount: 12,
+  compactColumnCount: 4,
+  id: "surface.hr.time-and-scheduling",
+  mediumColumnCount: 8,
+  route: "/workspace/hr/time-and-scheduling",
+  serviceGroup: "hr",
+} as const satisfies PresentationSurfaceDefinitionWithoutHash;
+
+const HR_REQUESTS_AND_CLAIMS_SURFACE = {
+  baseVersion: 1,
+  columnCount: 12,
+  compactColumnCount: 4,
+  id: "surface.hr.requests-and-claims",
+  mediumColumnCount: 8,
+  route: "/workspace/hr/requests-and-claims",
+  serviceGroup: "hr",
+} as const satisfies PresentationSurfaceDefinitionWithoutHash;
+
 export const PRESENTATION_SURFACE_DEFINITIONS = deepFreeze([
   {
     ...UNIVERSAL_MISSION_CONTROL_SURFACE,
@@ -131,6 +172,18 @@ export const PRESENTATION_SURFACE_DEFINITIONS = deepFreeze([
   {
     ...HR_MISSION_CONTROL_SURFACE,
     definitionHash: "12e135cb9be3deeef974ec5af2362d7a8e68057bdba904976a29709afe601c36",
+  },
+  {
+    ...HR_WORKFORCE_SURFACE,
+    definitionHash: "8c945cf827e6949b3f454bd8afdea68351ebbd6de68062933a48845aa3af32c3",
+  },
+  {
+    ...HR_TIME_AND_SCHEDULING_SURFACE,
+    definitionHash: "1308489fb489e2638eeafd8e57a9db7de08a8690cca247e69e8492014c3d4629",
+  },
+  {
+    ...HR_REQUESTS_AND_CLAIMS_SURFACE,
+    definitionHash: "2436f49c88ac0e71c1dca8c1c0d9027e86e5c8a92ee2a8a725c7ff19d2caebdc",
   },
 ] as const) satisfies readonly PresentationSurfaceDefinition[];
 
@@ -331,6 +384,205 @@ const HR_MISSION_CONTROL_DEFAULT_INSTANCES = deepFreeze([
     widgetDefinitionVersion: 1,
   },
 ] as const) satisfies readonly PresentationSurfaceDefaultInstance[];
+
+function fourByThreeDefaultOptionalInstance(
+  instanceId: string,
+  widgetDefinitionId: string,
+  sourceOrder: number,
+  column: 1 | 5 | 9,
+  row: number,
+): PresentationSurfaceDefaultInstance {
+  return {
+    column,
+    columnSpan: 4,
+    instanceId,
+    placementPolicy: "default_optional",
+    row,
+    rowSpan: 3,
+    sectionId: "overview",
+    sourceOrder,
+    widgetDefinitionId,
+    widgetDefinitionVersion: 1,
+  };
+}
+
+const HR_WORKFORCE_DEFAULT_INSTANCES = deepFreeze([
+  fourByThreeDefaultOptionalInstance("hr-workforce.my-profile", "hr.workforce.my-profile", 1, 1, 1),
+  fourByThreeDefaultOptionalInstance(
+    "hr-workforce.direct-reports",
+    "hr.workforce.direct-reports",
+    2,
+    5,
+    1,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-workforce.admin-queue",
+    "hr.workforce.admin-queue",
+    3,
+    9,
+    1,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-workforce.status-reporting",
+    "hr.workforce.status-reporting",
+    4,
+    1,
+    4,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-workforce.current-employment",
+    "hr.employment.current-facts",
+    5,
+    5,
+    4,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-workforce.employment-history",
+    "hr.employment.history",
+    6,
+    9,
+    4,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-workforce.employment-admin-queue",
+    "hr.employment.admin-queue",
+    7,
+    1,
+    7,
+  ),
+]) satisfies readonly PresentationSurfaceDefaultInstance[];
+
+const HR_TIME_AND_SCHEDULING_DEFAULT_INSTANCES = deepFreeze([
+  fourByThreeDefaultOptionalInstance(
+    "hr-time-and-scheduling.my-published-shifts",
+    "hr.shift.my-published",
+    1,
+    1,
+    1,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-time-and-scheduling.roster-overview",
+    "hr.shift.roster-overview",
+    2,
+    5,
+    1,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-time-and-scheduling.publish-queue",
+    "hr.shift.publish-queue",
+    3,
+    9,
+    1,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-time-and-scheduling.my-attendance",
+    "hr.attendance.my-observations",
+    4,
+    1,
+    4,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-time-and-scheduling.attendance-reports",
+    "hr.attendance.reports",
+    5,
+    5,
+    4,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-time-and-scheduling.attendance-correction-queue",
+    "hr.attendance.correction-queue",
+    6,
+    9,
+    4,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-time-and-scheduling.my-timesheets",
+    "hr.timesheet.mine",
+    7,
+    1,
+    7,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-time-and-scheduling.timesheet-draft",
+    "hr.timesheet.draft",
+    8,
+    5,
+    7,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-time-and-scheduling.timesheet-assigned",
+    "hr.timesheet.assigned",
+    9,
+    9,
+    7,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-time-and-scheduling.timesheet-corrections",
+    "hr.timesheet.corrections",
+    10,
+    1,
+    10,
+  ),
+]) satisfies readonly PresentationSurfaceDefaultInstance[];
+
+const HR_REQUESTS_AND_CLAIMS_DEFAULT_INSTANCES = deepFreeze([
+  fourByThreeDefaultOptionalInstance(
+    "hr-requests-and-claims.my-leave",
+    "hr.leave.my-requests",
+    1,
+    1,
+    1,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-requests-and-claims.leave-request-form",
+    "hr.leave.request-form",
+    2,
+    5,
+    1,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-requests-and-claims.leave-assigned",
+    "hr.leave.assigned",
+    3,
+    9,
+    1,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-requests-and-claims.leave-history",
+    "hr.leave.history",
+    4,
+    1,
+    4,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-requests-and-claims.my-expenses",
+    "hr.expense.mine",
+    5,
+    5,
+    4,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-requests-and-claims.expense-draft",
+    "hr.expense.draft",
+    6,
+    9,
+    4,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-requests-and-claims.expense-assigned",
+    "hr.expense.assigned",
+    7,
+    1,
+    7,
+  ),
+  fourByThreeDefaultOptionalInstance(
+    "hr-requests-and-claims.expense-corrections",
+    "hr.expense.corrections",
+    8,
+    5,
+    7,
+  ),
+]) satisfies readonly PresentationSurfaceDefaultInstance[];
 
 const UNIVERSAL_MISSION_CONTROL_CATALOGUE_INSTANCES = deepFreeze([
   {
@@ -822,6 +1074,47 @@ const HR_MISSION_CONTROL_CONTRACT = {
   surfaceId: "surface.hr.mission-control",
 } as const satisfies ZenV1SurfaceContractWithoutHash;
 
+function serviceGroupSurfaceContract(
+  surfaceId:
+    | "surface.hr.workforce"
+    | "surface.hr.time-and-scheduling"
+    | "surface.hr.requests-and-claims",
+  definitionHash: string,
+  defaultInstances: readonly PresentationSurfaceDefaultInstance[],
+): ZenV1SurfaceContractWithoutHash {
+  return {
+    basePlacements: defaultInstances.map(placementFromDefaultInstance),
+    basePlacementsByBreakpoint: {
+      desktop: defaultInstances.map(placementFromDefaultInstance),
+      phone: compactPlacements(defaultInstances, 4),
+      tablet: compactPlacements(defaultInstances, 8),
+    },
+    baseVersion: 1,
+    catalogueInstances: [],
+    defaultInstances,
+    definitionHash,
+    surfaceId,
+  };
+}
+
+const HR_WORKFORCE_CONTRACT = serviceGroupSurfaceContract(
+  "surface.hr.workforce",
+  "8c945cf827e6949b3f454bd8afdea68351ebbd6de68062933a48845aa3af32c3",
+  HR_WORKFORCE_DEFAULT_INSTANCES,
+);
+
+const HR_TIME_AND_SCHEDULING_CONTRACT = serviceGroupSurfaceContract(
+  "surface.hr.time-and-scheduling",
+  "1308489fb489e2638eeafd8e57a9db7de08a8690cca247e69e8492014c3d4629",
+  HR_TIME_AND_SCHEDULING_DEFAULT_INSTANCES,
+);
+
+const HR_REQUESTS_AND_CLAIMS_CONTRACT = serviceGroupSurfaceContract(
+  "surface.hr.requests-and-claims",
+  "2436f49c88ac0e71c1dca8c1c0d9027e86e5c8a92ee2a8a725c7ff19d2caebdc",
+  HR_REQUESTS_AND_CLAIMS_DEFAULT_INSTANCES,
+);
+
 export const ZEN_V1_SURFACE_CONTRACTS = deepFreeze([
   {
     ...UNIVERSAL_MISSION_CONTROL_CONTRACT,
@@ -830,6 +1123,18 @@ export const ZEN_V1_SURFACE_CONTRACTS = deepFreeze([
   {
     ...HR_MISSION_CONTROL_CONTRACT,
     canonicalHash: "dafe03ca3473b95bc679c67f531dd62c3d5b95c06a5339155a95407733392a4b",
+  },
+  {
+    ...HR_WORKFORCE_CONTRACT,
+    canonicalHash: "d4c9e5727e17afd3b412b2625e362e9e022b69bd6082afebf263a70199a06895",
+  },
+  {
+    ...HR_TIME_AND_SCHEDULING_CONTRACT,
+    canonicalHash: "bbd0d87dded7676e1894ecb6e644adf7803de1417c5b86c3e770c7955bc88f32",
+  },
+  {
+    ...HR_REQUESTS_AND_CLAIMS_CONTRACT,
+    canonicalHash: "879b2e93a964a5685392946ef6c5f8c79befea6a6f9328a28432a27dbf476259",
   },
 ] as const) satisfies readonly ZenV1SurfaceContract[];
 
@@ -1033,6 +1338,12 @@ function safeInteger(value: unknown, minimum: number, maximum: number): value is
 }
 
 export function parsePresentationSurfaceDefinition(value: unknown): PresentationSurfaceDefinition {
+  const expectedDefinition =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? PRESENTATION_SURFACE_DEFINITIONS.find(
+          ({ id }) => id === (value as Readonly<Record<string, unknown>>).id,
+        )
+      : undefined;
   if (
     !exactRecord(value, [
       "baseVersion",
@@ -1050,15 +1361,9 @@ export function parsePresentationSurfaceDefinition(value: unknown): Presentation
     value.mediumColumnCount !== 8 ||
     typeof value.definitionHash !== "string" ||
     !new RegExp(sha256Pattern).test(value.definitionHash) ||
-    !zenV1SurfaceIds.includes(value.id as ZenV1SurfaceId) ||
-    !(
-      (value.id === "surface.mission-control" &&
-        value.route === "/" &&
-        value.serviceGroup === "universal") ||
-      (value.id === "surface.hr.mission-control" &&
-        value.route === "/workspace/hr" &&
-        value.serviceGroup === "hr")
-    )
+    !expectedDefinition ||
+    value.route !== expectedDefinition.route ||
+    value.serviceGroup !== expectedDefinition.serviceGroup
   ) {
     throw new Error("Invalid presentation surface definition");
   }
@@ -1422,10 +1727,10 @@ function canonicalPlacements(placements: readonly PresentationWidgetPlacement[])
 }
 
 export function parseZenV1SurfaceId(value: unknown): ZenV1SurfaceId {
-  if (value !== "surface.mission-control" && value !== "surface.hr.mission-control") {
+  if (typeof value !== "string" || !zenV1SurfaceIds.includes(value as ZenV1SurfaceId)) {
     throw new Error("Invalid Zen surface");
   }
-  return value;
+  return value as ZenV1SurfaceId;
 }
 
 export function parsePresentationSurfacePath(value: unknown): PresentationSurfacePath {

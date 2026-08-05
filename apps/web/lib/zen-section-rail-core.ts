@@ -4,6 +4,7 @@ import {
   getZenV1SurfaceContract,
   type PresentationSurfaceDefinition,
   type ZenV1SurfaceId,
+  zenV1SurfaceIds,
 } from "@esbla/contracts";
 
 export interface ZenSurfaceSectionRegistration {
@@ -128,6 +129,79 @@ export const ZEN_SURFACE_SECTION_REGISTRY = deepFreeze({
     surfaceCanonicalHash: "dafe03ca3473b95bc679c67f531dd62c3d5b95c06a5339155a95407733392a4b",
     surfaceDefinitionHash: "12e135cb9be3deeef974ec5af2362d7a8e68057bdba904976a29709afe601c36",
   },
+  "surface.hr.requests-and-claims": {
+    sectionDefinitionVersion: 1,
+    sections: [
+      {
+        authorizedContentAnchorIds: [],
+        headingId: "hr-requests-and-claims-heading",
+        id: "overview",
+        label: "Overview",
+        widgetInstanceIds: [
+          "hr-requests-and-claims.my-leave",
+          "hr-requests-and-claims.leave-request-form",
+          "hr-requests-and-claims.leave-assigned",
+          "hr-requests-and-claims.leave-history",
+          "hr-requests-and-claims.my-expenses",
+          "hr-requests-and-claims.expense-draft",
+          "hr-requests-and-claims.expense-assigned",
+          "hr-requests-and-claims.expense-corrections",
+        ],
+      },
+    ],
+    surfaceBaseVersion: 1,
+    surfaceCanonicalHash: "879b2e93a964a5685392946ef6c5f8c79befea6a6f9328a28432a27dbf476259",
+    surfaceDefinitionHash: "2436f49c88ac0e71c1dca8c1c0d9027e86e5c8a92ee2a8a725c7ff19d2caebdc",
+  },
+  "surface.hr.time-and-scheduling": {
+    sectionDefinitionVersion: 1,
+    sections: [
+      {
+        authorizedContentAnchorIds: [],
+        headingId: "hr-time-and-scheduling-heading",
+        id: "overview",
+        label: "Overview",
+        widgetInstanceIds: [
+          "hr-time-and-scheduling.my-published-shifts",
+          "hr-time-and-scheduling.roster-overview",
+          "hr-time-and-scheduling.publish-queue",
+          "hr-time-and-scheduling.my-attendance",
+          "hr-time-and-scheduling.attendance-reports",
+          "hr-time-and-scheduling.attendance-correction-queue",
+          "hr-time-and-scheduling.my-timesheets",
+          "hr-time-and-scheduling.timesheet-draft",
+          "hr-time-and-scheduling.timesheet-assigned",
+          "hr-time-and-scheduling.timesheet-corrections",
+        ],
+      },
+    ],
+    surfaceBaseVersion: 1,
+    surfaceCanonicalHash: "bbd0d87dded7676e1894ecb6e644adf7803de1417c5b86c3e770c7955bc88f32",
+    surfaceDefinitionHash: "1308489fb489e2638eeafd8e57a9db7de08a8690cca247e69e8492014c3d4629",
+  },
+  "surface.hr.workforce": {
+    sectionDefinitionVersion: 1,
+    sections: [
+      {
+        authorizedContentAnchorIds: [],
+        headingId: "hr-workforce-heading",
+        id: "overview",
+        label: "Overview",
+        widgetInstanceIds: [
+          "hr-workforce.my-profile",
+          "hr-workforce.direct-reports",
+          "hr-workforce.admin-queue",
+          "hr-workforce.status-reporting",
+          "hr-workforce.current-employment",
+          "hr-workforce.employment-history",
+          "hr-workforce.employment-admin-queue",
+        ],
+      },
+    ],
+    surfaceBaseVersion: 1,
+    surfaceCanonicalHash: "d4c9e5727e17afd3b412b2625e362e9e022b69bd6082afebf263a70199a06895",
+    surfaceDefinitionHash: "8c945cf827e6949b3f454bd8afdea68351ebbd6de68062933a48845aa3af32c3",
+  },
   "surface.mission-control": {
     sectionDefinitionVersion: 1,
     sections: [
@@ -218,10 +292,7 @@ function assertSurfaceBinding(
   }
 }
 
-for (const surfaceId of [
-  "surface.mission-control",
-  "surface.hr.mission-control",
-] as const satisfies readonly ZenV1SurfaceId[]) {
+for (const surfaceId of zenV1SurfaceIds) {
   assertSurfaceBinding(
     getPresentationSurfaceDefinition(surfaceId),
     ZEN_SURFACE_SECTION_REGISTRY[surfaceId],
