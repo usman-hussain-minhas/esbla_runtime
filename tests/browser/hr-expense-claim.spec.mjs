@@ -19,7 +19,10 @@ async function openActor(browser, origin) {
     } else await route.continue();
   });
   await page.goto(`${origin}/workspace/hr`);
-  await expect(page.locator(".esbla-shell")).toHaveAttribute("data-current-surface", "HR");
+  await expect(page.locator(".esbla-shell")).toHaveAttribute(
+    "data-current-surface",
+    "surface.hr.mission-control",
+  );
   return { context, diagnostics, origin, page };
 }
 

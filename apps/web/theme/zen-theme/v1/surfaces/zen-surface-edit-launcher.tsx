@@ -2,15 +2,10 @@
 
 import { Pencil } from "lucide-react";
 import Link from "next/link";
+import type { ZenSurfaceEditDescriptor } from "../../../../lib/zen-surface-edit-core";
 import { prepareRouteHeadingFocus } from "../chrome/zen-navigation-chrome";
 
-export interface ZenSurfaceEditDescriptor {
-  readonly ariaLabel: string;
-  readonly href:
-    | "/studio/surfaces/surface.hr.mission-control/personal"
-    | "/studio/surfaces/surface.mission-control/personal";
-  readonly route: "/" | "/workspace/hr";
-}
+export type { ZenSurfaceEditDescriptor } from "../../../../lib/zen-surface-edit-core";
 
 export function ZenSurfaceEditLauncher({
   ariaLabel,

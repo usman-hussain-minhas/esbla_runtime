@@ -1,6 +1,7 @@
 import { resolveResponsivePresentationSurfaceLayout } from "../lib/presentation-layout-core";
 import { loadOwnPresentationPersonalSurfaceEditorWorkspace } from "../lib/presentation-surfaces";
 import { getEligibleZenSurfaceSections } from "../lib/zen-section-rail-core";
+import { getZenSurfaceEditDescriptor } from "../lib/zen-surface-edit-core";
 import { getSurfaceDefinition } from "../theme/zen-theme/v1";
 import { ZenSectionRail } from "../theme/zen-theme/v1/surfaces/zen-section-rail";
 import { ZenSurfaceWidgets } from "../theme/zen-theme/v1/surfaces/zen-surface-widgets";
@@ -26,15 +27,9 @@ export default async function MissionControlPage() {
   );
   return (
     <WorkspaceShell
-      currentSurface="Mission Control"
-      editSurface={
-        editorWorkspace?.editable
-          ? {
-              ariaLabel: "Edit Mission Control personal layout",
-              href: "/studio/surfaces/surface.mission-control/personal",
-              route: "/",
-            }
-          : undefined
+      currentSurface="surface.mission-control"
+      editSurfaces={
+        editorWorkspace?.editable ? [getZenSurfaceEditDescriptor("surface.mission-control")] : []
       }
       shortcutContext={{ contextSurfaceId: "surface.mission-control" }}
     >

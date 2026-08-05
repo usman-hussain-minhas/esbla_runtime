@@ -14,34 +14,28 @@ if (
 
 const managerSurfaces = [
   {
-    allowedInstanceIds: ["hr-workforce.direct-reports"],
     heading: "Workforce",
+    instanceIds: ["hr-workforce.direct-reports"],
     pathname: "/workspace/hr/workforce",
-    requiredInstanceIds: ["hr-workforce.direct-reports"],
     surfaceId: "surface.hr.workforce",
   },
   {
-    allowedInstanceIds: [
+    heading: "Time & Scheduling",
+    instanceIds: [
       "hr-time-and-scheduling.roster-overview",
       "hr-time-and-scheduling.attendance-reports",
       "hr-time-and-scheduling.timesheet-assigned",
     ],
-    heading: "Time & Scheduling",
     pathname: "/workspace/hr/time-and-scheduling",
-    requiredInstanceIds: [
-      "hr-time-and-scheduling.roster-overview",
-      "hr-time-and-scheduling.timesheet-assigned",
-    ],
     surfaceId: "surface.hr.time-and-scheduling",
   },
   {
-    allowedInstanceIds: [
+    heading: "Requests & Claims",
+    instanceIds: [
       "hr-requests-and-claims.leave-assigned",
       "hr-requests-and-claims.expense-assigned",
     ],
-    heading: "Requests & Claims",
     pathname: "/workspace/hr/requests-and-claims",
-    requiredInstanceIds: ["hr-requests-and-claims.leave-assigned"],
     surfaceId: "surface.hr.requests-and-claims",
   },
 ];
@@ -121,6 +115,23 @@ async function closeActors(...actors) {
     .toBe(true);
 }
 
+async function ensureAttendanceActive(actor) {
+  await actor.page.goto(`${actor.origin}/workspace/hr/attendance/settings`, {
+    waitUntil: "networkidle",
+  });
+  const activate = actor.page.getByRole("button", { exact: true, name: "Activate service" });
+  if (await activate.isVisible()) {
+    const response = actor.page.waitForResponse(
+      (candidate) =>
+        candidate.request().method() === "POST" &&
+        new URL(candidate.url()).pathname === "/workspace/hr/attendance/action",
+    );
+    await activate.click();
+    expect((await response).status()).toBe(303);
+  }
+  await expect(actor.page.locator(".leave-status")).toHaveText("Active");
+}
+
 async function consumeExpectedDocumentNotFound(actor) {
   const message = "Failed to load resource: the server responded with a status of 404 (Not Found)";
   await expect
@@ -163,12 +174,7 @@ async function readReadySurface(page, surface) {
     .evaluateAll((widgets) =>
       widgets.map((widget) => widget.getAttribute("data-surface-instance")),
     );
-  expect(instanceIds).toEqual(
-    surface.allowedInstanceIds.filter((instanceId) => instanceIds.includes(instanceId)),
-  );
-  for (const requiredInstanceId of surface.requiredInstanceIds) {
-    expect(instanceIds).toContain(requiredInstanceId);
-  }
+  expect(instanceIds).toEqual(surface.instanceIds);
   await waitForSettledWidgets(host);
 
   return {
@@ -194,7 +200,7 @@ async function assertNotFoundSurface(page, surface, forbiddenLabels) {
     await expect(page.getByText(label, { exact: true })).toHaveCount(0);
   }
   const body = await page.locator("body").innerText();
-  for (const instanceId of surface.allowedInstanceIds) {
+  for (const instanceId of surface.instanceIds) {
     expect(body).not.toContain(instanceId);
   }
 }
@@ -202,8 +208,10 @@ async function assertNotFoundSurface(page, surface, forbiddenLabels) {
 test("manager receives exact ordered widgets on every registered HR operating surface", async ({
   browser,
 }) => {
+  const admin = await openActor(browser, fixture.adminOrigin, fixture.adminLabel);
   const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
   try {
+    await ensureAttendanceActive(admin);
     for (const surface of managerSurfaces) {
       const response = await manager.page.goto(`${manager.origin}${surface.pathname}`, {
         waitUntil: "networkidle",
@@ -217,7 +225,7 @@ test("manager receives exact ordered widgets on every registered HR operating su
       expect(await readReadySurface(manager.page, surface)).toEqual(beforeReload);
     }
   } finally {
-    await closeActors(manager);
+    await closeActors(admin, manager);
   }
 });
 
@@ -228,8 +236,7 @@ test("employee access fails closed and Requests & Claims survives deactivation a
   const timeSurface = managerSurfaces[1];
   const requestsSurface = {
     ...managerSurfaces[2],
-    allowedInstanceIds: employeeRequestInstanceIds,
-    requiredInstanceIds: employeeRequestInstanceIds,
+    instanceIds: employeeRequestInstanceIds,
   };
   let leaveRestored = false;
   try {

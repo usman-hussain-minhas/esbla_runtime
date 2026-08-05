@@ -3,14 +3,15 @@ import type {
   PresentationNavigationDiscovery,
   PresentationShortcutDiscovery,
   PresentationShortcutDiscoveryQuery,
+  ZenV1SurfaceId,
 } from "@esbla/contracts";
 import type { ReactNode } from "react";
 import { loadOwnNotifications } from "../lib/platform-notifications";
 import { loadOwnPresentationNavigation } from "../lib/presentation-navigation";
 import { loadOwnPresentationPreferences } from "../lib/presentation-preferences";
 import { loadOwnPresentationShortcuts } from "../lib/presentation-shortcuts";
+import type { ZenSurfaceEditDescriptor } from "../lib/zen-surface-edit-core";
 import { ZenShellChrome } from "../theme/zen-theme/v1/chrome/zen-shell-chrome";
-import type { ZenSurfaceEditDescriptor } from "../theme/zen-theme/v1/surfaces/zen-surface-edit-launcher";
 import { ZenSurfaceScrollRail } from "../theme/zen-theme/v1/surfaces/zen-surface-scroll-rail";
 import type { WorkspaceSurfaceKey } from "./workspace-surfaces";
 
@@ -18,15 +19,15 @@ const WORKSPACE_SURFACE_SCROLL_OWNER_ID = "workspace-surface-scroll";
 
 interface WorkspaceShellProps {
   readonly children: ReactNode;
-  readonly currentSurface: WorkspaceSurfaceKey;
-  readonly editSurface?: ZenSurfaceEditDescriptor | undefined;
+  readonly currentSurface: WorkspaceSurfaceKey | ZenV1SurfaceId;
+  readonly editSurfaces?: readonly ZenSurfaceEditDescriptor[] | undefined;
   readonly shortcutContext?: PresentationShortcutDiscoveryQuery | undefined;
 }
 
 export async function WorkspaceShell({
   children,
   currentSurface,
-  editSurface,
+  editSurfaces,
   shortcutContext,
 }: WorkspaceShellProps) {
   const [navigation, notifications, shortcuts, systemEligible] = await Promise.all([
@@ -47,7 +48,7 @@ export async function WorkspaceShell({
       <ZenShellChrome
         appearanceAvailable={systemEligible}
         discovery={navigation}
-        editSurface={editSurface}
+        editSurfaces={editSurfaces ?? []}
         initialNotifications={notifications}
         settingsAvailable
         shortcutDiscovery={shortcuts}

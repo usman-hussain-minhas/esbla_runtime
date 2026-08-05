@@ -292,7 +292,10 @@ async function submitLeave(actor, values) {
   await actor.page.goto(`${actor.origin}/workspace/hr/leave/new`);
   await expect(actor.page).toHaveTitle("Esbla");
   await expect(actor.page.getByRole("heading", { name: "New leave request" })).toBeVisible();
-  await expect(actor.page.locator(".esbla-shell")).toHaveAttribute("data-current-surface", "HR");
+  await expect(actor.page.locator(".esbla-shell")).toHaveAttribute(
+    "data-current-surface",
+    "surface.hr.mission-control",
+  );
 
   const leaveType = actor.page.getByLabel("Leave type");
   const startDate = actor.page.getByLabel("Start date");
@@ -1446,13 +1449,13 @@ test("Mission Control reuses the real Leave widget and persists four independent
     }
     const contextualLauncher = employee.page.getByRole("button", {
       exact: true,
-      name: "HR pages",
+      name: "HR surfaces",
     });
     await expect(contextualLauncher).toBeVisible();
     await contextualLauncher.click();
     const contextualNavigation = employee.page.getByRole("navigation", {
       exact: true,
-      name: "HR pages",
+      name: "HR surfaces",
     });
     await expect(
       contextualNavigation.getByRole("link", { exact: true, name: "HR Mission Control" }),
@@ -1461,8 +1464,8 @@ test("Mission Control reuses the real Leave widget and persists four independent
       contextualNavigation.getByRole("link", { exact: true, name: "HR Mission Control" }),
     ).toBeFocused();
     await expect(
-      contextualNavigation.getByRole("link", { exact: true, name: "Leave Requests" }),
-    ).toHaveAttribute("href", "/workspace/hr/leave");
+      contextualNavigation.getByRole("link", { exact: true, name: "Requests & Claims" }),
+    ).toHaveAttribute("href", "/workspace/hr/requests-and-claims");
     await employee.page.keyboard.press("Escape");
     await expect(contextualLauncher).toBeFocused();
 
@@ -1815,9 +1818,13 @@ test("Mission Control reuses the real Leave widget and persists four independent
     await employee.page.keyboard.press("Escape");
     await expect(systemLauncher).toBeFocused();
     await contextualLauncher.click();
-    await contextualNavigation.getByRole("link", { exact: true, name: "Leave Requests" }).click();
-    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/leave`);
-    await expect(employee.page.getByRole("heading", { name: "My Leave Requests" })).toBeFocused();
+    await contextualNavigation
+      .getByRole("link", { exact: true, name: "Requests & Claims" })
+      .click();
+    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/requests-and-claims`);
+    await expect(
+      employee.page.getByRole("heading", { exact: true, name: "Requests & Claims" }),
+    ).toBeFocused();
     await expect(
       employee.page.getByRole("link", {
         exact: true,
@@ -1834,9 +1841,11 @@ test("Mission Control reuses the real Leave widget and persists four independent
     await systemPanel.getByRole("button", { exact: true, name: "Appearance" }).click();
     await expect(employee.page.getByRole("region", { name: "Appearance settings" })).toBeVisible();
     await employee.page.goForward();
-    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/leave`);
+    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/requests-and-claims`);
     await expect(employee.page.getByRole("region", { name: "Appearance settings" })).toBeHidden();
-    await expect(employee.page.getByRole("heading", { name: "My Leave Requests" })).toBeFocused();
+    await expect(
+      employee.page.getByRole("heading", { exact: true, name: "Requests & Claims" }),
+    ).toBeFocused();
     await employee.page.goBack();
     await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr`);
     await systemLauncher.click();
@@ -1940,7 +1949,7 @@ test("Mission Control reuses the real Leave widget and persists four independent
 
     await setEmployeeLeavePresentationEligibility(true, ["hr.leave.submit"]);
     await employee.page.reload();
-    await expect(serviceGroupsLauncher).toHaveCount(0);
+    await expect(serviceGroupsLauncher).toBeVisible();
     await employee.page.goto(`${employee.origin}/workspace/hr`);
     await expect(employee.page.getByRole("link", { name: "Open My Profile" })).toHaveCount(0);
     await expect(
@@ -2699,7 +2708,10 @@ test("Zen chrome remains inside the visual viewport without Product placeholders
   );
   try {
     await actor.page.goto(`${actor.origin}/workspace/hr`);
-    await expect(actor.page.locator(".esbla-shell")).toHaveAttribute("data-current-surface", "HR");
+    await expect(actor.page.locator(".esbla-shell")).toHaveAttribute(
+      "data-current-surface",
+      "surface.hr.mission-control",
+    );
     await expect(actor.page.getByLabel("Development identity status")).toHaveCount(0);
     await expect(actor.page.locator("html")).toHaveCSS("--zen-visual-block-start", "60px");
     await expect(actor.page.locator("html")).toHaveCSS("--zen-visual-block-end", "264px");
@@ -4140,6 +4152,7 @@ test("current manager browses direct reports and returns from persistent detail"
       manager.page.getByRole("heading", { name: "Direct reports", exact: true }),
     ).toBeVisible();
 
+    await waitForShellHydration(manager);
     await manager.page.setViewportSize({ height: 844, width: 390 });
     await enableHighContrast(manager);
     expect(
@@ -4234,7 +4247,10 @@ test("tenant admin configures and controls Workforce Profile without record acce
   const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
   try {
     await admin.page.goto(`${admin.origin}/workspace/hr/profile/settings`);
-    await expect(admin.page.locator(".esbla-shell")).toHaveAttribute("data-current-surface", "HR");
+    await expect(admin.page.locator(".esbla-shell")).toHaveAttribute(
+      "data-current-surface",
+      "surface.hr.mission-control",
+    );
     await expect(
       admin.page.getByRole("heading", { name: "Workforce Profile settings" }),
     ).toBeVisible();

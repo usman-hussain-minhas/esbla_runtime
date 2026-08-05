@@ -20,11 +20,14 @@ import {
   type ZenResponsiveChromeResult,
 } from "../../../../lib/zen-responsive-chrome-core";
 import {
+  selectZenSurfaceEditDescriptor,
+  type ZenSurfaceEditDescriptor,
+} from "../../../../lib/zen-surface-edit-core";
+import {
   resolveZenVisualViewport,
   type ZenVisualViewportResult,
 } from "../../../../lib/zen-visual-viewport-core";
 import { UserSystemControl, type ZenSystemPanelState } from "../panels/zen-system-panel";
-import type { ZenSurfaceEditDescriptor } from "../surfaces/zen-surface-edit-launcher";
 import {
   consumeRouteHeadingFocus,
   type ZenDirectOpenMenu,
@@ -110,21 +113,21 @@ function sameResolution(
 export function ZenShellChrome({
   appearanceAvailable,
   discovery,
-  editSurface,
+  editSurfaces,
   initialNotifications,
   settingsAvailable,
   shortcutDiscovery,
 }: Readonly<{
   appearanceAvailable: boolean;
   discovery: PresentationNavigationDiscovery;
-  editSurface: ZenSurfaceEditDescriptor | undefined;
+  editSurfaces: readonly ZenSurfaceEditDescriptor[];
   initialNotifications: PlatformNotificationPage | undefined;
   settingsAvailable: boolean;
   shortcutDiscovery: PresentationShortcutDiscovery | undefined;
 }>) {
   const pathname = usePathname();
   const model = useMemo(() => buildZenNavigationModel(discovery, pathname), [discovery, pathname]);
-  const activeEditSurface = editSurface?.route === pathname ? editSurface : undefined;
+  const activeEditSurface = selectZenSurfaceEditDescriptor(editSurfaces, pathname);
   const [layer, setLayer] = useState<ZenChromeLayer>();
   const activeLayer = useRef(layer);
   const [resolution, setResolution] = useState(() =>
