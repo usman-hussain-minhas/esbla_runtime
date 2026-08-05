@@ -1,3 +1,8 @@
+import {
+  PRESENTATION_SURFACE_DEFINITIONS,
+  type ZenV1SurfaceId,
+  zenV1SurfaceIds,
+} from "./platform-presentation-surface-api.js";
 import type { PresentationSemanticIconKey } from "./platform-presentation-widget.js";
 
 export const presentationServiceGroupIds = ["hr"] as const;
@@ -378,8 +383,8 @@ export interface PresentationServiceGroupDiscovery {
 }
 
 export interface PresentationNavigationServiceGroup {
-  readonly destinationIds: readonly PresentationNavigationDestinationId[];
   readonly serviceGroupId: PresentationServiceGroupId;
+  readonly surfaceIds: readonly ZenV1SurfaceId[];
 }
 
 export interface PresentationNavigationDiscovery {
@@ -410,14 +415,15 @@ export const presentationNavigationDiscoverySchema = {
         additionalProperties: false,
         properties: {
           serviceGroupId: { enum: presentationServiceGroupIds },
-          destinationIds: {
-            items: { enum: presentationNavigationDestinationIds },
-            maxItems: presentationNavigationDestinationIds.length,
+          surfaceIds: {
+            items: { enum: zenV1SurfaceIds },
+            maxItems: zenV1SurfaceIds.length,
+            minItems: 1,
             type: "array",
             uniqueItems: true,
           },
         },
-        required: ["destinationIds", "serviceGroupId"],
+        required: ["serviceGroupId", "surfaceIds"],
         type: "object",
       },
       maxItems: presentationServiceGroupIds.length,
@@ -491,7 +497,7 @@ export function parsePresentationNavigationDiscovery(
       candidate === null ||
       Array.isArray(candidate) ||
       JSON.stringify(Object.keys(candidate).sort()) !==
-        JSON.stringify(["destinationIds", "serviceGroupId"])
+        JSON.stringify(["serviceGroupId", "surfaceIds"])
     ) {
       throw new Error("Invalid presentation navigation discovery");
     }
@@ -500,31 +506,31 @@ export function parsePresentationNavigationDiscovery(
       PRESENTATION_SERVICE_GROUP_DEFINITIONS.find(
         ({ serviceGroupId }) => serviceGroupId === record.serviceGroupId,
       );
-    const destinationIds = record.destinationIds;
-    if (!definition || !Array.isArray(destinationIds)) {
+    const surfaceIds = record.surfaceIds;
+    if (!definition || !Array.isArray(surfaceIds) || surfaceIds.length === 0) {
       throw new Error("Invalid presentation navigation discovery");
     }
-    const registeredDestinations = definition.services.flatMap(({ destinations }) => destinations);
+    const registeredSurfaceIds = PRESENTATION_SURFACE_DEFINITIONS.filter(
+      ({ serviceGroup }) => serviceGroup === definition.serviceGroupId,
+    ).map(({ id }) => id);
     if (
-      destinationIds.some(
-        (destinationId) =>
-          typeof destinationId !== "string" ||
-          !registeredDestinations.some(
-            (destination) => destination.destinationId === destinationId,
-          ),
+      surfaceIds.some(
+        (surfaceId) =>
+          typeof surfaceId !== "string" ||
+          !(registeredSurfaceIds as readonly string[]).includes(surfaceId),
       )
     ) {
       throw new Error("Invalid presentation navigation discovery");
     }
-    const canonicalDestinationIds = registeredDestinations
-      .map(({ destinationId }) => destinationId)
-      .filter((destinationId) => destinationIds.includes(destinationId));
-    if (JSON.stringify(destinationIds) !== JSON.stringify(canonicalDestinationIds)) {
+    const canonicalSurfaceIds = registeredSurfaceIds.filter((surfaceId) =>
+      surfaceIds.includes(surfaceId),
+    );
+    if (JSON.stringify(surfaceIds) !== JSON.stringify(canonicalSurfaceIds)) {
       throw new Error("Invalid presentation navigation discovery");
     }
     parsed.push({
-      destinationIds: canonicalDestinationIds,
       serviceGroupId: definition.serviceGroupId,
+      surfaceIds: canonicalSurfaceIds,
     });
   }
   const canonicalGroups = PRESENTATION_SERVICE_GROUP_DEFINITIONS.map(

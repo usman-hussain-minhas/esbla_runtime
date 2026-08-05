@@ -24,9 +24,7 @@ export default async function PersonalSurfaceEditorPage({
   const surfaceName = getPresentationSemanticSurfaceDefinition(surfaceId).label;
 
   return (
-    <WorkspaceShell
-      currentSurface={surfaceId === "surface.mission-control" ? "Mission Control" : "HR"}
-    >
+    <WorkspaceShell currentSurface={surfaceId}>
       <div className="surface-editor-page" id="surface-editor-content">
         <nav
           aria-label="Surface editor breadcrumb"

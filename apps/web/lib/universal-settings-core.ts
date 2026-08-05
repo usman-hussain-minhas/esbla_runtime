@@ -2,6 +2,7 @@ import {
   getPresentationSettingDefinition,
   type PresentationPreferences,
   type ZenV1SurfaceId,
+  zenV1SurfaceIds,
 } from "@esbla/contracts";
 
 export const UNIVERSAL_SETTINGS_CHANNEL = "esbla.universal-settings.v1";
@@ -35,9 +36,8 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}
 const subjects = new Set<UniversalSettingsUpdateSubject>([
   "appearance",
   "shortcuts",
-  "surface.hr.mission-control",
-  "surface.mission-control",
   "tenant-defaults",
+  ...zenV1SurfaceIds,
 ]);
 
 function literalProductDefault(key: string): boolean | string {

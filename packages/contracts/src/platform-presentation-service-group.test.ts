@@ -135,14 +135,34 @@ describe("presentation service-group contract", () => {
     });
     expect(
       parsePresentationNavigationDiscovery({
-        serviceGroups: [{ destinationIds: ["hr.leave.own"], serviceGroupId: "hr" }],
+        serviceGroups: [
+          {
+            serviceGroupId: "hr",
+            surfaceIds: [
+              "surface.hr.mission-control",
+              "surface.hr.workforce",
+              "surface.hr.time-and-scheduling",
+              "surface.hr.requests-and-claims",
+            ],
+          },
+        ],
       }),
     ).toEqual({
-      serviceGroups: [{ destinationIds: ["hr.leave.own"], serviceGroupId: "hr" }],
+      serviceGroups: [
+        {
+          serviceGroupId: "hr",
+          surfaceIds: [
+            "surface.hr.mission-control",
+            "surface.hr.workforce",
+            "surface.hr.time-and-scheduling",
+            "surface.hr.requests-and-claims",
+          ],
+        },
+      ],
     });
   });
 
-  it("rejects topology, duplicates, unknown groups, and non-canonical response order", () => {
+  it("rejects leaf, unknown, duplicate, out-of-order and cross-group navigation surfaces", () => {
     for (const invalid of [
       { serviceGroupIds: ["hr", "hr"] },
       { serviceGroupIds: ["finance"] },
@@ -155,15 +175,23 @@ describe("presentation service-group contract", () => {
     }
     for (const invalid of [
       {
-        serviceGroups: [{ destinationIds: ["hr.leave.own", "hr.leave.own"], serviceGroupId: "hr" }],
+        serviceGroups: [
+          {
+            serviceGroupId: "hr",
+            surfaceIds: ["surface.hr.workforce", "surface.hr.workforce"],
+          },
+        ],
       },
-      { serviceGroups: [{ destinationIds: ["unknown"], serviceGroupId: "hr" }] },
-      { serviceGroups: [{ destinationIds: [], serviceGroupId: "finance" }] },
+      { serviceGroups: [{ serviceGroupId: "hr", surfaceIds: ["hr.leave.own"] }] },
+      { serviceGroups: [{ serviceGroupId: "hr", surfaceIds: ["surface.hr.unknown"] }] },
+      { serviceGroups: [{ serviceGroupId: "hr", surfaceIds: ["surface.mission-control"] }] },
+      { serviceGroups: [{ serviceGroupId: "hr", surfaceIds: [] }] },
+      { serviceGroups: [{ serviceGroupId: "finance", surfaceIds: [] }] },
       {
         serviceGroups: [
           {
-            destinationIds: ["hr.timesheet.settings", "hr.leave.own"],
             serviceGroupId: "hr",
+            surfaceIds: ["surface.hr.requests-and-claims", "surface.hr.time-and-scheduling"],
           },
         ],
       },

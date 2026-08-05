@@ -1798,7 +1798,7 @@ describe("presentation preference persistence", () => {
       capabilities: ["hr.leave.submit"],
     });
     expect(await getOwnPresentationServiceGroups(pool, context(ids.tenantA, ids.actorA))).toEqual({
-      serviceGroupIds: [],
+      serviceGroupIds: ["hr"],
     });
     await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
       active: true,
@@ -1806,27 +1806,92 @@ describe("presentation preference persistence", () => {
     });
   });
 
-  it("discovers only active actor-eligible navigation destinations in canonical order", async () => {
+  it("discovers only active actor-eligible semantic surfaces in canonical order", async () => {
     expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
-      serviceGroups: [{ destinationIds: ["hr.leave.own"], serviceGroupId: "hr" }],
+      serviceGroups: [
+        {
+          serviceGroupId: "hr",
+          surfaceIds: ["surface.hr.mission-control", "surface.hr.requests-and-claims"],
+        },
+      ],
     });
     await setWorkforcePresentationEligibility(ids.tenantA, ids.actorA, true);
     expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
       serviceGroups: [
         {
-          destinationIds: ["hr.workforce.own", "hr.leave.own"],
           serviceGroupId: "hr",
+          surfaceIds: [
+            "surface.hr.mission-control",
+            "surface.hr.workforce",
+            "surface.hr.requests-and-claims",
+          ],
         },
       ],
     });
-    await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
-      active: true,
-      capabilities: ["hr.leave.submit"],
-    });
+    await setExactServicePresentationEligibility(ids.tenantA, ids.actorA, "shift_assignment", [
+      "hr.shift.list_roster",
+      "hr.shift.view_detail",
+    ]);
     expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
-      serviceGroups: [{ destinationIds: ["hr.workforce.own"], serviceGroupId: "hr" }],
+      serviceGroups: [
+        {
+          serviceGroupId: "hr",
+          surfaceIds: [
+            "surface.hr.mission-control",
+            "surface.hr.workforce",
+            "surface.hr.time-and-scheduling",
+            "surface.hr.requests-and-claims",
+          ],
+        },
+      ],
+    });
+    await setPresentationCapability(ids.tenantA, ids.actorA, "hr.shift.view_detail", false);
+    expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
+      serviceGroups: [
+        {
+          serviceGroupId: "hr",
+          surfaceIds: [
+            "surface.hr.mission-control",
+            "surface.hr.workforce",
+            "surface.hr.requests-and-claims",
+          ],
+        },
+      ],
     });
     await setWorkforcePresentationEligibility(ids.tenantA, ids.actorA, false);
+    await setPresentationActorRole(ids.tenantA, ids.actorA, "manager");
+    await setPresentationCapability(ids.tenantA, ids.actorA, "hr.workforce.list_authorized", true);
+    await setPresentationCapability(
+      ids.tenantA,
+      ids.actorA,
+      "hr.workforce.view_authorized_detail",
+      true,
+    );
+    expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
+      serviceGroups: [
+        {
+          serviceGroupId: "hr",
+          surfaceIds: ["surface.hr.workforce"],
+        },
+      ],
+    });
+    await setWorkforceManagerVisibility(ids.tenantA, "none");
+    expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
+      serviceGroups: [],
+    });
+    await setWorkforceManagerVisibility(ids.tenantA, null);
+    await setPresentationCapability(ids.tenantA, ids.actorA, "hr.workforce.list_authorized", false);
+    await setPresentationCapability(
+      ids.tenantA,
+      ids.actorA,
+      "hr.workforce.view_authorized_detail",
+      false,
+    );
+    await setPresentationActorRole(ids.tenantA, ids.actorA, "employee");
+    await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
+      active: false,
+      capabilities: ["hr.leave.list_own", "hr.leave.view"],
+    });
     expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
       serviceGroups: [],
     });
@@ -1834,42 +1899,31 @@ describe("presentation preference persistence", () => {
       active: true,
       capabilities: ["hr.leave.list_own", "hr.leave.view"],
     });
+    await setPresentationCapability(ids.tenantA, ids.actorA, "hr.shift.list_roster", false);
+  });
 
-    await setPresentationActorRole(ids.tenantA, ids.actorA, "manager");
-    await setPresentationCapability(ids.tenantA, ids.actorA, "hr.workforce.list_authorized", true);
-    expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
-      serviceGroups: [
-        {
-          destinationIds: ["hr.workforce.direct_reports"],
-          serviceGroupId: "hr",
-        },
-      ],
-    });
-
-    await setPresentationActorRole(ids.tenantA, ids.actorA, "hr_operator");
-    expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
-      serviceGroups: [{ destinationIds: ["hr.workforce.admin"], serviceGroupId: "hr" }],
-    });
-
-    await setPresentationActorRole(ids.tenantA, ids.actorA, "tenant_admin");
-    await setPresentationCapability(ids.tenantA, ids.actorA, "hr.workforce.list_authorized", false);
+  it("requires the current explicit layout-read capability for navigation discovery", async () => {
     await setPresentationCapability(
       ids.tenantA,
       ids.actorA,
-      "hr.workforce.view_service_control",
-      true,
-    );
-    expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
-      serviceGroups: [{ destinationIds: ["hr.workforce.settings"], serviceGroupId: "hr" }],
-    });
-
-    await setPresentationCapability(
-      ids.tenantA,
-      ids.actorA,
-      "hr.workforce.view_service_control",
+      "platform.presentation.layouts.read_own",
       false,
     );
-    await setPresentationActorRole(ids.tenantA, ids.actorA, "employee");
+    try {
+      await expect(
+        getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA)),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
+      await expect(
+        getOwnPresentationServiceGroups(pool, context(ids.tenantA, ids.actorA)),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
+    } finally {
+      await setPresentationCapability(
+        ids.tenantA,
+        ids.actorA,
+        "platform.presentation.layouts.read_own",
+        true,
+      );
+    }
   });
 
   it("replays simultaneous first shortcut writes with one durable receipt", async () => {
@@ -2369,7 +2423,12 @@ describe("presentation preference persistence", () => {
       serviceGroupIds: ["hr"],
     });
     expect(await getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA))).toEqual({
-      serviceGroups: [{ destinationIds: [], serviceGroupId: "hr" }],
+      serviceGroups: [
+        {
+          serviceGroupId: "hr",
+          surfaceIds: ["surface.hr.mission-control", "surface.hr.requests-and-claims"],
+        },
+      ],
     });
 
     await setPresentationActorRole(ids.tenantA, ids.actorA, "employee");

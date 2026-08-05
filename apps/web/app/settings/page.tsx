@@ -3,6 +3,9 @@ import type {
   PresentationShortcutSet,
   PresentationSurfaceLayout,
 } from "@esbla/contracts";
+import { getPresentationSemanticSurfaceDefinition } from "@esbla/contracts";
+import { loadOwnPresentationNavigation } from "../../lib/presentation-navigation";
+import { getZenDiscoveredSurfaceIds } from "../../lib/presentation-navigation-core";
 import {
   loadOwnPresentationPreferences,
   loadPresentationPreferenceCacheScope,
@@ -15,30 +18,31 @@ import { WorkspaceShell } from "../workspace-shell";
 
 export const dynamic = "force-dynamic";
 
-const surfaceDefinitions = [
-  { label: "Mission Control", surfaceId: "surface.mission-control" },
-  { label: "HR Mission Control", surfaceId: "surface.hr.mission-control" },
-] as const;
-
 export default async function UniversalSettingsPage() {
-  const [preferences, rootShortcuts, hrShortcuts, layoutResults, tenantBaseResults] =
-    await Promise.all([
-      loadOwnPresentationPreferences().catch(() => undefined),
-      loadOwnPresentationShortcuts({ contextSurfaceId: "surface.mission-control" }).catch(
-        (): PresentationShortcutDiscovery | undefined => undefined,
+  const [preferences, navigation, rootShortcuts, hrShortcuts] = await Promise.all([
+    loadOwnPresentationPreferences().catch(() => undefined),
+    loadOwnPresentationNavigation().catch(() => ({ serviceGroups: [] }) as const),
+    loadOwnPresentationShortcuts({ contextSurfaceId: "surface.mission-control" }).catch(
+      (): PresentationShortcutDiscovery | undefined => undefined,
+    ),
+    loadOwnPresentationShortcuts({ contextServiceGroupId: "hr" }).catch(
+      (): PresentationShortcutDiscovery | undefined => undefined,
+    ),
+  ]);
+  const surfaceDefinitions = getZenDiscoveredSurfaceIds(navigation).map((surfaceId) => ({
+    label: getPresentationSemanticSurfaceDefinition(surfaceId).label,
+    surfaceId,
+  }));
+  const [layoutResults, tenantBaseResults] = await Promise.all([
+    Promise.allSettled(
+      surfaceDefinitions.map(({ surfaceId }) => loadOwnPresentationSurfaceLayout(surfaceId)),
+    ),
+    Promise.allSettled(
+      surfaceDefinitions.map(({ surfaceId }) =>
+        loadTenantPresentationSurfaceBaseWorkspace(surfaceId),
       ),
-      loadOwnPresentationShortcuts({ contextServiceGroupId: "hr" }).catch(
-        (): PresentationShortcutDiscovery | undefined => undefined,
-      ),
-      Promise.allSettled(
-        surfaceDefinitions.map(({ surfaceId }) => loadOwnPresentationSurfaceLayout(surfaceId)),
-      ),
-      Promise.allSettled(
-        surfaceDefinitions.map(({ surfaceId }) =>
-          loadTenantPresentationSurfaceBaseWorkspace(surfaceId),
-        ),
-      ),
-    ]);
+    ),
+  ]);
   const shortcutSets = [
     rootShortcuts?.universal ?? hrShortcuts?.universal,
     rootShortcuts?.contextual,
@@ -63,7 +67,7 @@ export default async function UniversalSettingsPage() {
   }));
 
   return (
-    <WorkspaceShell currentSurface="Mission Control">
+    <WorkspaceShell currentSurface="surface.mission-control">
       <section
         aria-labelledby="universal-settings-heading"
         className="work-surface universal-settings-surface"

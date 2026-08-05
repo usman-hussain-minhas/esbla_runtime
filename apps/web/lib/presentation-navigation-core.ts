@@ -1,9 +1,13 @@
 import {
+  getPresentationSemanticSurfaceDefinition,
   getPresentationServiceGroupDefinition,
   type PresentationNavigationDiscovery,
   type PresentationSemanticIconKey,
+  type PresentationServiceGroupId,
   parseApiProblemDetails,
   parsePresentationNavigationDiscovery,
+  type ZenV1SurfaceId,
+  zenV1SurfaceIds,
 } from "@esbla/contracts";
 
 export class PresentationNavigationError extends Error {
@@ -36,19 +40,55 @@ export interface ZenNavigationModel {
   readonly serviceGroups: readonly ZenServiceGroupNavigation[];
 }
 
+export interface ZenNavigationProjectionRegistry {
+  readonly serviceGroup: (serviceGroupId: string) => Readonly<{
+    href: string;
+    label: string;
+    semanticIcon: PresentationSemanticIconKey;
+    serviceGroupId: string;
+  }>;
+  readonly surface: (surfaceId: string) => Readonly<{
+    label: string;
+    route: string;
+    semanticIcon: PresentationSemanticIconKey;
+    surfaceId: string;
+  }>;
+}
+
+export interface ZenNavigationProjectionDiscovery {
+  readonly serviceGroups: readonly Readonly<{
+    serviceGroupId: string;
+    surfaceIds: readonly string[];
+  }>[];
+}
+
+export function getZenDiscoveredSurfaceIds(
+  input: PresentationNavigationDiscovery,
+): readonly ZenV1SurfaceId[] {
+  const discovery = parsePresentationNavigationDiscovery(input);
+  const discovered = new Set<ZenV1SurfaceId>([
+    "surface.mission-control",
+    ...discovery.serviceGroups.flatMap(({ surfaceIds }) => surfaceIds),
+  ]);
+  return zenV1SurfaceIds.filter((surfaceId) => discovered.has(surfaceId));
+}
+
 function matchesRoute(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export function buildZenNavigationModel(
-  input: PresentationNavigationDiscovery,
+export function projectZenNavigationModel(
+  discovery: ZenNavigationProjectionDiscovery,
   pathname: string,
+  registry: ZenNavigationProjectionRegistry,
 ): ZenNavigationModel {
-  const discovery = parsePresentationNavigationDiscovery(input);
   const serviceGroups = discovery.serviceGroups.map((discoveredGroup) => {
-    const definition = getPresentationServiceGroupDefinition(discoveredGroup.serviceGroupId);
+    const definition = registry.serviceGroup(discoveredGroup.serviceGroupId);
+    const firstEligibleSurfaceId = discoveredGroup.surfaceIds[0];
+    if (!firstEligibleSurfaceId) throw new PresentationNavigationError();
+    const firstEligibleSurface = registry.surface(firstEligibleSurfaceId);
     return {
-      href: definition.href,
+      href: firstEligibleSurface.route,
       id: `service_group.${definition.serviceGroupId}`,
       label: definition.label,
       semanticIcon: definition.semanticIcon,
@@ -56,48 +96,55 @@ export function buildZenNavigationModel(
     };
   });
   const discoveredGroup = discovery.serviceGroups.find((group) => {
-    const definition = getPresentationServiceGroupDefinition(group.serviceGroupId);
+    const definition = registry.serviceGroup(group.serviceGroupId);
     return matchesRoute(pathname, definition.href);
   });
   if (!discoveredGroup) return { serviceGroups };
 
-  const definition = getPresentationServiceGroupDefinition(discoveredGroup.serviceGroupId);
-  const eligibleDestinations = definition.services
-    .flatMap(({ destinations }) => destinations)
-    .filter(({ destinationId }) => discoveredGroup.destinationIds.includes(destinationId));
-  const destinations: ZenNavigationDestination[] = [
-    {
-      href: definition.href,
-      id: `service_group.${definition.serviceGroupId}.mission_control`,
-      label: `${definition.label} Mission Control`,
-      semanticIcon: definition.semanticIcon,
-    },
-    ...eligibleDestinations.map(({ destinationId, href, label, semanticIcon }) => ({
-      href,
-      id: destinationId,
-      label,
-      semanticIcon,
-    })),
-  ];
-  const activeDestination = [...eligibleDestinations]
+  const definition = registry.serviceGroup(discoveredGroup.serviceGroupId);
+  const destinations: ZenNavigationDestination[] = discoveredGroup.surfaceIds.map((surfaceId) => {
+    const surface = registry.surface(surfaceId);
+    return {
+      href: surface.route,
+      id: surface.surfaceId,
+      label: surface.label,
+      semanticIcon: surface.semanticIcon,
+    };
+  });
+  const activeDestination = [...destinations]
     .sort((left, right) => right.href.length - left.href.length)
-    .find(({ href }) => matchesRoute(pathname, href));
-  const activeDestinationId =
-    activeDestination?.destinationId ??
-    (pathname === definition.href
-      ? `service_group.${definition.serviceGroupId}.mission_control`
-      : undefined);
+    .find(({ href }) =>
+      href === definition.href ? pathname === href : matchesRoute(pathname, href),
+    );
+  const activeDestinationId = activeDestination?.id;
   const meaningfulAlternatives = destinations.filter(({ id }) => id !== activeDestinationId).length;
   if (meaningfulAlternatives === 0) return { serviceGroups };
   return {
     contextualMenu: {
       ...(activeDestinationId ? { activeDestinationId } : {}),
       destinations,
-      label: `${definition.label} pages`,
+      label: `${definition.label} surfaces`,
       serviceGroupId: definition.serviceGroupId,
     },
     serviceGroups,
   };
+}
+
+const zenNavigationRegistry: ZenNavigationProjectionRegistry = {
+  serviceGroup: (serviceGroupId) =>
+    getPresentationServiceGroupDefinition(serviceGroupId as PresentationServiceGroupId),
+  surface: (surfaceId) => getPresentationSemanticSurfaceDefinition(surfaceId as ZenV1SurfaceId),
+};
+
+export function buildZenNavigationModel(
+  input: PresentationNavigationDiscovery,
+  pathname: string,
+): ZenNavigationModel {
+  return projectZenNavigationModel(
+    parsePresentationNavigationDiscovery(input),
+    pathname,
+    zenNavigationRegistry,
+  );
 }
 
 export async function decodePresentationNavigationDiscoveryResponse(

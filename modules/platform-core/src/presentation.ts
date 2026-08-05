@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type {
   PresentationAppearancePreferences,
   PresentationDensity,
+  PresentationNavigationDestinationId,
   PresentationNavigationDiscovery,
   PresentationPalette,
   PresentationPersonalSurfaceEditorWorkspace,
@@ -9,6 +10,7 @@ import type {
   PresentationReducedMotion,
   PresentationSemanticRegistryInput,
   PresentationServiceGroupDiscovery,
+  PresentationServiceGroupId,
   PresentationShortcutContextId,
   PresentationShortcutContextKind,
   PresentationShortcutDiscovery,
@@ -573,20 +575,28 @@ export async function getOwnPresentationServiceGroups(
         "platform.presentation.layouts.read_own",
         `principal:${transaction.context.actorPrincipalId}:service-groups`,
       );
-      const { active, authorized } = await loadPresentationNavigationEligibility(transaction);
+      await assertCurrentOwnPresentationCapability(
+        transaction,
+        "platform.presentation.layouts.read_own",
+        `principal:${transaction.context.actorPrincipalId}:service-groups`,
+      );
+      const discovery = await loadPresentationNavigationDiscovery(transaction);
       return {
-        serviceGroupIds: PRESENTATION_SERVICE_GROUP_DEFINITIONS.filter(({ services }) =>
-          services.some((service) =>
-            presentationServiceIsEligible(service, transaction.actor.roleKey, active, authorized),
-          ),
-        ).map(({ serviceGroupId }) => serviceGroupId),
+        serviceGroupIds: discovery.serviceGroups.map(({ serviceGroupId }) => serviceGroupId),
       };
     },
     { migrationBarrier: "shared" },
   );
 }
 
-async function loadPresentationNavigationEligibility(transaction: TenantTransaction): Promise<{
+interface LegacyShortcutNavigationDiscovery {
+  readonly serviceGroups: readonly {
+    readonly destinationIds: readonly PresentationNavigationDestinationId[];
+    readonly serviceGroupId: PresentationServiceGroupId;
+  }[];
+}
+
+async function loadLegacyShortcutNavigationEligibility(transaction: TenantTransaction): Promise<{
   readonly active: ReadonlySet<string>;
   readonly authorized: ReadonlySet<string>;
 }> {
@@ -631,14 +641,14 @@ async function loadPresentationNavigationEligibility(transaction: TenantTransact
   };
 }
 
-async function loadPresentationNavigationDiscovery(
+async function loadLegacyShortcutNavigationDiscovery(
   transaction: TenantTransaction,
-): Promise<PresentationNavigationDiscovery> {
-  const { active, authorized } = await loadPresentationNavigationEligibility(transaction);
+): Promise<LegacyShortcutNavigationDiscovery> {
+  const { active, authorized } = await loadLegacyShortcutNavigationEligibility(transaction);
   return {
     serviceGroups: PRESENTATION_SERVICE_GROUP_DEFINITIONS.flatMap((group) => {
       const eligibleServices = group.services.filter((service) =>
-        presentationServiceIsEligible(service, transaction.actor.roleKey, active, authorized),
+        legacyShortcutServiceIsEligible(service, transaction.actor.roleKey, active, authorized),
       );
       if (eligibleServices.length === 0) return [];
       return [
@@ -646,7 +656,7 @@ async function loadPresentationNavigationDiscovery(
           destinationIds: eligibleServices.flatMap(({ destinations }) =>
             destinations
               .filter((destination) =>
-                presentationEligibilityRuleMatches(
+                legacyShortcutEligibilityRuleMatches(
                   destination,
                   transaction.actor.roleKey,
                   authorized,
@@ -661,7 +671,7 @@ async function loadPresentationNavigationDiscovery(
   };
 }
 
-function presentationServiceIsEligible(
+function legacyShortcutServiceIsEligible(
   service: (typeof PRESENTATION_SERVICE_GROUP_DEFINITIONS)[number]["services"][number],
   roleKey: string,
   active: ReadonlySet<string>,
@@ -672,11 +682,11 @@ function presentationServiceIsEligible(
     [
       ...service.destinations,
       ...("additionalVisibilityRules" in service ? service.additionalVisibilityRules : []),
-    ].some((rule) => presentationEligibilityRuleMatches(rule, roleKey, authorized))
+    ].some((rule) => legacyShortcutEligibilityRuleMatches(rule, roleKey, authorized))
   );
 }
 
-function presentationEligibilityRuleMatches(
+function legacyShortcutEligibilityRuleMatches(
   rule: {
     readonly allowedRoleKeys: readonly string[];
     readonly anyCapabilityIds: readonly string[];
@@ -690,6 +700,34 @@ function presentationEligibilityRuleMatches(
   );
 }
 
+async function loadPresentationNavigationDiscovery(
+  transaction: TenantTransaction,
+): Promise<PresentationNavigationDiscovery> {
+  const eligibleSurfaceIds = new Set<ZenV1SurfaceId>();
+  for (const surface of PRESENTATION_SEMANTIC_REGISTRY.surfaces) {
+    if (surface.serviceGroupId === "universal") continue;
+    const surfaceId = surface.surfaceId as ZenV1SurfaceId;
+    if ((await loadEligibleWidgetDefinitionIds(transaction, surfaceId)).size > 0) {
+      eligibleSurfaceIds.add(surfaceId);
+    }
+  }
+  return {
+    serviceGroups: PRESENTATION_SERVICE_GROUP_DEFINITIONS.flatMap(({ serviceGroupId }) => {
+      const surfaceIds = PRESENTATION_SEMANTIC_REGISTRY.surfaces
+        .filter((surface) => surface.serviceGroupId === serviceGroupId)
+        .sort(
+          (left, right) =>
+            Number(left.contextualOrder ?? Number.MAX_SAFE_INTEGER) -
+            Number(right.contextualOrder ?? Number.MAX_SAFE_INTEGER),
+        )
+        .filter(({ surfaceId }) => eligibleSurfaceIds.has(surfaceId as ZenV1SurfaceId))
+        .map(({ surfaceId }) => surfaceId as ZenV1SurfaceId);
+      if (surfaceIds.length === 0) return [];
+      return [{ serviceGroupId, surfaceIds }];
+    }),
+  };
+}
+
 export async function getOwnPresentationNavigation(
   pool: Pool,
   context: OperationContext,
@@ -699,6 +737,11 @@ export async function getOwnPresentationNavigation(
     context,
     async (transaction) => {
       assertOwnPresentationPolicy(
+        transaction,
+        "platform.presentation.layouts.read_own",
+        `principal:${transaction.context.actorPrincipalId}:navigation`,
+      );
+      await assertCurrentOwnPresentationCapability(
         transaction,
         "platform.presentation.layouts.read_own",
         `principal:${transaction.context.actorPrincipalId}:navigation`,
@@ -769,7 +812,7 @@ function registeredShortcutTargets(
 }
 
 function eligibleShortcutTargetIds(
-  discovery: PresentationNavigationDiscovery,
+  discovery: LegacyShortcutNavigationDiscovery,
 ): ReadonlySet<PresentationShortcutTargetId> {
   const ids = new Set<PresentationShortcutTargetId>(["platform.mission_control"]);
   for (const group of discovery.serviceGroups) {
@@ -780,7 +823,7 @@ function eligibleShortcutTargetIds(
 }
 
 function eligibleShortcutTargets(
-  discovery: PresentationNavigationDiscovery,
+  discovery: LegacyShortcutNavigationDiscovery,
   contextKind: PresentationShortcutContextKind,
   contextId: PresentationShortcutContextId,
 ): readonly PresentationShortcutTarget[] {
@@ -860,13 +903,13 @@ async function lockShortcutAppendTargetEligibility(
   }
   const eligible = destinationMatch
     ? active.has(destinationMatch.service.activationServiceKey) &&
-      presentationEligibilityRuleMatches(
+      legacyShortcutEligibilityRuleMatches(
         destinationMatch.destination,
         transaction.actor.roleKey,
         authorized,
       )
     : services.some((service) =>
-        presentationServiceIsEligible(service, transaction.actor.roleKey, active, authorized),
+        legacyShortcutServiceIsEligible(service, transaction.actor.roleKey, active, authorized),
       );
   if (!eligible) {
     throw new PlatformError("POLICY_DENIED", "Shortcut target is not currently eligible");
@@ -967,7 +1010,7 @@ function resolveShortcutSet(
 
 async function loadShortcutSet(
   transaction: TenantTransaction,
-  discovery: PresentationNavigationDiscovery,
+  discovery: LegacyShortcutNavigationDiscovery,
   settingKey: PresentationShortcutSettingKey,
   contextKind: PresentationShortcutContextKind,
   contextId: PresentationShortcutContextId,
@@ -1004,7 +1047,7 @@ export async function getOwnPresentationShortcuts(
         "platform.presentation.shortcuts.read_own",
         `principal:${transaction.context.actorPrincipalId}:shortcuts`,
       );
-      const discovery = await loadPresentationNavigationDiscovery(transaction);
+      const discovery = await loadLegacyShortcutNavigationDiscovery(transaction);
       const universal = await loadShortcutSet(
         transaction,
         discovery,
@@ -1214,7 +1257,7 @@ export async function updateOwnPresentationShortcut(
       if (input.operation === "append") {
         await lockShortcutAppendTargetEligibility(transaction, input.targetId);
       }
-      const discovery = await loadPresentationNavigationDiscovery(transaction);
+      const discovery = await loadLegacyShortcutNavigationDiscovery(transaction);
       const eligibleTargets = eligibleShortcutTargets(
         discovery,
         input.contextKind,
@@ -2465,18 +2508,45 @@ function surfaceLayoutResponse(
   };
 }
 
-async function hasCurrentOwnPresentationLayoutCapability(
+type CurrentOwnPresentationCapabilityAction =
+  | "platform.presentation.layouts.read_own"
+  | "platform.presentation.layouts.reset_own"
+  | "platform.presentation.layouts.write_own";
+
+async function hasCurrentOwnPresentationCapability(
   transaction: TenantTransaction,
-  actionKey:
-    | "platform.presentation.layouts.read_own"
-    | "platform.presentation.layouts.reset_own"
-    | "platform.presentation.layouts.write_own",
+  actionKey: CurrentOwnPresentationCapabilityAction,
 ): Promise<boolean> {
   const capability = await transaction.client.query<{ capability_current: boolean }>(
     `SELECT public.esbla_lock_membership_capability($1, $2, $3) AS capability_current`,
     [transaction.context.tenantId, transaction.context.actorPrincipalId, actionKey],
   );
   return capability.rows[0]?.capability_current === true;
+}
+
+async function assertCurrentOwnPresentationCapability(
+  transaction: TenantTransaction,
+  actionKey: CurrentOwnPresentationCapabilityAction,
+  resourceKey: string,
+): Promise<void> {
+  const decision = evaluatePolicy(
+    {
+      actionKey,
+      input: {
+        capabilityCurrent: await hasCurrentOwnPresentationCapability(transaction, actionKey),
+      },
+      resourceKey,
+      transaction,
+    },
+    [
+      {
+        effect: "allow",
+        id: "presentation.current-explicit-capability-may-access-own-state",
+        matches: (input) => input.capabilityCurrent,
+      },
+    ],
+  );
+  assertPolicyAllowed(decision, transaction, actionKey, resourceKey);
 }
 
 async function assertCurrentOwnPresentationLayoutCapability(
@@ -2487,25 +2557,7 @@ async function assertCurrentOwnPresentationLayoutCapability(
     | "platform.presentation.layouts.write_own",
   surfaceId: ZenV1SurfaceId,
 ): Promise<void> {
-  const decision = evaluatePolicy(
-    {
-      actionKey,
-      input: {
-        capabilityCurrent: await hasCurrentOwnPresentationLayoutCapability(transaction, actionKey),
-      },
-      resourceKey: `principal:${transaction.context.actorPrincipalId}:surface:${surfaceId}`,
-      transaction,
-    },
-    [
-      {
-        effect: "allow",
-        id: "presentation.current-explicit-capability-may-access-own-layout",
-        matches: (input) => input.capabilityCurrent,
-      },
-    ],
-  );
-  assertPolicyAllowed(
-    decision,
+  await assertCurrentOwnPresentationCapability(
     transaction,
     actionKey,
     `principal:${transaction.context.actorPrincipalId}:surface:${surfaceId}`,
@@ -2934,11 +2986,11 @@ export async function getOwnPresentationPersonalSurfaceEditorWorkspace(
         surfaceId,
         "shared",
       );
-      const writeCapable = await hasCurrentOwnPresentationLayoutCapability(
+      const writeCapable = await hasCurrentOwnPresentationCapability(
         transaction,
         "platform.presentation.layouts.write_own",
       );
-      const resetCapable = await hasCurrentOwnPresentationLayoutCapability(
+      const resetCapable = await hasCurrentOwnPresentationCapability(
         transaction,
         "platform.presentation.layouts.reset_own",
       );

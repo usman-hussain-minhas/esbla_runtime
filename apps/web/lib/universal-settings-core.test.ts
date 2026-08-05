@@ -23,6 +23,15 @@ describe("Universal Settings cross-tab updates", () => {
     expect(() => parseUniversalSettingsUpdate({ ...update, scope: "tenant-a" })).toThrow();
     expect(() => parseUniversalSettingsUpdate({ ...update, subject: "unknown" })).toThrow();
     expect(() => parseUniversalSettingsUpdate({ ...update, sourceTabId: "not-a-uuid" })).toThrow();
+    for (const subject of [
+      "surface.mission-control",
+      "surface.hr.mission-control",
+      "surface.hr.workforce",
+      "surface.hr.time-and-scheduling",
+      "surface.hr.requests-and-claims",
+    ]) {
+      expect(parseUniversalSettingsUpdate({ ...update, subject }).subject).toBe(subject);
+    }
   });
 
   it("notifies only another tab in the exact server-derived subject scope", () => {

@@ -297,8 +297,9 @@ describe("Esbla Theme v1 host contract", () => {
   });
 
   it("hosts the eligible Edit Surface action in route-bound top-right chrome only", async () => {
-    const [entry, hrHub, hrLayout, shellChrome, systemControl] = await Promise.all([
+    const [entry, editCore, hrHub, hrLayout, shellChrome, systemControl] = await Promise.all([
       readFile(new URL("./page.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../lib/zen-surface-edit-core.ts", import.meta.url), "utf8"),
       readFile(new URL("./workspace/hr/page.tsx", import.meta.url), "utf8"),
       readFile(new URL("./workspace/hr/layout.tsx", import.meta.url), "utf8"),
       readFile(
@@ -311,10 +312,14 @@ describe("Esbla Theme v1 host contract", () => {
       ),
     ]);
     expect(entry).not.toContain("<ZenSurfaceEditLauncher");
-    expect(entry).toContain("editSurface={");
+    expect(entry).toContain("editSurfaces={");
+    expect(entry).toContain('getZenSurfaceEditDescriptor("surface.mission-control")');
     expect(hrHub).not.toContain("ZenSurfaceEditLauncher");
-    expect(hrLayout).toContain('route: "/workspace/hr"');
-    expect(shellChrome).toContain("editSurface?.route === pathname");
+    expect(hrLayout).toContain("PRESENTATION_SEMANTIC_SURFACE_DEFINITIONS.filter");
+    expect(hrLayout).toContain("getZenSurfaceEditDescriptor");
+    expect(editCore).toContain("getPresentationSemanticSurfaceDefinition");
+    expect(editCore).toContain("descriptors.find(({ route }) => route === pathname)");
+    expect(shellChrome).toContain("selectZenSurfaceEditDescriptor(editSurfaces, pathname)");
     expect(systemControl).toContain("ZenSurfaceEditLauncher");
     const user = systemControl.indexOf('data-tooltip="User and system"');
     const settings = systemControl.indexOf('data-tooltip="Universal Settings"');
