@@ -21,6 +21,7 @@ export default async function InterceptedDirectReportsPage({ searchParams }: Pro
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}
       label="Direct reports"
+      origin={origin}
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace

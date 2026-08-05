@@ -1835,6 +1835,10 @@ textarea:focus-visible,
   outline-offset: 3px;
 }
 
+main h1[data-zen-programmatic-route-focus="true"]:focus {
+  outline: 0;
+}
+
 .zen-section-rail button:hover,
 .zen-section-rail button:focus-visible,
 .zen-section-rail button[aria-current="location"] {

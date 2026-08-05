@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 import { fixture } from "./hr-leave-fixture.mjs";
 
+function focusWorkspace(page, label) {
+  return page.locator(
+    `.zen-widget-overlay[data-widget-presentation="workspace"][aria-label="${label}"]`,
+  );
+}
+
 async function openActor(browser, origin) {
   const context = await browser.newContext({ serviceWorkers: "block" });
   const page = await context.newPage();
@@ -226,11 +232,9 @@ test("Expense and My Work focus workspaces preserve one nested Product journey",
       name: "Open My Expense Claims workspace",
     });
     await expenseLauncher.click();
-    const expenseList = employee.page.getByRole("dialog", {
-      exact: true,
-      name: "My Expense Claims",
-    });
+    const expenseList = focusWorkspace(employee.page, "My Expense Claims");
     await expect(expenseList).toBeVisible();
+    await expect(expenseList).toHaveAttribute("data-widget-presentation", "workspace");
     await expect(expenseList.locator('[data-focus-workspace="hr-expense-list"]')).toHaveAttribute(
       "data-focus-layout",
       "single",
@@ -251,10 +255,7 @@ test("Expense and My Work focus workspaces preserve one nested Product journey",
         `/workspace/hr/expenses/by-id/${expenseClaimId}\\?returnTo=own&result=current&originFocusId=hr-mission-control\\.my-expenses\\.full-screen&returnSurface=surface\\.hr\\.mission-control&originWidgetDefinitionId=hr\\.expense\\.mine#expense-result$`,
       ),
     );
-    const expenseDetail = employee.page.getByRole("dialog", {
-      exact: true,
-      name: "Expense Claim detail",
-    });
+    const expenseDetail = focusWorkspace(employee.page, "Expense Claim detail");
     await expect(expenseDetail).toBeVisible();
     await expect(expenseDetail.locator('[data-focus-workspace="hr-expense-own"]')).toHaveAttribute(
       "data-focus-layout",
@@ -286,10 +287,7 @@ test("Expense and My Work focus workspaces preserve one nested Product journey",
       `/workspace/hr/expenses/by-id/${expenseClaimId}?returnTo=own&originFocusId=${compactExpenseFocusId}&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.expense.mine`,
     );
     await compactExpenseRow.click();
-    const compactExpenseDetail = employee.page.getByRole("dialog", {
-      exact: true,
-      name: "Expense Claim detail",
-    });
+    const compactExpenseDetail = focusWorkspace(employee.page, "Expense Claim detail");
     await expect(compactExpenseDetail).toBeVisible();
     await compactExpenseDetail
       .getByRole("button", { exact: true, name: "Close Expense Claim detail" })
@@ -299,16 +297,14 @@ test("Expense and My Work focus workspaces preserve one nested Product journey",
 
     await manager.page.goto(`${manager.origin}/workspace/hr`);
     await manager.page.getByRole("link", { exact: true, name: "Open My Work workspace" }).click();
-    const myWork = manager.page.getByRole("dialog", { exact: true, name: "My Work" });
+    const myWork = focusWorkspace(manager.page, "My Work");
     await expect(myWork).toBeVisible();
+    await expect(myWork).toHaveAttribute("data-widget-presentation", "workspace");
     const assignedExpense = myWork
       .getByRole("listitem")
       .filter({ hasText: "21,009 USD minor units" });
     await assignedExpense.getByRole("link", { exact: true, name: "Review Expense Claim" }).click();
-    const assignedDetail = manager.page.getByRole("dialog", {
-      exact: true,
-      name: "Expense Claim detail",
-    });
+    const assignedDetail = focusWorkspace(manager.page, "Expense Claim detail");
     await expect(assignedDetail).toBeVisible();
     await expect(
       assignedDetail.locator('[data-focus-workspace="hr-expense-my-work"]'),
@@ -328,10 +324,7 @@ test("Expense and My Work focus workspaces preserve one nested Product journey",
     expect(new URL(manager.page.url()).searchParams.get("originWidgetDefinitionId")).toBe(
       "platform.my-work.queue",
     );
-    const decidedDetail = manager.page.getByRole("dialog", {
-      exact: true,
-      name: "Expense Claim detail",
-    });
+    const decidedDetail = focusWorkspace(manager.page, "Expense Claim detail");
     await expect(
       decidedDetail.locator('[data-focus-workspace="hr-expense-my-work"]'),
     ).toHaveAttribute("data-focus-layout", "master-detail");
@@ -339,13 +332,13 @@ test("Expense and My Work focus workspaces preserve one nested Product journey",
       "Approved — 21,009 USD minor units",
     );
     await manager.page.goBack();
-    await expect(manager.page.getByRole("dialog", { exact: true, name: "My Work" })).toBeVisible();
+    await expect(focusWorkspace(manager.page, "My Work")).toBeVisible();
     await expect(manager.page).toHaveURL(/\/workspace\/my-work\?/);
     await manager.page.goForward();
     await expect(
-      manager.page
-        .getByRole("dialog", { exact: true, name: "Expense Claim detail" })
-        .locator('[data-focus-workspace="hr-expense-my-work"]'),
+      focusWorkspace(manager.page, "Expense Claim detail").locator(
+        '[data-focus-workspace="hr-expense-my-work"]',
+      ),
     ).toHaveAttribute("data-focus-layout", "master-detail");
     await manager.page.setViewportSize({ height: 844, width: 390 });
     await expect(decidedDetail.locator('[data-focus-pane="master"]')).toHaveCSS("display", "none");

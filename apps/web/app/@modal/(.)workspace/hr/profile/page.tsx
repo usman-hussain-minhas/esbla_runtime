@@ -20,6 +20,7 @@ export default async function InterceptedProfilePage({ searchParams }: Props) {
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}
       label="Workforce profile"
+      origin={origin}
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace

@@ -21,6 +21,7 @@ export default async function InterceptedExpensesPage({ searchParams }: Props) {
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}
       label="My Expense Claims"
+      origin={origin}
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace

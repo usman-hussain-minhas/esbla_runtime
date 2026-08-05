@@ -28,7 +28,7 @@ interface RouteBackedWidgetOverlayProps {
   readonly children: ReactNode;
   readonly fallbackHref: string;
   readonly label: string;
-  readonly origin?: RouteBackedWidgetOrigin | undefined;
+  readonly origin: RouteBackedWidgetOrigin | undefined;
   readonly returnFocusId: string;
 }
 

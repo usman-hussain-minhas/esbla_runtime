@@ -74,6 +74,7 @@ export default async function InterceptedShiftDetailPage({ params, searchParams 
       browserBackMode={showMaster ? "return-master" : "close-origin"}
       fallbackHref={origin.fallbackHref}
       label="Shift assignment"
+      origin={origin}
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace

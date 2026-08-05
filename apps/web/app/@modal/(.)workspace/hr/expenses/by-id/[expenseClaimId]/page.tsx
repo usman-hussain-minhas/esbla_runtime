@@ -65,6 +65,7 @@ export default async function InterceptedExpenseClaimDetailPage({ params, search
       browserBackMode={masterKind ? "return-master" : "close-origin"}
       fallbackHref={origin.fallbackHref}
       label="Expense Claim detail"
+      origin={origin}
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace

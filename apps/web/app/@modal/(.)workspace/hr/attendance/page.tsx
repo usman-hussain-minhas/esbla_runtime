@@ -21,6 +21,7 @@ export default async function InterceptedAttendancePage({ searchParams }: Props)
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}
       label="My attendance"
+      origin={origin}
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace

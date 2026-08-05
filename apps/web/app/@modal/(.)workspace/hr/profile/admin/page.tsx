@@ -21,6 +21,7 @@ export default async function InterceptedWorkforceAdminPage({ searchParams }: Pr
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}
       label="Workforce administration"
+      origin={origin}
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace

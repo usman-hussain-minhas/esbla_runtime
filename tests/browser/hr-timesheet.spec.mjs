@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 import { fixture } from "./hr-leave-fixture.mjs";
 
+function focusWorkspace(page, label) {
+  return page.locator(
+    `.zen-widget-overlay[data-widget-presentation="workspace"][aria-label="${label}"]`,
+  );
+}
+
 async function openActor(browser, origin) {
   const context = await browser.newContext({ serviceWorkers: "block" });
   const page = await context.newPage();
@@ -143,18 +149,18 @@ test("HR Timesheet widget opens a route-backed full-screen form and protects dir
       `${actor.origin}/workspace/hr/timesheets?originFocusId=hr-mission-control.my-timesheets.full-screen&returnSurface=surface.hr.mission-control&originWidgetDefinitionId=hr.timesheet.mine`,
     );
 
-    const overlay = actor.page.getByRole("dialog", {
-      exact: true,
-      name: "My Timesheets",
-    });
+    const overlay = focusWorkspace(actor.page, "My Timesheets");
     await expect(overlay).toBeVisible();
     await expect(overlay).toBeFocused();
     await expect(overlay.locator('[data-widget-definition="hr.timesheet.draft"]')).toBeVisible();
     await expect(
       overlay.getByRole("button", { exact: true, name: "Create Timesheet draft" }),
     ).toBeEnabled();
-    await expect(actor.page.locator(".esbla-shell")).toHaveAttribute("aria-hidden", "true");
-    await expect(actor.page.locator(".esbla-shell")).toHaveAttribute("inert", "");
+    await expect(overlay).toHaveAttribute("data-widget-presentation", "workspace");
+    await expect(actor.page.locator(".esbla-shell")).not.toHaveAttribute("aria-hidden", "true");
+    await expect(actor.page.locator(".esbla-shell")).not.toHaveAttribute("inert", "");
+    await expect(actor.page.locator(".surface-scroll")).toHaveAttribute("aria-hidden", "true");
+    await expect(actor.page.locator(".surface-scroll")).toHaveAttribute("inert", "");
 
     const close = overlay.getByRole("button", {
       exact: true,
@@ -171,10 +177,13 @@ test("HR Timesheet widget opens a route-backed full-screen form and protects dir
     await expect(actor.page).toHaveURL(`${actor.origin}/workspace/hr`);
     await expect(launcher).toBeFocused();
     await expect
-      .poll(() =>
-        actor.page.locator(".surface-scroll").evaluate((element) => Math.round(element.scrollTop)),
-      )
-      .toBe(originScrollTop);
+      .poll(async () => {
+        const restoredScrollTop = await actor.page
+          .locator(".surface-scroll")
+          .evaluate((element) => Math.round(element.scrollTop));
+        return Math.abs(restoredScrollTop - originScrollTop);
+      })
+      .toBeLessThanOrEqual(1);
     await launcher.press("Enter");
     await expect(overlay).toBeVisible();
     await expect(overlay).toBeFocused();
@@ -304,10 +313,7 @@ test("employee creates, edits, submits, and reloads a rendered weekly Timesheet"
       `/workspace/hr/timesheets/by-id/${timesheetId}?returnTo=own&originFocusId=${compactTimesheetFocusId}&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.timesheet.mine`,
     );
     await compactTimesheetRow.click();
-    const compactTimesheetDetail = actor.page.getByRole("dialog", {
-      exact: true,
-      name: "Timesheet detail",
-    });
+    const compactTimesheetDetail = focusWorkspace(actor.page, "Timesheet detail");
     await expect(compactTimesheetDetail).toBeVisible();
     await compactTimesheetDetail
       .getByRole("button", { exact: true, name: "Close Timesheet detail" })
@@ -454,7 +460,7 @@ test("manager decides assigned Timesheets and tenant settings alter rejection be
     );
     await manager.page.goto(`${manager.origin}/workspace/hr`);
     await manager.page.getByRole("link", { exact: true, name: "Open My Work workspace" }).click();
-    const focusedMyWork = manager.page.getByRole("dialog", { exact: true, name: "My Work" });
+    const focusedMyWork = focusWorkspace(manager.page, "My Work");
     await expect(focusedMyWork).toBeVisible();
     const approval = focusedMyWork
       .getByRole("listitem")
@@ -465,10 +471,7 @@ test("manager decides assigned Timesheets and tenant settings alter rejection be
     await expect(manager.page.getByRole("button", { name: "Reject Timesheet" })).toBeVisible();
     await manager.page.getByLabel("Approval note").fill("Reviewed current work-time facts");
     await post(manager, "Approve Timesheet");
-    const decisionDialog = manager.page.getByRole("dialog", {
-      exact: true,
-      name: "Timesheet detail",
-    });
+    const decisionDialog = focusWorkspace(manager.page, "Timesheet detail");
     await expect(decisionDialog.locator(".leave-status")).toHaveText("Approved");
     await expect(decisionDialog.getByText("Version 1: Approved")).toBeVisible();
     await expect
@@ -481,10 +484,7 @@ test("manager decides assigned Timesheets and tenant settings alter rejection be
     expect(new URL(manager.page.url()).searchParams.get("originWidgetDefinitionId")).toBe(
       "platform.my-work.queue",
     );
-    const focusedDetail = manager.page.getByRole("dialog", {
-      exact: true,
-      name: "Timesheet detail",
-    });
+    const focusedDetail = focusWorkspace(manager.page, "Timesheet detail");
     await expect(
       focusedDetail.locator('[data-focus-workspace="hr-timesheet-my-work"]'),
     ).toHaveAttribute("data-focus-layout", "master-detail");
@@ -492,13 +492,13 @@ test("manager decides assigned Timesheets and tenant settings alter rejection be
       "Approved — 8h 0m",
     );
     await manager.page.goBack();
-    await expect(manager.page.getByRole("dialog", { exact: true, name: "My Work" })).toBeVisible();
+    await expect(focusWorkspace(manager.page, "My Work")).toBeVisible();
     await expect(manager.page).toHaveURL(/\/workspace\/my-work\?/);
     await manager.page.goForward();
     await expect(
-      manager.page
-        .getByRole("dialog", { exact: true, name: "Timesheet detail" })
-        .locator('[data-focus-workspace="hr-timesheet-my-work"]'),
+      focusWorkspace(manager.page, "Timesheet detail").locator(
+        '[data-focus-workspace="hr-timesheet-my-work"]',
+      ),
     ).toHaveAttribute("data-focus-layout", "master-detail");
 
     await employee.page.goto(

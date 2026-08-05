@@ -117,9 +117,24 @@ test("manager receives only the exact ordered HR surfaces and can activate each 
       await menu.getByRole("link", { exact: true, name: surface.label }).click();
       await manager.page.waitForLoadState("networkidle");
       await expect(manager.page).toHaveURL(`${manager.origin}${surface.href}`);
-      await expect(
-        manager.page.getByRole("heading", { exact: true, level: 1, name: surface.heading }),
-      ).toBeVisible();
+      const heading = manager.page.getByRole("heading", {
+        exact: true,
+        level: 1,
+        name: surface.heading,
+      });
+      await expect(heading).toBeVisible();
+      await expect(heading).toBeFocused();
+      await expect(heading).toHaveAttribute("data-zen-programmatic-route-focus", "true");
+      expect(await heading.evaluate((element) => getComputedStyle(element).outlineStyle)).toBe(
+        "none",
+      );
+      await manager.page.keyboard.press("Tab");
+      expect(
+        await manager.page.locator(":focus").evaluate((element) => ({
+          interactive: element.matches("a[href], button, input, select, textarea"),
+          outlineWidth: getComputedStyle(element).outlineWidth,
+        })),
+      ).toEqual({ interactive: true, outlineWidth: "3px" });
       if (surface.surfaceId !== "surface.hr.mission-control") {
         await expect(
           manager.page.locator(`[data-presentation-surface-id="${surface.surfaceId}"]`),
@@ -335,6 +350,7 @@ test("grouped surfaces preserve exact launch identity and semantic expansion adm
       name: "Workforce profile",
     });
     await expect(profileOverlay).toBeVisible();
+    await expect(profileOverlay).toHaveAttribute("data-widget-presentation", "quick_view");
     await expect(employee.page).toHaveURL(
       `${employee.origin}/workspace/hr/profile?originFocusId=hr-workforce.my-profile.full-screen&returnSurface=surface.hr.workforce&originWidgetDefinitionId=hr.workforce.my-profile`,
     );
