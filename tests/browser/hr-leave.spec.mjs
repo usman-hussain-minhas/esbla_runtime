@@ -2874,23 +2874,23 @@ test("Mission Control surface shortcuts persist and fail closed at activation", 
     await panel
       .getByRole("button", {
         exact: true,
-        name: "Add Leave Requests to Mission Control surface shortcuts",
+        name: "Add Requests & Claims to Mission Control surface shortcuts",
       })
       .click();
     expect((await appendResponse).status()).toBe(200);
     shortcutAdded = true;
     await panel.getByRole("button", { name: "Close mission control surface shortcuts" }).click();
-    const surfaceLeaveShortcut = employee.page
+    const surfaceRequestsShortcut = employee.page
       .locator(".zen-shortcut-contextual")
-      .getByRole("link", { exact: true, name: "Leave Requests" });
-    await expect(surfaceLeaveShortcut).toBeVisible();
+      .getByRole("link", { exact: true, name: "Requests & Claims" });
+    await expect(surfaceRequestsShortcut).toBeVisible();
 
     await employee.page.reload();
-    await expect(surfaceLeaveShortcut).toBeVisible();
+    await expect(surfaceRequestsShortcut).toBeVisible();
     await employee.page.goto("about:blank");
     await restartEmployeeApplication();
     await employee.page.goto(employee.origin);
-    await expect(surfaceLeaveShortcut).toBeVisible();
+    await expect(surfaceRequestsShortcut).toBeVisible();
 
     const desktopEvidencePath = testInfo.outputPath("mission-control-surface-shortcut-desktop.png");
     await employee.page.screenshot({ fullPage: false, path: desktopEvidencePath });
@@ -2900,13 +2900,13 @@ test("Mission Control surface shortcuts persist and fail closed at activation", 
     });
 
     await employee.page.setViewportSize({ height: 844, width: 390 });
-    await expect(surfaceLeaveShortcut).toHaveCount(0);
+    await expect(surfaceRequestsShortcut).toHaveCount(0);
     await launcher.click();
     panel = employee.page.getByRole("dialog", {
       exact: true,
       name: "Mission Control surface shortcuts",
     });
-    await expect(panel.getByRole("link", { exact: true, name: "Leave Requests" })).toBeVisible();
+    await expect(panel.getByRole("link", { exact: true, name: "Requests & Claims" })).toBeVisible();
     expect(
       await employee.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     ).toBe(true);
@@ -2923,18 +2923,20 @@ test("Mission Control surface shortcuts persist and fail closed at activation", 
     await employee.page.setViewportSize({ height: 900, width: 1_440 });
     eligibilityChanged = true;
     await setEmployeeLeavePresentationEligibility(false, ["hr.leave.list_own", "hr.leave.view"]);
-    await surfaceLeaveShortcut.click();
-    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/leave`);
-    await expect(employee.page.getByText("Current and historical whole-day requests.")).toHaveCount(
-      0,
+    await surfaceRequestsShortcut.click();
+    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/requests-and-claims`);
+    await expect(
+      employee.page.getByRole("heading", { exact: true, level: 1, name: "Requests & Claims" }),
+    ).toHaveCount(0);
+    await expect(employee.page.locator('meta[name="robots"]')).toHaveAttribute(
+      "content",
+      /noindex/,
     );
-    await expect.poll(() => employee.diagnostics.page.length).toBe(1);
-    expect(employee.diagnostics.page).toEqual([
-      expect.stringContaining(
-        "The specific message is omitted in production builds to avoid leaking sensitive details.",
-      ),
-    ]);
-    employee.diagnostics.page.length = 0;
+    await expect(
+      employee.page.locator('[data-presentation-surface-id="surface.hr.requests-and-claims"]'),
+    ).toHaveCount(0);
+    await expect(employee.page.locator("[data-widget-definition]")).toHaveCount(0);
+    expect(employee.diagnostics.page).toEqual([]);
 
     await setEmployeeLeavePresentationEligibility(true, ["hr.leave.list_own", "hr.leave.view"]);
     eligibilityChanged = false;
@@ -2949,7 +2951,7 @@ test("Mission Control surface shortcuts persist and fail closed at activation", 
     );
     await panel
       .getByRole("button", {
-        name: "Remove Leave Requests from Mission Control surface shortcuts",
+        name: "Remove Requests & Claims from Mission Control surface shortcuts",
       })
       .click();
     expect((await removalResponse).status()).toBe(200);
@@ -2972,7 +2974,7 @@ test("Mission Control surface shortcuts persist and fail closed at activation", 
         await employee.page
           .getByRole("dialog", { exact: true, name: "Mission Control surface shortcuts" })
           .getByRole("button", {
-            name: "Remove Leave Requests from Mission Control surface shortcuts",
+            name: "Remove Requests & Claims from Mission Control surface shortcuts",
           })
           .click()
           .catch(() => undefined);
@@ -2982,7 +2984,7 @@ test("Mission Control surface shortcuts persist and fail closed at activation", 
   }
 });
 
-test("registered universal and HR shortcuts persist, arbitrate, and fail closed", async ({
+test("registered universal and HR surface shortcuts persist, arbitrate, and fail closed", async ({
   browser,
 }, testInfo) => {
   const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
@@ -2997,7 +2999,7 @@ test("registered universal and HR shortcuts persist, arbitrate, and fail closed"
     });
     const contextualLauncher = employee.page.getByRole("button", {
       exact: true,
-      name: "HR shortcuts",
+      name: "HR Mission Control surface shortcuts",
     });
     await expect(universalLauncher).toBeVisible();
     await expect(contextualLauncher).toBeVisible();
@@ -3017,23 +3019,23 @@ test("registered universal and HR shortcuts persist, arbitrate, and fail closed"
     await universalPanel
       .getByRole("button", {
         exact: true,
-        name: "Add Leave Requests to Universal shortcuts",
+        name: "Add Requests & Claims to Universal shortcuts",
       })
       .click();
     expect((await universalMutation).status()).toBe(200);
     await expect(
-      universalPanel.getByRole("link", { exact: true, name: "Leave Requests" }),
+      universalPanel.getByRole("link", { exact: true, name: "Requests & Claims" }),
     ).toBeVisible();
     await universalPanel.getByRole("button", { name: "Close universal shortcuts" }).click();
-    const universalLeaveShortcut = employee.page
+    const universalRequestsShortcut = employee.page
       .locator(".zen-shortcut-universal")
-      .getByRole("link", { exact: true, name: "Leave Requests" });
-    await expect(universalLeaveShortcut).toBeVisible();
+      .getByRole("link", { exact: true, name: "Requests & Claims" });
+    await expect(universalRequestsShortcut).toBeVisible();
 
     await contextualLauncher.click();
     let contextualPanel = employee.page.getByRole("dialog", {
       exact: true,
-      name: "HR shortcuts",
+      name: "HR Mission Control surface shortcuts",
     });
     await contextualPanel.getByRole("button", { exact: true, name: "Add shortcut" }).click();
     const contextualMutation = employee.page.waitForResponse(
@@ -3042,24 +3044,26 @@ test("registered universal and HR shortcuts persist, arbitrate, and fail closed"
     await contextualPanel
       .getByRole("button", {
         exact: true,
-        name: "Add Leave Requests to HR shortcuts",
+        name: "Add Requests & Claims to HR Mission Control surface shortcuts",
       })
       .click();
     expect((await contextualMutation).status()).toBe(200);
-    await contextualPanel.getByRole("button", { name: "Close hr shortcuts" }).click();
-    const contextualLeaveShortcut = employee.page
+    await contextualPanel
+      .getByRole("button", { name: "Close hr mission control surface shortcuts" })
+      .click();
+    const contextualRequestsShortcut = employee.page
       .locator(".zen-shortcut-contextual")
-      .getByRole("link", { exact: true, name: "Leave Requests" });
-    await expect(contextualLeaveShortcut).toBeVisible();
+      .getByRole("link", { exact: true, name: "Requests & Claims" });
+    await expect(contextualRequestsShortcut).toBeVisible();
 
     await employee.page.reload();
-    await expect(universalLeaveShortcut).toBeVisible();
-    await expect(contextualLeaveShortcut).toBeVisible();
+    await expect(universalRequestsShortcut).toBeVisible();
+    await expect(contextualRequestsShortcut).toBeVisible();
     await employee.page.goto("about:blank");
     await restartEmployeeApplication();
     await employee.page.goto(`${employee.origin}/workspace/hr`);
-    await expect(universalLeaveShortcut).toBeVisible();
-    await expect(contextualLeaveShortcut).toBeVisible();
+    await expect(universalRequestsShortcut).toBeVisible();
+    await expect(contextualRequestsShortcut).toBeVisible();
 
     await universalLauncher.focus();
     await employee.page.keyboard.press("Enter");
@@ -3075,7 +3079,7 @@ test("registered universal and HR shortcuts persist, arbitrate, and fail closed"
     await employee.page.keyboard.press("Space");
     contextualPanel = employee.page.getByRole("dialog", {
       exact: true,
-      name: "HR shortcuts",
+      name: "HR Mission Control surface shortcuts",
     });
     await expect(contextualPanel).toBeVisible();
     await employee.page.keyboard.press("Escape");
@@ -3098,12 +3102,12 @@ test("registered universal and HR shortcuts persist, arbitrate, and fail closed"
     });
     const touchContextualLauncher = touchEmployee.page.getByRole("button", {
       exact: true,
-      name: "HR shortcuts",
+      name: "HR Mission Control surface shortcuts",
     });
     await expect(
       touchEmployee.page
         .locator(".zen-shortcut-universal")
-        .getByRole("link", { exact: true, name: "Leave Requests" }),
+        .getByRole("link", { exact: true, name: "Requests & Claims" }),
     ).toHaveCount(0);
     await touchUniversalLauncher.tap();
     const touchUniversalPanel = touchEmployee.page.getByRole("dialog", {
@@ -3124,13 +3128,13 @@ test("registered universal and HR shortcuts persist, arbitrate, and fail closed"
     await expect(
       touchEmployee.page.getByRole("dialog", {
         exact: true,
-        name: "HR shortcuts",
+        name: "HR Mission Control surface shortcuts",
       }),
     ).toBeVisible();
 
     await employee.page.setViewportSize({ height: 844, width: 390 });
-    await expect(universalLeaveShortcut).toHaveCount(0);
-    await expect(contextualLeaveShortcut).toHaveCount(0);
+    await expect(universalRequestsShortcut).toHaveCount(0);
+    await expect(contextualRequestsShortcut).toHaveCount(0);
     await universalLauncher.click();
     universalPanel = employee.page.getByRole("dialog", {
       exact: true,
@@ -3140,7 +3144,7 @@ test("registered universal and HR shortcuts persist, arbitrate, and fail closed"
     await contextualLauncher.click();
     contextualPanel = employee.page.getByRole("dialog", {
       exact: true,
-      name: "HR shortcuts",
+      name: "HR Mission Control surface shortcuts",
     });
     await expect(universalPanel).toBeHidden();
     await expect(contextualPanel).toBeVisible();
@@ -3174,7 +3178,7 @@ test("registered universal and HR shortcuts persist, arbitrate, and fail closed"
     await contextualLauncher.click();
     contextualPanel = employee.page.getByRole("dialog", {
       exact: true,
-      name: "HR shortcuts",
+      name: "HR Mission Control surface shortcuts",
     });
     await expect(contextualPanel).toContainText("1 unavailable shortcut is hidden.");
 
@@ -3191,7 +3195,7 @@ test("registered universal and HR shortcuts persist, arbitrate, and fail closed"
     );
     await universalPanel
       .getByRole("button", {
-        name: "Remove Leave Requests from Universal shortcuts",
+        name: "Remove Requests & Claims from Universal shortcuts",
       })
       .click();
     expect((await universalRemoval).status()).toBe(200);
@@ -3199,14 +3203,14 @@ test("registered universal and HR shortcuts persist, arbitrate, and fail closed"
     await contextualLauncher.click();
     contextualPanel = employee.page.getByRole("dialog", {
       exact: true,
-      name: "HR shortcuts",
+      name: "HR Mission Control surface shortcuts",
     });
     const contextualRemoval = employee.page.waitForResponse(
       (response) => new URL(response.url()).pathname === "/presentation/shortcuts",
     );
     await contextualPanel
       .getByRole("button", {
-        name: "Remove Leave Requests from HR shortcuts",
+        name: "Remove Requests & Claims from HR Mission Control surface shortcuts",
       })
       .click();
     expect((await contextualRemoval).status()).toBe(200);
@@ -3427,7 +3431,9 @@ test("Universal Settings preserves Theme, exposes authority, and coordinates tab
     for (const heading of [
       "Universal shortcuts",
       "Mission Control surface shortcuts",
-      "HR service shortcuts",
+      "HR Mission Control surface shortcuts",
+      "Workforce surface shortcuts",
+      "Requests & Claims surface shortcuts",
     ]) {
       await expect(
         employee.page.getByRole("heading", { exact: true, name: heading }),
@@ -3502,23 +3508,23 @@ test("Universal Settings preserves Theme, exposes authority, and coordinates tab
     const universalShortcuts = employee.page.locator("article").filter({
       has: employee.page.getByRole("heading", { exact: true, name: "Universal shortcuts" }),
     });
-    const addLeave = universalShortcuts.getByRole("button", {
+    const addRequests = universalShortcuts.getByRole("button", {
       exact: true,
-      name: "Add Leave Requests",
+      name: "Add Requests & Claims",
     });
-    if ((await addLeave.count()) === 0) {
+    if ((await addRequests.count()) === 0) {
       const removeExisting = universalShortcuts
         .getByRole("button", { exact: true, name: "Remove" })
         .first();
       if (await removeExisting.isVisible()) await removeExisting.click();
-      await expect(addLeave).toBeVisible();
+      await expect(addRequests).toBeVisible();
     }
     const shortcutResponse = employee.page.waitForResponse(
       (response) => new URL(response.url()).pathname === "/presentation/shortcuts",
     );
-    await addLeave.click();
+    await addRequests.click();
     expect((await shortcutResponse).status()).toBe(200);
-    await expect(universalShortcuts).toContainText("Leave Requests");
+    await expect(universalShortcuts).toContainText("Requests & Claims");
 
     secondPage = await employee.context.newPage();
     secondPage.on("console", (message) => {

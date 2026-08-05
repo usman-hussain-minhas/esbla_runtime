@@ -3,54 +3,144 @@ import {
   buildPresentationShortcutsPath,
   decodePresentationShortcutDiscoveryResponse,
   decodePresentationShortcutUpdateResponse,
+  getPresentationShortcutContextSurfaceIds,
   PresentationShortcutsError,
   parsePresentationShortcutUpdateRequest,
   replacePresentationShortcutSet,
+  selectPresentationShortcutDiscovery,
 } from "./presentation-shortcuts-core";
 
 const evidenceEventId = "40000000-0000-4000-8000-000000000001";
 const idempotencyKey = "50000000-0000-4000-8000-000000000001";
 const home = {
   href: "/",
-  id: "platform.mission_control",
+  id: "surface.mission-control",
   label: "Mission Control",
   semanticIcon: "home",
 } as const;
-const leave = {
-  href: "/workspace/hr/leave",
-  id: "hr.leave.own",
-  label: "Leave Requests",
-  semanticIcon: "calendar-check",
+const workforceTarget = {
+  href: "/workspace/hr/workforce",
+  id: "surface.hr.workforce",
+  label: "Workforce",
+  semanticIcon: "users-round",
+} as const;
+const requests = {
+  href: "/workspace/hr/requests-and-claims",
+  id: "surface.hr.requests-and-claims",
+  label: "Requests & Claims",
+  semanticIcon: "receipt-text",
 } as const;
 const universal = {
   contextId: "global",
   contextKind: "global",
   editable: true,
-  eligibleTargets: [home, leave],
-  items: [leave],
+  eligibleTargets: [home, workforceTarget, requests],
+  items: [requests],
   settingKey: "navigation.universal_shortcuts.v1",
   tombstoneCount: 0,
   version: 1,
 } as const;
 const discovery = { contextual: null, universal } as const;
+const workforce = {
+  contextId: "surface.hr.workforce",
+  contextKind: "surface",
+  editable: true,
+  eligibleTargets: [requests],
+  items: [requests],
+  settingKey: "navigation.contextual_shortcuts.v1",
+  tombstoneCount: 0,
+  version: 2,
+} as const;
 
 describe("presentation shortcut web boundary", () => {
-  it("builds only zero or one canonical service or surface context query", () => {
+  it("builds only zero or one canonical exact-surface context query", () => {
     expect(buildPresentationShortcutsPath()).toBe("/v1/platform/presentation/shortcuts");
-    expect(buildPresentationShortcutsPath({ contextServiceGroupId: "hr" })).toBe(
-      "/v1/platform/presentation/shortcuts?contextServiceGroupId=hr",
-    );
     expect(
       buildPresentationShortcutsPath({
         contextSurfaceId: "surface.mission-control",
       }),
     ).toBe("/v1/platform/presentation/shortcuts?contextSurfaceId=surface.mission-control");
-    expect(() =>
-      buildPresentationShortcutsPath({
-        contextServiceGroupId: "hr",
-        contextSurfaceId: "surface.mission-control",
-      } as never),
-    ).toThrow(PresentationShortcutsError);
+    expect(() => buildPresentationShortcutsPath({ contextServiceGroupId: "hr" } as never)).toThrow(
+      PresentationShortcutsError,
+    );
+  });
+
+  it("derives shortcut context requests only from currently discovered registered surfaces", () => {
+    expect(
+      getPresentationShortcutContextSurfaceIds({
+        serviceGroups: [
+          {
+            serviceGroupId: "hr",
+            surfaceIds: ["surface.hr.workforce", "surface.hr.requests-and-claims"],
+          },
+        ],
+      }),
+    ).toEqual([
+      "surface.mission-control",
+      "surface.hr.workforce",
+      "surface.hr.requests-and-claims",
+    ]);
+    expect(getPresentationShortcutContextSurfaceIds({ serviceGroups: [] })).toEqual([
+      "surface.mission-control",
+    ]);
+  });
+
+  it("selects the exact registered route or explicit Studio origin without prefix guessing", () => {
+    const universalWithCurrentSurface = {
+      ...universal,
+      items: [workforceTarget, requests],
+    } as const;
+    const exactUniversal = {
+      ...universalWithCurrentSurface,
+      items: [home, workforceTarget],
+      version: 9,
+    } as const;
+    const discoveries = [
+      { contextual: null, universal: universalWithCurrentSurface },
+      { contextual: workforce, universal: exactUniversal },
+    ] as const;
+    expect(selectPresentationShortcutDiscovery(discoveries, "/workspace/hr/workforce")).toEqual({
+      contextual: workforce,
+      universal: {
+        ...exactUniversal,
+        eligibleTargets: [home, requests],
+        items: [home],
+      },
+    });
+    expect(universalWithCurrentSurface.items).toEqual([workforceTarget, requests]);
+    expect(
+      selectPresentationShortcutDiscovery(
+        discoveries,
+        "/studio/surfaces/surface.hr.workforce/personal",
+        "surface.hr.workforce",
+      ),
+    ).toEqual({
+      contextual: workforce,
+      universal: {
+        ...exactUniversal,
+        eligibleTargets: [home, requests],
+        items: [home],
+      },
+    });
+    expect(selectPresentationShortcutDiscovery(discoveries, "/workspace/hr/profile/admin")).toEqual(
+      { contextual: null, universal: universalWithCurrentSurface },
+    );
+  });
+
+  it("keeps a surviving contextual result usable when the universal-only request failed", () => {
+    const contextualOnly = { contextual: workforce, universal } as const;
+    expect(
+      selectPresentationShortcutDiscovery([contextualOnly], "/workspace/hr/workforce"),
+    ).toEqual({
+      contextual: workforce,
+      universal: {
+        ...universal,
+        eligibleTargets: [home, requests],
+      },
+    });
+    expect(
+      selectPresentationShortcutDiscovery([contextualOnly], "/workspace/hr/profile/admin"),
+    ).toEqual(discovery);
   });
 
   it("accepts only exact HTTP 200 strict discovery and update responses", async () => {
@@ -117,7 +207,7 @@ describe("presentation shortcut web boundary", () => {
       idempotencyKey,
       operation: "remove",
       settingKey: "navigation.universal_shortcuts.v1",
-      targetId: "hr.leave.own",
+      targetId: "surface.hr.requests-and-claims",
     } as const;
     expect(parsePresentationShortcutUpdateRequest(request)).toEqual(request);
     for (const candidate of [
@@ -139,16 +229,18 @@ describe("presentation shortcut web boundary", () => {
     expect(() =>
       replacePresentationShortcutSet(discovery, {
         ...universal,
-        contextId: "hr",
-        contextKind: "service",
+        contextId: "surface.hr.workforce",
+        contextKind: "surface",
         settingKey: "navigation.contextual_shortcuts.v1",
       }),
     ).toThrow(PresentationShortcutsError);
 
     const surface = {
       ...universal,
-      contextId: "surface.mission-control",
+      contextId: "surface.hr.workforce",
       contextKind: "surface",
+      eligibleTargets: [requests],
+      items: [requests],
       settingKey: "navigation.contextual_shortcuts.v1",
     } as const;
     const surfaceDiscovery = { contextual: surface, universal } as const;
@@ -156,5 +248,26 @@ describe("presentation shortcut web boundary", () => {
       contextual: { ...surface, version: 2 },
       universal,
     });
+
+    const universalMutationWithActiveSurface = {
+      ...universal,
+      items: [workforceTarget, requests],
+      version: 3,
+    } as const;
+    expect(
+      replacePresentationShortcutSet(
+        surfaceDiscovery,
+        universalMutationWithActiveSurface,
+        "surface.hr.workforce",
+      ),
+    ).toEqual({
+      contextual: surface,
+      universal: {
+        ...universalMutationWithActiveSurface,
+        eligibleTargets: [home, requests],
+        items: [requests],
+      },
+    });
+    expect(universalMutationWithActiveSurface.items).toEqual([workforceTarget, requests]);
   });
 });

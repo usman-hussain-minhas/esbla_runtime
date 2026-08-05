@@ -6,6 +6,7 @@ import {
   type PresentationShortcutSet,
   type PresentationShortcutTarget,
   parseUpdatePresentationShortcutResponse,
+  type ZenV1SurfaceId,
 } from "@esbla/contracts";
 import Link from "next/link";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
@@ -229,11 +230,13 @@ function ShortcutPicker({
 }
 
 export function ZenShortcutChrome({
+  activeSurfaceId,
   initialDiscovery,
   onOpenScopeChange,
   openScope,
   responsiveClass,
 }: Readonly<{
+  activeSurfaceId: ZenV1SurfaceId | undefined;
   initialDiscovery: PresentationShortcutDiscovery;
   onOpenScopeChange: (scope: ZenShortcutScope | undefined) => void;
   openScope: ZenShortcutScope | undefined;
@@ -340,7 +343,9 @@ export function ZenShortcutChrome({
       });
       if (response.status !== 200) throw new Error("unavailable");
       const updated = parseUpdatePresentationShortcutResponse(await response.json());
-      setDiscovery((current) => replacePresentationShortcutSet(current, updated.set));
+      setDiscovery((current) =>
+        replacePresentationShortcutSet(current, updated.set, activeSurfaceId),
+      );
       if (operation === "append") setPickerMode("list");
     } catch {
       setError("Shortcut could not be saved. Reload this page and try again.");
@@ -359,6 +364,7 @@ export function ZenShortcutChrome({
       : discovery.universal.eligibleTargets.length > 0);
   const showContextualScope =
     discovery.contextual !== null &&
+    discovery.contextual.eligibleTargets.length > 0 &&
     (discovery.contextual.editable ||
       (responsiveClass === "desktop"
         ? discovery.contextual.items.length > 0

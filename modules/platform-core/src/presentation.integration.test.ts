@@ -68,6 +68,27 @@ async function presentationRows<T extends Record<string, unknown>>(
   }
 }
 
+async function mutatePresentationRows(
+  tenantId: string,
+  actorPrincipalId: string,
+  statement: string,
+  values: readonly unknown[] = [],
+): Promise<void> {
+  const client = await migrationPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
+    await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [actorPrincipalId]);
+    await client.query(statement, [...values]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function shortcutProofSnapshot(
   tenantId: string,
   actorPrincipalId: string,
@@ -951,6 +972,8 @@ beforeAll(async () => {
       "platform.presentation.layouts.read_own",
       "platform.presentation.layouts.reset_own",
       "platform.presentation.layouts.write_own",
+      "platform.presentation.shortcuts.read_own",
+      "platform.presentation.shortcuts.write_own",
     ]) {
       await setPresentationCapability(tenantId, principalId, capabilityId, true);
     }
@@ -1913,9 +1936,6 @@ describe("presentation preference persistence", () => {
       await expect(
         getOwnPresentationNavigation(pool, context(ids.tenantA, ids.actorA)),
       ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
-      await expect(
-        getOwnPresentationServiceGroups(pool, context(ids.tenantA, ids.actorA)),
-      ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
     } finally {
       await setPresentationCapability(
         ids.tenantA,
@@ -1934,7 +1954,7 @@ describe("presentation preference persistence", () => {
       expectedVersion: 0,
       operation: "append",
       settingKey: "navigation.universal_shortcuts.v1",
-      targetId: "platform.mission_control",
+      targetId: "surface.mission-control",
     } as const;
     const results = await Promise.all([
       updateOwnPresentationShortcut(pool, mutationContext, input),
@@ -1973,8 +1993,8 @@ describe("presentation preference persistence", () => {
 
     const divergentContext = context(ids.tenantA, ids.actorAdminA);
     const divergentBase = {
-      contextId: "hr",
-      contextKind: "service",
+      contextId: "surface.mission-control",
+      contextKind: "surface",
       expectedVersion: 0,
       operation: "append",
       settingKey: "navigation.contextual_shortcuts.v1",
@@ -1982,11 +2002,11 @@ describe("presentation preference persistence", () => {
     const divergentResults = await Promise.allSettled([
       updateOwnPresentationShortcut(pool, divergentContext, {
         ...divergentBase,
-        targetId: "service_group.hr.mission_control",
+        targetId: "surface.hr.mission-control",
       }),
       updateOwnPresentationShortcut(pool, divergentContext, {
         ...divergentBase,
-        targetId: "hr.leave.own",
+        targetId: "surface.hr.requests-and-claims",
       }),
     ]);
     const divergentFulfilled = divergentResults.filter(
@@ -2021,7 +2041,7 @@ describe("presentation preference persistence", () => {
            FROM presentation_shortcut_user_patches
            WHERE tenant_id = $1 AND principal_id = $2
              AND setting_key = 'navigation.contextual_shortcuts.v1'
-             AND context_kind = 'service' AND context_id = 'hr'
+             AND context_kind = 'surface' AND context_id = 'surface.mission-control'
          ) AS patch_count`,
       [ids.tenantA, ids.actorAdminA, divergentContext.correlationId],
     );
@@ -2035,12 +2055,12 @@ describe("presentation preference persistence", () => {
 
   it("persists exact own shortcut scopes with CAS, evidence and current eligibility", async () => {
     const initial = await getOwnPresentationShortcuts(pool, context(ids.tenantA, ids.actorA), {
-      contextServiceGroupId: "hr",
+      contextSurfaceId: "surface.hr.mission-control",
     });
     expect(initial).toMatchObject({
       contextual: {
-        contextId: "hr",
-        contextKind: "service",
+        contextId: "surface.hr.mission-control",
+        contextKind: "surface",
         items: [],
         settingKey: "navigation.contextual_shortcuts.v1",
         tombstoneCount: 0,
@@ -2056,13 +2076,12 @@ describe("presentation preference persistence", () => {
       },
     });
     expect(initial.universal.eligibleTargets.map(({ id }) => id)).toEqual([
-      "platform.mission_control",
-      "service_group.hr.mission_control",
-      "hr.leave.own",
+      "surface.mission-control",
+      "surface.hr.mission-control",
+      "surface.hr.requests-and-claims",
     ]);
     expect(initial.contextual?.eligibleTargets.map(({ id }) => id)).toEqual([
-      "service_group.hr.mission_control",
-      "hr.leave.own",
+      "surface.hr.requests-and-claims",
     ]);
 
     const universalContext = context(ids.tenantA, ids.actorA);
@@ -2072,13 +2091,13 @@ describe("presentation preference persistence", () => {
       expectedVersion: 0,
       operation: "append",
       settingKey: "navigation.universal_shortcuts.v1",
-      targetId: "hr.leave.own",
+      targetId: "surface.hr.requests-and-claims",
     });
     expect(universal).toMatchObject({
       billingState: "non_billable",
       replayed: false,
       set: {
-        items: [expect.objectContaining({ id: "hr.leave.own" })],
+        items: [expect.objectContaining({ id: "surface.hr.requests-and-claims" })],
         tombstoneCount: 0,
         version: 1,
       },
@@ -2090,24 +2109,24 @@ describe("presentation preference persistence", () => {
         expectedVersion: 0,
         operation: "append",
         settingKey: "navigation.universal_shortcuts.v1",
-        targetId: "hr.leave.own",
+        targetId: "surface.hr.requests-and-claims",
       }),
     ).toEqual({ ...universal, replayed: true });
 
     const contextual = await updateOwnPresentationShortcut(pool, context(ids.tenantA, ids.actorA), {
-      contextId: "hr",
-      contextKind: "service",
+      contextId: "surface.hr.mission-control",
+      contextKind: "surface",
       expectedVersion: 0,
       operation: "append",
       settingKey: "navigation.contextual_shortcuts.v1",
-      targetId: "hr.leave.own",
+      targetId: "surface.hr.requests-and-claims",
     });
     expect(contextual).toMatchObject({
       billingState: "non_billable",
       replayed: false,
       set: {
-        contextId: "hr",
-        items: [expect.objectContaining({ id: "hr.leave.own" })],
+        contextId: "surface.hr.mission-control",
+        items: [expect.objectContaining({ id: "surface.hr.requests-and-claims" })],
         version: 1,
       },
     });
@@ -2125,7 +2144,7 @@ describe("presentation preference persistence", () => {
         expectedVersion: 0,
         operation: "append",
         settingKey: "navigation.universal_shortcuts.v1",
-        targetId: "service_group.hr.mission_control",
+        targetId: "surface.hr.mission-control",
       }),
     ).rejects.toMatchObject({
       code: "IDEMPOTENCY_CONFLICT",
@@ -2146,11 +2165,11 @@ describe("presentation preference persistence", () => {
     expect(
       (
         await getOwnPresentationShortcuts(pool, context(ids.tenantA, ids.actorA), {
-          contextServiceGroupId: "hr",
+          contextSurfaceId: "surface.hr.mission-control",
         })
       ).universal,
     ).toMatchObject({
-      items: [expect.objectContaining({ id: "hr.leave.own" })],
+      items: [expect.objectContaining({ id: "surface.hr.requests-and-claims" })],
       version: 1,
     });
 
@@ -2159,7 +2178,7 @@ describe("presentation preference persistence", () => {
       capabilities: ["hr.leave.list_own", "hr.leave.view"],
     });
     const deactivated = await getOwnPresentationShortcuts(pool, context(ids.tenantA, ids.actorA), {
-      contextServiceGroupId: "hr",
+      contextSurfaceId: "surface.hr.mission-control",
     });
     expect(deactivated.contextual).toBeNull();
     expect(deactivated.universal).toMatchObject({
@@ -2168,7 +2187,7 @@ describe("presentation preference persistence", () => {
       version: 1,
     });
     expect(deactivated.universal.eligibleTargets.map(({ id }) => id)).toEqual([
-      "platform.mission_control",
+      "surface.mission-control",
     ]);
     const beforeDeniedAppend = await migrationPool.query<{
       evidence_count: number;
@@ -2196,7 +2215,7 @@ describe("presentation preference persistence", () => {
         expectedVersion: 1,
         operation: "append",
         settingKey: "navigation.universal_shortcuts.v1",
-        targetId: "service_group.hr.mission_control",
+        targetId: "surface.hr.mission-control",
       }),
     ).rejects.toMatchObject({
       code: "POLICY_DENIED",
@@ -2231,7 +2250,7 @@ describe("presentation preference persistence", () => {
       expectedVersion: 1,
       operation: "remove",
       settingKey: "navigation.universal_shortcuts.v1",
-      targetId: "hr.leave.own",
+      targetId: "surface.hr.requests-and-claims",
     });
     expect(removed.set).toMatchObject({ items: [], version: 2 });
     expect(
@@ -2248,6 +2267,20 @@ describe("presentation preference persistence", () => {
       active: true,
       capabilities: ["hr.leave.list_own", "hr.leave.view"],
     });
+    const beforeStaleReplay = await shortcutProofSnapshot(ids.tenantA, ids.actorA);
+    await expect(
+      updateOwnPresentationShortcut(pool, universalContext, {
+        contextId: "global",
+        contextKind: "global",
+        expectedVersion: 0,
+        operation: "append",
+        settingKey: "navigation.universal_shortcuts.v1",
+        targetId: "surface.hr.requests-and-claims",
+      }),
+    ).rejects.toMatchObject({
+      code: "IDEMPOTENCY_CONFLICT",
+    } satisfies Partial<PlatformError>);
+    expect(await shortcutProofSnapshot(ids.tenantA, ids.actorA)).toEqual(beforeStaleReplay);
   });
 
   it("persists one exact Mission Control surface shortcut scope without self-navigation", async () => {
@@ -2267,8 +2300,8 @@ describe("presentation preference persistence", () => {
       version: 0,
     });
     expect(initial.contextual?.eligibleTargets.map(({ id }) => id)).toEqual([
-      "service_group.hr.mission_control",
-      "hr.leave.own",
+      "surface.hr.mission-control",
+      "surface.hr.requests-and-claims",
     ]);
     const updated = await updateOwnPresentationShortcut(pool, context(ids.tenantA, ids.actorA), {
       contextId: "surface.mission-control",
@@ -2276,7 +2309,7 @@ describe("presentation preference persistence", () => {
       expectedVersion: 0,
       operation: "append",
       settingKey: "navigation.contextual_shortcuts.v1",
-      targetId: "hr.leave.own",
+      targetId: "surface.hr.requests-and-claims",
     });
     expect(updated).toMatchObject({
       billingState: "non_billable",
@@ -2284,7 +2317,7 @@ describe("presentation preference persistence", () => {
       set: {
         contextId: "surface.mission-control",
         contextKind: "surface",
-        items: [expect.objectContaining({ id: "hr.leave.own" })],
+        items: [expect.objectContaining({ id: "surface.hr.requests-and-claims" })],
         version: 1,
       },
     });
@@ -2314,7 +2347,7 @@ describe("presentation preference persistence", () => {
         })
       ).contextual,
     ).toMatchObject({
-      items: [expect.objectContaining({ id: "hr.leave.own" })],
+      items: [expect.objectContaining({ id: "surface.hr.requests-and-claims" })],
       version: 1,
     });
     await expect(
@@ -2324,7 +2357,7 @@ describe("presentation preference persistence", () => {
         expectedVersion: 1,
         operation: "append",
         settingKey: "navigation.contextual_shortcuts.v1",
-        targetId: "platform.mission_control",
+        targetId: "surface.mission-control",
       }),
     ).rejects.toMatchObject({ code: "SETTING_INVALID" } satisfies Partial<PlatformError>);
     expect(await shortcutProofSnapshot(ids.tenantA, ids.actorA, surfaceScope)).toEqual(afterAppend);
@@ -2336,7 +2369,7 @@ describe("presentation preference persistence", () => {
         expectedVersion: 0,
         operation: "append",
         settingKey: "navigation.contextual_shortcuts.v1",
-        targetId: "service_group.hr.mission_control",
+        targetId: "surface.hr.mission-control",
       }),
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" } satisfies Partial<PlatformError>);
     expect(await shortcutProofSnapshot(ids.tenantA, ids.actorA, surfaceScope)).toEqual(afterAppend);
@@ -2360,7 +2393,7 @@ describe("presentation preference persistence", () => {
           expectedVersion: 1,
           operation: "append",
           settingKey: "navigation.contextual_shortcuts.v1",
-          targetId: "hr.leave.own",
+          targetId: "surface.hr.requests-and-claims",
         }),
       ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
       expect(await shortcutProofSnapshot(ids.tenantA, ids.actorA, surfaceScope)).toEqual(
@@ -2372,7 +2405,7 @@ describe("presentation preference persistence", () => {
         expectedVersion: 1,
         operation: "remove",
         settingKey: "navigation.contextual_shortcuts.v1",
-        targetId: "hr.leave.own",
+        targetId: "surface.hr.requests-and-claims",
       });
       expect(removed).toMatchObject({
         billingState: "non_billable",
@@ -2402,7 +2435,7 @@ describe("presentation preference persistence", () => {
         expectedVersion: 0,
         operation: "append",
         settingKey: "navigation.contextual_shortcuts.v1",
-        targetId: "hr.leave.own",
+        targetId: "surface.hr.requests-and-claims",
       }),
     ).rejects.toMatchObject({
       code: "ACTOR_NOT_ACTIVE_MEMBER",
@@ -2410,6 +2443,529 @@ describe("presentation preference persistence", () => {
     expect(await shortcutProofSnapshot(ids.tenantA, ids.actorA, surfaceScope)).toEqual(
       afterRemoval,
     );
+  });
+
+  it("recovers the reachable 21-operation legacy shortcut state with a bounded write", async () => {
+    const legacyTargetIds = [
+      "platform.mission_control",
+      "service_group.hr.mission_control",
+      "hr.workforce.own",
+      "hr.workforce.direct_reports",
+      "hr.workforce.admin",
+      "hr.workforce.settings",
+      "hr.employment.records",
+      "hr.employment.admin",
+      "hr.employment.settings",
+      "hr.shift.own",
+      "hr.shift.reports",
+      "hr.shift.settings",
+      "hr.attendance.own",
+      "hr.attendance.reports",
+      "hr.attendance.settings",
+      "hr.leave.own",
+      "hr.timesheet.own",
+      "hr.timesheet.corrections",
+      "hr.timesheet.settings",
+      "hr.expense.own",
+      "hr.expense.settings",
+    ] as const;
+    const legacyOperations = [
+      ...legacyTargetIds.slice(1, 20).map((id) => ({ id, operation: "append" as const })),
+      { id: legacyTargetIds[0], operation: "remove" as const },
+      { id: legacyTargetIds[20], operation: "append" as const },
+    ];
+    expect(legacyOperations).toHaveLength(21);
+    const globalScope = {
+      contextId: "global",
+      contextKind: "global",
+      settingKey: "navigation.universal_shortcuts.v1",
+    } as const;
+    await setPresentationCapability(
+      ids.tenantC,
+      ids.actorC,
+      "platform.presentation.shortcuts.read_own",
+      true,
+    );
+    await setPresentationCapability(
+      ids.tenantC,
+      ids.actorC,
+      "platform.presentation.shortcuts.write_own",
+      true,
+    );
+    await mutatePresentationRows(
+      ids.tenantC,
+      ids.actorC,
+      `INSERT INTO presentation_shortcut_user_patches
+         (tenant_id, principal_id, setting_key, context_kind, context_id,
+          patch, version, updated_by_principal_id)
+       VALUES
+         ($1, $2, 'navigation.universal_shortcuts.v1', 'global', 'global', $3::jsonb, 1, $2),
+         ($1, $2, 'navigation.contextual_shortcuts.v1', 'service', 'hr', $3::jsonb, 7, $2)`,
+      [ids.tenantC, ids.actorC, JSON.stringify({ operations: legacyOperations })],
+    );
+    try {
+      const legacyServiceBefore = await presentationRows<{ patch: string; version: number }>(
+        ids.tenantC,
+        ids.actorC,
+        `SELECT patch::text AS patch, version
+         FROM presentation_shortcut_user_patches
+         WHERE tenant_id = $1 AND principal_id = $2
+           AND setting_key = 'navigation.contextual_shortcuts.v1'
+           AND context_kind = 'service' AND context_id = 'hr'`,
+        [ids.tenantC, ids.actorC],
+      );
+      const initialDiscovery = await getOwnPresentationShortcuts(
+        pool,
+        context(ids.tenantC, ids.actorC),
+        {},
+      );
+      expect(initialDiscovery.contextual).toBeNull();
+      expect(initialDiscovery.universal).toMatchObject({
+        items: [],
+        tombstoneCount: 20,
+        version: 1,
+      });
+
+      const updated = await updateOwnPresentationShortcut(pool, context(ids.tenantC, ids.actorC), {
+        ...globalScope,
+        expectedVersion: 1,
+        operation: "append",
+        targetId: "surface.mission-control",
+      });
+      expect(updated.set).toMatchObject({
+        items: [expect.objectContaining({ id: "surface.mission-control" })],
+        tombstoneCount: 0,
+        version: 2,
+      });
+      expect(
+        (await getOwnPresentationShortcuts(pool, context(ids.tenantC, ids.actorC), {})).universal,
+      ).toMatchObject({
+        items: [expect.objectContaining({ id: "surface.mission-control" })],
+        tombstoneCount: 0,
+        version: 2,
+      });
+      const durable = await presentationRows<{
+        context_kind: string;
+        operations: unknown;
+        version: number;
+      }>(
+        ids.tenantC,
+        ids.actorC,
+        `SELECT context_kind, patch->'operations' AS operations, version
+         FROM presentation_shortcut_user_patches
+         WHERE tenant_id = $1 AND principal_id = $2
+           AND setting_key = 'navigation.universal_shortcuts.v1'
+           AND context_kind = 'global' AND context_id = 'global'`,
+        [ids.tenantC, ids.actorC],
+      );
+      expect(durable).toEqual([
+        {
+          context_kind: "global",
+          operations: [{ id: "surface.mission-control", operation: "append" }],
+          version: 2,
+        },
+      ]);
+      expect(
+        await presentationRows<{ patch: string; version: number }>(
+          ids.tenantC,
+          ids.actorC,
+          `SELECT patch::text AS patch, version
+           FROM presentation_shortcut_user_patches
+           WHERE tenant_id = $1 AND principal_id = $2
+             AND setting_key = 'navigation.contextual_shortcuts.v1'
+             AND context_kind = 'service' AND context_id = 'hr'`,
+          [ids.tenantC, ids.actorC],
+        ),
+      ).toEqual(legacyServiceBefore);
+    } finally {
+      await mutatePresentationRows(
+        ids.tenantC,
+        ids.actorC,
+        `DELETE FROM presentation_shortcut_user_patches
+         WHERE tenant_id = $1 AND principal_id = $2`,
+        [ids.tenantC, ids.actorC],
+      );
+      await setPresentationCapability(
+        ids.tenantC,
+        ids.actorC,
+        "platform.presentation.shortcuts.read_own",
+        false,
+      );
+      await setPresentationCapability(
+        ids.tenantC,
+        ids.actorC,
+        "platform.presentation.shortcuts.write_own",
+        false,
+      );
+    }
+  });
+
+  it("canonicalizes registered targets that depend on a retired shortcut anchor", async () => {
+    const chainedOperations = [
+      { id: "platform.mission_control", operation: "append" },
+      {
+        anchorId: "platform.mission_control",
+        id: "surface.mission-control",
+        operation: "insert_after",
+      },
+      {
+        anchorId: "surface.mission-control",
+        id: "surface.hr.mission-control",
+        operation: "insert_after",
+      },
+    ] as const;
+    await setPresentationCapability(
+      ids.tenantC,
+      ids.actorC,
+      "platform.presentation.shortcuts.read_own",
+      true,
+    );
+    await setPresentationCapability(
+      ids.tenantC,
+      ids.actorC,
+      "platform.presentation.shortcuts.write_own",
+      true,
+    );
+    await mutatePresentationRows(
+      ids.tenantC,
+      ids.actorC,
+      `INSERT INTO presentation_shortcut_user_patches
+         (tenant_id, principal_id, setting_key, context_kind, context_id,
+          patch, version, updated_by_principal_id)
+       VALUES ($1, $2, 'navigation.universal_shortcuts.v1', 'global', 'global',
+               $3::jsonb, 1, $2)`,
+      [ids.tenantC, ids.actorC, JSON.stringify({ operations: chainedOperations })],
+    );
+    try {
+      const updated = await updateOwnPresentationShortcut(pool, context(ids.tenantC, ids.actorC), {
+        contextId: "global",
+        contextKind: "global",
+        expectedVersion: 1,
+        operation: "remove",
+        settingKey: "navigation.universal_shortcuts.v1",
+        targetId: "surface.hr.mission-control",
+      });
+      expect(updated.set).toMatchObject({
+        items: [expect.objectContaining({ id: "surface.mission-control" })],
+        tombstoneCount: 0,
+        version: 2,
+      });
+      expect(
+        await presentationRows<{ operations: unknown; version: number }>(
+          ids.tenantC,
+          ids.actorC,
+          `SELECT patch->'operations' AS operations, version
+           FROM presentation_shortcut_user_patches
+           WHERE tenant_id = $1 AND principal_id = $2
+             AND setting_key = 'navigation.universal_shortcuts.v1'
+             AND context_kind = 'global' AND context_id = 'global'`,
+          [ids.tenantC, ids.actorC],
+        ),
+      ).toEqual([
+        {
+          operations: [
+            { id: "surface.mission-control", operation: "append" },
+            { id: "surface.hr.mission-control", operation: "remove" },
+          ],
+          version: 2,
+        },
+      ]);
+      expect(
+        (await getOwnPresentationShortcuts(pool, context(ids.tenantC, ids.actorC), {})).universal,
+      ).toMatchObject({
+        items: [expect.objectContaining({ id: "surface.mission-control" })],
+        tombstoneCount: 0,
+        version: 2,
+      });
+    } finally {
+      await mutatePresentationRows(
+        ids.tenantC,
+        ids.actorC,
+        `DELETE FROM presentation_shortcut_user_patches
+         WHERE tenant_id = $1 AND principal_id = $2`,
+        [ids.tenantC, ids.actorC],
+      );
+      await setPresentationCapability(
+        ids.tenantC,
+        ids.actorC,
+        "platform.presentation.shortcuts.read_own",
+        false,
+      );
+      await setPresentationCapability(
+        ids.tenantC,
+        ids.actorC,
+        "platform.presentation.shortcuts.write_own",
+        false,
+      );
+    }
+  });
+
+  it("rejects shortcut storage beyond the exact legacy operation envelope", async () => {
+    const excessiveOperations = Array.from({ length: 11 }, (_, index) => {
+      const id = `legacy.storage.${String(index + 1).padStart(2, "0")}`;
+      return [
+        { id, operation: "append" as const },
+        { id, operation: "remove" as const },
+      ];
+    }).flat();
+    expect(excessiveOperations).toHaveLength(22);
+    await setPresentationCapability(
+      ids.tenantC,
+      ids.actorC,
+      "platform.presentation.shortcuts.read_own",
+      true,
+    );
+    await mutatePresentationRows(
+      ids.tenantC,
+      ids.actorC,
+      `INSERT INTO presentation_shortcut_user_patches
+         (tenant_id, principal_id, setting_key, context_kind, context_id,
+          patch, version, updated_by_principal_id)
+       VALUES ($1, $2, 'navigation.universal_shortcuts.v1', 'global', 'global',
+               $3::jsonb, 1, $2)`,
+      [ids.tenantC, ids.actorC, JSON.stringify({ operations: excessiveOperations })],
+    );
+    try {
+      await expect(
+        getOwnPresentationShortcuts(pool, context(ids.tenantC, ids.actorC), {}),
+      ).rejects.toMatchObject({ code: "SETTING_INVALID" } satisfies Partial<PlatformError>);
+    } finally {
+      await mutatePresentationRows(
+        ids.tenantC,
+        ids.actorC,
+        `DELETE FROM presentation_shortcut_user_patches
+         WHERE tenant_id = $1 AND principal_id = $2`,
+        [ids.tenantC, ids.actorC],
+      );
+      await setPresentationCapability(
+        ids.tenantC,
+        ids.actorC,
+        "platform.presentation.shortcuts.read_own",
+        false,
+      );
+    }
+  });
+
+  it("rejects a 21-operation surface shortcut row outside the legacy global envelope", async () => {
+    const unsupportedOperations = [
+      ...Array.from({ length: 10 }, (_, index) => {
+        const id = `legacy.surface.${String(index + 1).padStart(2, "0")}`;
+        return [
+          { id, operation: "append" as const },
+          { id, operation: "remove" as const },
+        ];
+      }).flat(),
+      { id: "surface.hr.mission-control", operation: "append" as const },
+    ];
+    expect(unsupportedOperations).toHaveLength(21);
+    await setPresentationCapability(
+      ids.tenantC,
+      ids.actorC,
+      "platform.presentation.shortcuts.read_own",
+      true,
+    );
+    await mutatePresentationRows(
+      ids.tenantC,
+      ids.actorC,
+      `INSERT INTO presentation_shortcut_user_patches
+         (tenant_id, principal_id, setting_key, context_kind, context_id,
+          patch, version, updated_by_principal_id)
+       VALUES ($1, $2, 'navigation.contextual_shortcuts.v1', 'surface',
+               'surface.mission-control', $3::jsonb, 1, $2)`,
+      [ids.tenantC, ids.actorC, JSON.stringify({ operations: unsupportedOperations })],
+    );
+    try {
+      await expect(
+        getOwnPresentationShortcuts(pool, context(ids.tenantC, ids.actorC), {
+          contextSurfaceId: "surface.mission-control",
+        }),
+      ).rejects.toMatchObject({ code: "SETTING_INVALID" } satisfies Partial<PlatformError>);
+    } finally {
+      await mutatePresentationRows(
+        ids.tenantC,
+        ids.actorC,
+        `DELETE FROM presentation_shortcut_user_patches
+         WHERE tenant_id = $1 AND principal_id = $2`,
+        [ids.tenantC, ids.actorC],
+      );
+      await setPresentationCapability(
+        ids.tenantC,
+        ids.actorC,
+        "platform.presentation.shortcuts.read_own",
+        false,
+      );
+    }
+  });
+
+  it("requires current explicit shortcut read and write capabilities without durable side effects", async () => {
+    const capabilityScope = {
+      contextId: "global",
+      contextKind: "global",
+      settingKey: "navigation.universal_shortcuts.v1",
+    } as const;
+    await setPresentationCapability(
+      ids.tenantC,
+      ids.actorC,
+      "platform.presentation.shortcuts.read_own",
+      true,
+    );
+    await setPresentationCapability(
+      ids.tenantC,
+      ids.actorC,
+      "platform.presentation.shortcuts.write_own",
+      true,
+    );
+    const before = await shortcutProofSnapshot(ids.tenantC, ids.actorC, capabilityScope);
+    await setPresentationCapability(
+      ids.tenantC,
+      ids.actorC,
+      "platform.presentation.shortcuts.read_own",
+      false,
+    );
+    try {
+      await expect(
+        getOwnPresentationShortcuts(pool, context(ids.tenantC, ids.actorC), {}),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
+      expect(await shortcutProofSnapshot(ids.tenantC, ids.actorC, capabilityScope)).toEqual(before);
+    } finally {
+      await setPresentationCapability(
+        ids.tenantC,
+        ids.actorC,
+        "platform.presentation.shortcuts.read_own",
+        true,
+      );
+    }
+
+    await setPresentationCapability(
+      ids.tenantC,
+      ids.actorC,
+      "platform.presentation.shortcuts.write_own",
+      false,
+    );
+    try {
+      const readOnly = await getOwnPresentationShortcuts(pool, context(ids.tenantC, ids.actorC), {
+        contextSurfaceId: "surface.mission-control",
+      });
+      expect(readOnly.universal.editable).toBe(false);
+      expect(readOnly.contextual?.editable).toBe(false);
+      await expect(
+        updateOwnPresentationShortcut(pool, context(ids.tenantC, ids.actorC), {
+          contextId: "global",
+          contextKind: "global",
+          expectedVersion: 0,
+          operation: "append",
+          settingKey: "navigation.universal_shortcuts.v1",
+          targetId: "surface.mission-control",
+        }),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
+      expect(await shortcutProofSnapshot(ids.tenantC, ids.actorC, capabilityScope)).toEqual(before);
+    } finally {
+      await setPresentationCapability(
+        ids.tenantC,
+        ids.actorC,
+        "platform.presentation.shortcuts.write_own",
+        true,
+      );
+    }
+
+    await setPresentationCapability(
+      ids.tenantC,
+      ids.actorC,
+      "platform.presentation.layouts.read_own",
+      false,
+    );
+    try {
+      await expect(
+        getOwnPresentationShortcuts(pool, context(ids.tenantC, ids.actorC), {}),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
+      await expect(
+        updateOwnPresentationShortcut(pool, context(ids.tenantC, ids.actorC), {
+          contextId: "global",
+          contextKind: "global",
+          expectedVersion: 0,
+          operation: "append",
+          settingKey: "navigation.universal_shortcuts.v1",
+          targetId: "surface.mission-control",
+        }),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
+      expect(await shortcutProofSnapshot(ids.tenantC, ids.actorC, capabilityScope)).toEqual(before);
+    } finally {
+      await setPresentationCapability(
+        ids.tenantC,
+        ids.actorC,
+        "platform.presentation.layouts.read_own",
+        true,
+      );
+    }
+  });
+
+  it("tombstones and denies a Workforce surface shortcut after current-role demotion", async () => {
+    const surfaceScope = {
+      contextId: "surface.mission-control",
+      contextKind: "surface",
+      settingKey: "navigation.contextual_shortcuts.v1",
+    } as const;
+    await setWorkforcePresentationEligibility(ids.tenantB, ids.actorB, false);
+    await setPresentationActorRole(ids.tenantB, ids.actorB, "manager");
+    await setPresentationCapability(ids.tenantB, ids.actorB, "hr.workforce.list_authorized", true);
+    await setPresentationCapability(
+      ids.tenantB,
+      ids.actorB,
+      "hr.workforce.view_authorized_detail",
+      true,
+    );
+    try {
+      const initial = await getOwnPresentationShortcuts(pool, context(ids.tenantB, ids.actorB), {
+        contextSurfaceId: "surface.mission-control",
+      });
+      expect(initial.contextual?.eligibleTargets.map(({ id }) => id)).toEqual([
+        "surface.hr.workforce",
+      ]);
+      await updateOwnPresentationShortcut(pool, context(ids.tenantB, ids.actorB), {
+        contextId: "surface.mission-control",
+        contextKind: "surface",
+        expectedVersion: 0,
+        operation: "append",
+        settingKey: "navigation.contextual_shortcuts.v1",
+        targetId: "surface.hr.workforce",
+      });
+      await setPresentationActorRole(ids.tenantB, ids.actorB, "employee");
+      expect(
+        (
+          await getOwnPresentationShortcuts(pool, context(ids.tenantB, ids.actorB), {
+            contextSurfaceId: "surface.mission-control",
+          })
+        ).contextual,
+      ).toMatchObject({ items: [], tombstoneCount: 1, version: 1 });
+      const beforeDeniedReplay = await shortcutProofSnapshot(ids.tenantB, ids.actorB, surfaceScope);
+      await expect(
+        updateOwnPresentationShortcut(pool, context(ids.tenantB, ids.actorB), {
+          contextId: "surface.mission-control",
+          contextKind: "surface",
+          expectedVersion: 1,
+          operation: "append",
+          settingKey: "navigation.contextual_shortcuts.v1",
+          targetId: "surface.hr.workforce",
+        }),
+      ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
+      expect(await shortcutProofSnapshot(ids.tenantB, ids.actorB, surfaceScope)).toEqual(
+        beforeDeniedReplay,
+      );
+    } finally {
+      await setPresentationCapability(
+        ids.tenantB,
+        ids.actorB,
+        "hr.workforce.list_authorized",
+        false,
+      );
+      await setPresentationCapability(
+        ids.tenantB,
+        ids.actorB,
+        "hr.workforce.view_authorized_detail",
+        false,
+      );
+      await setPresentationActorRole(ids.tenantB, ids.actorB, "employee");
+    }
   });
 
   it("fails service-group discovery closed after role demotion with stale capabilities", async () => {
@@ -3425,7 +3981,7 @@ describe("presentation preference persistence", () => {
         expectedVersion: 2,
         operation: "append",
         settingKey: "navigation.universal_shortcuts.v1",
-        targetId: "platform.mission_control",
+        targetId: "surface.mission-control",
       }),
     ).rejects.toMatchObject({
       code: "ACTOR_NOT_ACTIVE_MEMBER",
@@ -3475,7 +4031,7 @@ describe("presentation preference persistence", () => {
         expectedVersion: 2,
         operation: "append",
         settingKey: "navigation.universal_shortcuts.v1",
-        targetId: "platform.mission_control",
+        targetId: "surface.mission-control",
       }),
     ).rejects.toMatchObject({
       code: "ACTOR_NOT_ACTIVE_MEMBER",

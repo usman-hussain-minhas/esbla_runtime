@@ -19,21 +19,21 @@ import { WorkspaceShell } from "../workspace-shell";
 export const dynamic = "force-dynamic";
 
 export default async function UniversalSettingsPage() {
-  const [preferences, navigation, rootShortcuts, hrShortcuts] = await Promise.all([
+  const [preferences, navigation] = await Promise.all([
     loadOwnPresentationPreferences().catch(() => undefined),
     loadOwnPresentationNavigation().catch(() => ({ serviceGroups: [] }) as const),
-    loadOwnPresentationShortcuts({ contextSurfaceId: "surface.mission-control" }).catch(
-      (): PresentationShortcutDiscovery | undefined => undefined,
-    ),
-    loadOwnPresentationShortcuts({ contextServiceGroupId: "hr" }).catch(
-      (): PresentationShortcutDiscovery | undefined => undefined,
-    ),
   ]);
   const surfaceDefinitions = getZenDiscoveredSurfaceIds(navigation).map((surfaceId) => ({
     label: getPresentationSemanticSurfaceDefinition(surfaceId).label,
     surfaceId,
   }));
-  const [layoutResults, tenantBaseResults] = await Promise.all([
+  const [shortcutResults, layoutResults, tenantBaseResults] = await Promise.all([
+    Promise.allSettled([
+      loadOwnPresentationShortcuts(),
+      ...surfaceDefinitions.map(({ surfaceId }) =>
+        loadOwnPresentationShortcuts({ contextSurfaceId: surfaceId }),
+      ),
+    ]),
     Promise.allSettled(
       surfaceDefinitions.map(({ surfaceId }) => loadOwnPresentationSurfaceLayout(surfaceId)),
     ),
@@ -43,11 +43,18 @@ export default async function UniversalSettingsPage() {
       ),
     ),
   ]);
-  const shortcutSets = [
-    rootShortcuts?.universal ?? hrShortcuts?.universal,
-    rootShortcuts?.contextual,
-    hrShortcuts?.contextual,
-  ].filter((set): set is PresentationShortcutSet => set !== undefined && set !== null);
+  const shortcutDiscoveries = shortcutResults
+    .filter(
+      (result): result is PromiseFulfilledResult<PresentationShortcutDiscovery> =>
+        result.status === "fulfilled",
+    )
+    .map(({ value }) => value);
+  const shortcutSets: PresentationShortcutSet[] = [];
+  const universal = shortcutDiscoveries[0]?.universal;
+  if (universal) shortcutSets.push(universal);
+  for (const discovery of shortcutDiscoveries) {
+    if (discovery.contextual) shortcutSets.push(discovery.contextual);
+  }
   let cacheScope: string | null = null;
   try {
     cacheScope = loadPresentationPreferenceCacheScope();

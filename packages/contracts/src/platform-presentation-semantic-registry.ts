@@ -56,6 +56,7 @@ export interface PresentationSemanticSurfaceDefinition {
 
 export interface PresentationWidgetSettingEligibilityRule {
   readonly absentIsEligible: boolean;
+  readonly concurrencyLockNamespace: string;
   readonly eligibleValues: readonly string[];
   readonly recognizedValues: readonly string[];
   readonly settingKey: string;
@@ -295,6 +296,7 @@ export const PRESENTATION_WIDGET_ADMISSION_DEFINITIONS = deepFreeze([
     "list",
     deepFreeze({
       absentIsEligible: true,
+      concurrencyLockNamespace: "hr.workforce_profile.settings.v1",
       eligibleValues: ["minimized"],
       recognizedValues: ["minimized", "none"],
       settingKey: "hr.workforce_profile.manager_visibility",
@@ -587,6 +589,7 @@ export function validatePresentationSemanticRegistry(
       (admissionDefinition.settingEligibility !== null &&
         (admissionDefinition.settingEligibility.valueType !== "enum" ||
           typeof admissionDefinition.settingEligibility.absentIsEligible !== "boolean" ||
+          !nonEmpty(admissionDefinition.settingEligibility.concurrencyLockNamespace) ||
           !nonEmpty(admissionDefinition.settingEligibility.settingKey) ||
           admissionDefinition.settingEligibility.recognizedValues.length === 0 ||
           admissionDefinition.settingEligibility.eligibleValues.length === 0 ||

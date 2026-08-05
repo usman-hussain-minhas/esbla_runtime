@@ -1,4 +1,6 @@
 import {
+  getPresentationSemanticSurfaceDefinition,
+  type PresentationNavigationDiscovery,
   type PresentationShortcutDiscovery,
   type PresentationShortcutDiscoveryQuery,
   type PresentationShortcutSet,
@@ -9,7 +11,10 @@ import {
   parseUpdatePresentationShortcutResponse,
   type UpdatePresentationShortcutBody,
   type UpdatePresentationShortcutResponse,
+  type ZenV1SurfaceId,
+  zenV1SurfaceIds,
 } from "@esbla/contracts";
+import { getZenDiscoveredSurfaceIds } from "./presentation-navigation-core";
 
 export type PresentationShortcutsErrorKind =
   | "conflict"
@@ -58,15 +63,54 @@ export function buildPresentationShortcutsPath(
   } catch {
     throw new PresentationShortcutsError("invalid_input");
   }
-  if (parsed.contextServiceGroupId) {
-    const parameters = new URLSearchParams({
-      contextServiceGroupId: parsed.contextServiceGroupId,
-    });
-    return `/v1/platform/presentation/shortcuts?${parameters.toString()}`;
-  }
   if (!parsed.contextSurfaceId) return "/v1/platform/presentation/shortcuts";
   const parameters = new URLSearchParams({ contextSurfaceId: parsed.contextSurfaceId });
   return `/v1/platform/presentation/shortcuts?${parameters.toString()}`;
+}
+
+export function getPresentationShortcutContextSurfaceIds(
+  navigation: PresentationNavigationDiscovery,
+): readonly ZenV1SurfaceId[] {
+  return getZenDiscoveredSurfaceIds(navigation);
+}
+
+export function resolvePresentationShortcutSurfaceId(
+  pathname: string,
+  explicitSurfaceId?: ZenV1SurfaceId,
+): ZenV1SurfaceId | undefined {
+  if (explicitSurfaceId) return explicitSurfaceId;
+  return zenV1SurfaceIds
+    .map((surfaceId) => getPresentationSemanticSurfaceDefinition(surfaceId))
+    .sort((left, right) => right.route.length - left.route.length)
+    .find(({ contextualOrder, route }) =>
+      contextualOrder === null || contextualOrder === 1
+        ? pathname === route
+        : pathname === route || pathname.startsWith(`${route}/`),
+    )?.surfaceId as ZenV1SurfaceId | undefined;
+}
+
+export function selectPresentationShortcutDiscovery(
+  discoveries: readonly PresentationShortcutDiscovery[],
+  pathname: string,
+  explicitSurfaceId?: ZenV1SurfaceId,
+): PresentationShortcutDiscovery | undefined {
+  if (discoveries.length === 0) return undefined;
+  const parsed = discoveries.map((discovery) => parsePresentationShortcutDiscovery(discovery));
+  const base = parsed.find(({ contextual }) => contextual === null) ?? parsed[0];
+  if (!base) return undefined;
+  const surfaceId = resolvePresentationShortcutSurfaceId(pathname, explicitSurfaceId);
+  const exact = surfaceId
+    ? parsed.find(({ contextual }) => contextual?.contextId === surfaceId)
+    : undefined;
+  const current = exact ?? base;
+  const universal = surfaceId
+    ? {
+        ...current.universal,
+        eligibleTargets: current.universal.eligibleTargets.filter(({ id }) => id !== surfaceId),
+        items: current.universal.items.filter(({ id }) => id !== surfaceId),
+      }
+    : current.universal;
+  return { contextual: exact?.contextual ?? null, universal };
 }
 
 export async function decodePresentationShortcutDiscoveryResponse(
@@ -148,13 +192,21 @@ export function parsePresentationShortcutUpdateRequest(
 export function replacePresentationShortcutSet(
   discovery: PresentationShortcutDiscovery,
   replacement: PresentationShortcutSet,
+  activeSurfaceId?: ZenV1SurfaceId,
 ): PresentationShortcutDiscovery {
   if (
     replacement.settingKey === "navigation.universal_shortcuts.v1" &&
     replacement.contextKind === "global" &&
     replacement.contextId === "global"
   ) {
-    return { ...discovery, universal: replacement };
+    const universal = activeSurfaceId
+      ? {
+          ...replacement,
+          eligibleTargets: replacement.eligibleTargets.filter(({ id }) => id !== activeSurfaceId),
+          items: replacement.items.filter(({ id }) => id !== activeSurfaceId),
+        }
+      : replacement;
+    return { ...discovery, universal };
   }
   if (
     replacement.settingKey === "navigation.contextual_shortcuts.v1" &&

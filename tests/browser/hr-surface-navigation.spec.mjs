@@ -106,3 +106,69 @@ test("manager receives only the exact ordered HR surfaces and can activate each 
     await closeActor(manager);
   }
 });
+
+test("Settings, Studio and shortcut chrome preserve exact surface identity and suppress self links", async ({
+  browser,
+}) => {
+  const manager = await openActor(browser, fixture.managerOrigin, fixture.managerLabel);
+  try {
+    await manager.page.setViewportSize({ height: 900, width: 1_440 });
+    const workforce = hrSurfaces[1];
+    await manager.page.goto(`${manager.origin}${workforce.href}`, { waitUntil: "networkidle" });
+
+    for (const scope of ["Universal shortcuts", "Workforce surface shortcuts"]) {
+      const launcher = manager.page.getByRole("button", { exact: true, name: scope });
+      await expect(launcher).toBeVisible();
+      await launcher.click();
+      const panel = manager.page.getByRole("dialog", { exact: true, name: scope });
+      await expect(panel).toBeVisible();
+      await expect(panel.getByRole("link", { exact: true, name: "Workforce" })).toHaveCount(0);
+      const add = panel.getByRole("button", { exact: true, name: "Add shortcut" });
+      if (await add.isVisible()) await add.click();
+      await expect(
+        panel.getByRole("button", { exact: true, name: `Add Workforce to ${scope}` }),
+      ).toHaveCount(0);
+      await manager.page.keyboard.press("Escape");
+      await expect(panel).toBeHidden();
+    }
+
+    await manager.page.goto(`${manager.origin}/settings`, { waitUntil: "networkidle" });
+    for (const surface of [
+      {
+        href: "/studio/surfaces/surface.mission-control/personal",
+        label: "Mission Control",
+      },
+      ...hrSurfaces.map(({ label, surfaceId }) => ({
+        href: `/studio/surfaces/${surfaceId}/personal`,
+        label,
+      })),
+    ]) {
+      const card = manager.page.locator(".layout-settings-card").filter({
+        has: manager.page.getByRole("heading", { exact: true, level: 3, name: surface.label }),
+      });
+      await expect(card).toHaveCount(1);
+      await expect(
+        card.getByRole("link", {
+          exact: true,
+          name: `Edit ${surface.label} personal layout`,
+        }),
+      ).toHaveAttribute("href", surface.href);
+    }
+
+    await manager.page
+      .getByRole("link", { exact: true, name: "Edit Workforce personal layout" })
+      .click();
+    await expect(manager.page).toHaveURL(
+      `${manager.origin}/studio/surfaces/surface.hr.workforce/personal`,
+    );
+    await expect(
+      manager.page.getByRole("heading", { exact: true, level: 1, name: "Shape your Workforce" }),
+    ).toBeVisible();
+    const returnLink = manager.page.getByRole("link", { exact: true, name: "Return to Workforce" });
+    await expect(returnLink).toHaveAttribute("href", workforce.href);
+    await returnLink.click();
+    await expect(manager.page).toHaveURL(`${manager.origin}${workforce.href}`);
+  } finally {
+    await closeActor(manager);
+  }
+});

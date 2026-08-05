@@ -4,6 +4,7 @@ import type {
   PlatformNotificationPage,
   PresentationNavigationDiscovery,
   PresentationShortcutDiscovery,
+  ZenV1SurfaceId,
 } from "@esbla/contracts";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -11,6 +12,10 @@ import {
   buildZenNavigationModel,
   type ZenNavigationModel,
 } from "../../../../lib/presentation-navigation-core";
+import {
+  resolvePresentationShortcutSurfaceId,
+  selectPresentationShortcutDiscovery,
+} from "../../../../lib/presentation-shortcuts-core";
 import {
   parseRouteBackedWidgetReturnFocus,
   ROUTE_BACKED_WIDGET_RETURN_FOCUS_KEY,
@@ -116,17 +121,24 @@ export function ZenShellChrome({
   editSurfaces,
   initialNotifications,
   settingsAvailable,
-  shortcutDiscovery,
+  shortcutDiscoveries,
+  shortcutSurfaceId,
 }: Readonly<{
   appearanceAvailable: boolean;
   discovery: PresentationNavigationDiscovery;
   editSurfaces: readonly ZenSurfaceEditDescriptor[];
   initialNotifications: PlatformNotificationPage | undefined;
   settingsAvailable: boolean;
-  shortcutDiscovery: PresentationShortcutDiscovery | undefined;
+  shortcutDiscoveries: readonly PresentationShortcutDiscovery[];
+  shortcutSurfaceId: ZenV1SurfaceId | undefined;
 }>) {
   const pathname = usePathname();
   const model = useMemo(() => buildZenNavigationModel(discovery, pathname), [discovery, pathname]);
+  const shortcutDiscovery = useMemo(
+    () => selectPresentationShortcutDiscovery(shortcutDiscoveries, pathname, shortcutSurfaceId),
+    [pathname, shortcutDiscoveries, shortcutSurfaceId],
+  );
+  const activeShortcutSurfaceId = resolvePresentationShortcutSurfaceId(pathname, shortcutSurfaceId);
   const activeEditSurface = selectZenSurfaceEditDescriptor(editSurfaces, pathname);
   const [layer, setLayer] = useState<ZenChromeLayer>();
   const activeLayer = useRef(layer);
@@ -490,6 +502,7 @@ export function ZenShellChrome({
 
       {shortcutDiscovery ? (
         <ZenShortcutChrome
+          activeSurfaceId={activeShortcutSurfaceId}
           initialDiscovery={shortcutDiscovery}
           key={`${pathname}:${shortcutDiscovery.universal.version}:${
             shortcutDiscovery.contextual?.version ?? "none"

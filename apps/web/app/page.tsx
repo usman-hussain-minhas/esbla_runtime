@@ -31,7 +31,6 @@ export default async function MissionControlPage() {
       editSurfaces={
         editorWorkspace?.editable ? [getZenSurfaceEditDescriptor("surface.mission-control")] : []
       }
-      shortcutContext={{ contextSurfaceId: "surface.mission-control" }}
     >
       <section
         aria-labelledby="mission-control-heading"

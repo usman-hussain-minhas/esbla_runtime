@@ -664,6 +664,8 @@ export async function seedHrLeaveFixture() {
             "platform.presentation.layouts.read_own",
             "platform.presentation.layouts.reset_own",
             "platform.presentation.layouts.write_own",
+            "platform.presentation.shortcuts.read_own",
+            "platform.presentation.shortcuts.write_own",
           ],
         ],
       );
