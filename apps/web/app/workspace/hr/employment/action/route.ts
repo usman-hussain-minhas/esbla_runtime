@@ -100,8 +100,13 @@ export async function POST(request: Request): Promise<Response> {
     return redirect("/workspace/hr/employment", "validation", request.url);
   }
 
-  const presentationOrigin = parseOptionalRouteBackedWidgetOrigin(value);
+  const presentationOrigin = parseOptionalRouteBackedWidgetOrigin(value, [
+    "/workspace/hr/employment",
+    "/workspace/hr/employment/admin",
+    "/workspace/hr/profile/admin",
+  ]);
   delete value.originFocusId;
+  delete value.originWidgetDefinitionId;
   delete value.returnSurface;
   const path = destination(value.operation);
   const validation = validateEmploymentAction(value);

@@ -4,7 +4,6 @@ import type { ReactNode } from "react";
 import { loadOwnTimesheets, loadTimesheetDetail } from "../../../../lib/hr-timesheet";
 import { hasTimesheetAction, parseOwnTimesheetCursor } from "../../../../lib/hr-timesheet-core";
 import {
-  getRouteBackedWidgetOriginParameters,
   type RouteBackedWidgetOrigin,
   withoutRouteBackedWidgetOrigin,
 } from "../../../../lib/route-backed-widget-navigation-core";
@@ -55,15 +54,13 @@ function TimesheetActionForm({
       </form>
     );
   }
-  const origin = getRouteBackedWidgetOriginParameters(focusOrigin);
   return (
     <RouteBackedWidgetPostForm
       action="/workspace/hr/timesheets/action"
       resultFocusId="timesheet-result"
+      focusOrigin={focusOrigin}
       {...(className === undefined ? {} : { className })}
     >
-      <input name="originFocusId" type="hidden" value={origin.originFocusId} />
-      <input name="returnSurface" type="hidden" value={origin.returnSurface} />
       {children}
     </RouteBackedWidgetPostForm>
   );

@@ -26,7 +26,13 @@ function one(value: string | string[] | undefined): string | undefined {
 
 export default async function InterceptedWorkforceDetailPage({ params, searchParams }: Props) {
   const [{ workerProfileId }, parameters] = await Promise.all([params, searchParams]);
-  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr");
+  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr", [
+    "/workspace/hr/employment",
+    "/workspace/hr/employment/admin",
+    "/workspace/hr/profile",
+    "/workspace/hr/profile/direct-reports",
+    "/workspace/hr/profile/admin",
+  ]);
   const returnContext = one(parameters.returnContext);
   const masterKind =
     returnContext === "admin"

@@ -26,7 +26,10 @@ function one(value: string | string[] | undefined): string | undefined {
 
 export default async function InterceptedExpenseClaimDetailPage({ params, searchParams }: Props) {
   const [{ expenseClaimId }, parameters] = await Promise.all([params, searchParams]);
-  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr");
+  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr", [
+    "/workspace/hr/expenses",
+    "/workspace/my-work",
+  ]);
   const fromMyWork =
     one(parameters.returnContext) === "my-work" || one(parameters.returnTo) === "my-work";
   const masterKind = fromMyWork

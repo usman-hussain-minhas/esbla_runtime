@@ -12,7 +12,7 @@ interface Props {
 
 export default async function InterceptedShiftsPage({ searchParams }: Props) {
   const parameters = await searchParams;
-  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr");
+  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr", "/workspace/hr/shifts");
   return (
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}

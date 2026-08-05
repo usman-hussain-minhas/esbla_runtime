@@ -12,7 +12,11 @@ interface Props {
 
 export default async function InterceptedEmploymentPage({ searchParams }: Props) {
   const parameters = await searchParams;
-  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr");
+  const origin = parseRouteBackedWidgetOrigin(
+    parameters,
+    "/workspace/hr",
+    "/workspace/hr/employment",
+  );
   return (
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}

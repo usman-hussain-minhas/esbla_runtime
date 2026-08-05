@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { PresentationWidgetDefinition, PresentationWidgetState } from "@esbla/contracts";
+import {
+  getPresentationWidgetAdmissionDefinition,
+  type PresentationWidgetDefinition,
+  type PresentationWidgetState,
+} from "@esbla/contracts";
 import { ArrowRight, List, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -31,6 +35,7 @@ import { settlePresentationWidgetProviders } from "../../../../lib/presentation-
 import {
   buildNestedRouteBackedWidgetHref,
   buildRouteBackedWidgetHref,
+  createRouteBackedWidgetOrigin,
 } from "../../../../lib/route-backed-widget-navigation-core";
 import { getAssignedWorkspaceTasks } from "../../../../lib/workspace-task-assigned-list";
 import {
@@ -68,7 +73,7 @@ interface FailureContent {
 
 interface RegisteredWidget {
   readonly definition: PresentationWidgetDefinition;
-  readonly fullScreenRoute: string;
+  readonly fullScreenRoute: string | null;
   readonly placement: ResponsivePresentationWidgetPlacement;
 }
 
@@ -82,6 +87,10 @@ function resolveRegisteredWidget(
     registered.widgetDefinitionId,
     registered.widgetDefinitionVersion,
   );
+  const admission = getPresentationWidgetAdmissionDefinition(
+    registered.widgetDefinitionId,
+    registered.widgetDefinitionVersion,
+  );
   if (
     (expectedDefinitionId !== undefined && definition.id !== expectedDefinitionId) ||
     [placement.desktop, placement.tablet, placement.phone].some(
@@ -90,7 +99,7 @@ function resolveRegisteredWidget(
         candidate.widgetDefinitionId !== registered.widgetDefinitionId ||
         candidate.widgetDefinitionVersion !== registered.widgetDefinitionVersion,
     ) ||
-    definition.fullScreenRoute === null
+    (admission.expansionMode !== null && definition.fullScreenRoute === null)
   ) {
     throw new Error("Representative widget registry binding is invalid");
   }
@@ -120,22 +129,29 @@ function WidgetFrame({
   surfaceId: SurfaceDefinition["id"];
 }>) {
   const fullScreenControlId = `${placement.desktop.instanceId}.full-screen`;
+  const admission = getPresentationWidgetAdmissionDefinition(
+    definition.id,
+    definition.definitionVersion,
+  );
   const fullScreenEligible =
     state !== "permission_denied" && state !== "service_inactive" && state !== "not_found";
   return (
     <PresentationWidgetFrame
       action={
-        definition.fullScreenRoute && fullScreenEligible ? (
+        admission.expansionMode !== null && definition.fullScreenRoute && fullScreenEligible ? (
           <Link
-            aria-label={`Open ${definition.displayName}`}
+            aria-label={`Open ${definition.displayName} ${
+              admission.expansionMode === "quick_view" ? "quick view" : "workspace"
+            }`}
             className="icon-command"
             href={buildRouteBackedWidgetHref(
               definition.fullScreenRoute,
               surfaceId,
               fullScreenControlId,
+              definition.id,
             )}
             id={fullScreenControlId}
-            title="Open full screen"
+            title={admission.expansionMode === "quick_view" ? "Open quick view" : "Open workspace"}
           >
             <List aria-hidden="true" size={16} />
           </Link>
@@ -171,10 +187,15 @@ function compactWidgetHref(
   placement: ResponsivePresentationWidgetPlacement,
   subjectId: string,
 ): string {
-  return buildNestedRouteBackedWidgetHref(destination, {
-    fallbackHref: surfaceId === "surface.mission-control" ? "/" : "/workspace/hr",
-    returnFocusId: compactWidgetFocusId(placement, subjectId),
-  });
+  const registered = getRegisteredSurfaceInstance(surfaceId, placement.desktop.instanceId);
+  return buildNestedRouteBackedWidgetHref(
+    destination,
+    createRouteBackedWidgetOrigin(
+      surfaceId,
+      compactWidgetFocusId(placement, subjectId),
+      registered.widgetDefinitionId,
+    ),
+  );
 }
 
 function FailureState({
@@ -450,6 +471,8 @@ export async function LeaveAssignedWidget({ placement, surfaceId }: Representati
                 item.leaveRequestId,
                 surfaceId === "surface.mission-control" ? "mission-control" : "hr-mission-control",
                 focusId,
+                undefined,
+                createRouteBackedWidgetOrigin(surfaceId, focusId, definition.id),
               );
               return (
                 <li className="zen-widget-work-row" key={item.workItemId}>
@@ -585,6 +608,8 @@ export async function LeaveHistoryWidget({ placement, surfaceId }: Representativ
                         ? "mission-control"
                         : "hr-mission-control",
                       focusId,
+                      undefined,
+                      createRouteBackedWidgetOrigin(surfaceId, focusId, definition.id),
                     )}
                     id={focusId}
                   >
@@ -630,6 +655,11 @@ export function LeaveRequestFormWidget({ placement, surfaceId }: RepresentativeW
             className="text-command"
             href={buildHrLeaveNewHref({
               originFocusId: `${placement.desktop.instanceId}.new-request`,
+              routeOrigin: createRouteBackedWidgetOrigin(
+                surfaceId,
+                `${placement.desktop.instanceId}.new-request`,
+                definition.id,
+              ),
               returnContext:
                 surfaceId === "surface.mission-control" ? "mission-control" : "hr-mission-control",
             })}
@@ -2305,6 +2335,12 @@ export async function MyWorkWidget({ placement, surfaceId }: RepresentativeWidge
                     ? "mission-control"
                     : "hr-mission-control",
                   `${placement.desktop.instanceId}.${item.leaveRequestId}`,
+                  undefined,
+                  createRouteBackedWidgetOrigin(
+                    surfaceId,
+                    `${placement.desktop.instanceId}.${item.leaveRequestId}`,
+                    definition.id,
+                  ),
                 )}
                 id={`${placement.desktop.instanceId}.${item.leaveRequestId}`}
               >
@@ -2329,6 +2365,12 @@ export async function MyWorkWidget({ placement, surfaceId }: RepresentativeWidge
                         ? "mission-control"
                         : "hr-mission-control",
                       `${placement.desktop.instanceId}.${item.leaveRequestId}`,
+                      undefined,
+                      createRouteBackedWidgetOrigin(
+                        surfaceId,
+                        `${placement.desktop.instanceId}.${item.leaveRequestId}`,
+                        definition.id,
+                      ),
                     )}
                   />
                 </div>

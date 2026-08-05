@@ -586,7 +586,7 @@ describe("Employment Record rendered boundary", () => {
       }),
     );
     expect(contextual.headers.get("location")).toBe(
-      "/workspace/hr/employment/admin?result=success&originFocusId=mission-control.employment-admin.full-screen&returnSurface=mission-control#employment-result",
+      "/workspace/hr/employment/admin?result=success&originFocusId=mission-control.employment-admin.full-screen&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.employment.admin-queue#employment-result",
     );
     expect(fetchSpy).toHaveBeenCalledTimes(2);
 

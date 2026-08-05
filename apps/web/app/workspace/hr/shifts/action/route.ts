@@ -115,8 +115,12 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
   }
-  const presentationOrigin = parseOptionalRouteBackedWidgetOrigin(value);
+  const presentationOrigin = parseOptionalRouteBackedWidgetOrigin(
+    value,
+    "/workspace/hr/shifts/reports",
+  );
   delete value.originFocusId;
+  delete value.originWidgetDefinitionId;
   delete value.returnSurface;
   const validation = validateShiftAction(value);
   if (!validation.ok)

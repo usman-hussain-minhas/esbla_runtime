@@ -5,7 +5,6 @@ import { loadAttendanceDetail } from "../../../../../../lib/hr-attendance";
 import { hasAttendanceAction } from "../../../../../../lib/hr-attendance-core";
 import {
   buildNestedRouteBackedWidgetHref,
-  getRouteBackedWidgetOriginParameters,
   type RouteBackedWidgetOrigin,
 } from "../../../../../../lib/route-backed-widget-navigation-core";
 import { RouteBackedWidgetPostForm } from "../../../../../../theme/zen-theme/v1/route-backed-widget-overlay";
@@ -37,7 +36,6 @@ export default async function AttendanceDetailPage({
 }: Props) {
   const [{ observationId }, parameters] = await Promise.all([params, searchParams]);
   const state = preloadedState ?? (await loadAttendanceDetail(observationId, parameters));
-  const encodedOrigin = focusOrigin ? getRouteBackedWidgetOriginParameters(focusOrigin) : undefined;
   const back =
     one(parameters.returnTo) === "reports"
       ? "/workspace/hr/attendance/reports"
@@ -96,12 +94,11 @@ export default async function AttendanceDetailPage({
             <RouteBackedWidgetPostForm
               action="/workspace/hr/attendance/action"
               className="leave-request-form"
+              focusOrigin={focusOrigin}
             >
               <h2>Append a correction</h2>
-              {encodedOrigin ? (
+              {focusOrigin?.widgetDefinitionId ? (
                 <>
-                  <input name="originFocusId" type="hidden" value={encodedOrigin.originFocusId} />
-                  <input name="returnSurface" type="hidden" value={encodedOrigin.returnSurface} />
                   <input
                     name="returnTo"
                     type="hidden"

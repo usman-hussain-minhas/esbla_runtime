@@ -12,7 +12,11 @@ interface Props {
 
 export default async function InterceptedTimesheetCorrectionsPage({ searchParams }: Props) {
   const parameters = await searchParams;
-  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr");
+  const origin = parseRouteBackedWidgetOrigin(
+    parameters,
+    "/workspace/hr",
+    "/workspace/hr/timesheets/admin/corrections",
+  );
   return (
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}

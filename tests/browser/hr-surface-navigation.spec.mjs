@@ -172,3 +172,93 @@ test("Settings, Studio and shortcut chrome preserve exact surface identity and s
     await closeActor(manager);
   }
 });
+
+test("grouped surfaces preserve exact launch identity and semantic expansion admission", async ({
+  browser,
+}) => {
+  const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
+  const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
+  try {
+    await employee.page.goto(`${employee.origin}/workspace/hr/requests-and-claims`, {
+      waitUntil: "networkidle",
+    });
+    const requests = employee.page.locator(
+      '[data-presentation-surface-id="surface.hr.requests-and-claims"]',
+    );
+    const leave = requests.locator('[data-widget-definition="hr.leave.my-requests"]');
+    const leaveLauncher = leave.getByRole("link", {
+      exact: true,
+      name: "Open My Leave Requests workspace",
+    });
+    const leaveHref =
+      "/workspace/hr/leave?originFocusId=hr-requests-and-claims.my-leave.full-screen&returnSurface=surface.hr.requests-and-claims&originWidgetDefinitionId=hr.leave.my-requests";
+    await expect(leaveLauncher).toHaveAttribute("href", leaveHref);
+    await leaveLauncher.click();
+    const leaveOverlay = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "My leave requests",
+    });
+    await expect(leaveOverlay).toBeVisible();
+    await expect(employee.page).toHaveURL(`${employee.origin}${leaveHref}`);
+    await leaveOverlay.getByRole("link", { exact: true, name: "New request" }).click();
+    const newLeaveOverlay = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "New leave request",
+    });
+    await expect(newLeaveOverlay).toBeVisible();
+    await expect(employee.page).toHaveURL(
+      `${employee.origin}/workspace/hr/leave/new?returnContext=hr-mission-control&originFocusId=hr-requests-and-claims.my-leave.full-screen&returnSurface=surface.hr.requests-and-claims&originWidgetDefinitionId=hr.leave.my-requests`,
+    );
+    await employee.page.goBack();
+    await expect(leaveOverlay).toBeVisible();
+    await expect(employee.page).toHaveURL(`${employee.origin}${leaveHref}`);
+    await leaveOverlay
+      .getByRole("button", { exact: true, name: "Close My leave requests" })
+      .click();
+    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/requests-and-claims`);
+    await expect(employee.page.getByRole("dialog")).toHaveCount(0);
+    await expect(
+      employee.page.locator("#hr-requests-and-claims\\.my-leave\\.full-screen"),
+    ).toBeFocused();
+
+    await employee.page.goto(`${employee.origin}/workspace/hr/workforce`, {
+      waitUntil: "networkidle",
+    });
+    const workforce = employee.page.locator(
+      '[data-presentation-surface-id="surface.hr.workforce"]',
+    );
+    const profileLauncher = workforce
+      .locator('[data-widget-definition="hr.workforce.my-profile"]')
+      .getByRole("link", { exact: true, name: "Open My Profile quick view" });
+    await expect(profileLauncher).toHaveAttribute(
+      "href",
+      "/workspace/hr/profile?originFocusId=hr-workforce.my-profile.full-screen&returnSurface=surface.hr.workforce&originWidgetDefinitionId=hr.workforce.my-profile",
+    );
+    await profileLauncher.click();
+    const profileOverlay = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "Workforce profile",
+    });
+    await expect(profileOverlay).toBeVisible();
+    await expect(employee.page).toHaveURL(
+      `${employee.origin}/workspace/hr/profile?originFocusId=hr-workforce.my-profile.full-screen&returnSurface=surface.hr.workforce&originWidgetDefinitionId=hr.workforce.my-profile`,
+    );
+    await profileOverlay
+      .getByRole("button", { exact: true, name: "Close workforce profile" })
+      .click();
+    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/workforce`);
+    await expect(employee.page.locator("#hr-workforce\\.my-profile\\.full-screen")).toBeFocused();
+
+    await operator.page.goto(`${operator.origin}/workspace/hr/workforce`, {
+      waitUntil: "networkidle",
+    });
+    const statusReporting = operator.page.locator(
+      '[data-widget-definition="hr.workforce.status-reporting"]',
+    );
+    await expect(statusReporting).toBeVisible();
+    await expect(statusReporting.locator(".icon-command")).toHaveCount(0);
+  } finally {
+    await closeActor(employee);
+    await closeActor(operator);
+  }
+});

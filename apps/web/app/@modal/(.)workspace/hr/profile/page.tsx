@@ -11,7 +11,11 @@ interface Props {
 }
 
 export default async function InterceptedProfilePage({ searchParams }: Props) {
-  const origin = parseRouteBackedWidgetOrigin(await searchParams, "/workspace/hr");
+  const origin = parseRouteBackedWidgetOrigin(
+    await searchParams,
+    "/workspace/hr",
+    "/workspace/hr/profile",
+  );
   return (
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}

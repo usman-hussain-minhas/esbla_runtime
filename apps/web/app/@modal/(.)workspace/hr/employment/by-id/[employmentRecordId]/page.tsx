@@ -28,7 +28,11 @@ function one(value: string | string[] | undefined): string | undefined {
 
 export default async function InterceptedEmploymentDetailPage({ params, searchParams }: Props) {
   const [{ employmentRecordId }, parameters] = await Promise.all([params, searchParams]);
-  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr");
+  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr", [
+    "/workspace/hr/employment",
+    "/workspace/hr/employment/admin",
+    "/workspace/hr/profile/admin",
+  ]);
   const returnTo = one(parameters.returnTo);
   const masterKind = returnTo === "list" ? "list" : returnTo === "admin" ? "admin" : undefined;
   const domainParameters = withoutRouteBackedWidgetOrigin(parameters);

@@ -6,6 +6,7 @@ import {
   getHrLeaveReturnLink,
   HR_LEAVE_CANONICAL_HOST_LINK,
   type HrLeaveFocusNavigation,
+  isHrLeaveRouteOriginCompatible,
   parseHrLeaveListCursor,
   parseHrLeaveOriginFocusId,
   parseHrLeaveReturnContext,
@@ -39,7 +40,18 @@ export default async function InterceptedLeaveDetailPage({
   const returnContext = parseHrLeaveReturnContext(parameters.returnContext);
   const returnLink = getHrLeaveReturnLink(returnContext);
   const originFocusId = parseHrLeaveOriginFocusId(parameters.originFocusId);
-  const routeOrigin = parseOptionalRouteBackedWidgetOrigin(parameters);
+  const candidateRouteOrigin = parseOptionalRouteBackedWidgetOrigin(parameters, [
+    "/workspace/hr/leave",
+    "/workspace/hr/leave/new",
+    "/workspace/my-work",
+  ]);
+  const routeOrigin = isHrLeaveRouteOriginCompatible(
+    returnContext,
+    originFocusId,
+    candidateRouteOrigin,
+  )
+    ? candidateRouteOrigin
+    : undefined;
   const fromFocusedMyWork = returnContext === "my-work" && routeOrigin !== undefined;
   const detailResult = await (async () => {
     try {
@@ -50,15 +62,16 @@ export default async function InterceptedLeaveDetailPage({
     }
   })();
 
-  const fallbackHref = fromFocusedMyWork
+  const fallbackHref = routeOrigin
     ? routeOrigin.fallbackHref
     : (returnLink?.href ?? HR_LEAVE_CANONICAL_HOST_LINK.href);
   const focusNavigation: HrLeaveFocusNavigation | undefined =
     returnContext === "leave-list"
       ? { returnContext }
       : (returnContext === "mission-control" || returnContext === "hr-mission-control") &&
-          originFocusId
-        ? { originFocusId, returnContext }
+          originFocusId &&
+          routeOrigin
+        ? { originFocusId, routeOrigin, returnContext }
         : undefined;
   const listCursor =
     returnContext === "leave-list" ? parseHrLeaveListCursor(parameters) : undefined;
@@ -97,7 +110,7 @@ export default async function InterceptedLeaveDetailPage({
       browserBackMode={showMaster ? "return-master" : "close-origin"}
       fallbackHref={fallbackHref}
       label="Leave request detail"
-      returnFocusId={routeOrigin?.returnFocusId ?? originFocusId ?? "leave-detail-fallback-focus"}
+      returnFocusId={routeOrigin?.returnFocusId ?? "leave-detail-fallback-focus"}
     >
       <RouteBackedWidgetFocusWorkspace
         activePane="detail"

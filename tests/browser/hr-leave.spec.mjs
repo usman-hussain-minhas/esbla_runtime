@@ -838,8 +838,8 @@ test("employee Profile and Leave-list widgets render as responsive route-backed 
       {
         dialogName: "Workforce profile",
         expectedHref:
-          "/workspace/hr/profile?originFocusId=hr-mission-control.my-profile.full-screen&returnSurface=hr-mission-control",
-        launcherName: "Open My Profile",
+          "/workspace/hr/profile?originFocusId=hr-mission-control.my-profile.full-screen&returnSurface=surface.hr.mission-control&originWidgetDefinitionId=hr.workforce.my-profile",
+        launcherName: "Open My Profile quick view",
         screenshotStem: "representative-workforce-profile",
         standaloneHeading: "Workforce profile",
       },
@@ -850,8 +850,8 @@ test("employee Profile and Leave-list widgets render as responsive route-backed 
       {
         dialogName: "My leave requests",
         expectedHref:
-          "/workspace/hr/leave?originFocusId=hr-mission-control.my-leave.full-screen&returnSurface=hr-mission-control",
-        launcherName: "View all My Leave Requests",
+          "/workspace/hr/leave?originFocusId=hr-mission-control.my-leave.full-screen&returnSurface=surface.hr.mission-control&originWidgetDefinitionId=hr.leave.my-requests",
+        launcherName: "Open My Leave Requests workspace",
         screenshotStem: "representative-leave-list",
         standaloneHeading: "My Leave Requests",
       },
@@ -871,7 +871,7 @@ test("Leave focus workspace preserves origin, nested Back, dirty guard and mobil
     await employee.page.goto(`${employee.origin}/workspace/hr`);
     await waitForShellHydration(employee);
     await employee.page
-      .getByRole("link", { exact: true, name: "View all My Leave Requests" })
+      .getByRole("link", { exact: true, name: "Open My Leave Requests workspace" })
       .press("Enter");
 
     const listOverlay = employee.page.getByRole("dialog", {
@@ -888,7 +888,7 @@ test("Leave focus workspace preserves origin, nested Back, dirty guard and mobil
     const workspace = newOverlay.locator('[data-focus-workspace="hr-leave"]');
     await expect(newOverlay).toBeVisible();
     await expect(employee.page).toHaveURL(
-      `${employee.origin}/workspace/hr/leave/new?returnContext=hr-mission-control&originFocusId=hr-mission-control.my-leave.full-screen`,
+      `${employee.origin}/workspace/hr/leave/new?returnContext=hr-mission-control&originFocusId=hr-mission-control.my-leave.full-screen&returnSurface=surface.hr.mission-control&originWidgetDefinitionId=hr.leave.my-requests`,
     );
     await expect(workspace).toHaveAttribute("data-focus-layout", "master-detail");
     await expect(workspace.locator('[data-focus-pane="master"]')).toBeVisible();
@@ -939,7 +939,7 @@ test("Leave focus workspace preserves origin, nested Back, dirty guard and mobil
     expect(await acceptedPrompt).toBe("Discard unsaved changes and leave this view?");
     await expect(listOverlay).toBeVisible();
     await expect(employee.page).toHaveURL(
-      `${employee.origin}/workspace/hr/leave?originFocusId=hr-mission-control.my-leave.full-screen&returnSurface=hr-mission-control`,
+      `${employee.origin}/workspace/hr/leave?originFocusId=hr-mission-control.my-leave.full-screen&returnSurface=surface.hr.mission-control&originWidgetDefinitionId=hr.leave.my-requests`,
     );
 
     await employee.page.setViewportSize({ height: 844, width: 390 });
@@ -960,13 +960,13 @@ test("Leave focus workspace preserves origin, nested Back, dirty guard and mobil
     await employee.page.goBack();
     await expect(listOverlay).toBeVisible();
     await expect(employee.page).toHaveURL(
-      `${employee.origin}/workspace/hr/leave?originFocusId=hr-mission-control.my-leave.full-screen&returnSurface=hr-mission-control`,
+      `${employee.origin}/workspace/hr/leave?originFocusId=hr-mission-control.my-leave.full-screen&returnSurface=surface.hr.mission-control&originWidgetDefinitionId=hr.leave.my-requests`,
     );
 
     await employee.page.goForward();
     await expect(newOverlay).toBeVisible();
     await expect(employee.page).toHaveURL(
-      `${employee.origin}/workspace/hr/leave/new?returnContext=hr-mission-control&originFocusId=hr-mission-control.my-leave.full-screen`,
+      `${employee.origin}/workspace/hr/leave/new?returnContext=hr-mission-control&originFocusId=hr-mission-control.my-leave.full-screen&returnSurface=surface.hr.mission-control&originWidgetDefinitionId=hr.leave.my-requests`,
     );
     await expect(workspace.locator('[data-focus-pane="master"]')).toBeHidden();
     await employee.page.goBack();
@@ -1010,7 +1010,7 @@ test("Leave focus workspace fails closed after authorization loss, deactivation 
     const openFromCurrentList = async () => {
       await employee.page.goto(`${employee.origin}/workspace/hr`);
       await employee.page
-        .getByRole("link", { exact: true, name: "View all My Leave Requests" })
+        .getByRole("link", { exact: true, name: "Open My Leave Requests workspace" })
         .press("Enter");
       const listOverlay = employee.page.getByRole("dialog", {
         exact: true,
@@ -1135,8 +1135,8 @@ test("employee Employment and Shift widgets render as responsive route-backed pr
       {
         dialogName: "Employment facts",
         expectedHref:
-          "/workspace/hr/employment?originFocusId=hr-mission-control.current-employment.full-screen&returnSurface=hr-mission-control",
-        launcherName: "Open Current Employment Facts",
+          "/workspace/hr/employment?originFocusId=hr-mission-control.current-employment.full-screen&returnSurface=surface.hr.mission-control&originWidgetDefinitionId=hr.employment.current-facts",
+        launcherName: "Open Current Employment Facts workspace",
         screenshotStem: "representative-employment-facts",
         standaloneHeading: "Employment facts",
       },
@@ -1147,8 +1147,8 @@ test("employee Employment and Shift widgets render as responsive route-backed pr
       {
         dialogName: "My shifts",
         expectedHref:
-          "/workspace/hr/shifts?originFocusId=hr-mission-control.my-published-shifts.full-screen&returnSurface=hr-mission-control",
-        launcherName: "Open My Published Shifts",
+          "/workspace/hr/shifts?originFocusId=hr-mission-control.my-published-shifts.full-screen&returnSurface=surface.hr.mission-control&originWidgetDefinitionId=hr.shift.my-published",
+        launcherName: "Open My Published Shifts workspace",
         screenshotStem: "representative-published-shifts",
         standaloneHeading: "My shifts",
       },
@@ -1169,8 +1169,8 @@ test("manager My Work widget renders as a responsive route-backed product", asyn
       {
         dialogName: "My Work",
         expectedHref:
-          "/workspace/my-work?originFocusId=hr-mission-control.my-work.full-screen&returnSurface=hr-mission-control",
-        launcherName: "Open My Work",
+          "/workspace/my-work?originFocusId=hr-mission-control.my-work.full-screen&returnSurface=surface.hr.mission-control&originWidgetDefinitionId=platform.my-work.queue",
+        launcherName: "Open My Work workspace",
         screenshotStem: "representative-my-work",
         standaloneHeading: "Assigned work",
       },
@@ -1336,10 +1336,13 @@ test("Mission Control reuses the real Leave widget and persists four independent
     );
     await expect(universalWidget).toHaveAttribute("data-widget-definition", "hr.leave.my-requests");
     await expect(
-      universalWidget.getByRole("link", { name: "View all My leave requests" }),
+      universalWidget.getByRole("link", {
+        exact: true,
+        name: "Open My Leave Requests workspace",
+      }),
     ).toHaveAttribute(
       "href",
-      "/workspace/hr/leave?originFocusId=mission-control.my-leave.full-screen&returnSurface=mission-control",
+      "/workspace/hr/leave?originFocusId=mission-control.my-leave.full-screen&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.leave.my-requests",
     );
     await expect(employee.page.locator('.zen-widget[data-widget-state="loading"]')).toHaveCount(0);
 
@@ -1902,9 +1905,14 @@ test("Mission Control reuses the real Leave widget and persists four independent
     await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr`);
     await expect(employee.page.getByRole("heading", { name: "People and work" })).toBeFocused();
     await expect(
-      employee.page.getByRole("link", { name: "View all My leave requests" }),
+      employee.page.getByRole("link", {
+        exact: true,
+        name: "Open My Leave Requests workspace",
+      }),
     ).toHaveCount(0);
-    await expect(employee.page.getByRole("link", { name: "Open My Profile" })).toBeVisible();
+    await expect(
+      employee.page.getByRole("link", { exact: true, name: "Open My Profile quick view" }),
+    ).toBeVisible();
     await employee.page.goto(employee.origin);
     const deniedCapabilityMutation = await employee.page.evaluate(async () => {
       const response = await fetch("/presentation/surfaces/surface.mission-control", {
@@ -1951,9 +1959,14 @@ test("Mission Control reuses the real Leave widget and persists four independent
     await employee.page.reload();
     await expect(serviceGroupsLauncher).toBeVisible();
     await employee.page.goto(`${employee.origin}/workspace/hr`);
-    await expect(employee.page.getByRole("link", { name: "Open My Profile" })).toHaveCount(0);
     await expect(
-      employee.page.getByRole("link", { name: "View all My leave requests" }),
+      employee.page.getByRole("link", { exact: true, name: "Open My Profile quick view" }),
+    ).toHaveCount(0);
+    await expect(
+      employee.page.getByRole("link", {
+        exact: true,
+        name: "Open My Leave Requests workspace",
+      }),
     ).toHaveCount(0);
 
     await setEmployeeLeavePresentationEligibility(false, ["hr.leave.list_own", "hr.leave.view"]);
@@ -2518,11 +2531,14 @@ test("Timesheet and Expense catalogue faces add through Surface Editor and rende
     }
 
     await addAndSave(manager, ["Assigned Timesheets", "Assigned Expense Claims"]);
-    for (const definitionId of ["hr.timesheet.assigned", "hr.expense.assigned"]) {
+    for (const [definitionId, accessibleName] of [
+      ["hr.timesheet.assigned", "Open Assigned Timesheets workspace"],
+      ["hr.expense.assigned", "Open Assigned Expense Claims workspace"],
+    ]) {
       const widget = manager.page.locator(`[data-widget-definition="${definitionId}"]`);
       await expect(widget).toHaveCount(1);
       await expect(widget).toHaveAttribute("data-widget-state", /^(empty|populated)$/);
-      await expect(widget.getByRole("link", { name: /^Open / })).toHaveAttribute(
+      await expect(widget.getByRole("link", { exact: true, name: accessibleName })).toHaveAttribute(
         "href",
         /\/workspace\/my-work\?/,
       );
@@ -2553,7 +2569,7 @@ test("Timesheet and Expense catalogue faces add through Surface Editor and rende
       corrections.getByRole("link", { exact: true, name: "Open Timesheet corrections" }),
     ).toHaveAttribute(
       "href",
-      "/workspace/hr/timesheets/admin/corrections?originFocusId=mission-control.timesheet-corrections.corrections&returnSurface=mission-control",
+      "/workspace/hr/timesheets/admin/corrections?originFocusId=mission-control.timesheet-corrections.corrections&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.timesheet.corrections",
     );
 
     for (const [actor, name] of [
@@ -3700,12 +3716,12 @@ test("employee submits, manager approves, and employee reloads durable rendered 
       .locator(`a[href*="/workspace/hr/leave/${leaveRequestId}?"]`);
     await expect(originLink).toHaveAttribute(
       "href",
-      `/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control&originFocusId=mission-control.my-leave.${leaveRequestId}`,
+      `/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control&originFocusId=mission-control.my-leave.${leaveRequestId}&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.leave.my-requests`,
     );
     await expect(originLink).toBeVisible();
     await originLink.press("Enter");
     await expect(employee.page).toHaveURL(
-      `${employee.origin}/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control&originFocusId=mission-control.my-leave.${leaveRequestId}`,
+      `${employee.origin}/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control&originFocusId=mission-control.my-leave.${leaveRequestId}&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.leave.my-requests`,
     );
     const overlay = employee.page.getByRole("dialog", { name: "Leave request detail" });
     await expect(overlay).toBeVisible();
@@ -3918,7 +3934,7 @@ test("employee submits, manager approves, and employee reloads durable rendered 
     await expect(confirm).toBeFocused();
     await confirm.press("Enter");
     await expect(manager.page).toHaveURL(
-      `${fixture.managerOrigin}/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control&originFocusId=mission-control.my-work.${leaveRequestId}`,
+      `${fixture.managerOrigin}/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control&originFocusId=mission-control.my-work.${leaveRequestId}&returnSurface=surface.mission-control&originWidgetDefinitionId=platform.my-work.queue`,
     );
     await expectHistory(manager, "Approved", ["Submitted", "Approved"]);
     await manager.page
@@ -3984,7 +4000,7 @@ test("configured rejection note fails accessibly, then rejection persists after 
       startDate: "2027-03-11",
     });
     await manager.page.goto(`${manager.origin}/workspace/hr`);
-    await manager.page.getByRole("link", { exact: true, name: "Open My Work" }).click();
+    await manager.page.getByRole("link", { exact: true, name: "Open My Work workspace" }).click();
     const focusedMyWork = manager.page.getByRole("dialog", { exact: true, name: "My Work" });
     await expect(focusedMyWork).toBeVisible();
     const card = focusedMyWork.getByRole("listitem").filter({
@@ -4027,7 +4043,10 @@ test("configured rejection note fails accessibly, then rejection persists after 
       .toBe("my-work");
     await expect
       .poll(() => new URL(manager.page.url()).searchParams.get("returnSurface"))
-      .toBe("hr-mission-control");
+      .toBe("surface.hr.mission-control");
+    expect(new URL(manager.page.url()).searchParams.get("originWidgetDefinitionId")).toBe(
+      "platform.my-work.queue",
+    );
     const focusedDetail = manager.page.getByRole("dialog", {
       exact: true,
       name: "Leave request detail",
@@ -5101,7 +5120,9 @@ test("Shift roster renders across operator, employee and manager authority", asy
 
     await employee.page.setViewportSize({ height: 900, width: 1_280 });
     await employee.page.goto(`${employee.origin}/workspace/hr`);
-    await employee.page.getByRole("link", { name: "Open My Published Shifts" }).press("Enter");
+    await employee.page
+      .getByRole("link", { exact: true, name: "Open My Published Shifts workspace" })
+      .press("Enter");
     const shiftListOverlay = employee.page.getByRole("dialog", {
       exact: true,
       name: "My shifts",
@@ -5112,7 +5133,7 @@ test("Shift roster renders across operator, employee and manager authority", asy
     await shiftListOverlay.getByRole("button", { name: "Apply period" }).press("Enter");
     await expect(shiftListOverlay).toBeVisible();
     await expect(employee.page).toHaveURL(
-      /\/workspace\/hr\/shifts\?(?=.*originFocusId=hr-mission-control\.my-published-shifts\.full-screen)(?=.*returnSurface=hr-mission-control)(?=.*from=2028-08-01)(?=.*to=2028-08-07)/,
+      /\/workspace\/hr\/shifts\?(?=.*originFocusId=hr-mission-control\.my-published-shifts\.full-screen)(?=.*returnSurface=surface\.hr\.mission-control)(?=.*originWidgetDefinitionId=hr\.shift\.my-published)(?=.*from=2028-08-01)(?=.*to=2028-08-07)/,
     );
     await expect(shiftListOverlay.getByText("Asia/Karachi", { exact: true })).toBeVisible();
     await shiftListOverlay.getByRole("link", { name: "View persistent history" }).click();
@@ -5259,7 +5280,7 @@ test("Attendance renders manual facts and persistent correction history by curre
     await employee.page.setViewportSize({ height: 900, width: 1_280 });
     await employee.page.goto(`${employee.origin}/workspace/hr`);
     await employee.page
-      .getByRole("link", { name: "Open My Attendance Observations" })
+      .getByRole("link", { exact: true, name: "Open My Attendance Observations workspace" })
       .press("Enter");
     const attendanceListOverlay = employee.page.getByRole("dialog", {
       exact: true,
@@ -5271,7 +5292,7 @@ test("Attendance renders manual facts and persistent correction history by curre
     await attendanceListOverlay.getByRole("button", { name: "Apply period" }).press("Enter");
     await expect(attendanceListOverlay).toBeVisible();
     await expect(employee.page).toHaveURL(
-      /\/workspace\/hr\/attendance\?(?=.*originFocusId=hr-mission-control\.my-attendance\.full-screen)(?=.*returnSurface=hr-mission-control)(?=.*from=2028-08-01)(?=.*to=2028-08-07)/,
+      /\/workspace\/hr\/attendance\?(?=.*originFocusId=hr-mission-control\.my-attendance\.full-screen)(?=.*returnSurface=surface\.hr\.mission-control)(?=.*originWidgetDefinitionId=hr\.attendance\.my-observations)(?=.*from=2028-08-01)(?=.*to=2028-08-07)/,
     );
     const employeeHistory = attendanceListOverlay.getByRole("link", {
       name: "View correction history",
@@ -5305,7 +5326,7 @@ test("Attendance renders manual facts and persistent correction history by curre
     ).toBe(true);
     await expect(employee.page).toHaveURL(
       new RegExp(
-        `/workspace/hr/attendance/by-id/${observationId}\\?(?=.*returnTo=own)(?=.*originFocusId=hr-mission-control\\.my-attendance\\.full-screen)(?=.*returnSurface=hr-mission-control)`,
+        `/workspace/hr/attendance/by-id/${observationId}\\?(?=.*returnTo=own)(?=.*originFocusId=hr-mission-control\\.my-attendance\\.full-screen)(?=.*returnSurface=surface\\.hr\\.mission-control)(?=.*originWidgetDefinitionId=hr\\.attendance\\.my-observations)`,
       ),
     );
     await expect(
@@ -5326,10 +5347,11 @@ test("Attendance renders manual facts and persistent correction history by curre
     await correct.focus();
     await operator.page.keyboard.press("Enter");
     await expect(operator.page).toHaveURL(
-      new RegExp(
-        `/workspace/hr/attendance/by-id/${observationId}\\?(?=.*returnTo=reports)(?=.*originFocusId=route-backed-widget-fallback-focus)(?=.*returnSurface=hr-mission-control)`,
-      ),
+      new RegExp(`/workspace/hr/attendance/by-id/${observationId}\\?returnTo=reports`),
     );
+    expect(new URL(operator.page.url()).searchParams.get("originFocusId")).toBeNull();
+    expect(new URL(operator.page.url()).searchParams.get("returnSurface")).toBeNull();
+    expect(new URL(operator.page.url()).searchParams.get("originWidgetDefinitionId")).toBeNull();
     await expect(
       operator.page.getByText("Rendered correction history", { exact: true }),
     ).toBeVisible();
@@ -5386,7 +5408,7 @@ test("Shift and Attendance catalogue faces preserve exact routes and current aut
     await expect(publishQueue.getByText("Create draft roster", { exact: true })).toBeVisible();
     await expect(publishQueue.getByRole("link", { name: /Create draft roster/ })).toHaveAttribute(
       "href",
-      "/workspace/hr/shifts/reports?originFocusId=mission-control.roster-publish.create_roster&returnSurface=mission-control",
+      "/workspace/hr/shifts/reports?originFocusId=mission-control.roster-publish.create_roster&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.shift.publish-queue",
     );
     await expect(attendanceReports).toHaveAttribute("data-widget-state", "empty");
     await expect(
@@ -5409,7 +5431,10 @@ test("Shift and Attendance catalogue faces preserve exact routes and current aut
     });
 
     await correctionQueue
-      .getByRole("link", { name: "Open Attendance Correction Queue" })
+      .getByRole("link", {
+        exact: true,
+        name: "Open Attendance Correction Queue workspace",
+      })
       .press("Enter");
     const attendanceReportsOverlay = operator.page.getByRole("dialog", {
       exact: true,
@@ -5433,7 +5458,7 @@ test("Shift and Attendance catalogue faces preserve exact routes and current aut
     await expect(attendanceFocusWorkspace.locator('[data-focus-pane="master"]')).toBeVisible();
     await expect(attendanceFocusWorkspace.locator('[data-focus-pane="detail"]')).toBeVisible();
     await expect(operator.page).toHaveURL(
-      /\/workspace\/hr\/attendance\/by-id\/[0-9a-f-]+\?(?=.*returnTo=reports)(?=.*originFocusId=mission-control\..+\.full-screen)(?=.*returnSurface=mission-control)/,
+      /\/workspace\/hr\/attendance\/by-id\/[0-9a-f-]+\?(?=.*returnTo=reports)(?=.*originFocusId=mission-control\..+\.full-screen)(?=.*returnSurface=surface\.mission-control)(?=.*originWidgetDefinitionId=hr\.attendance\.correction-queue)/,
     );
     const freshOriginLoaded = operator.page.waitForEvent("load");
     await attendanceDetailOverlay
@@ -5445,7 +5470,7 @@ test("Shift and Attendance catalogue faces preserve exact routes and current aut
 
     await operator.page
       .locator('[data-widget-definition="hr.shift.publish-queue"]')
-      .getByRole("link", { name: "Open Roster Publish Queue" })
+      .getByRole("link", { exact: true, name: "Open Roster Publish Queue workspace" })
       .press("Enter");
     const shiftReportsOverlay = operator.page.getByRole("dialog", {
       exact: true,
@@ -5461,7 +5486,7 @@ test("Shift and Attendance catalogue faces preserve exact routes and current aut
       shiftReportsOverlay.getByRole("heading", { name: "Last Shift action receipt" }),
     ).toBeVisible();
     await expect(operator.page).toHaveURL(
-      /\/workspace\/hr\/shifts\/reports\?(?=.*result=success)(?=.*originFocusId=mission-control\..+\.full-screen)(?=.*returnSurface=mission-control)/,
+      /\/workspace\/hr\/shifts\/reports\?(?=.*result=success)(?=.*originFocusId=mission-control\..+\.full-screen)(?=.*returnSurface=surface\.mission-control)(?=.*originWidgetDefinitionId=hr\.shift\.publish-queue)/,
     );
 
     const focusEvidencePath = testInfo.outputPath(
@@ -5510,7 +5535,10 @@ test("Employment and Workforce catalogue faces preserve focus workspace continui
 
     await operator.page
       .locator('[data-widget-definition="hr.employment.admin-queue"]')
-      .getByRole("link", { name: "Open Employment Administration Queue" })
+      .getByRole("link", {
+        exact: true,
+        name: "Open Employment Administration Queue workspace",
+      })
       .press("Enter");
     const employmentAdmin = operator.page.getByRole("dialog", {
       exact: true,
@@ -5540,7 +5568,7 @@ test("Employment and Workforce catalogue faces preserve focus workspace continui
     );
     await expect(employmentAdmin.locator("#employment-result")).toBeFocused();
     await expect(operator.page).toHaveURL(
-      /\/workspace\/hr\/employment\/admin\?(?=.*result=validation)(?=.*originFocusId=mission-control\..+\.full-screen)(?=.*returnSurface=mission-control)/,
+      /\/workspace\/hr\/employment\/admin\?(?=.*result=validation)(?=.*originFocusId=mission-control\..+\.full-screen)(?=.*returnSurface=surface\.mission-control)(?=.*originWidgetDefinitionId=hr\.employment\.admin-queue)/,
     );
     await expect(employmentHistoryLinks).toHaveCount(employmentRecordCount);
     await employmentAdmin.getByLabel("Worker Profile ID").fill(employmentActionWorkerProfileId);
@@ -5550,7 +5578,7 @@ test("Employment and Workforce catalogue faces preserve focus workspace continui
     );
     await expect(employmentAdmin).toBeVisible();
     await expect(operator.page).toHaveURL(
-      /\/workspace\/hr\/employment\/admin\?(?=.*result=success)(?=.*originFocusId=mission-control\..+\.full-screen)(?=.*returnSurface=mission-control)/,
+      /\/workspace\/hr\/employment\/admin\?(?=.*result=success)(?=.*originFocusId=mission-control\..+\.full-screen)(?=.*returnSurface=surface\.mission-control)(?=.*originWidgetDefinitionId=hr\.employment\.admin-queue)/,
     );
     await expect(employmentHistoryLinks).toHaveCount(employmentRecordCount + 1);
     await employmentHistoryLinks.first().click();
@@ -5575,7 +5603,7 @@ test("Employment and Workforce catalogue faces preserve focus workspace continui
     await operator.page.goto(`${operator.origin}/workspace/hr`);
     await operator.page
       .locator('[data-widget-definition="hr.employment.current-facts"]')
-      .getByRole("link", { name: "Open Current Employment Facts" })
+      .getByRole("link", { exact: true, name: "Open Current Employment Facts workspace" })
       .press("Enter");
     const employmentFacts = operator.page.getByRole("dialog", {
       exact: true,
@@ -5599,10 +5627,13 @@ test("Employment and Workforce catalogue faces preserve focus workspace continui
 
     await operator.page
       .locator('[data-widget-definition="hr.workforce.admin-queue"]')
-      .getByRole("link", { name: "Open Workforce Administration Queue" })
+      .getByRole("link", {
+        exact: true,
+        name: "Open Workforce Administration Queue workspace",
+      })
       .press("Enter");
     await expect(operator.page).toHaveURL(
-      /\/workspace\/hr\/profile\/admin\?(?=.*originFocusId=mission-control\..+\.full-screen)(?=.*returnSurface=mission-control)/,
+      /\/workspace\/hr\/profile\/admin\?(?=.*originFocusId=mission-control\..+\.full-screen)(?=.*returnSurface=surface\.mission-control)(?=.*originWidgetDefinitionId=hr\.workforce\.admin-queue)/,
     );
     const workforceAdmin = operator.page.getByRole("dialog", {
       exact: true,
@@ -5690,10 +5721,13 @@ test("Leave catalogue faces preserve employee and assigned-manager journeys", as
     await expect(assigned).toHaveCount(1);
     await expect(assigned).toHaveAttribute("data-widget-state", /^(empty|populated)$/);
     await expect(
-      assigned.getByRole("link", { name: "Open Assigned Leave Approvals" }),
+      assigned.getByRole("link", {
+        exact: true,
+        name: "Open Assigned Leave Approvals workspace",
+      }),
     ).toHaveAttribute(
       "href",
-      "/workspace/my-work?originFocusId=mission-control.leave-assigned.full-screen&returnSurface=mission-control",
+      "/workspace/my-work?originFocusId=mission-control.leave-assigned.full-screen&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.leave.assigned",
     );
     await expect(assigned).toHaveAttribute("data-widget-state", "populated");
     const decisionRow = assigned.locator(".zen-widget-work-row").filter({
@@ -5715,7 +5749,7 @@ test("Leave catalogue faces preserve employee and assigned-manager journeys", as
     await decisionRow.getByRole("button", { name: "Confirm approval" }).click();
     expect((await decisionResponse).status()).toBe(200);
     await expect(manager.page).toHaveURL(
-      `${manager.origin}/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control&originFocusId=${originFocusId}`,
+      `${manager.origin}/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control&originFocusId=${originFocusId}&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.leave.assigned`,
     );
     await expect(manager.page.getByRole("dialog", { name: "Leave request detail" })).toBeVisible();
     await manager.page
@@ -5750,9 +5784,14 @@ test("Leave catalogue faces preserve employee and assigned-manager journeys", as
     const requestForm = employee.page.locator('[data-widget-definition="hr.leave.request-form"]');
     await expect(history).toHaveCount(1);
     await expect(history).toHaveAttribute("data-widget-state", /^(empty|populated)$/);
-    await expect(history.getByRole("link", { name: "Open Leave Request History" })).toHaveAttribute(
+    await expect(
+      history.getByRole("link", {
+        exact: true,
+        name: "Open Leave Request History workspace",
+      }),
+    ).toHaveAttribute(
       "href",
-      "/workspace/hr/leave?originFocusId=mission-control.leave-history.full-screen&returnSurface=mission-control",
+      "/workspace/hr/leave?originFocusId=mission-control.leave-history.full-screen&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.leave.history",
     );
     if ((await history.getAttribute("data-widget-state")) === "populated") {
       await expect(history.locator('a[href^="/workspace/hr/leave/"]').first()).toBeVisible();
@@ -5764,8 +5803,30 @@ test("Leave catalogue faces preserve employee and assigned-manager journeys", as
     await expect(requestForm.getByText("Whole-day V1", { exact: true })).toBeVisible();
     await expect(requestForm.getByRole("link", { name: "Start Leave request" })).toHaveAttribute(
       "href",
-      "/workspace/hr/leave/new?returnContext=mission-control&originFocusId=mission-control.leave-request.new-request",
+      "/workspace/hr/leave/new?returnContext=mission-control&originFocusId=mission-control.leave-request.new-request&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.leave.request-form",
     );
+    await requestForm.getByRole("link", { name: "Start Leave request" }).click();
+    const newLeaveOverlay = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "New leave request",
+    });
+    await expect(newLeaveOverlay).toBeVisible();
+    await newLeaveOverlay.getByRole("link", { exact: true, name: "Back to requests" }).click();
+    const leaveListOverlay = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "My leave requests",
+    });
+    await expect(leaveListOverlay).toBeVisible();
+    await expect(employee.page).toHaveURL(
+      `${employee.origin}/workspace/hr/leave?originFocusId=mission-control.leave-request.new-request&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.leave.request-form`,
+    );
+    await leaveListOverlay
+      .getByRole("button", { exact: true, name: "Close My leave requests" })
+      .click();
+    await expect(employee.page).toHaveURL(employee.origin);
+    await expect(
+      employee.page.locator("#mission-control\\.leave-request\\.new-request"),
+    ).toBeFocused();
 
     for (const [name, actor] of [
       ["catalogue-leave-manager", manager],
@@ -5837,10 +5898,13 @@ test("complete default HR widgets render real attendance, expense, and direct-re
     );
     await expect(attendance.getByText("Start", { exact: true }).first()).toBeVisible();
     await expect(
-      attendance.getByRole("link", { name: "Open My Attendance Observations" }),
+      attendance.getByRole("link", {
+        exact: true,
+        name: "Open My Attendance Observations workspace",
+      }),
     ).toHaveAttribute(
       "href",
-      "/workspace/hr/attendance?originFocusId=mission-control.my-attendance.full-screen&returnSurface=mission-control",
+      "/workspace/hr/attendance?originFocusId=mission-control.my-attendance.full-screen&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.attendance.my-observations",
     );
 
     const expenses = employee.page.locator(
@@ -5849,9 +5913,11 @@ test("complete default HR widgets render real attendance, expense, and direct-re
     await expect(expenses).toHaveAttribute("data-widget-definition", "hr.expense.mine");
     await expect(expenses).toHaveAttribute("data-widget-state", "populated");
     await expect(expenses.getByText(/Minor units · version/).first()).toBeVisible();
-    await expect(expenses.getByRole("link", { name: "Open My Expense Claims" })).toHaveAttribute(
+    await expect(
+      expenses.getByRole("link", { exact: true, name: "Open My Expense Claims workspace" }),
+    ).toHaveAttribute(
       "href",
-      "/workspace/hr/expenses?originFocusId=mission-control.my-expenses.full-screen&returnSurface=mission-control",
+      "/workspace/hr/expenses?originFocusId=mission-control.my-expenses.full-screen&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.expense.mine",
     );
 
     await manager.page.setViewportSize({ height: 900, width: 1_280 });
@@ -5880,9 +5946,11 @@ test("complete default HR widgets render real attendance, expense, and direct-re
       "hr.workforce.direct-reports",
     );
     await expect(directReports.getByText("BROWSER-EMPLOYMENT-001", { exact: true })).toBeVisible();
-    await expect(directReports.getByRole("link", { name: "Open Direct Reports" })).toHaveAttribute(
+    await expect(
+      directReports.getByRole("link", { exact: true, name: "Open Direct Reports workspace" }),
+    ).toHaveAttribute(
       "href",
-      "/workspace/hr/profile/direct-reports?originFocusId=mission-control.direct-reports.full-screen&returnSurface=mission-control",
+      "/workspace/hr/profile/direct-reports?originFocusId=mission-control.direct-reports.full-screen&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.workforce.direct-reports",
     );
 
     await employee.page.setViewportSize({ height: 844, width: 390 });

@@ -6,10 +6,16 @@ import {
   buildHrLeaveNewHref,
   getHrLeaveReturnLink,
   HR_LEAVE_CANONICAL_HOST_LINK,
+  isHrLeaveRouteOriginCompatible,
   parseHrLeaveListCursor,
   parseHrLeaveOriginFocusId,
   parseHrLeaveReturnContext,
+  resolveHrLeaveInterceptedFocusNavigation,
 } from "./hr-leave-navigation-core";
+import {
+  createRouteBackedWidgetOrigin,
+  parseRouteBackedWidgetOrigin,
+} from "./route-backed-widget-navigation-core";
 
 const leaveRequestId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 
@@ -75,35 +81,112 @@ describe("HR leave closed navigation", () => {
     expect(buildHrLeaveDetailHref(leaveRequestId, "my-work")).toBe(
       `/workspace/hr/leave/${leaveRequestId}?returnContext=my-work`,
     );
-    expect(
+    expect(() =>
       buildHrLeaveDetailHref(
         leaveRequestId,
         "mission-control",
         `mission-control.my-leave.${leaveRequestId}`,
       ),
-    ).toBe(
-      `/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control&originFocusId=mission-control.my-leave.${leaveRequestId}`,
-    );
+    ).toThrow("Leave surface origin does not match its return context");
   });
 
-  it("preserves the exact originating surface across list, new and detail routes", () => {
+  it("never emits legacy Mission Control tokens without an exact registered origin", () => {
     const navigation = {
       originFocusId: `mission-control.my-leave.${leaveRequestId}`,
       returnContext: "mission-control" as const,
     };
 
+    expect(() => buildHrLeaveListHref(navigation)).toThrow(
+      "Leave surface origin does not match its return context",
+    );
+    expect(() => buildHrLeaveNewHref(navigation)).toThrow(
+      "Leave surface origin does not match its return context",
+    );
+    expect(() =>
+      buildHrLeaveDetailHref(leaveRequestId, navigation.returnContext, navigation.originFocusId),
+    ).toThrow("Leave surface origin does not match its return context");
+    expect(parseHrLeaveOriginFocusId(navigation.originFocusId)).toBe(navigation.originFocusId);
+  });
+
+  it("resolves an intercepted Leave list to canonical navigation when its origin is absent or incompatible", () => {
+    for (const search of [
+      {},
+      {
+        originFocusId: "hr-workforce.my-profile.full-screen",
+        originWidgetDefinitionId: "hr.workforce.my-profile",
+        returnSurface: "surface.hr.workforce",
+      },
+    ]) {
+      const fallbackOrigin = parseRouteBackedWidgetOrigin(
+        search,
+        "/workspace/hr",
+        "/workspace/hr/leave",
+      );
+      expect(resolveHrLeaveInterceptedFocusNavigation(fallbackOrigin)).toEqual({
+        returnContext: "leave-list",
+      });
+    }
+  });
+
+  it("preserves an exact grouped surface and semantic widget across nested routes", () => {
+    const routeOrigin = createRouteBackedWidgetOrigin(
+      "surface.hr.requests-and-claims",
+      "hr-requests-and-claims.my-leave.full-screen",
+      "hr.leave.my-requests",
+    );
+    const navigation = {
+      originFocusId: routeOrigin.returnFocusId,
+      routeOrigin,
+      returnContext: "hr-mission-control" as const,
+    };
+
     expect(buildHrLeaveListHref(navigation)).toBe(
-      `/workspace/hr/leave?originFocusId=mission-control.my-leave.${leaveRequestId}&returnSurface=mission-control`,
+      "/workspace/hr/leave?originFocusId=hr-requests-and-claims.my-leave.full-screen&returnSurface=surface.hr.requests-and-claims&originWidgetDefinitionId=hr.leave.my-requests",
     );
     expect(buildHrLeaveNewHref(navigation)).toBe(
-      `/workspace/hr/leave/new?returnContext=mission-control&originFocusId=mission-control.my-leave.${leaveRequestId}`,
+      "/workspace/hr/leave/new?returnContext=hr-mission-control&originFocusId=hr-requests-and-claims.my-leave.full-screen&returnSurface=surface.hr.requests-and-claims&originWidgetDefinitionId=hr.leave.my-requests",
     );
     expect(
-      buildHrLeaveDetailHref(leaveRequestId, navigation.returnContext, navigation.originFocusId),
+      buildHrLeaveDetailHref(
+        leaveRequestId,
+        navigation.returnContext,
+        navigation.originFocusId,
+        undefined,
+        routeOrigin,
+      ),
     ).toBe(
-      `/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control&originFocusId=mission-control.my-leave.${leaveRequestId}`,
+      `/workspace/hr/leave/${leaveRequestId}?returnContext=hr-mission-control&originFocusId=hr-requests-and-claims.my-leave.full-screen&returnSurface=surface.hr.requests-and-claims&originWidgetDefinitionId=hr.leave.my-requests`,
     );
-    expect(parseHrLeaveOriginFocusId(navigation.originFocusId)).toBe(navigation.originFocusId);
+    expect(() =>
+      buildHrLeaveNewHref({
+        ...navigation,
+        originFocusId: "hr-requests-and-claims.leave-history.full-screen",
+      }),
+    ).toThrow("Leave surface origin does not match its return context");
+    expect(
+      isHrLeaveRouteOriginCompatible("hr-mission-control", navigation.originFocusId, routeOrigin),
+    ).toBe(true);
+    expect(
+      isHrLeaveRouteOriginCompatible("mission-control", navigation.originFocusId, routeOrigin),
+    ).toBe(false);
+    const assignedFocusId = `mission-control.leave-assigned.${leaveRequestId}`;
+    const assignedOrigin = createRouteBackedWidgetOrigin(
+      "surface.mission-control",
+      assignedFocusId,
+      "hr.leave.assigned",
+    );
+    expect(isHrLeaveRouteOriginCompatible("mission-control", assignedFocusId, assignedOrigin)).toBe(
+      true,
+    );
+    expect(
+      buildHrLeaveDetailHref(
+        leaveRequestId,
+        "mission-control",
+        assignedFocusId,
+        undefined,
+        assignedOrigin,
+      ),
+    ).toContain("originWidgetDefinitionId=hr.leave.assigned");
   });
 
   it("keeps standalone list navigation canonical and rejects unsafe focus identifiers", () => {
@@ -157,7 +240,7 @@ describe("HR leave closed navigation", () => {
       ).toThrow("Leave origin focus ID is invalid");
     }
     expect(() => buildHrLeaveNewHref({ returnContext: "mission-control" })).toThrow(
-      "Leave origin focus ID is required",
+      "Leave surface origin does not match its return context",
     );
   });
 

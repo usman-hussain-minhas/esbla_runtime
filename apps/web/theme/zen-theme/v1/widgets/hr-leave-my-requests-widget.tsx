@@ -1,3 +1,4 @@
+import { getPresentationWidgetAdmissionDefinition } from "@esbla/contracts";
 import { ArrowRight, List } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -5,7 +6,10 @@ import { getOwnLeaveRequests } from "../../../../lib/hr-leave-list";
 import { buildHrLeaveDetailHref } from "../../../../lib/hr-leave-navigation-core";
 import type { ResponsivePresentationWidgetPlacement } from "../../../../lib/presentation-layout-core";
 import { settlePresentationWidgetProviders } from "../../../../lib/presentation-widget-provider-core";
-import { buildRouteBackedWidgetHref } from "../../../../lib/route-backed-widget-navigation-core";
+import {
+  buildRouteBackedWidgetHref,
+  createRouteBackedWidgetOrigin,
+} from "../../../../lib/route-backed-widget-navigation-core";
 import {
   getRegisteredSurfaceInstance,
   getWidgetDefinition,
@@ -44,6 +48,10 @@ function resolveLeaveWidget(
     registered.widgetDefinitionId,
     registered.widgetDefinitionVersion,
   );
+  const admission = getPresentationWidgetAdmissionDefinition(
+    registered.widgetDefinitionId,
+    registered.widgetDefinitionVersion,
+  );
   if (
     [placement.desktop, placement.tablet, placement.phone].some(
       (candidate) =>
@@ -51,6 +59,7 @@ function resolveLeaveWidget(
         candidate.widgetDefinitionId !== registered.widgetDefinitionId ||
         candidate.widgetDefinitionVersion !== registered.widgetDefinitionVersion,
     ) ||
+    admission.expansionMode !== "workspace" ||
     definition.fullScreenRoute === null
   ) {
     throw new Error("Leave widget registry binding is invalid");
@@ -147,30 +156,35 @@ export async function HrLeaveMyRequestsWidget({
       content = (
         <PresentationWidgetStateContent state="populated">
           <ol aria-label="My recent leave requests" className="zen-widget-list">
-            {page.items.slice(0, 5).map((request) => (
-              <li key={request.leaveRequestId}>
-                <Link
-                  className="zen-widget-row"
-                  href={buildHrLeaveDetailHref(
-                    request.leaveRequestId,
-                    surfaceId === "surface.mission-control"
-                      ? "mission-control"
-                      : "hr-mission-control",
-                    `${instance.desktop.instanceId}.${request.leaveRequestId}`,
-                  )}
-                  id={`${instance.desktop.instanceId}.${request.leaveRequestId}`}
-                >
-                  <span className={`leave-status leave-status-${request.status}`}>
-                    {request.status}
-                  </span>
-                  <span>
-                    <strong>{formatRange(request.startDate, request.endDate)}</strong>
-                    <p>{request.categoryCode} leave</p>
-                  </span>
-                  <ArrowRight aria-hidden="true" size={15} />
-                </Link>
-              </li>
-            ))}
+            {page.items.slice(0, 5).map((request) => {
+              const focusId = `${instance.desktop.instanceId}.${request.leaveRequestId}`;
+              return (
+                <li key={request.leaveRequestId}>
+                  <Link
+                    className="zen-widget-row"
+                    href={buildHrLeaveDetailHref(
+                      request.leaveRequestId,
+                      surfaceId === "surface.mission-control"
+                        ? "mission-control"
+                        : "hr-mission-control",
+                      focusId,
+                      undefined,
+                      createRouteBackedWidgetOrigin(surfaceId, focusId, definition.id),
+                    )}
+                    id={focusId}
+                  >
+                    <span className={`leave-status leave-status-${request.status}`}>
+                      {request.status}
+                    </span>
+                    <span>
+                      <strong>{formatRange(request.startDate, request.endDate)}</strong>
+                      <p>{request.categoryCode} leave</p>
+                    </span>
+                    <ArrowRight aria-hidden="true" size={15} />
+                  </Link>
+                </li>
+              );
+            })}
           </ol>
         </PresentationWidgetStateContent>
       );
@@ -202,11 +216,16 @@ export async function HrLeaveMyRequestsWidget({
       action={
         fullScreenEligible ? (
           <Link
-            aria-label={`View all ${definition.displayName}`}
+            aria-label={`Open ${definition.displayName} workspace`}
             className="icon-command"
-            href={buildRouteBackedWidgetHref(fullScreenRoute, surfaceId, fullScreenControlId)}
+            href={buildRouteBackedWidgetHref(
+              fullScreenRoute,
+              surfaceId,
+              fullScreenControlId,
+              definition.id,
+            )}
             id={fullScreenControlId}
-            title="View all"
+            title="Open workspace"
           >
             <List aria-hidden="true" size={16} />
           </Link>

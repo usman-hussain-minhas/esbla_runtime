@@ -105,11 +105,15 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
   }
-  const presentationOrigin = parseOptionalRouteBackedWidgetOrigin(value);
+  const presentationOrigin = parseOptionalRouteBackedWidgetOrigin(value, [
+    "/workspace/hr/attendance",
+    "/workspace/hr/attendance/reports",
+  ]);
   const returnTo = value.returnTo === "own" || value.returnTo === "reports" ? value.returnTo : null;
   const from = /^\d{4}-\d{2}-\d{2}$/.test(value.from ?? "") ? value.from : null;
   const to = /^\d{4}-\d{2}-\d{2}$/.test(value.to ?? "") ? value.to : null;
   delete value.originFocusId;
+  delete value.originWidgetDefinitionId;
   delete value.returnSurface;
   delete value.returnTo;
   delete value.from;
