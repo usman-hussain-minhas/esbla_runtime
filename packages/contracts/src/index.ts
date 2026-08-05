@@ -174,6 +174,7 @@ export {
 } from "./module-manifest.js";
 export * from "./platform-notification-api.js";
 export * from "./platform-presentation-api.js";
+export * from "./platform-presentation-semantic-registry.js";
 export * from "./platform-presentation-service-group.js";
 export * from "./platform-presentation-setting.js";
 export * from "./platform-presentation-shortcut-api.js";
