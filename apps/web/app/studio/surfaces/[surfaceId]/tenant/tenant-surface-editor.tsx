@@ -3,6 +3,7 @@
 import {
   getPresentationWidgetDefinition,
   type PresentationSurfaceBaseWorkspace,
+  type PresentationSurfaceDefinition,
   parsePresentationSurfaceBaseMutationResponse,
   parseUpsertPresentationSurfaceDraftResponse,
   parseValidatePresentationSurfaceDraftResponse,
@@ -98,7 +99,7 @@ export function TenantSurfaceEditor({
   surfaceName,
 }: Readonly<{
   initialWorkspace: PresentationSurfaceBaseWorkspace;
-  returnHref: "/" | "/workspace/hr";
+  returnHref: PresentationSurfaceDefinition["route"];
   surfaceName: string;
 }>) {
   const [model, setModel] = useState(() => createTenantSurfaceEditorModel(initialWorkspace));

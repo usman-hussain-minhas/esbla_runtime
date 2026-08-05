@@ -11,6 +11,7 @@ import {
   validatePresentationSemanticRegistry,
 } from "./platform-presentation-semantic-registry.js";
 import { PRESENTATION_DEEP_ROUTE_DEFINITIONS } from "./platform-presentation-service-group.js";
+import { ZEN_V1_SURFACE_CONTRACTS } from "./platform-presentation-surface-api.js";
 import {
   PRESENTATION_WIDGET_DEFINITIONS,
   type PresentationWidgetDefinition,
@@ -23,7 +24,7 @@ function replaceInput(
 }
 
 describe("presentation semantic registry", () => {
-  it("binds the exact two active surfaces, deep-route exposure and current roles", () => {
+  it("binds the exact five active surfaces, deep-route exposure and current roles", () => {
     expect(validatePresentationSemanticRegistry()).toBeUndefined();
     expect(
       PRESENTATION_SEMANTIC_SURFACE_DEFINITIONS.map(
@@ -47,7 +48,28 @@ describe("presentation semantic registry", () => {
         route: "/workspace/hr",
         surfaceId: "surface.hr.mission-control",
       },
+      {
+        contextualOrder: 2,
+        label: "Workforce",
+        route: "/workspace/hr/workforce",
+        surfaceId: "surface.hr.workforce",
+      },
+      {
+        contextualOrder: 3,
+        label: "Time & Scheduling",
+        route: "/workspace/hr/time-and-scheduling",
+        surfaceId: "surface.hr.time-and-scheduling",
+      },
+      {
+        contextualOrder: 4,
+        label: "Requests & Claims",
+        route: "/workspace/hr/requests-and-claims",
+        surfaceId: "surface.hr.requests-and-claims",
+      },
     ]);
+    expect(
+      ZEN_V1_SURFACE_CONTRACTS.slice(2).map(({ defaultInstances }) => defaultInstances.length),
+    ).toEqual([7, 10, 8]);
     expect(PRESENTATION_WIDGET_ADMISSION_DEFINITIONS).toHaveLength(27);
     expect(PRESENTATION_DEEP_ROUTE_DEFINITIONS).toHaveLength(22);
     expect(
@@ -86,6 +108,17 @@ describe("presentation semantic registry", () => {
       fallbackSurfaceId: "surface.mission-control",
       zeroEligibleBehavior: "hide_surface",
     });
+    expect(getPresentationSemanticSurfaceDefinition("surface.hr.workforce")).toMatchObject({
+      allowedWidgetSourceServiceGroups: ["hr"],
+      anyProviderActivationProjections: [],
+      fallbackSurfaceId: "surface.hr.mission-control",
+      zeroEligibleBehavior: "hide_surface",
+    });
+    expect(
+      PRESENTATION_SEMANTIC_SURFACE_DEFINITIONS.slice(2).every(
+        ({ anyProviderActivationProjections }) => anyProviderActivationProjections.length === 0,
+      ),
+    ).toBe(true);
     expect(
       getPresentationSurfaceAnyProviderActivationServiceKeys(
         "surface.mission-control",
@@ -312,12 +345,17 @@ describe("presentation semantic registry", () => {
     ): PresentationSemanticRegistryInput["surfaces"] => [
       { ...root, anyProviderActivationProjections: [projection] },
       hr,
+      ...PRESENTATION_SEMANTIC_SURFACE_DEFINITIONS.slice(2),
     ];
 
     expect(() =>
       validatePresentationSemanticRegistry(
         replaceInput({
-          surfaces: [{ ...root, anyProviderActivationProjections: [] }, hr],
+          surfaces: [
+            { ...root, anyProviderActivationProjections: [] },
+            hr,
+            ...PRESENTATION_SEMANTIC_SURFACE_DEFINITIONS.slice(2),
+          ],
         }),
       ),
     ).toThrow("Invalid presentation surface any-provider activation projection");
@@ -330,6 +368,7 @@ describe("presentation semantic registry", () => {
               anyProviderActivationProjections: [rootProjection, rootProjection],
             },
             hr,
+            ...PRESENTATION_SEMANTIC_SURFACE_DEFINITIONS.slice(2),
           ],
         }),
       ),

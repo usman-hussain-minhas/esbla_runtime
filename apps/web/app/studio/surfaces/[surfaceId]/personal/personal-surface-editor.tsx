@@ -3,6 +3,7 @@
 import {
   getPresentationWidgetDefinition,
   type PresentationPersonalSurfaceEditorWorkspace,
+  type PresentationSurfaceDefinition,
   parseResetPresentationSurfaceOverlayResponse,
   parseUpdatePresentationSurfaceOverlayResponse,
 } from "@esbla/contracts";
@@ -84,7 +85,7 @@ export function PersonalSurfaceEditor({
   surfaceName,
 }: Readonly<{
   initialWorkspace: PresentationPersonalSurfaceEditorWorkspace;
-  returnHref: "/" | "/workspace/hr";
+  returnHref: PresentationSurfaceDefinition["route"];
   surfaceName: string;
 }>) {
   const router = useRouter();

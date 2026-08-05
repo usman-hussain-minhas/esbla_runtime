@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { getZenV1RegisteredSurfacePlacements } from "@esbla/contracts";
+import { getZenV1RegisteredSurfacePlacements, ZEN_V1_SURFACE_CONTRACTS } from "@esbla/contracts";
 import { createDatabase, createDatabasePool, migrateDatabase } from "@esbla/db";
 import type { Pool, PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -504,6 +504,71 @@ async function rewriteSurfaceEvidenceAsLegacyV1(
   }
 }
 
+async function rewriteSurfaceOverlayEvidenceMaterializedHashes(
+  tenantId: string,
+  actorPrincipalId: string,
+  evidenceEventId: string,
+  materializedBaseDefinitionHashes: readonly string[],
+): Promise<void> {
+  await migrationPool.query(
+    "ALTER TABLE evidence_events DISABLE TRIGGER evidence_events_reject_update_delete",
+  );
+  try {
+    const client = await migrationPool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
+      await client.query("SELECT set_config('app.actor_principal_id', $1, true)", [
+        actorPrincipalId,
+      ]);
+      const current = await client.query<{ new_state: string }>(
+        `SELECT new_state
+         FROM evidence_events
+         WHERE evidence_event_id = $1 AND tenant_id = $2 AND actor_principal_id = $3
+           AND event_type = 'platform.presentation.surface_overlay.updated'
+         FOR UPDATE`,
+        [evidenceEventId, tenantId, actorPrincipalId],
+      );
+      const row = current.rows[0];
+      if (!row) throw new Error("Surface overlay evidence is unavailable");
+      const state = JSON.parse(row.new_state) as Record<string, unknown>;
+      expect(state.materializedBaseDefinitionHashes).toEqual(
+        ZEN_V1_SURFACE_CONTRACTS.map(({ definitionHash }) => definitionHash),
+      );
+      const updated = await client.query(
+        `UPDATE evidence_events
+         SET new_state = jsonb_set(
+           new_state::jsonb,
+           '{materializedBaseDefinitionHashes}',
+           $4::jsonb,
+           false
+         )::text
+         WHERE evidence_event_id = $1 AND tenant_id = $2 AND actor_principal_id = $3
+           AND event_type = 'platform.presentation.surface_overlay.updated'`,
+        [
+          evidenceEventId,
+          tenantId,
+          actorPrincipalId,
+          JSON.stringify(materializedBaseDefinitionHashes),
+        ],
+      );
+      if (updated.rowCount !== 1) {
+        throw new Error("Surface overlay evidence rewrite did not update exactly one row");
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  } finally {
+    await migrationPool.query(
+      "ALTER TABLE evidence_events ENABLE TRIGGER evidence_events_reject_update_delete",
+    );
+  }
+}
+
 const studioSurfaceBaseCapabilities = [
   "platform.studio.surface_base.read",
   "platform.studio.surface_base.draft",
@@ -602,6 +667,46 @@ async function surfaceMutationFootprint(
     overlayRows: row.overlay_rows,
     outboxCount: row.outbox_count,
     versionCount: row.version_count,
+  };
+}
+
+async function surfaceOverlayReplaySnapshot(
+  tenantId: string,
+  actorPrincipalId: string,
+  surfaceId: string,
+  correlationId: string,
+): Promise<{
+  readonly evidenceRows: string;
+  readonly outboxRows: string;
+  readonly overlayRows: string;
+}> {
+  const rows = await presentationRows<{
+    evidence_rows: string;
+    outbox_rows: string;
+    overlay_rows: string;
+  }>(
+    tenantId,
+    actorPrincipalId,
+    `SELECT
+       (SELECT coalesce(jsonb_agg(to_jsonb(surface_overlay) ORDER BY principal_id), '[]'::jsonb)::text
+        FROM presentation_surface_overlays AS surface_overlay
+        WHERE tenant_id = $1 AND principal_id = $2 AND surface_id = $3) AS overlay_rows,
+       (SELECT coalesce(jsonb_agg(to_jsonb(evidence) ORDER BY evidence_event_id), '[]'::jsonb)::text
+        FROM evidence_events AS evidence
+        WHERE tenant_id = $1 AND actor_principal_id = $2
+          AND event_type = 'platform.presentation.surface_overlay.updated'
+          AND correlation_id = $4) AS evidence_rows,
+       (SELECT coalesce(jsonb_agg(to_jsonb(outbox) ORDER BY event_id), '[]'::jsonb)::text
+        FROM outbox_events AS outbox
+        WHERE tenant_id = $1 AND correlation_id = $4) AS outbox_rows`,
+    [tenantId, actorPrincipalId, surfaceId, correlationId],
+  );
+  const row = rows[0];
+  if (!row) throw new Error("Surface overlay replay snapshot is unavailable");
+  return {
+    evidenceRows: row.evidence_rows,
+    outboxRows: row.outbox_rows,
+    overlayRows: row.overlay_rows,
   };
 }
 
@@ -1308,24 +1413,26 @@ describe("presentation preference persistence", () => {
     expect(await surfaceBaseCounts(ids.tenantA)).toEqual({ heads: 0, versions: 0 });
 
     const mutationContext = context(ids.tenantA, ids.actorA);
+    const mutationInput = Object.freeze({
+      expectedVersion: 0,
+      placements: Object.freeze([
+        Object.freeze({
+          column: 2,
+          columnSpan: 4,
+          instanceId: "mission-control.my-leave",
+          row: 5,
+          rowSpan: 3,
+          widgetDefinitionId: "hr.leave.my-requests",
+          widgetDefinitionVersion: 1,
+        }),
+      ]),
+    });
+    const exactRequest = JSON.stringify(mutationInput);
     const updated = await updateOwnPresentationSurfaceOverlay(
       pool,
       mutationContext,
       "surface.mission-control",
-      {
-        expectedVersion: 0,
-        placements: [
-          {
-            column: 2,
-            columnSpan: 4,
-            instanceId: "mission-control.my-leave",
-            row: 5,
-            rowSpan: 3,
-            widgetDefinitionId: "hr.leave.my-requests",
-            widgetDefinitionVersion: 1,
-          },
-        ],
-      },
+      mutationInput,
     );
     expect(updated).toMatchObject({
       billingState: "non_billable",
@@ -1334,13 +1441,51 @@ describe("presentation preference persistence", () => {
       source: "user_overlay",
     });
     expect(
-      await updateOwnPresentationSurfaceOverlay(pool, mutationContext, "surface.mission-control", {
-        expectedVersion: 0,
-        placements: updated.effectivePlacements,
-      }),
+      await updateOwnPresentationSurfaceOverlay(
+        pool,
+        mutationContext,
+        "surface.mission-control",
+        mutationInput,
+      ),
     ).toEqual({ ...updated, replayed: true });
 
-    expect(await surfaceBaseCounts(ids.tenantA)).toEqual({ heads: 2, versions: 2 });
+    await rewriteSurfaceOverlayEvidenceMaterializedHashes(
+      ids.tenantA,
+      ids.actorA,
+      updated.evidenceEventId,
+      [
+        "c75bac3fed1b604fe9ebc9f39e1ccef45b2ad34570f5200ada0e8b77ab8b71fb",
+        "12e135cb9be3deeef974ec5af2362d7a8e68057bdba904976a29709afe601c36",
+      ],
+    );
+    const beforeLegacyReplay = await surfaceOverlayReplaySnapshot(
+      ids.tenantA,
+      ids.actorA,
+      "surface.mission-control",
+      mutationContext.correlationId,
+    );
+    expect(JSON.parse(beforeLegacyReplay.overlayRows)).toHaveLength(1);
+    expect(JSON.parse(beforeLegacyReplay.evidenceRows)).toHaveLength(1);
+    expect(beforeLegacyReplay.outboxRows).toBe("[]");
+    expect(
+      await updateOwnPresentationSurfaceOverlay(
+        pool,
+        mutationContext,
+        "surface.mission-control",
+        mutationInput,
+      ),
+    ).toEqual({ ...updated, replayed: true });
+    expect(JSON.stringify(mutationInput)).toBe(exactRequest);
+    expect(
+      await surfaceOverlayReplaySnapshot(
+        ids.tenantA,
+        ids.actorA,
+        "surface.mission-control",
+        mutationContext.correlationId,
+      ),
+    ).toEqual(beforeLegacyReplay);
+
+    expect(await surfaceBaseCounts(ids.tenantA)).toEqual({ heads: 5, versions: 5 });
 
     await pool.end();
     pool = createDatabasePool(process.env.DATABASE_URL ?? "", { max: 4 });
@@ -1406,6 +1551,43 @@ describe("presentation preference persistence", () => {
         "surface.hr.mission-control",
       ),
     ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
+  });
+
+  it("loads Requests & Claims through current leave eligibility and hides it at zero eligibility", async () => {
+    await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
+      active: true,
+      capabilities: ["hr.leave.list_own", "hr.leave.view"],
+    });
+    const eligible = await getOwnPresentationSurfaceLayout(
+      pool,
+      context(ids.tenantA, ids.actorA),
+      "surface.hr.requests-and-claims",
+    );
+    expect(eligible).toMatchObject({
+      source: "code_default",
+      surfaceId: "surface.hr.requests-and-claims",
+    });
+    expect(eligible.basePlacements.map(({ widgetDefinitionId }) => widgetDefinitionId)).toEqual([
+      "hr.leave.my-requests",
+      "hr.leave.history",
+    ]);
+
+    await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
+      active: false,
+      capabilities: ["hr.leave.list_own", "hr.leave.view"],
+    });
+    await expect(
+      getOwnPresentationSurfaceLayout(
+        pool,
+        context(ids.tenantA, ids.actorA),
+        "surface.hr.requests-and-claims",
+      ),
+    ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
+
+    await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
+      active: true,
+      capabilities: ["hr.leave.list_own", "hr.leave.view"],
+    });
   });
 
   it("filters discovery and blocks layout mutation after capability loss or deactivation", async () => {

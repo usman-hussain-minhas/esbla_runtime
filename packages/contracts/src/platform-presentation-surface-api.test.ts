@@ -17,13 +17,16 @@ import {
 import { PRESENTATION_WIDGET_DEFINITIONS } from "./platform-presentation-widget.js";
 
 describe("platform presentation surface API contract", () => {
-  it("binds two distinct version-one Zen surface bases", () => {
+  it("binds the exact five distinct version-one Zen surface bases", () => {
     expect(ZEN_V1_SURFACE_CONTRACTS.map(({ surfaceId }) => surfaceId)).toEqual([
       "surface.mission-control",
       "surface.hr.mission-control",
+      "surface.hr.workforce",
+      "surface.hr.time-and-scheduling",
+      "surface.hr.requests-and-claims",
     ]);
     expect(new Set(ZEN_V1_SURFACE_CONTRACTS.map(({ definitionHash }) => definitionHash)).size).toBe(
-      2,
+      5,
     );
     expect(ZEN_V1_SURFACE_CONTRACTS.every(({ baseVersion }) => baseVersion === 1)).toBe(true);
     for (const contract of ZEN_V1_SURFACE_CONTRACTS) {
@@ -85,7 +88,7 @@ describe("platform presentation surface API contract", () => {
     ]);
   });
 
-  it("owns both surface definitions in one canonical shared registry", () => {
+  it("owns all five surface definitions in one canonical shared registry", () => {
     expect(PRESENTATION_SURFACE_DEFINITIONS).toEqual([
       expect.objectContaining({
         baseVersion: 1,
@@ -103,6 +106,21 @@ describe("platform presentation surface API contract", () => {
         id: "surface.hr.mission-control",
         mediumColumnCount: 8,
         route: "/workspace/hr",
+        serviceGroup: "hr",
+      }),
+      expect.objectContaining({
+        id: "surface.hr.workforce",
+        route: "/workspace/hr/workforce",
+        serviceGroup: "hr",
+      }),
+      expect.objectContaining({
+        id: "surface.hr.time-and-scheduling",
+        route: "/workspace/hr/time-and-scheduling",
+        serviceGroup: "hr",
+      }),
+      expect.objectContaining({
+        id: "surface.hr.requests-and-claims",
+        route: "/workspace/hr/requests-and-claims",
         serviceGroup: "hr",
       }),
     ]);
@@ -134,7 +152,9 @@ describe("platform presentation surface API contract", () => {
           .digest("hex"),
       ).toBe(canonicalHash);
       expect(Object.isFrozen(contract.defaultInstances[0])).toBe(true);
-      expect(Object.isFrozen(contract.catalogueInstances[0])).toBe(true);
+      if (contract.catalogueInstances[0]) {
+        expect(Object.isFrozen(contract.catalogueInstances[0])).toBe(true);
+      }
     }
     expect(
       ZEN_V1_SURFACE_CONTRACTS.map(({ catalogueInstances }) =>
@@ -180,6 +200,9 @@ describe("platform presentation surface API contract", () => {
         "hr.expense.draft",
         "hr.expense.corrections",
       ],
+      [],
+      [],
+      [],
     ]);
     expect(ZEN_V1_SURFACE_CONTRACTS.map(({ defaultInstances }) => defaultInstances[0])).toEqual([
       expect.objectContaining({
@@ -191,6 +214,18 @@ describe("platform presentation surface API contract", () => {
       }),
       expect.objectContaining({
         instanceId: "hr-mission-control.my-profile",
+        sourceOrder: 1,
+      }),
+      expect.objectContaining({
+        instanceId: "hr-workforce.my-profile",
+        sourceOrder: 1,
+      }),
+      expect.objectContaining({
+        instanceId: "hr-time-and-scheduling.my-published-shifts",
+        sourceOrder: 1,
+      }),
+      expect.objectContaining({
+        instanceId: "hr-requests-and-claims.my-leave",
         placementPolicy: "default_optional",
         sectionId: "overview",
         sourceOrder: 1,
@@ -222,6 +257,37 @@ describe("platform presentation surface API contract", () => {
         "hr-mission-control.my-timesheets",
         "hr-mission-control.my-expenses",
       ],
+      [
+        "hr-workforce.my-profile",
+        "hr-workforce.direct-reports",
+        "hr-workforce.admin-queue",
+        "hr-workforce.status-reporting",
+        "hr-workforce.current-employment",
+        "hr-workforce.employment-history",
+        "hr-workforce.employment-admin-queue",
+      ],
+      [
+        "hr-time-and-scheduling.my-published-shifts",
+        "hr-time-and-scheduling.roster-overview",
+        "hr-time-and-scheduling.publish-queue",
+        "hr-time-and-scheduling.my-attendance",
+        "hr-time-and-scheduling.attendance-reports",
+        "hr-time-and-scheduling.attendance-correction-queue",
+        "hr-time-and-scheduling.my-timesheets",
+        "hr-time-and-scheduling.timesheet-draft",
+        "hr-time-and-scheduling.timesheet-assigned",
+        "hr-time-and-scheduling.timesheet-corrections",
+      ],
+      [
+        "hr-requests-and-claims.my-leave",
+        "hr-requests-and-claims.leave-request-form",
+        "hr-requests-and-claims.leave-assigned",
+        "hr-requests-and-claims.leave-history",
+        "hr-requests-and-claims.my-expenses",
+        "hr-requests-and-claims.expense-draft",
+        "hr-requests-and-claims.expense-assigned",
+        "hr-requests-and-claims.expense-corrections",
+      ],
     ]);
     const universalFirstPlacement = ZEN_V1_SURFACE_CONTRACTS[0].basePlacements[0];
     const universalFirstInstance = ZEN_V1_SURFACE_CONTRACTS[0].defaultInstances[0];
@@ -248,6 +314,9 @@ describe("platform presentation surface API contract", () => {
             ],
           },
           ZEN_V1_SURFACE_CONTRACTS[1],
+          ZEN_V1_SURFACE_CONTRACTS[2],
+          ZEN_V1_SURFACE_CONTRACTS[3],
+          ZEN_V1_SURFACE_CONTRACTS[4],
         ],
         PRESENTATION_WIDGET_DEFINITIONS,
       ),

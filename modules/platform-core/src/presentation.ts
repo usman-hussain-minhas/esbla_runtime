@@ -2981,7 +2981,35 @@ interface SurfaceOverlayEvidenceState {
   readonly version: number;
 }
 
-function parseSurfaceOverlayEvidenceState(
+const LEGACY_V1_MATERIALIZED_SURFACE_HASHES = Object.freeze([
+  "c75bac3fed1b604fe9ebc9f39e1ccef45b2ad34570f5200ada0e8b77ab8b71fb",
+  "12e135cb9be3deeef974ec5af2362d7a8e68057bdba904976a29709afe601c36",
+]);
+
+const LEGACY_V1_MATERIALIZED_SURFACE_IDS = new Set<ZenV1SurfaceId>([
+  "surface.mission-control",
+  "surface.hr.mission-control",
+]);
+
+function isAdmittedMaterializedSurfaceHashVector(
+  value: unknown,
+  expectedSurfaceId: ZenV1SurfaceId,
+): value is readonly string[] {
+  if (!Array.isArray(value) || value.some((candidate) => typeof candidate !== "string")) {
+    return false;
+  }
+  const serialized = JSON.stringify(value);
+  return (
+    (LEGACY_V1_MATERIALIZED_SURFACE_IDS.has(expectedSurfaceId) &&
+      serialized === JSON.stringify(LEGACY_V1_MATERIALIZED_SURFACE_HASHES)) ||
+    serialized ===
+      JSON.stringify(
+        zenV1SurfaceIds.map((surfaceId) => getZenV1SurfaceContract(surfaceId).definitionHash),
+      )
+  );
+}
+
+export function parseSurfaceOverlayEvidenceState(
   value: string,
   expectedSurfaceId: ZenV1SurfaceId,
 ): SurfaceOverlayEvidenceState {
@@ -3014,11 +3042,10 @@ function parseSurfaceOverlayEvidenceState(
       Number(record.baseVersion) < 1 ||
       !Number.isSafeInteger(record.expectedVersion) ||
       Number(record.expectedVersion) < 0 ||
-      !Array.isArray(record.materializedBaseDefinitionHashes) ||
-      JSON.stringify(record.materializedBaseDefinitionHashes) !==
-        JSON.stringify(
-          zenV1SurfaceIds.map((surfaceId) => getZenV1SurfaceContract(surfaceId).definitionHash),
-        ) ||
+      !isAdmittedMaterializedSurfaceHashVector(
+        record.materializedBaseDefinitionHashes,
+        expectedSurfaceId,
+      ) ||
       !Number.isSafeInteger(record.version) ||
       Number(record.version) < 1
     ) {

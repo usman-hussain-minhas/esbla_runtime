@@ -16,6 +16,7 @@ import {
   parseUpsertPresentationSurfaceDraftResponse,
   parseValidatePresentationSurfaceDraftBody,
   parseValidatePresentationSurfaceDraftResponse,
+  presentationSurfaceBaseVersionSchema,
 } from "./platform-studio-surface-base-api.js";
 
 const surface = ZEN_V1_SURFACE_CONTRACTS[0];
@@ -26,6 +27,23 @@ const moved = surface.basePlacements.map((placement) => ({
 const evidenceEventId = "93000000-0000-4000-8000-000000000001";
 
 describe("platform Studio surface-base API contract", () => {
+  it("derives Studio admission for all five code-owned surfaces", () => {
+    expect(presentationSurfaceBaseVersionSchema.properties.surfaceId.enum).toEqual(
+      ZEN_V1_SURFACE_CONTRACTS.map(({ surfaceId }) => surfaceId),
+    );
+    for (const contract of ZEN_V1_SURFACE_CONTRACTS) {
+      expect(
+        parsePresentationSurfaceBaseVersion({
+          basedOnVersion: null,
+          baseVersion: 1,
+          definitionHash: contract.definitionHash,
+          placements: contract.basePlacements,
+          surfaceId: contract.surfaceId,
+        }),
+      ).toMatchObject({ surfaceId: contract.surfaceId });
+    }
+  });
+
   it("strictly binds immutable version lineage and one exact draft", () => {
     const version = parsePresentationSurfaceBaseVersion({
       basedOnVersion: 1,

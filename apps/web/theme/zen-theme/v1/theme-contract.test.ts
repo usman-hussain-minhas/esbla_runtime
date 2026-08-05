@@ -4,6 +4,7 @@ import {
   PRESENTATION_SURFACE_DEFINITIONS,
   PRESENTATION_WIDGET_DEFINITIONS,
   presentationSemanticIconKeys,
+  ZEN_V1_SURFACE_CONTRACTS,
 } from "@esbla/contracts";
 import { describe, expect, it } from "vitest";
 import {
@@ -19,94 +20,33 @@ import {
 } from "./index";
 
 describe("Zen Theme v1 composition contract", () => {
-  it("binds each T5 representative definition to every ratified eligible surface instance", () => {
+  it("binds every canonical default instance through the Zen facade", () => {
     expect(
       DEFAULT_SURFACE_INSTANCES.map(({ id, surfaceId, widgetDefinitionId }) => ({
         id,
         surfaceId,
         widgetDefinitionId,
       })),
+    ).toEqual(
+      ZEN_V1_SURFACE_CONTRACTS.flatMap(({ defaultInstances, surfaceId }) =>
+        defaultInstances.map(({ instanceId: id, widgetDefinitionId }) => ({
+          id,
+          surfaceId,
+          widgetDefinitionId,
+        })),
+      ),
+    );
+    expect(
+      ZEN_V1_SURFACE_CONTRACTS.map(({ defaultInstances, surfaceId }) => ({
+        count: defaultInstances.length,
+        surfaceId,
+      })),
     ).toEqual([
-      {
-        id: "mission-control.my-work",
-        surfaceId: "surface.mission-control",
-        widgetDefinitionId: "platform.my-work.queue",
-      },
-      {
-        id: "mission-control.my-published-shifts",
-        surfaceId: "surface.mission-control",
-        widgetDefinitionId: "hr.shift.my-published",
-      },
-      {
-        id: "mission-control.my-leave",
-        surfaceId: "surface.mission-control",
-        widgetDefinitionId: "hr.leave.my-requests",
-      },
-      {
-        id: "mission-control.my-attendance",
-        surfaceId: "surface.mission-control",
-        widgetDefinitionId: "hr.attendance.my-observations",
-      },
-      {
-        id: "mission-control.my-timesheets",
-        surfaceId: "surface.mission-control",
-        widgetDefinitionId: "hr.timesheet.mine",
-      },
-      {
-        id: "mission-control.my-expenses",
-        surfaceId: "surface.mission-control",
-        widgetDefinitionId: "hr.expense.mine",
-      },
-      {
-        id: "mission-control.my-profile",
-        surfaceId: "surface.mission-control",
-        widgetDefinitionId: "hr.workforce.my-profile",
-      },
-      {
-        id: "mission-control.direct-reports",
-        surfaceId: "surface.mission-control",
-        widgetDefinitionId: "hr.workforce.direct-reports",
-      },
-      {
-        id: "hr-mission-control.my-profile",
-        surfaceId: "surface.hr.mission-control",
-        widgetDefinitionId: "hr.workforce.my-profile",
-      },
-      {
-        id: "hr-mission-control.current-employment",
-        surfaceId: "surface.hr.mission-control",
-        widgetDefinitionId: "hr.employment.current-facts",
-      },
-      {
-        id: "hr-mission-control.my-work",
-        surfaceId: "surface.hr.mission-control",
-        widgetDefinitionId: "platform.my-work.queue",
-      },
-      {
-        id: "hr-mission-control.my-published-shifts",
-        surfaceId: "surface.hr.mission-control",
-        widgetDefinitionId: "hr.shift.my-published",
-      },
-      {
-        id: "hr-mission-control.my-attendance",
-        surfaceId: "surface.hr.mission-control",
-        widgetDefinitionId: "hr.attendance.my-observations",
-      },
-      {
-        id: "hr-mission-control.my-leave",
-        surfaceId: "surface.hr.mission-control",
-        widgetDefinitionId: "hr.leave.my-requests",
-      },
-      {
-        id: "hr-mission-control.my-timesheets",
-        surfaceId: "surface.hr.mission-control",
-        widgetDefinitionId: "hr.timesheet.mine",
-      },
-      {
-        id: "hr-mission-control.my-expenses",
-        surfaceId: "surface.hr.mission-control",
-        widgetDefinitionId: "hr.expense.mine",
-      },
+      { count: 8, surfaceId: "surface.mission-control" },
+      { count: 8, surfaceId: "surface.hr.mission-control" },
+      { count: 7, surfaceId: "surface.hr.workforce" },
+      { count: 10, surfaceId: "surface.hr.time-and-scheduling" },
+      { count: 8, surfaceId: "surface.hr.requests-and-claims" },
     ]);
     expect(
       DEFAULT_SURFACE_INSTANCES.every(
@@ -115,7 +55,7 @@ describe("Zen Theme v1 composition contract", () => {
     ).toBe(true);
   });
 
-  it("defines exactly the two code-owned Mission Control surfaces", () => {
+  it("defines exactly the five code-owned surfaces", () => {
     expect(SURFACE_DEFINITIONS).toBe(PRESENTATION_SURFACE_DEFINITIONS);
     expect(SURFACE_DEFINITIONS).toEqual([
       expect.objectContaining({
@@ -128,10 +68,28 @@ describe("Zen Theme v1 composition contract", () => {
         id: "surface.hr.mission-control",
         route: "/workspace/hr",
       }),
+      expect.objectContaining({
+        columnCount: 12,
+        id: "surface.hr.workforce",
+        route: "/workspace/hr/workforce",
+      }),
+      expect.objectContaining({
+        columnCount: 12,
+        id: "surface.hr.time-and-scheduling",
+        route: "/workspace/hr/time-and-scheduling",
+      }),
+      expect.objectContaining({
+        columnCount: 12,
+        id: "surface.hr.requests-and-claims",
+        route: "/workspace/hr/requests-and-claims",
+      }),
     ]);
     expect(SURFACE_DEFINITIONS.map(({ definitionHash }) => definitionHash)).toEqual([
       "c75bac3fed1b604fe9ebc9f39e1ccef45b2ad34570f5200ada0e8b77ab8b71fb",
       "12e135cb9be3deeef974ec5af2362d7a8e68057bdba904976a29709afe601c36",
+      "8c945cf827e6949b3f454bd8afdea68351ebbd6de68062933a48845aa3af32c3",
+      "1308489fb489e2638eeafd8e57a9db7de08a8690cca247e69e8492014c3d4629",
+      "2436f49c88ac0e71c1dca8c1c0d9027e86e5c8a92ee2a8a725c7ff19d2caebdc",
     ]);
     expect(SURFACE_DEFINITIONS.every(({ baseVersion }) => baseVersion === 1)).toBe(true);
     for (const surface of SURFACE_DEFINITIONS) {
@@ -193,6 +151,10 @@ describe("Zen Theme v1 composition contract", () => {
       expect.objectContaining({
         id: "hr-mission-control.my-leave",
         surfaceId: "surface.hr.mission-control",
+      }),
+      expect.objectContaining({
+        id: "hr-requests-and-claims.my-leave",
+        surfaceId: "surface.hr.requests-and-claims",
       }),
     ]);
     for (const instance of DEFAULT_SURFACE_INSTANCES) {
