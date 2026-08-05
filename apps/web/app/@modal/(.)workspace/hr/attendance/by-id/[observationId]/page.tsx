@@ -29,7 +29,10 @@ function one(value: string | string[] | undefined): string | undefined {
 
 export default async function InterceptedAttendanceDetailPage({ params, searchParams }: Props) {
   const [{ observationId }, parameters] = await Promise.all([params, searchParams]);
-  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr");
+  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr", [
+    "/workspace/hr/attendance",
+    "/workspace/hr/attendance/reports",
+  ]);
   const returnTo = one(parameters.returnTo);
   const masterKind = returnTo === "reports" ? "reports" : returnTo === "own" ? "own" : undefined;
   const masterPath =

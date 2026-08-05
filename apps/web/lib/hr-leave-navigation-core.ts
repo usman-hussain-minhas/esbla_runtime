@@ -1,3 +1,8 @@
+import {
+  getRouteBackedWidgetOriginParameters,
+  type RouteBackedWidgetOrigin,
+} from "./route-backed-widget-navigation-core";
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RFC3339_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
@@ -12,6 +17,7 @@ export type HrLeaveListReturnContext = Exclude<HrLeaveReturnContext, "my-work">;
 
 export interface HrLeaveFocusNavigation {
   readonly originFocusId?: string;
+  readonly routeOrigin?: RouteBackedWidgetOrigin;
   readonly returnContext: HrLeaveListReturnContext;
 }
 
@@ -29,6 +35,11 @@ export const HR_LEAVE_CANONICAL_HOST_LINK = Object.freeze({
   href: "/workspace/hr/leave",
   label: "Back to My Leave Requests",
 }) satisfies HrLeaveReturnLink;
+const HR_LEAVE_ENTRY_ROUTES = new Set([
+  "/workspace/hr/leave",
+  "/workspace/hr/leave/new",
+  "/workspace/my-work",
+]);
 
 function validateOriginFocusId(originFocusId: string | undefined): void {
   if (
@@ -55,13 +66,69 @@ function isStrictTimestamp(value: string): boolean {
   );
 }
 
-function appendFocusNavigation(search: URLSearchParams, navigation: HrLeaveFocusNavigation): void {
-  validateOriginFocusId(navigation.originFocusId);
-  if (navigation.returnContext !== "leave-list" && !navigation.originFocusId) {
-    throw new TypeError("Leave origin focus ID is required");
+export function isHrLeaveRouteOriginCompatible(
+  returnContext: HrLeaveReturnContext | undefined,
+  originFocusId: string | undefined,
+  routeOrigin: RouteBackedWidgetOrigin | undefined,
+): boolean {
+  if (!returnContext || !originFocusId || !routeOrigin) return false;
+  if (originFocusId !== routeOrigin.returnFocusId) return false;
+  if (returnContext === "my-work") return routeOrigin.entryRoute === "/workspace/my-work";
+  if (!routeOrigin.entryRoute || !HR_LEAVE_ENTRY_ROUTES.has(routeOrigin.entryRoute)) return false;
+  if (returnContext === "mission-control") {
+    return routeOrigin.surfaceId === "surface.mission-control";
   }
+  return returnContext === "hr-mission-control" && routeOrigin.surfaceId.startsWith("surface.hr.");
+}
+
+function assertFocusNavigation(navigation: HrLeaveFocusNavigation): void {
+  validateOriginFocusId(navigation.originFocusId);
+  if (navigation.returnContext === "leave-list") {
+    if (navigation.originFocusId || navigation.routeOrigin) {
+      throw new TypeError("Canonical Leave list navigation cannot carry a surface origin");
+    }
+    return;
+  }
+  if (
+    !isHrLeaveRouteOriginCompatible(
+      navigation.returnContext,
+      navigation.originFocusId,
+      navigation.routeOrigin,
+    )
+  ) {
+    throw new TypeError("Leave surface origin does not match its return context");
+  }
+}
+
+export function resolveHrLeaveInterceptedFocusNavigation(
+  routeOrigin: RouteBackedWidgetOrigin,
+): HrLeaveFocusNavigation {
+  if (routeOrigin.widgetDefinitionId === null) {
+    return Object.freeze({ returnContext: "leave-list" });
+  }
+  const navigation = {
+    originFocusId: routeOrigin.returnFocusId,
+    routeOrigin,
+    returnContext:
+      routeOrigin.surfaceId === "surface.mission-control"
+        ? ("mission-control" as const)
+        : ("hr-mission-control" as const),
+  };
+  assertFocusNavigation(navigation);
+  return Object.freeze(navigation);
+}
+
+function appendFocusNavigation(search: URLSearchParams, navigation: HrLeaveFocusNavigation): void {
+  assertFocusNavigation(navigation);
   search.set("returnContext", navigation.returnContext);
   if (navigation.originFocusId) search.set("originFocusId", navigation.originFocusId);
+  if (navigation.routeOrigin) {
+    const origin = getRouteBackedWidgetOriginParameters(navigation.routeOrigin);
+    search.set("returnSurface", origin.returnSurface);
+    if (origin.originWidgetDefinitionId) {
+      search.set("originWidgetDefinitionId", origin.originWidgetDefinitionId);
+    }
+  }
 }
 
 export function buildHrLeaveListHref(
@@ -76,16 +143,14 @@ export function buildHrLeaveListHref(
     search.set("cursorLeaveRequestId", cursor.leaveRequestId);
     search.set("cursorSubmittedAt", cursor.submittedAt);
   }
-  if (navigation?.returnContext === "mission-control") {
-    validateOriginFocusId(navigation.originFocusId);
-    if (!navigation.originFocusId) throw new TypeError("Leave origin focus ID is required");
-    search.set("originFocusId", navigation.originFocusId);
-    search.set("returnSurface", "mission-control");
-  } else if (navigation?.returnContext === "hr-mission-control") {
-    validateOriginFocusId(navigation.originFocusId);
-    if (!navigation.originFocusId) throw new TypeError("Leave origin focus ID is required");
-    search.set("originFocusId", navigation.originFocusId);
-    search.set("returnSurface", "hr-mission-control");
+  if (navigation) assertFocusNavigation(navigation);
+  if (navigation?.routeOrigin) {
+    const origin = getRouteBackedWidgetOriginParameters(navigation.routeOrigin);
+    search.set("originFocusId", origin.originFocusId);
+    search.set("returnSurface", origin.returnSurface);
+    if (origin.originWidgetDefinitionId) {
+      search.set("originWidgetDefinitionId", origin.originWidgetDefinitionId);
+    }
   }
   const query = search.toString();
   return query ? `/workspace/hr/leave?${query}` : "/workspace/hr/leave";
@@ -134,14 +199,29 @@ export function buildHrLeaveDetailHref(
   returnContext: HrLeaveReturnContext,
   originFocusId?: string,
   listCursor?: HrLeaveListCursor,
+  routeOrigin?: RouteBackedWidgetOrigin,
 ): string {
   if (!UUID_PATTERN.test(leaveRequestId)) throw new TypeError("Leave request ID is invalid");
   if (!parseHrLeaveReturnContext(returnContext)) {
     throw new TypeError("Leave return context is invalid");
   }
   validateOriginFocusId(originFocusId);
+  if (routeOrigin || originFocusId) {
+    if (!isHrLeaveRouteOriginCompatible(returnContext, originFocusId, routeOrigin)) {
+      throw new TypeError("Leave surface origin does not match its return context");
+    }
+  } else if (returnContext === "mission-control" || returnContext === "hr-mission-control") {
+    throw new TypeError("Leave surface origin is required");
+  }
   const search = new URLSearchParams({ returnContext });
   if (originFocusId) search.set("originFocusId", originFocusId);
+  if (routeOrigin) {
+    const origin = getRouteBackedWidgetOriginParameters(routeOrigin);
+    search.set("returnSurface", origin.returnSurface);
+    if (origin.originWidgetDefinitionId) {
+      search.set("originWidgetDefinitionId", origin.originWidgetDefinitionId);
+    }
+  }
   if (listCursor) {
     const cursor = parseHrLeaveListCursor({
       cursorLeaveRequestId: listCursor.leaveRequestId,

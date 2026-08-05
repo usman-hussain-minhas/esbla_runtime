@@ -9,7 +9,6 @@ import {
 } from "../../../../../../lib/hr-timesheet-core";
 import {
   buildNestedRouteBackedWidgetHref,
-  getRouteBackedWidgetOriginParameters,
   type RouteBackedWidgetOrigin,
 } from "../../../../../../lib/route-backed-widget-navigation-core";
 import { RouteBackedWidgetGetForm } from "../../../../../../theme/zen-theme/v1/route-backed-widget-overlay";
@@ -30,14 +29,12 @@ function CorrectionLookupForm({
         {children}
       </form>
     );
-  const origin = getRouteBackedWidgetOriginParameters(focusOrigin);
   return (
     <RouteBackedWidgetGetForm
       action="/workspace/hr/timesheets/admin/corrections"
       className="leave-request-form"
+      focusOrigin={focusOrigin}
     >
-      <input name="originFocusId" type="hidden" value={origin.originFocusId} />
-      <input name="returnSurface" type="hidden" value={origin.returnSurface} />
       {children}
     </RouteBackedWidgetGetForm>
   );

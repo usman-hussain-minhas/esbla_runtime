@@ -29,7 +29,10 @@ function one(value: string | string[] | undefined): string | undefined {
 
 export default async function InterceptedShiftDetailPage({ params, searchParams }: Props) {
   const [{ shiftAssignmentId }, parameters] = await Promise.all([params, searchParams]);
-  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr");
+  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr", [
+    "/workspace/hr/shifts",
+    "/workspace/hr/shifts/reports",
+  ]);
   const returnTo = one(parameters.returnTo);
   const rosterVersionId = one(parameters.rosterVersionId);
   const masterKind =

@@ -29,7 +29,11 @@ function one(value: string | string[] | undefined): string | undefined {
 
 export default async function InterceptedTimesheetDetailPage({ params, searchParams }: Props) {
   const [{ timesheetId }, parameters] = await Promise.all([params, searchParams]);
-  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr");
+  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr", [
+    "/workspace/hr/timesheets",
+    "/workspace/hr/timesheets/admin/corrections",
+    "/workspace/my-work",
+  ]);
   const fromMyWork =
     one(parameters.returnContext) === "my-work" || one(parameters.returnTo) === "my-work";
   const navigationKind = fromMyWork

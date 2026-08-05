@@ -163,8 +163,13 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return respond("/workspace/hr/timesheets?result=validation");
   }
-  const presentationOrigin = parseOptionalRouteBackedWidgetOrigin(value);
+  const presentationOrigin = parseOptionalRouteBackedWidgetOrigin(value, [
+    "/workspace/hr/timesheets",
+    "/workspace/hr/timesheets/admin/corrections",
+    "/workspace/my-work",
+  ]);
   delete value.originFocusId;
+  delete value.originWidgetDefinitionId;
   delete value.returnSurface;
   let masterCursorParameters: Readonly<Record<string, string>> = {};
   let ownCursorParameters: Readonly<Record<string, string>> = {};

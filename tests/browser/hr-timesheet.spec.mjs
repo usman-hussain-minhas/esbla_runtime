@@ -123,11 +123,11 @@ test("HR Timesheet widget opens a route-backed full-screen form and protects dir
     await actor.page.setViewportSize({ height: 500, width: 1280 });
     const launcher = actor.page.getByRole("link", {
       exact: true,
-      name: "Open My Timesheets",
+      name: "Open My Timesheets workspace",
     });
     await expect(launcher).toHaveAttribute(
       "href",
-      "/workspace/hr/timesheets?originFocusId=hr-mission-control.my-timesheets.full-screen&returnSurface=hr-mission-control",
+      "/workspace/hr/timesheets?originFocusId=hr-mission-control.my-timesheets.full-screen&returnSurface=surface.hr.mission-control&originWidgetDefinitionId=hr.timesheet.mine",
     );
     await actor.page.locator(".surface-scroll").evaluate((element) => {
       element.scrollTop = element.scrollHeight;
@@ -140,7 +140,7 @@ test("HR Timesheet widget opens a route-backed full-screen form and protects dir
     expect(originScrollTop).toBeGreaterThan(0);
     await launcher.press("Enter");
     await expect(actor.page).toHaveURL(
-      `${actor.origin}/workspace/hr/timesheets?originFocusId=hr-mission-control.my-timesheets.full-screen&returnSurface=hr-mission-control`,
+      `${actor.origin}/workspace/hr/timesheets?originFocusId=hr-mission-control.my-timesheets.full-screen&returnSurface=surface.hr.mission-control&originWidgetDefinitionId=hr.timesheet.mine`,
     );
 
     const overlay = actor.page.getByRole("dialog", {
@@ -230,7 +230,7 @@ test("HR Timesheet widget opens a route-backed full-screen form and protects dir
     await expect(actor.page).toHaveURL(`${actor.origin}/workspace/hr`);
     await expect(overlay).toHaveCount(0);
     await expect(
-      actor.page.getByRole("link", { exact: true, name: "Open My Timesheets" }),
+      actor.page.getByRole("link", { exact: true, name: "Open My Timesheets workspace" }),
     ).toHaveCount(0);
     await expect(actor.page.locator("main h1")).toBeFocused();
 
@@ -301,7 +301,7 @@ test("employee creates, edits, submits, and reloads a rendered weekly Timesheet"
     await expect(compactTimesheetRow).toHaveAttribute("id", compactTimesheetFocusId);
     await expect(compactTimesheetRow).toHaveAttribute(
       "href",
-      `/workspace/hr/timesheets/by-id/${timesheetId}?returnTo=own&originFocusId=${compactTimesheetFocusId}&returnSurface=mission-control`,
+      `/workspace/hr/timesheets/by-id/${timesheetId}?returnTo=own&originFocusId=${compactTimesheetFocusId}&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.timesheet.mine`,
     );
     await compactTimesheetRow.click();
     const compactTimesheetDetail = actor.page.getByRole("dialog", {
@@ -453,7 +453,7 @@ test("manager decides assigned Timesheets and tenant settings alter rejection be
       "Approval journey",
     );
     await manager.page.goto(`${manager.origin}/workspace/hr`);
-    await manager.page.getByRole("link", { exact: true, name: "Open My Work" }).click();
+    await manager.page.getByRole("link", { exact: true, name: "Open My Work workspace" }).click();
     const focusedMyWork = manager.page.getByRole("dialog", { exact: true, name: "My Work" });
     await expect(focusedMyWork).toBeVisible();
     const approval = focusedMyWork
@@ -477,7 +477,10 @@ test("manager decides assigned Timesheets and tenant settings alter rejection be
     expect(new URL(manager.page.url()).searchParams.get("returnTo")).toBeNull();
     await expect
       .poll(() => new URL(manager.page.url()).searchParams.get("returnSurface"))
-      .toBe("hr-mission-control");
+      .toBe("surface.hr.mission-control");
+    expect(new URL(manager.page.url()).searchParams.get("originWidgetDefinitionId")).toBe(
+      "platform.my-work.queue",
+    );
     const focusedDetail = manager.page.getByRole("dialog", {
       exact: true,
       name: "Timesheet detail",

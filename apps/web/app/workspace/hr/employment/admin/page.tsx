@@ -13,10 +13,7 @@ import {
   hasEmploymentAction,
   parseEmploymentWorkerSelection,
 } from "../../../../../lib/hr-employment-record-core";
-import {
-  getRouteBackedWidgetOriginParameters,
-  type RouteBackedWidgetOrigin,
-} from "../../../../../lib/route-backed-widget-navigation-core";
+import type { RouteBackedWidgetOrigin } from "../../../../../lib/route-backed-widget-navigation-core";
 import { RouteBackedWidgetLink } from "../../../../../theme/zen-theme/v1/route-backed-widget-link";
 import { RouteBackedWidgetPostForm } from "../../../../../theme/zen-theme/v1/route-backed-widget-overlay";
 import { EmploymentResult } from "../result";
@@ -76,14 +73,12 @@ function EmploymentActionForm({
       </form>
     );
   }
-  const encodedOrigin = getRouteBackedWidgetOriginParameters(focusOrigin);
   return (
     <RouteBackedWidgetPostForm
       action="/workspace/hr/employment/action"
       className="leave-request-form"
+      focusOrigin={focusOrigin}
     >
-      <input name="originFocusId" type="hidden" value={encodedOrigin.originFocusId} />
-      <input name="returnSurface" type="hidden" value={encodedOrigin.returnSurface} />
       {children}
     </RouteBackedWidgetPostForm>
   );

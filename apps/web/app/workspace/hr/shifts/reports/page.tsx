@@ -9,7 +9,6 @@ import {
 import { hasShiftAction } from "../../../../../lib/hr-shift-assignment-core";
 import {
   buildNestedRouteBackedWidgetHref,
-  getRouteBackedWidgetOriginParameters,
   type RouteBackedWidgetOrigin,
 } from "../../../../../lib/route-backed-widget-navigation-core";
 import {
@@ -46,7 +45,6 @@ export default async function ReportShiftsPage({
   searchParams,
 }: Props) {
   const [parameters, cookieStore] = await Promise.all([searchParams, cookies()]);
-  const encodedOrigin = focusOrigin ? getRouteBackedWidgetOriginParameters(focusOrigin) : undefined;
   const rosterVersionId = one(parameters.rosterVersionId);
   const state =
     preloadedState ??
@@ -69,12 +67,6 @@ export default async function ReportShiftsPage({
   const confirmed = receipt && hasShiftAction(actions, receipt.operation) ? receipt : null;
   const unconfirmed =
     one(parameters.result) && (one(parameters.result) !== "success" || !confirmed);
-  const originFields = encodedOrigin ? (
-    <>
-      <input name="originFocusId" type="hidden" value={encodedOrigin.originFocusId} />
-      <input name="returnSurface" type="hidden" value={encodedOrigin.returnSurface} />
-    </>
-  ) : null;
   return (
     <section aria-labelledby="report-shifts-heading" className="work-surface">
       {mode === "standalone" ? (
@@ -104,13 +96,8 @@ export default async function ReportShiftsPage({
       <RouteBackedWidgetGetForm
         action="/workspace/hr/shifts/reports"
         className="leave-request-form"
+        focusOrigin={focusOrigin}
       >
-        {encodedOrigin ? (
-          <>
-            <input name="originFocusId" type="hidden" value={encodedOrigin.originFocusId} />
-            <input name="returnSurface" type="hidden" value={encodedOrigin.returnSurface} />
-          </>
-        ) : null}
         <div className="form-grid-two">
           <div className="form-field">
             <label htmlFor="roster-id">Roster Version ID</label>
@@ -138,8 +125,8 @@ export default async function ReportShiftsPage({
           <RouteBackedWidgetPostForm
             action="/workspace/hr/shifts/action"
             className="leave-request-form"
+            focusOrigin={focusOrigin}
           >
-            {originFields}
             <input name="operation" type="hidden" value="create_roster" />
             <input name="idempotencyKey" type="hidden" value={randomUUID()} />
             <div className="form-grid-two">
@@ -164,8 +151,8 @@ export default async function ReportShiftsPage({
           <RouteBackedWidgetPostForm
             action="/workspace/hr/shifts/action"
             className="leave-request-form"
+            focusOrigin={focusOrigin}
           >
-            {originFields}
             <input name="operation" type="hidden" value="assign" />
             <input name="idempotencyKey" type="hidden" value={randomUUID()} />
             <input name="rosterVersionId" type="hidden" value={rosterVersionId} />
@@ -202,8 +189,8 @@ export default async function ReportShiftsPage({
         <RouteBackedWidgetPostForm
           action="/workspace/hr/shifts/action"
           className="leave-request-form"
+          focusOrigin={focusOrigin}
         >
-          {originFields}
           <input name="operation" type="hidden" value="publish" />
           <input name="idempotencyKey" type="hidden" value={randomUUID()} />
           <input name="rosterVersionId" type="hidden" value={rosterVersionId} />
@@ -227,8 +214,8 @@ export default async function ReportShiftsPage({
         <RouteBackedWidgetPostForm
           action="/workspace/hr/shifts/action"
           className="leave-request-form"
+          focusOrigin={focusOrigin}
         >
-          {originFields}
           <input name="operation" type="hidden" value="cancel" />
           <input name="idempotencyKey" type="hidden" value={randomUUID()} />
           <div className="form-field">
@@ -297,8 +284,10 @@ export default async function ReportShiftsPage({
                 View persistent history
               </Link>
               {canCancel && shift.status === "active" ? (
-                <RouteBackedWidgetPostForm action="/workspace/hr/shifts/action">
-                  {originFields}
+                <RouteBackedWidgetPostForm
+                  action="/workspace/hr/shifts/action"
+                  focusOrigin={focusOrigin}
+                >
                   <input name="operation" type="hidden" value="cancel" />
                   <input name="idempotencyKey" type="hidden" value={randomUUID()} />
                   <input name="shiftAssignmentId" type="hidden" value={shift.shiftAssignmentId} />

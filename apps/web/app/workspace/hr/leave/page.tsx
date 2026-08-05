@@ -124,6 +124,7 @@ export default async function HrLeaveListPage({
                         focusNavigation?.returnContext ?? "leave-list",
                         focusNavigation?.originFocusId,
                         cursor,
+                        focusNavigation?.routeOrigin,
                       )}
                       prefetch={false}
                     >

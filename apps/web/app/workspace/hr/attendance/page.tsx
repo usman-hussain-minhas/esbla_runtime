@@ -2,7 +2,6 @@ import Link from "next/link";
 import { loadOwnAttendance } from "../../../../lib/hr-attendance";
 import {
   buildNestedRouteBackedWidgetHref,
-  getRouteBackedWidgetOriginParameters,
   type RouteBackedWidgetOrigin,
 } from "../../../../lib/route-backed-widget-navigation-core";
 import { RouteBackedWidgetGetForm } from "../../../../theme/zen-theme/v1/route-backed-widget-overlay";
@@ -41,7 +40,6 @@ export default async function OwnAttendancePage({
 }: Props) {
   const parameters = await searchParams;
   const state = preloadedState ?? (await loadOwnAttendance(parameters));
-  const encodedOrigin = focusOrigin ? getRouteBackedWidgetOriginParameters(focusOrigin) : undefined;
   return (
     <section aria-labelledby="attendance-heading" className="work-surface">
       {mode === "standalone" ? (
@@ -58,13 +56,11 @@ export default async function OwnAttendancePage({
           </p>
         </div>
       </header>
-      <RouteBackedWidgetGetForm action="/workspace/hr/attendance" className="leave-request-form">
-        {encodedOrigin ? (
-          <>
-            <input name="originFocusId" type="hidden" value={encodedOrigin.originFocusId} />
-            <input name="returnSurface" type="hidden" value={encodedOrigin.returnSurface} />
-          </>
-        ) : null}
+      <RouteBackedWidgetGetForm
+        action="/workspace/hr/attendance"
+        className="leave-request-form"
+        focusOrigin={focusOrigin}
+      >
         <div className="form-grid-two">
           <div className="form-field">
             <label htmlFor="attendance-from">From date</label>

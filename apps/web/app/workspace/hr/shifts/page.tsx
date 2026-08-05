@@ -2,7 +2,6 @@ import Link from "next/link";
 import { loadOwnShifts } from "../../../../lib/hr-shift-assignment";
 import {
   buildNestedRouteBackedWidgetHref,
-  getRouteBackedWidgetOriginParameters,
   type RouteBackedWidgetOrigin,
 } from "../../../../lib/route-backed-widget-navigation-core";
 import { RouteBackedWidgetGetForm } from "../../../../theme/zen-theme/v1/route-backed-widget-overlay";
@@ -48,7 +47,6 @@ export default async function OwnShiftsPage({
 }: Props) {
   const parameters = await searchParams;
   const state = preloadedState ?? (await loadOwnShifts(parameters));
-  const encodedOrigin = focusOrigin ? getRouteBackedWidgetOriginParameters(focusOrigin) : undefined;
   return (
     <section aria-labelledby="own-shifts-heading" className="work-surface">
       {mode === "standalone" ? (
@@ -64,13 +62,11 @@ export default async function OwnShiftsPage({
           <p>The requested Shift action is not confirmed. Review current values and try again.</p>
         </div>
       ) : null}
-      <RouteBackedWidgetGetForm action="/workspace/hr/shifts" className="leave-request-form">
-        {encodedOrigin ? (
-          <>
-            <input name="originFocusId" type="hidden" value={encodedOrigin.originFocusId} />
-            <input name="returnSurface" type="hidden" value={encodedOrigin.returnSurface} />
-          </>
-        ) : null}
+      <RouteBackedWidgetGetForm
+        action="/workspace/hr/shifts"
+        className="leave-request-form"
+        focusOrigin={focusOrigin}
+      >
         <div className="form-grid-two">
           <div className="form-field">
             <label htmlFor="shift-from">From date</label>

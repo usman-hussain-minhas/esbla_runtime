@@ -14,8 +14,10 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  getRouteBackedWidgetOriginParameters,
   parseRouteBackedWidgetFallbackHref,
   ROUTE_BACKED_WIDGET_RETURN_FOCUS_KEY,
+  type RouteBackedWidgetOrigin,
   serializeRouteBackedWidgetReturnFocus,
 } from "../../../lib/route-backed-widget-navigation-core";
 import { SemanticIcon } from "./semantic-icons";
@@ -366,10 +368,12 @@ export function RouteBackedWidgetGetForm({
   action,
   children,
   className,
+  focusOrigin,
 }: {
   readonly action: string;
   readonly children: ReactNode;
   readonly className?: string;
+  readonly focusOrigin?: RouteBackedWidgetOrigin | undefined;
 }) {
   const router = useRouter();
   const navigation = useContext(RouteBackedWidgetNavigationContext);
@@ -397,6 +401,7 @@ export function RouteBackedWidgetGetForm({
   }
   return (
     <form action={action} className={className} method="get" onSubmit={submit}>
+      <RouteBackedWidgetOriginFields focusOrigin={focusOrigin} />
       {children}
     </form>
   );
@@ -406,11 +411,13 @@ export function RouteBackedWidgetPostForm({
   action,
   children,
   className,
+  focusOrigin,
   resultFocusId,
 }: {
   readonly action: string;
   readonly children: ReactNode;
   readonly className?: string;
+  readonly focusOrigin?: RouteBackedWidgetOrigin | undefined;
   readonly resultFocusId?: string;
 }) {
   const router = useRouter();
@@ -513,8 +520,27 @@ export function RouteBackedWidgetPostForm({
       onSubmit={submit}
     >
       {error ? <p role="alert">{error}</p> : null}
+      <RouteBackedWidgetOriginFields focusOrigin={focusOrigin} />
       {children}
     </form>
+  );
+}
+
+function RouteBackedWidgetOriginFields({
+  focusOrigin,
+}: Readonly<{ focusOrigin?: RouteBackedWidgetOrigin | undefined }>) {
+  if (!focusOrigin?.widgetDefinitionId) return null;
+  const origin = getRouteBackedWidgetOriginParameters(focusOrigin);
+  return (
+    <>
+      <input name="originFocusId" type="hidden" value={origin.originFocusId} />
+      <input
+        name="originWidgetDefinitionId"
+        type="hidden"
+        value={origin.originWidgetDefinitionId}
+      />
+      <input name="returnSurface" type="hidden" value={origin.returnSurface} />
+    </>
   );
 }
 

@@ -4,7 +4,6 @@ import { loadReportAttendance } from "../../../../../lib/hr-attendance";
 import { canRenderAttendanceAction } from "../../../../../lib/hr-attendance-core";
 import {
   buildNestedRouteBackedWidgetHref,
-  getRouteBackedWidgetOriginParameters,
   type RouteBackedWidgetOrigin,
 } from "../../../../../lib/route-backed-widget-navigation-core";
 import {
@@ -46,7 +45,6 @@ export default async function ReportAttendancePage({
 }: Props) {
   const parameters = await searchParams;
   const state = preloadedState ?? (await loadReportAttendance(parameters));
-  const encodedOrigin = focusOrigin ? getRouteBackedWidgetOriginParameters(focusOrigin) : undefined;
   const canRecord = canRenderAttendanceAction(
     state.authorizedActions,
     state.status,
@@ -77,12 +75,11 @@ export default async function ReportAttendancePage({
         <RouteBackedWidgetPostForm
           action="/workspace/hr/attendance/action"
           className="leave-request-form"
+          focusOrigin={focusOrigin}
         >
           <h2>Record a manual attendance fact</h2>
-          {encodedOrigin ? (
+          {focusOrigin?.widgetDefinitionId ? (
             <>
-              <input name="originFocusId" type="hidden" value={encodedOrigin.originFocusId} />
-              <input name="returnSurface" type="hidden" value={encodedOrigin.returnSurface} />
               <input name="returnTo" type="hidden" value="reports" />
               {one(parameters.from) ? (
                 <input name="from" type="hidden" value={one(parameters.from)} />
@@ -127,13 +124,8 @@ export default async function ReportAttendancePage({
       <RouteBackedWidgetGetForm
         action="/workspace/hr/attendance/reports"
         className="leave-request-form"
+        focusOrigin={focusOrigin}
       >
-        {encodedOrigin ? (
-          <>
-            <input name="originFocusId" type="hidden" value={encodedOrigin.originFocusId} />
-            <input name="returnSurface" type="hidden" value={encodedOrigin.returnSurface} />
-          </>
-        ) : null}
         <div className="form-grid-two">
           <div className="form-field">
             <label htmlFor="attendance-report-from">From date</label>

@@ -1,3 +1,4 @@
+import { resolveHrLeaveInterceptedFocusNavigation } from "../../../../../lib/hr-leave-navigation-core";
 import { parseRouteBackedWidgetOrigin } from "../../../../../lib/route-backed-widget-navigation-core";
 import {
   RouteBackedWidgetFocusPane,
@@ -12,12 +13,8 @@ interface Props {
 
 export default async function InterceptedLeavePage({ searchParams }: Props) {
   const parameters = await searchParams;
-  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr");
-  const focusNavigation = {
-    originFocusId: origin.returnFocusId,
-    returnContext:
-      origin.fallbackHref === "/" ? ("mission-control" as const) : ("hr-mission-control" as const),
-  };
+  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr", "/workspace/hr/leave");
+  const focusNavigation = resolveHrLeaveInterceptedFocusNavigation(origin);
   return (
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}

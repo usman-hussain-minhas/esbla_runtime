@@ -7,7 +7,6 @@ import {
   parseOwnExpenseCursor,
 } from "../../../../../../lib/hr-expense-claim-core";
 import {
-  getRouteBackedWidgetOriginParameters,
   type RouteBackedWidgetOrigin,
   withoutRouteBackedWidgetOrigin,
 } from "../../../../../../lib/route-backed-widget-navigation-core";
@@ -58,15 +57,13 @@ function ExpenseActionForm({
       </form>
     );
   }
-  const origin = getRouteBackedWidgetOriginParameters(focusOrigin);
   return (
     <RouteBackedWidgetPostForm
       action="/workspace/hr/expenses/action"
       resultFocusId="expense-result"
+      focusOrigin={focusOrigin}
       {...(className === undefined ? {} : { className })}
     >
-      <input name="originFocusId" type="hidden" value={origin.originFocusId} />
-      <input name="returnSurface" type="hidden" value={origin.returnSurface} />
       {children}
     </RouteBackedWidgetPostForm>
   );

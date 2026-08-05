@@ -76,6 +76,8 @@ export function LeaveRequestForm({ focusNavigation, idempotencyKey }: LeaveReque
           result.leaveRequestId,
           focusNavigation?.returnContext ?? "leave-list",
           focusNavigation?.originFocusId,
+          undefined,
+          focusNavigation?.routeOrigin,
         ),
       );
     } catch {

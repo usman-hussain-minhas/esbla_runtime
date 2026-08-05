@@ -223,7 +223,7 @@ test("Expense and My Work focus workspaces preserve one nested Product journey",
     await employee.page.goto(`${employee.origin}/workspace/hr`);
     const expenseLauncher = employee.page.getByRole("link", {
       exact: true,
-      name: "Open My Expense Claims",
+      name: "Open My Expense Claims workspace",
     });
     await expenseLauncher.click();
     const expenseList = employee.page.getByRole("dialog", {
@@ -248,7 +248,7 @@ test("Expense and My Work focus workspaces preserve one nested Product journey",
     await post(employee, "Submit Expense Claim");
     await expect(employee.page).toHaveURL(
       new RegExp(
-        `/workspace/hr/expenses/by-id/${expenseClaimId}\\?returnTo=own&result=current&originFocusId=hr-mission-control\\.my-expenses\\.full-screen&returnSurface=hr-mission-control#expense-result$`,
+        `/workspace/hr/expenses/by-id/${expenseClaimId}\\?returnTo=own&result=current&originFocusId=hr-mission-control\\.my-expenses\\.full-screen&returnSurface=surface\\.hr\\.mission-control&originWidgetDefinitionId=hr\\.expense\\.mine#expense-result$`,
       ),
     );
     const expenseDetail = employee.page.getByRole("dialog", {
@@ -283,7 +283,7 @@ test("Expense and My Work focus workspaces preserve one nested Product journey",
     await expect(compactExpenseRow).toHaveAttribute("id", compactExpenseFocusId);
     await expect(compactExpenseRow).toHaveAttribute(
       "href",
-      `/workspace/hr/expenses/by-id/${expenseClaimId}?returnTo=own&originFocusId=${compactExpenseFocusId}&returnSurface=mission-control`,
+      `/workspace/hr/expenses/by-id/${expenseClaimId}?returnTo=own&originFocusId=${compactExpenseFocusId}&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.expense.mine`,
     );
     await compactExpenseRow.click();
     const compactExpenseDetail = employee.page.getByRole("dialog", {
@@ -298,7 +298,7 @@ test("Expense and My Work focus workspaces preserve one nested Product journey",
     await expect(employee.page.locator(`[id="${compactExpenseFocusId}"]`)).toBeFocused();
 
     await manager.page.goto(`${manager.origin}/workspace/hr`);
-    await manager.page.getByRole("link", { exact: true, name: "Open My Work" }).click();
+    await manager.page.getByRole("link", { exact: true, name: "Open My Work workspace" }).click();
     const myWork = manager.page.getByRole("dialog", { exact: true, name: "My Work" });
     await expect(myWork).toBeVisible();
     const assignedExpense = myWork
@@ -324,7 +324,10 @@ test("Expense and My Work focus workspaces preserve one nested Product journey",
     expect(new URL(manager.page.url()).searchParams.get("returnTo")).toBeNull();
     await expect
       .poll(() => new URL(manager.page.url()).searchParams.get("returnSurface"))
-      .toBe("hr-mission-control");
+      .toBe("surface.hr.mission-control");
+    expect(new URL(manager.page.url()).searchParams.get("originWidgetDefinitionId")).toBe(
+      "platform.my-work.queue",
+    );
     const decidedDetail = manager.page.getByRole("dialog", {
       exact: true,
       name: "Expense Claim detail",

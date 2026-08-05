@@ -12,7 +12,11 @@ interface Props {
 
 export default async function InterceptedWorkforceAdminPage({ searchParams }: Props) {
   const parameters = await searchParams;
-  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr");
+  const origin = parseRouteBackedWidgetOrigin(parameters, "/workspace/hr", [
+    "/workspace/hr/employment",
+    "/workspace/hr/employment/admin",
+    "/workspace/hr/profile/admin",
+  ]);
   return (
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}

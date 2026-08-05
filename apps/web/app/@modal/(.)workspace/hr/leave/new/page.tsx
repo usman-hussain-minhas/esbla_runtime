@@ -1,7 +1,9 @@
 import {
+  isHrLeaveRouteOriginCompatible,
   parseHrLeaveOriginFocusId,
   parseHrLeaveReturnContext,
 } from "../../../../../../lib/hr-leave-navigation-core";
+import { parseOptionalRouteBackedWidgetOrigin } from "../../../../../../lib/route-backed-widget-navigation-core";
 import {
   RouteBackedWidgetFocusPane,
   RouteBackedWidgetFocusWorkspace,
@@ -20,23 +22,31 @@ export default async function InterceptedNewLeavePage({
   const parameters = await searchParams;
   const returnContext = parseHrLeaveReturnContext(parameters.returnContext);
   const originFocusId = parseHrLeaveOriginFocusId(parameters.originFocusId);
+  const candidateRouteOrigin = parseOptionalRouteBackedWidgetOrigin(parameters, [
+    "/workspace/hr/leave",
+    "/workspace/hr/leave/new",
+  ]);
+  const routeOrigin = isHrLeaveRouteOriginCompatible(
+    returnContext,
+    originFocusId,
+    candidateRouteOrigin,
+  )
+    ? candidateRouteOrigin
+    : undefined;
   const focusNavigation =
     (returnContext === "mission-control" || returnContext === "hr-mission-control") && originFocusId
-      ? { originFocusId, returnContext }
+      ? routeOrigin
+        ? { originFocusId, routeOrigin, returnContext }
+        : { returnContext: "leave-list" as const }
       : { returnContext: "leave-list" as const };
-  const fallbackHref =
-    focusNavigation.returnContext === "mission-control"
-      ? "/"
-      : focusNavigation.returnContext === "hr-mission-control"
-        ? "/workspace/hr"
-        : "/workspace/hr/leave";
+  const fallbackHref = routeOrigin?.fallbackHref ?? "/workspace/hr/leave";
 
   return (
     <RouteBackedWidgetOverlay
       browserBackMode="return-master"
       fallbackHref={fallbackHref}
       label="New leave request"
-      returnFocusId={originFocusId ?? "leave-list-heading"}
+      returnFocusId={routeOrigin?.returnFocusId ?? "leave-list-heading"}
     >
       <RouteBackedWidgetFocusWorkspace
         activePane="detail"
