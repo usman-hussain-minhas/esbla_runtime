@@ -12,6 +12,7 @@ import { loadOwnPresentationShortcuts } from "../lib/presentation-shortcuts";
 import { getPresentationShortcutContextSurfaceIds } from "../lib/presentation-shortcuts-core";
 import type { ZenSurfaceEditDescriptor } from "../lib/zen-surface-edit-core";
 import { ZenShellChrome } from "../theme/zen-theme/v1/chrome/zen-shell-chrome";
+import { ZenSurfaceFocusHost } from "../theme/zen-theme/v1/surfaces/zen-surface-focus-host";
 import { ZenSurfaceScrollRail } from "../theme/zen-theme/v1/surfaces/zen-surface-scroll-rail";
 import type { WorkspaceSurfaceKey } from "./workspace-surfaces";
 
@@ -67,6 +68,7 @@ export async function WorkspaceShell({
 
       <ZenSurfaceScrollRail scrollOwnerId={WORKSPACE_SURFACE_SCROLL_OWNER_ID} />
       <main className="surface-frame">
+        <ZenSurfaceFocusHost />
         <div className="surface-scroll" id={WORKSPACE_SURFACE_SCROLL_OWNER_ID}>
           {children}
         </div>

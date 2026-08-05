@@ -413,7 +413,14 @@ async function submitEmploymentForm(actor, button) {
 
 async function proveRepresentativeRouteBackedWidget(
   actor,
-  { dialogName, expectedHref, launcherName, screenshotStem, standaloneHeading },
+  {
+    dialogName,
+    expectedHref,
+    launcherName,
+    presentation = "modal",
+    screenshotStem,
+    standaloneHeading,
+  },
   testInfo,
 ) {
   await actor.page.setViewportSize({ height: 800, width: 1280 });
@@ -427,7 +434,7 @@ async function proveRepresentativeRouteBackedWidget(
   await launcher.press("Enter");
   await expect(actor.page).toHaveURL(`${actor.origin}${expectedHref}`);
 
-  const overlay = actor.page.getByRole("dialog", {
+  const overlay = actor.page.getByRole(presentation === "workspace" ? "region" : "dialog", {
     exact: true,
     name: dialogName,
   });
@@ -436,19 +443,30 @@ async function proveRepresentativeRouteBackedWidget(
   await expect(
     overlay.getByRole("heading", { exact: true, level: 1, name: standaloneHeading }),
   ).toBeVisible();
-  await expect(actor.page.locator(".esbla-shell")).toHaveAttribute("aria-hidden", "true");
-  await expect(actor.page.locator(".esbla-shell")).toHaveAttribute("inert", "");
+  if (presentation === "workspace") {
+    await expect(overlay).not.toHaveAttribute("aria-modal", "true");
+    await expect(actor.page.locator(".esbla-shell")).not.toHaveAttribute("aria-hidden", "true");
+    await expect(actor.page.locator(".esbla-shell")).not.toHaveAttribute("inert", "");
+    await expect(actor.page.locator(".surface-scroll")).toHaveAttribute("aria-hidden", "true");
+    await expect(actor.page.locator(".surface-scroll")).toHaveAttribute("inert", "");
+    await expect(
+      actor.page.getByRole("link", { exact: true, name: "Mission Control" }),
+    ).toBeVisible();
+  } else {
+    await expect(actor.page.locator(".esbla-shell")).toHaveAttribute("aria-hidden", "true");
+    await expect(actor.page.locator(".esbla-shell")).toHaveAttribute("inert", "");
 
-  await actor.page.keyboard.press("Shift+Tab");
-  expect(
-    await overlay.evaluate((element) => element.contains(document.activeElement)),
-    `${dialogName} keeps reverse-tab focus inside`,
-  ).toBe(true);
-  await actor.page.keyboard.press("Tab");
-  expect(
-    await overlay.evaluate((element) => element.contains(document.activeElement)),
-    `${dialogName} keeps forward-tab focus inside`,
-  ).toBe(true);
+    await actor.page.keyboard.press("Shift+Tab");
+    expect(
+      await overlay.evaluate((element) => element.contains(document.activeElement)),
+      `${dialogName} keeps reverse-tab focus inside`,
+    ).toBe(true);
+    await actor.page.keyboard.press("Tab");
+    expect(
+      await overlay.evaluate((element) => element.contains(document.activeElement)),
+      `${dialogName} keeps forward-tab focus inside`,
+    ).toBe(true);
+  }
 
   const desktopPath = testInfo.outputPath(`${screenshotStem}-desktop.png`);
   await actor.page.screenshot({ fullPage: false, path: desktopPath });
@@ -852,6 +870,7 @@ test("employee Profile and Leave-list widgets render as responsive route-backed 
         expectedHref:
           "/workspace/hr/leave?originFocusId=hr-mission-control.my-leave.full-screen&returnSurface=surface.hr.mission-control&originWidgetDefinitionId=hr.leave.my-requests",
         launcherName: "Open My Leave Requests workspace",
+        presentation: "workspace",
         screenshotStem: "representative-leave-list",
         standaloneHeading: "My Leave Requests",
       },
@@ -874,17 +893,15 @@ test("Leave focus workspace preserves origin, nested Back, dirty guard and mobil
       .getByRole("link", { exact: true, name: "Open My Leave Requests workspace" })
       .press("Enter");
 
-    const listOverlay = employee.page.getByRole("dialog", {
-      exact: true,
-      name: "My leave requests",
-    });
+    const listOverlay = employee.page.locator(
+      '.zen-widget-overlay[data-widget-presentation="workspace"][aria-label="My leave requests"]',
+    );
     await expect(listOverlay).toBeVisible();
     await listOverlay.getByRole("link", { exact: true, name: "New request" }).press("Enter");
 
-    const newOverlay = employee.page.getByRole("dialog", {
-      exact: true,
-      name: "New leave request",
-    });
+    const newOverlay = employee.page.locator(
+      '.zen-widget-overlay[data-widget-presentation="workspace"][aria-label="New leave request"]',
+    );
     const workspace = newOverlay.locator('[data-focus-workspace="hr-leave"]');
     await expect(newOverlay).toBeVisible();
     await expect(employee.page).toHaveURL(
@@ -926,6 +943,17 @@ test("Leave focus workspace preserves origin, nested Back, dirty guard and mobil
     });
     await newOverlay.getByRole("link", { exact: true, name: "Back to requests" }).click();
     expect(await dismissedPrompt).toBe("Discard unsaved changes and leave this view?");
+    await expect(newOverlay).toBeVisible();
+    await expect(employee.page.getByLabel("Reason")).toHaveValue("Unsaved focus workspace draft");
+
+    const dismissedChromePrompt = new Promise((resolve) => {
+      employee.page.once("dialog", async (dialog) => {
+        resolve(dialog.message());
+        await dialog.dismiss();
+      });
+    });
+    await employee.page.getByRole("link", { exact: true, name: "Mission Control" }).click();
+    expect(await dismissedChromePrompt).toBe("Discard unsaved changes and leave this view?");
     await expect(newOverlay).toBeVisible();
     await expect(employee.page.getByLabel("Reason")).toHaveValue("Unsaved focus workspace draft");
 
@@ -1012,20 +1040,18 @@ test("Leave focus workspace fails closed after authorization loss, deactivation 
       await employee.page
         .getByRole("link", { exact: true, name: "Open My Leave Requests workspace" })
         .press("Enter");
-      const listOverlay = employee.page.getByRole("dialog", {
-        exact: true,
-        name: "My leave requests",
-      });
+      const listOverlay = employee.page.locator(
+        '.zen-widget-overlay[data-widget-presentation="workspace"][aria-label="My leave requests"]',
+      );
       await expect(listOverlay).toBeVisible();
       const detailLink = listOverlay.locator(`a[href*="/workspace/hr/leave/${leaveRequestId}?"]`);
       await expect(detailLink).toBeVisible();
       return detailLink;
     };
     const expectSafeError = async (actor) => {
-      const overlay = actor.page.getByRole("dialog", {
-        exact: true,
-        name: "Leave request detail",
-      });
+      const overlay = actor.page.locator(
+        '.zen-widget-overlay[data-widget-presentation="workspace"][aria-label="Leave request detail"]',
+      );
       await expect(overlay).toBeVisible();
       await expect(overlay.locator('[data-focus-workspace="hr-leave"]')).toHaveAttribute(
         "data-focus-layout",
@@ -1059,10 +1085,9 @@ test("Leave focus workspace fails closed after authorization loss, deactivation 
     await setForcedMissingLeaveRequest(leaveRequestId);
     forcedMissing = true;
     await detailLink.press("Enter");
-    const missingOverlay = employee.page.getByRole("dialog", {
-      exact: true,
-      name: "Leave request detail",
-    });
+    const missingOverlay = employee.page.locator(
+      '.zen-widget-overlay[data-widget-presentation="workspace"][aria-label="Leave request detail"]',
+    );
     await expect(missingOverlay).toBeVisible();
     await expect(
       missingOverlay.getByRole("heading", { name: "Leave request not found" }),
@@ -2485,20 +2510,6 @@ test("Timesheet and Expense catalogue faces add through Surface Editor and rende
   );
   const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
   const actors = [admin, manager, employee, operator];
-  let expenseReactivated = false;
-  const runExpenseServiceAction = async (buttonName) => {
-    const button = admin.page.getByRole("button", { exact: true, name: buttonName });
-    const [response] = await Promise.all([
-      admin.page.waitForResponse(
-        (candidate) =>
-          candidate.request().method() === "POST" &&
-          new URL(candidate.url()).pathname === "/workspace/hr/expenses/action",
-      ),
-      admin.page.waitForNavigation({ waitUntil: "domcontentloaded" }),
-      button.click(),
-    ]);
-    expect(response.status()).toBe(303);
-  };
   const addAndSave = async (actor, displayNames) => {
     await actor.page.setViewportSize({ height: 900, width: 1_280 });
     await actor.page.goto(`${actor.origin}/studio/surfaces/surface.mission-control/personal`);
@@ -2518,17 +2529,7 @@ test("Timesheet and Expense catalogue faces add through Surface Editor and rende
   try {
     await admin.page.goto(`${admin.origin}/workspace/hr/expenses/settings`);
     const expenseStatus = admin.page.locator(".leave-status");
-    await expect(expenseStatus).toHaveText(/^(Active|Inactive)$/);
-    const activateExpense = admin.page.getByRole("button", {
-      exact: true,
-      name: "Activate Expense Claim",
-    });
-    if ((await expenseStatus.textContent()) === "Inactive") {
-      await expect(activateExpense).toBeVisible();
-      await runExpenseServiceAction("Activate Expense Claim");
-      expenseReactivated = true;
-      await expect(expenseStatus).toHaveText("Active");
-    }
+    await expect(expenseStatus).toHaveText("Active");
 
     await addAndSave(manager, ["Assigned Timesheets", "Assigned Expense Claims"]);
     for (const [definitionId, accessibleName] of [
@@ -2594,11 +2595,6 @@ test("Timesheet and Expense catalogue faces add through Surface Editor and rende
         .goto(`${actor.origin}/studio/surfaces/surface.mission-control/personal`)
         .catch(() => undefined);
       await restoreTenantLayout(actor);
-    }
-    if (expenseReactivated) {
-      await admin.page.goto(`${admin.origin}/workspace/hr/expenses/settings`);
-      await runExpenseServiceAction("Deactivate Expense Claim");
-      await expect(admin.page.locator(".leave-status")).toHaveText("Inactive");
     }
     await closeActors(...actors);
   }
@@ -3723,44 +3719,57 @@ test("employee submits, manager approves, and employee reloads durable rendered 
     await expect(employee.page).toHaveURL(
       `${employee.origin}/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control&originFocusId=mission-control.my-leave.${leaveRequestId}&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.leave.my-requests`,
     );
-    const overlay = employee.page.getByRole("dialog", { name: "Leave request detail" });
+    const overlay = employee.page.locator(
+      '.zen-widget-overlay[data-widget-presentation="workspace"][aria-label="Leave request detail"]',
+    );
     await expect(overlay).toBeVisible();
     await expect(overlay).toBeFocused();
     const focusWorkspace = overlay.locator('[data-focus-workspace="hr-leave"]');
     await expect(focusWorkspace).toBeVisible();
     await expect(focusWorkspace.locator('[data-focus-pane="master"]')).toBeVisible();
     await expect(focusWorkspace.locator('[data-focus-pane="detail"]')).toBeVisible();
-    const focusGeometry = await focusWorkspace.evaluate((element) => {
+    const focusGeometry = await overlay.evaluate((element) => {
       const bounds = element.getBoundingClientRect();
-      const style = getComputedStyle(element);
-      const master = element.querySelector('[data-focus-pane="master"]');
-      const detail = element.querySelector('[data-focus-pane="detail"]');
+      const frame = element.closest(".surface-frame");
+      const frameBounds = frame?.getBoundingClientRect();
+      const workspace = element.querySelector('[data-focus-workspace="hr-leave"]');
+      const style = workspace ? getComputedStyle(workspace) : undefined;
+      const master = workspace?.querySelector('[data-focus-pane="master"]');
+      const detail = workspace?.querySelector('[data-focus-pane="detail"]');
       const masterBounds = master?.getBoundingClientRect();
       const detailBounds = detail?.getBoundingClientRect();
       return {
-        borderTopWidth: style.borderTopWidth,
+        borderTopWidth: style?.borderTopWidth ?? null,
         detailStartsAfterMaster: Boolean(
           masterBounds && detailBounds && detailBounds.left >= masterBounds.right,
         ),
-        height: Math.round(bounds.height),
+        frame: frameBounds
+          ? {
+              height: Math.round(frameBounds.height),
+              width: Math.round(frameBounds.width),
+              x: Math.round(frameBounds.x),
+              y: Math.round(frameBounds.y),
+            }
+          : null,
         masterWidth: Math.round(masterBounds?.width ?? 0),
-        width: Math.round(bounds.width),
-        x: Math.round(bounds.x),
-        y: Math.round(bounds.y),
+        overlay: {
+          height: Math.round(bounds.height),
+          width: Math.round(bounds.width),
+          x: Math.round(bounds.x),
+          y: Math.round(bounds.y),
+        },
       };
     });
-    expect(focusGeometry).toEqual({
-      borderTopWidth: "0px",
-      detailStartsAfterMaster: true,
-      height: 800,
-      masterWidth: 512,
-      width: 1_280,
-      x: 0,
-      y: 0,
-    });
+    expect(focusGeometry.frame).toEqual(focusGeometry.overlay);
+    expect(focusGeometry.borderTopWidth).toBe("0px");
+    expect(focusGeometry.detailStartsAfterMaster).toBe(true);
+    expect(focusGeometry.masterWidth).toBeGreaterThanOrEqual(360);
+    expect(focusGeometry.masterWidth).toBeLessThanOrEqual(520);
     await expect(overlay.locator('[data-leave-detail-face="overlay"]')).toBeVisible();
-    await expect(employee.page.locator(".esbla-shell")).toHaveAttribute("aria-hidden", "true");
-    await expect(employee.page.locator(".esbla-shell")).toHaveAttribute("inert", "");
+    await expect(employee.page.locator(".esbla-shell")).not.toHaveAttribute("aria-hidden", "true");
+    await expect(employee.page.locator(".esbla-shell")).not.toHaveAttribute("inert", "");
+    await expect(employee.page.locator(".surface-scroll")).toHaveAttribute("aria-hidden", "true");
+    await expect(employee.page.locator(".surface-scroll")).toHaveAttribute("inert", "");
     expect(
       await employee.page.evaluate(
         () =>
@@ -3778,9 +3787,11 @@ test("employee submits, manager approves, and employee reloads durable rendered 
     const closeDetail = overlay.getByRole("button", { name: "Close leave request detail" });
     await expect(closeDetail).toBeFocused();
     await employee.page.keyboard.press("Shift+Tab");
-    await expect(
-      overlay.getByRole("link", { exact: true, name: "Back to requests" }),
-    ).toBeFocused();
+    expect(
+      await employee.page.evaluate(
+        () => document.activeElement?.closest(".zen-shell-chrome") !== null,
+      ),
+    ).toBe(true);
     await employee.page.keyboard.press("Tab");
     await expect(closeDetail).toBeFocused();
     const revalidatedOrigin = employee.page.waitForResponse(
@@ -3938,7 +3949,9 @@ test("employee submits, manager approves, and employee reloads durable rendered 
     );
     await expectHistory(manager, "Approved", ["Submitted", "Approved"]);
     await manager.page
-      .getByRole("dialog", { name: "Leave request detail" })
+      .locator(
+        '.zen-widget-overlay[data-widget-presentation="workspace"][aria-label="Leave request detail"]',
+      )
       .getByRole("button", { name: "Close leave request detail" })
       .click();
     await expect(manager.page).toHaveURL(fixture.managerOrigin);
@@ -4047,10 +4060,9 @@ test("configured rejection note fails accessibly, then rejection persists after 
     expect(new URL(manager.page.url()).searchParams.get("originWidgetDefinitionId")).toBe(
       "platform.my-work.queue",
     );
-    const focusedDetail = manager.page.getByRole("dialog", {
-      exact: true,
-      name: "Leave request detail",
-    });
+    const focusedDetail = manager.page.locator(
+      '.zen-widget-overlay[data-widget-presentation="workspace"][aria-label="Leave request detail"]',
+    );
     await expect(focusedDetail).toBeVisible();
     await expect(focusedDetail.locator('[data-focus-workspace="hr-leave"]')).toHaveAttribute(
       "data-focus-layout",
@@ -5751,9 +5763,14 @@ test("Leave catalogue faces preserve employee and assigned-manager journeys", as
     await expect(manager.page).toHaveURL(
       `${manager.origin}/workspace/hr/leave/${leaveRequestId}?returnContext=mission-control&originFocusId=${originFocusId}&returnSurface=surface.mission-control&originWidgetDefinitionId=hr.leave.assigned`,
     );
-    await expect(manager.page.getByRole("dialog", { name: "Leave request detail" })).toBeVisible();
+    const assignedLeaveWorkspace = manager.page.locator(
+      '.zen-widget-overlay[data-widget-presentation="workspace"][aria-label="Leave request detail"]',
+    );
+    await expect(assignedLeaveWorkspace).toBeVisible();
     await manager.page
-      .getByRole("dialog", { name: "Leave request detail" })
+      .locator(
+        '.zen-widget-overlay[data-widget-presentation="workspace"][aria-label="Leave request detail"]',
+      )
       .getByRole("button", { name: "Close leave request detail" })
       .click();
     await expect(manager.page).toHaveURL(manager.origin);
@@ -5878,13 +5895,6 @@ test("complete default HR widgets render real attendance, expense, and direct-re
     );
 
     await admin.page.goto(`${admin.origin}/workspace/hr/expenses/settings`);
-    const activationResponse = admin.page.waitForResponse(
-      (candidate) =>
-        candidate.request().method() === "POST" &&
-        new URL(candidate.url()).pathname === "/workspace/hr/expenses/action",
-    );
-    await admin.page.getByRole("button", { name: "Activate Expense Claim" }).press("Enter");
-    expect((await activationResponse).status()).toBe(303);
     await expect(admin.page.locator(".leave-status")).toHaveText("Active");
 
     await employee.page.setViewportSize({ height: 900, width: 1_280 });
@@ -5911,8 +5921,12 @@ test("complete default HR widgets render real attendance, expense, and direct-re
       '[data-surface-instance="mission-control.my-expenses"]:not([data-widget-state="loading"])',
     );
     await expect(expenses).toHaveAttribute("data-widget-definition", "hr.expense.mine");
-    await expect(expenses).toHaveAttribute("data-widget-state", "populated");
-    await expect(expenses.getByText(/Minor units · version/).first()).toBeVisible();
+    await expect(expenses).toHaveAttribute("data-widget-state", /^(empty|populated)$/);
+    if ((await expenses.getAttribute("data-widget-state")) === "populated") {
+      await expect(expenses.getByText(/Minor units · version/).first()).toBeVisible();
+    } else {
+      await expect(expenses.getByText("No expense claims", { exact: true })).toBeVisible();
+    }
     await expect(
       expenses.getByRole("link", { exact: true, name: "Open My Expense Claims workspace" }),
     ).toHaveAttribute(

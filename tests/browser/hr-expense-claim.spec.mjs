@@ -465,6 +465,16 @@ test("manager decisions, employee correction, settings, and deactivation remain 
       manager.page.getByRole("heading", { name: "Expense Claim approvals unavailable" }),
     ).toBeVisible();
   } finally {
-    await closeActors(admin, employee, manager);
+    try {
+      await admin.page.goto(`${admin.origin}/workspace/hr/expenses/settings`);
+      const activationState = admin.page.locator(".leave-status");
+      await expect(activationState).toBeVisible();
+      if ((await activationState.textContent()) === "Inactive") {
+        await post(admin, "Activate Expense Claim");
+        await expect(activationState).toHaveText("Active");
+      }
+    } finally {
+      await closeActors(admin, employee, manager);
+    }
   }
 });

@@ -964,6 +964,19 @@ a.zen-shortcut-picker-link:focus-visible {
   z-index: 4;
 }
 
+.zen-surface-focus-host {
+  display: none;
+  inset: 0;
+  min-height: 0;
+  overflow: hidden;
+  position: absolute;
+  z-index: 6;
+}
+
+.zen-surface-focus-host:not(:empty) {
+  display: block;
+}
+
 .surface-frame::after {
   background: linear-gradient(to bottom, var(--bg-base), transparent);
   content: "";
@@ -1025,6 +1038,16 @@ a.zen-shortcut-picker-link:focus-visible {
 
 .surface-frame:has(.mission-control-surface)::after {
   display: none;
+}
+
+.surface-frame:has(.zen-surface-focus-host:not(:empty))::after {
+  display: none;
+}
+
+.surface-frame:has(.zen-surface-focus-host:not(:empty)) {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .mission-control-heading {
@@ -2088,6 +2111,15 @@ textarea:focus-visible,
   z-index: 80;
 }
 
+.zen-widget-overlay[data-widget-presentation="workspace"] {
+  inset: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  position: absolute;
+  z-index: 1;
+}
+
 .zen-widget-focused {
   grid-column: auto;
   grid-row: auto;
@@ -2119,6 +2151,12 @@ textarea:focus-visible,
   right: calc(var(--edge) + var(--safe-right) + var(--zen-visual-inline-end));
   top: calc(var(--edge) + var(--safe-top) + var(--zen-visual-block-start));
   z-index: 84;
+}
+
+.zen-widget-overlay[data-widget-presentation="workspace"] .zen-widget-full-screen-close {
+  position: absolute;
+  right: var(--edge);
+  top: var(--edge);
 }
 
 .leave-detail-overlay-face {
@@ -3770,6 +3808,12 @@ textarea:focus-visible,
   width: 100%;
 }
 
+.zen-widget-overlay[data-widget-presentation="workspace"] .zen-focus-workspace {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
+}
+
 .zen-focus-workspace[data-focus-layout="master-detail"] {
   display: grid;
   grid-template-columns: clamp(360px, 40%, 520px) minmax(0, 1fr);
@@ -3782,6 +3826,11 @@ textarea:focus-visible,
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-color: var(--line-mid) transparent;
+}
+
+.zen-widget-overlay[data-widget-presentation="workspace"] .zen-focus-pane {
+  height: auto;
+  overflow: visible;
 }
 
 .zen-focus-pane-master {
@@ -3876,4 +3925,9 @@ textarea:focus-visible,
   .zen-focus-pane-master .work-surface {
     padding: 32px 20px 48px;
   }
+}
+
+.esbla-shell:has(.zen-widget-overlay[data-widget-presentation="workspace"])
+  .zen-surface-scroll-rail {
+  display: none;
 }

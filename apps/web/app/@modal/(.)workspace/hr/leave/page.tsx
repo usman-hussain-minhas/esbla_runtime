@@ -22,6 +22,7 @@ export default async function InterceptedLeavePage({ searchParams }: Props) {
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}
       label="My leave requests"
+      origin={origin}
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace

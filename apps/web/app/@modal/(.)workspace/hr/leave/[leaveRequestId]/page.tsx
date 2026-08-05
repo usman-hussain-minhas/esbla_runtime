@@ -110,6 +110,7 @@ export default async function InterceptedLeaveDetailPage({
       browserBackMode={showMaster ? "return-master" : "close-origin"}
       fallbackHref={fallbackHref}
       label="Leave request detail"
+      origin={routeOrigin}
       returnFocusId={routeOrigin?.returnFocusId ?? "leave-detail-fallback-focus"}
     >
       <RouteBackedWidgetFocusWorkspace

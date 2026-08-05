@@ -21,12 +21,14 @@ import {
   serializeRouteBackedWidgetReturnFocus,
 } from "../../../lib/route-backed-widget-navigation-core";
 import { SemanticIcon } from "./semantic-icons";
+import { ZEN_SURFACE_FOCUS_HOST_ID } from "./surfaces/zen-surface-focus-host";
 
 interface RouteBackedWidgetOverlayProps {
   readonly browserBackMode?: "close-origin" | "return-master";
   readonly children: ReactNode;
   readonly fallbackHref: string;
   readonly label: string;
+  readonly origin?: RouteBackedWidgetOrigin | undefined;
   readonly returnFocusId: string;
 }
 
@@ -52,6 +54,62 @@ const ROUTE_BACKED_REFRESH_TOKEN_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RouteBackedWidgetNavigationContext = createContext<RouteBackedWidgetNavigation | null>(null);
 
+type RouteBackedWidgetPresentation = "legacy_modal" | "quick_view" | "workspace";
+
+interface ConcealedElementState {
+  readonly ariaHidden: string | null;
+  count: number;
+  readonly inert: boolean;
+}
+
+const concealedElementStates = new WeakMap<HTMLElement, ConcealedElementState>();
+let documentScrollLockCount = 0;
+let documentScrollLockSnapshot: Readonly<{ body: string; root: string }> | undefined;
+
+function acquireConcealment(element: HTMLElement): () => void {
+  const existing = concealedElementStates.get(element);
+  if (existing) {
+    existing.count += 1;
+  } else {
+    concealedElementStates.set(element, {
+      ariaHidden: element.getAttribute("aria-hidden"),
+      count: 1,
+      inert: element.inert,
+    });
+    element.inert = true;
+    element.setAttribute("aria-hidden", "true");
+  }
+  return () => {
+    const state = concealedElementStates.get(element);
+    if (!state) return;
+    state.count -= 1;
+    if (state.count > 0) return;
+    concealedElementStates.delete(element);
+    element.inert = state.inert;
+    if (state.ariaHidden === null) element.removeAttribute("aria-hidden");
+    else element.setAttribute("aria-hidden", state.ariaHidden);
+  };
+}
+
+function acquireDocumentScrollLock(): () => void {
+  if (documentScrollLockCount === 0) {
+    documentScrollLockSnapshot = {
+      body: document.body.style.overflow,
+      root: document.documentElement.style.overflow,
+    };
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+  }
+  documentScrollLockCount += 1;
+  return () => {
+    documentScrollLockCount = Math.max(0, documentScrollLockCount - 1);
+    if (documentScrollLockCount !== 0 || !documentScrollLockSnapshot) return;
+    document.documentElement.style.overflow = documentScrollLockSnapshot.root;
+    document.body.style.overflow = documentScrollLockSnapshot.body;
+    documentScrollLockSnapshot = undefined;
+  };
+}
+
 function parseRouteBackedPostResponse(value: unknown): string | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -75,13 +133,26 @@ export function RouteBackedWidgetOverlay({
   children,
   fallbackHref,
   label,
+  origin,
   returnFocusId,
 }: RouteBackedWidgetOverlayProps) {
   const safeFallbackHref = parseRouteBackedWidgetFallbackHref(fallbackHref) ?? "/";
+  const presentation: RouteBackedWidgetPresentation =
+    origin?.expansionMode === "workspace"
+      ? "workspace"
+      : origin?.expansionMode === "quick_view"
+        ? "quick_view"
+        : "legacy_modal";
+  if (
+    origin &&
+    (origin.fallbackHref !== safeFallbackHref || origin.returnFocusId !== returnFocusId)
+  ) {
+    throw new Error("Route-backed widget overlay origin does not match its navigation");
+  }
   const pathname = usePathname();
   const searchParameters = useSearchParams();
   const routeIdentity = `${pathname}?${searchParameters.toString()}`;
-  const dialog = useRef<HTMLDivElement>(null);
+  const face = useRef<HTMLElement>(null);
   const dirty = useRef(false);
   const exitRequested = useRef(false);
   const fallbackTimer = useRef<number | undefined>(undefined);
@@ -128,7 +199,7 @@ export function RouteBackedWidgetOverlay({
     } catch {
       return;
     }
-    const root = dialog.current;
+    const root = face.current;
     if (!root || !targetId) return;
     const target = document.getElementById(targetId);
     if (target instanceof HTMLElement && root.contains(target)) {
@@ -155,35 +226,35 @@ export function RouteBackedWidgetOverlay({
 
   useEffect(() => {
     if (!mounted) return;
-    const face = dialog.current;
-    if (!face) return;
-    const activeFace: HTMLDivElement = face;
+    const currentFace = face.current;
+    if (!currentFace) return;
+    const activeFace: HTMLElement = currentFace;
     const originFocus =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const originScrollOwner = document.querySelector<HTMLElement>(".surface-scroll");
+    const focusHost = activeFace.closest<HTMLElement>('[data-zen-surface-focus-host="true"]');
+    const originScrollOwner =
+      presentation === "workspace"
+        ? focusHost?.parentElement?.querySelector<HTMLElement>(":scope > .surface-scroll")
+        : document.querySelector<HTMLElement>(".surface-scroll");
+    if (presentation === "workspace" && !originScrollOwner) {
+      throw new Error("Surface-local focus workspace has no origin scroll owner");
+    }
     const currentOriginScroll = {
       left: Math.max(0, Math.round(originScrollOwner?.scrollLeft ?? 0)),
       top: Math.max(0, Math.round(originScrollOwner?.scrollTop ?? 0)),
     };
     originScroll.current = currentOriginScroll;
-    const priorDocumentOverflow = document.documentElement.style.overflow;
-    const priorBodyOverflow = document.body.style.overflow;
-    const concealed = [...document.body.children]
-      .filter(
-        (element): element is HTMLElement =>
-          element instanceof HTMLElement && element !== activeFace,
-      )
-      .map((element) => ({
-        ariaHidden: element.getAttribute("aria-hidden"),
-        element,
-        inert: element.inert,
-      }));
-    for (const entry of concealed) {
-      entry.element.inert = true;
-      entry.element.setAttribute("aria-hidden", "true");
-    }
-    document.documentElement.style.overflow = "hidden";
-    document.body.style.overflow = "hidden";
+    const concealmentTargets =
+      presentation === "workspace"
+        ? originScrollOwner
+          ? [originScrollOwner]
+          : []
+        : [...document.body.children].filter(
+            (element): element is HTMLElement =>
+              element instanceof HTMLElement && element !== activeFace,
+          );
+    const releaseConcealments = concealmentTargets.map(acquireConcealment);
+    const releaseDocumentScrollLock = acquireDocumentScrollLock();
     activeFace.focus();
     const historyState =
       typeof window.history.state === "object" && window.history.state !== null
@@ -207,11 +278,18 @@ export function RouteBackedWidgetOverlay({
     }
     function handleKeys(event: KeyboardEvent) {
       if (event.key === "Escape") {
+        if (
+          event.defaultPrevented ||
+          (presentation === "workspace" &&
+            document.querySelector('.zen-shell-chrome [aria-expanded="true"]'))
+        ) {
+          return;
+        }
         event.preventDefault();
         close();
         return;
       }
-      if (event.key !== "Tab") return;
+      if (event.key !== "Tab" || presentation === "workspace") return;
       const focusable = [...activeFace.querySelectorAll<HTMLElement>(focusableSelector)].filter(
         (element) => !element.hidden && element.getAttribute("aria-hidden") !== "true",
       );
@@ -239,6 +317,19 @@ export function RouteBackedWidgetOverlay({
       ) {
         dirty.current = true;
       }
+    }
+    function guardChromeNavigation(event: MouseEvent) {
+      if (presentation !== "workspace" || !dirty.current || !(event.target instanceof Element)) {
+        return;
+      }
+      const link = event.target.closest<HTMLAnchorElement>("a[href]");
+      if (!link?.closest(".zen-shell-chrome")) return;
+      if (window.confirm("Discard unsaved changes and leave this view?")) {
+        dirty.current = false;
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
     }
     function markSubmitted(event: SubmitEvent) {
       if (
@@ -282,6 +373,7 @@ export function RouteBackedWidgetOverlay({
       requestFreshOrigin(-1);
     }
     document.addEventListener("keydown", handleKeys);
+    document.addEventListener("click", guardChromeNavigation, true);
     activeFace.addEventListener("change", markDirty);
     activeFace.addEventListener("input", markDirty);
     activeFace.addEventListener("submit", markSubmitted);
@@ -289,6 +381,7 @@ export function RouteBackedWidgetOverlay({
     window.addEventListener("popstate", handleHistoryTraversal);
     return () => {
       document.removeEventListener("keydown", handleKeys);
+      document.removeEventListener("click", guardChromeNavigation, true);
       activeFace.removeEventListener("change", markDirty);
       activeFace.removeEventListener("input", markDirty);
       activeFace.removeEventListener("submit", markSubmitted);
@@ -297,16 +390,15 @@ export function RouteBackedWidgetOverlay({
       if (fallbackTimer.current !== undefined && !exitRequested.current) {
         window.clearTimeout(fallbackTimer.current);
       }
-      document.documentElement.style.overflow = priorDocumentOverflow;
-      document.body.style.overflow = priorBodyOverflow;
-      for (const entry of concealed) {
-        entry.element.inert = entry.inert;
-        if (entry.ariaHidden === null) entry.element.removeAttribute("aria-hidden");
-        else entry.element.setAttribute("aria-hidden", entry.ariaHidden);
-      }
+      for (const release of releaseConcealments) release();
+      releaseDocumentScrollLock();
       originScrollOwner?.scrollTo(currentOriginScroll);
       if (!exitRequested.current) {
         requestAnimationFrame(() => {
+          const anotherFace = [
+            ...document.querySelectorAll<HTMLElement>('[data-route-backed-overlay-active="true"]'),
+          ].some((candidate) => candidate !== activeFace);
+          if (anotherFace) return;
           const returnTarget = document.getElementById(returnFocusId) ?? originFocus;
           if (returnTarget?.isConnected && !returnTarget.closest("[inert]")) returnTarget.focus();
         });
@@ -318,6 +410,7 @@ export function RouteBackedWidgetOverlay({
     confirmNestedNavigation,
     mounted,
     navigateToFreshOrigin,
+    presentation,
     requestFreshOrigin,
     returnFocusId,
   ]);
@@ -334,7 +427,7 @@ export function RouteBackedWidgetOverlay({
       return;
     }
     const target = document.getElementById(targetId);
-    if (target instanceof HTMLElement && dialog.current?.contains(target)) {
+    if (target instanceof HTMLElement && face.current?.contains(target)) {
       target.focus({ preventScroll: true });
     }
   }, [mounted, routeIdentity]);
@@ -344,23 +437,56 @@ export function RouteBackedWidgetOverlay({
     [clearDirty, close, confirmNestedNavigation, focusHashTarget],
   );
   if (!mounted) return null;
+  const portalTarget =
+    presentation === "workspace"
+      ? document.getElementById(ZEN_SURFACE_FOCUS_HOST_ID)
+      : document.body;
+  if (!(portalTarget instanceof HTMLElement)) {
+    throw new Error("Surface-local focus host is unavailable");
+  }
+  if (
+    presentation === "workspace" &&
+    !(portalTarget.parentElement?.querySelector(":scope > .surface-scroll") instanceof HTMLElement)
+  ) {
+    throw new Error("Surface-local focus host is not bound to a surface scroll owner");
+  }
   return createPortal(
     <RouteBackedWidgetNavigationContext.Provider value={navigation}>
-      <div
-        aria-label={label}
-        aria-modal="true"
-        className="zen-widget-overlay"
-        onPointerDown={(event) => {
-          if (event.target === event.currentTarget) close();
-        }}
-        ref={dialog}
-        role="dialog"
-        tabIndex={-1}
-      >
-        {children}
-      </div>
+      {presentation === "workspace" ? (
+        <section
+          aria-label={label}
+          className="zen-widget-overlay"
+          data-route-backed-overlay-active="true"
+          data-widget-presentation="workspace"
+          data-zen-focus-scroll-owner="true"
+          ref={(node) => {
+            face.current = node;
+          }}
+          tabIndex={-1}
+        >
+          {children}
+        </section>
+      ) : (
+        <div
+          aria-label={label}
+          aria-modal="true"
+          className="zen-widget-overlay"
+          data-route-backed-overlay-active="true"
+          data-widget-presentation={presentation === "quick_view" ? "quick_view" : undefined}
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) close();
+          }}
+          ref={(node) => {
+            face.current = node;
+          }}
+          role="dialog"
+          tabIndex={-1}
+        >
+          {children}
+        </div>
+      )}
     </RouteBackedWidgetNavigationContext.Provider>,
-    document.body,
+    portalTarget,
   );
 }
 

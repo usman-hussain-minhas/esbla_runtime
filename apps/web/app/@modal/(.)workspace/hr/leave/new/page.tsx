@@ -46,6 +46,7 @@ export default async function InterceptedNewLeavePage({
       browserBackMode="return-master"
       fallbackHref={fallbackHref}
       label="New leave request"
+      origin={routeOrigin}
       returnFocusId={routeOrigin?.returnFocusId ?? "leave-list-heading"}
     >
       <RouteBackedWidgetFocusWorkspace
