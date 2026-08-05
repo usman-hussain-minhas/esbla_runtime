@@ -24,7 +24,7 @@ export default async function TenantSurfaceEditorPage({
   const surfaceName = getPresentationSemanticSurfaceDefinition(surfaceId).label;
 
   return (
-    <WorkspaceShell currentSurface={surfaceId}>
+    <WorkspaceShell currentSurface={surfaceId} shortcutSurfaceId={surfaceId}>
       <div className="surface-editor-page" id="surface-editor-content">
         <nav
           aria-label="Surface editor breadcrumb"

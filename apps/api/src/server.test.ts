@@ -242,7 +242,7 @@ describe("runtime probes", () => {
       (
         await server.inject({
           method: "GET",
-          url: "/v1/platform/presentation/shortcuts?contextServiceGroupId=hr",
+          url: "/v1/platform/presentation/shortcuts?contextSurfaceId=surface.hr.mission-control",
         })
       ).statusCode,
     ).toBe(401);
@@ -255,7 +255,7 @@ describe("runtime probes", () => {
             expectedVersion: 0,
             operation: "append",
             settingKey: "navigation.universal_shortcuts.v1",
-            targetId: "hr.leave.own",
+            targetId: "surface.hr.requests-and-claims",
           },
           headers: { "idempotency-key": randomUUID() },
           method: "POST",

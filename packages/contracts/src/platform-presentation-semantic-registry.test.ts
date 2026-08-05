@@ -139,6 +139,7 @@ describe("presentation semantic registry", () => {
       currentRoleEligibility: { kind: "one_of", roleKeys: ["manager"] },
       settingEligibility: {
         absentIsEligible: true,
+        concurrencyLockNamespace: "hr.workforce_profile.settings.v1",
         eligibleValues: ["minimized"],
         recognizedValues: ["minimized", "none"],
       },

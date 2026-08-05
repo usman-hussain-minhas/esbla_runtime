@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import type {
   PresentationAppearancePreferences,
   PresentationDensity,
-  PresentationNavigationDestinationId,
   PresentationNavigationDiscovery,
   PresentationPalette,
   PresentationPersonalSurfaceEditorWorkspace,
@@ -10,7 +9,6 @@ import type {
   PresentationReducedMotion,
   PresentationSemanticRegistryInput,
   PresentationServiceGroupDiscovery,
-  PresentationServiceGroupId,
   PresentationShortcutContextId,
   PresentationShortcutContextKind,
   PresentationShortcutDiscovery,
@@ -56,7 +54,6 @@ import {
   getPresentationSemanticSurfaceDefinition,
   getPresentationShortcutSurfaceContextDefinition,
   getPresentationShortcutTargetDefinition,
-  getPresentationShortcutTargetServiceGroupId,
   getPresentationSurfaceAnyProviderActivationServiceKeys,
   getPresentationWidgetAdmissionDefinition,
   getPresentationWidgetDefinition,
@@ -119,6 +116,11 @@ const APPEARANCE_SETTING_KEYS = [
   APPEARANCE_PALETTE_KEY,
   APPEARANCE_REDUCED_MOTION_KEY,
 ] as const;
+// The retired writer could persist 21 operations while resolving to its 20-item limit.
+const PRESENTATION_SHORTCUT_LEGACY_MAXIMUM_OPERATIONS = Math.max(
+  PRESENTATION_SHORTCUT_MAXIMUM_ITEMS,
+  21,
+);
 const PREFERENCE_EVENT_TYPE = "platform.presentation.preferences.updated";
 const PREFERENCE_RESET_EVENT_TYPE = "platform.presentation.preferences.reset";
 const TENANT_PREFERENCE_EVENT_TYPE = "platform.presentation.tenant_defaults.updated";
@@ -589,125 +591,15 @@ export async function getOwnPresentationServiceGroups(
   );
 }
 
-interface LegacyShortcutNavigationDiscovery {
-  readonly serviceGroups: readonly {
-    readonly destinationIds: readonly PresentationNavigationDestinationId[];
-    readonly serviceGroupId: PresentationServiceGroupId;
-  }[];
-}
-
-async function loadLegacyShortcutNavigationEligibility(transaction: TenantTransaction): Promise<{
-  readonly active: ReadonlySet<string>;
-  readonly authorized: ReadonlySet<string>;
-}> {
-  const activationServiceKeys = [
-    ...new Set(
-      PRESENTATION_SERVICE_GROUP_DEFINITIONS.flatMap(({ services }) =>
-        services.map(({ activationServiceKey }) => activationServiceKey),
-      ),
-    ),
-  ];
-  const capabilityIds = [
-    ...new Set(
-      PRESENTATION_SERVICE_GROUP_DEFINITIONS.flatMap(({ services }) =>
-        services.flatMap((service) => {
-          const additionalVisibilityRules =
-            "additionalVisibilityRules" in service ? service.additionalVisibilityRules : [];
-          return [
-            ...additionalVisibilityRules.flatMap(({ anyCapabilityIds }) => anyCapabilityIds),
-            ...service.destinations.flatMap(({ anyCapabilityIds }) => anyCapabilityIds),
-          ];
-        }),
-      ),
-    ),
-  ];
-  const activations = await transaction.client.query<{ service_key: string }>(
-    `SELECT service_key
-     FROM service_activations
-     WHERE tenant_id = $1 AND state = 'active' AND service_key = ANY($2::text[])
-     ORDER BY service_key`,
-    [transaction.context.tenantId, activationServiceKeys],
-  );
-  const capabilities = await transaction.client.query<{ capability_id: string }>(
-    `SELECT capability_id
-     FROM membership_capabilities
-     WHERE tenant_id = $1 AND principal_id = $2 AND capability_id = ANY($3::text[])
-     ORDER BY capability_id`,
-    [transaction.context.tenantId, transaction.context.actorPrincipalId, capabilityIds],
-  );
-  return {
-    active: new Set(activations.rows.map(({ service_key }) => service_key)),
-    authorized: new Set(capabilities.rows.map(({ capability_id }) => capability_id)),
-  };
-}
-
-async function loadLegacyShortcutNavigationDiscovery(
-  transaction: TenantTransaction,
-): Promise<LegacyShortcutNavigationDiscovery> {
-  const { active, authorized } = await loadLegacyShortcutNavigationEligibility(transaction);
-  return {
-    serviceGroups: PRESENTATION_SERVICE_GROUP_DEFINITIONS.flatMap((group) => {
-      const eligibleServices = group.services.filter((service) =>
-        legacyShortcutServiceIsEligible(service, transaction.actor.roleKey, active, authorized),
-      );
-      if (eligibleServices.length === 0) return [];
-      return [
-        {
-          destinationIds: eligibleServices.flatMap(({ destinations }) =>
-            destinations
-              .filter((destination) =>
-                legacyShortcutEligibilityRuleMatches(
-                  destination,
-                  transaction.actor.roleKey,
-                  authorized,
-                ),
-              )
-              .map(({ destinationId }) => destinationId),
-          ),
-          serviceGroupId: group.serviceGroupId,
-        },
-      ];
-    }),
-  };
-}
-
-function legacyShortcutServiceIsEligible(
-  service: (typeof PRESENTATION_SERVICE_GROUP_DEFINITIONS)[number]["services"][number],
-  roleKey: string,
-  active: ReadonlySet<string>,
-  authorized: ReadonlySet<string>,
-): boolean {
-  return (
-    active.has(service.activationServiceKey) &&
-    [
-      ...service.destinations,
-      ...("additionalVisibilityRules" in service ? service.additionalVisibilityRules : []),
-    ].some((rule) => legacyShortcutEligibilityRuleMatches(rule, roleKey, authorized))
-  );
-}
-
-function legacyShortcutEligibilityRuleMatches(
-  rule: {
-    readonly allowedRoleKeys: readonly string[];
-    readonly anyCapabilityIds: readonly string[];
-  },
-  roleKey: string,
-  authorized: ReadonlySet<string>,
-): boolean {
-  return (
-    rule.allowedRoleKeys.includes(roleKey) &&
-    rule.anyCapabilityIds.some((capabilityId) => authorized.has(capabilityId))
-  );
-}
-
 async function loadPresentationNavigationDiscovery(
   transaction: TenantTransaction,
+  authorityLock: "none" | "share" = "none",
 ): Promise<PresentationNavigationDiscovery> {
   const eligibleSurfaceIds = new Set<ZenV1SurfaceId>();
   for (const surface of PRESENTATION_SEMANTIC_REGISTRY.surfaces) {
     if (surface.serviceGroupId === "universal") continue;
     const surfaceId = surface.surfaceId as ZenV1SurfaceId;
-    if ((await loadEligibleWidgetDefinitionIds(transaction, surfaceId)).size > 0) {
+    if ((await loadEligibleWidgetDefinitionIds(transaction, surfaceId, authorityLock)).size > 0) {
       eligibleSurfaceIds.add(surfaceId);
     }
   }
@@ -723,7 +615,12 @@ async function loadPresentationNavigationDiscovery(
         .filter(({ surfaceId }) => eligibleSurfaceIds.has(surfaceId as ZenV1SurfaceId))
         .map(({ surfaceId }) => surfaceId as ZenV1SurfaceId);
       if (surfaceIds.length === 0) return [];
-      return [{ serviceGroupId, surfaceIds }];
+      return [
+        {
+          serviceGroupId,
+          surfaceIds,
+        },
+      ];
     }),
   };
 }
@@ -779,10 +676,10 @@ function parsePresentationShortcutUpdateInput(value: unknown): UpdatePresentatio
 
 function shortcutCandidateScope(
   settingKey: PresentationShortcutSettingKey,
-  contextKind: PresentationShortcutContextKind,
-): "user_global" | "user_service" | "user_surface" {
+  _contextKind: PresentationShortcutContextKind,
+): "user_global" | "user_surface" {
   if (settingKey === "navigation.universal_shortcuts.v1") return "user_global";
-  return contextKind === "surface" ? "user_surface" : "user_service";
+  return "user_surface";
 }
 
 function registeredShortcutTargets(
@@ -791,11 +688,6 @@ function registeredShortcutTargets(
 ): readonly PresentationShortcutTarget[] {
   if (contextKind === "global" && contextId === "global") {
     return PRESENTATION_SHORTCUT_TARGET_DEFINITIONS;
-  }
-  if (contextKind === "service" && contextId !== "global" && !contextId.startsWith("surface.")) {
-    return PRESENTATION_SHORTCUT_TARGET_DEFINITIONS.filter(
-      ({ id }) => getPresentationShortcutTargetServiceGroupId(id) === contextId,
-    );
   }
   if (contextKind === "surface" && contextId.startsWith("surface.")) {
     let allowed: ReadonlySet<PresentationShortcutTargetId>;
@@ -812,18 +704,29 @@ function registeredShortcutTargets(
 }
 
 function eligibleShortcutTargetIds(
-  discovery: LegacyShortcutNavigationDiscovery,
+  discovery: PresentationNavigationDiscovery,
 ): ReadonlySet<PresentationShortcutTargetId> {
-  const ids = new Set<PresentationShortcutTargetId>(["platform.mission_control"]);
+  const ids = new Set<PresentationShortcutTargetId>(["surface.mission-control"]);
   for (const group of discovery.serviceGroups) {
-    ids.add(`service_group.${group.serviceGroupId}.mission_control`);
-    for (const destinationId of group.destinationIds) ids.add(destinationId);
+    for (const surfaceId of group.surfaceIds) ids.add(surfaceId);
   }
   return ids;
 }
 
+function shortcutContextIsCurrentlyEligible(
+  discovery: PresentationNavigationDiscovery,
+  contextKind: PresentationShortcutContextKind,
+  contextId: PresentationShortcutContextId,
+): boolean {
+  if (contextKind === "global" && contextId === "global") return true;
+  return (
+    contextKind === "surface" &&
+    eligibleShortcutTargetIds(discovery).has(contextId as PresentationShortcutTargetId)
+  );
+}
+
 function eligibleShortcutTargets(
-  discovery: LegacyShortcutNavigationDiscovery,
+  discovery: PresentationNavigationDiscovery,
   contextKind: PresentationShortcutContextKind,
   contextId: PresentationShortcutContextId,
 ): readonly PresentationShortcutTarget[] {
@@ -831,89 +734,34 @@ function eligibleShortcutTargets(
   return registeredShortcutTargets(contextKind, contextId).filter(({ id }) => eligibleIds.has(id));
 }
 
-function shortcutTargetActivationServiceKeys(
-  targetId: PresentationShortcutTargetId,
-): readonly string[] {
-  const serviceGroupId = getPresentationShortcutTargetServiceGroupId(targetId);
-  if (serviceGroupId === null) return [];
-  const group = PRESENTATION_SERVICE_GROUP_DEFINITIONS.find(
-    (candidate) => candidate.serviceGroupId === serviceGroupId,
-  );
-  if (!group) return [];
-  if (targetId === `service_group.${serviceGroupId}.mission_control`) {
-    return [
-      ...new Set(group.services.map(({ activationServiceKey }) => activationServiceKey)),
-    ].sort();
-  }
-  const service = group.services.find(({ destinations }) =>
-    destinations.some(({ destinationId }) => destinationId === targetId),
-  );
-  return service ? [service.activationServiceKey] : [];
-}
-
-async function lockShortcutAppendTargetEligibility(
-  transaction: TenantTransaction,
-  targetId: PresentationShortcutTargetId,
-): Promise<void> {
-  const serviceGroupId = getPresentationShortcutTargetServiceGroupId(targetId);
-  if (serviceGroupId === null) return;
-  const group = PRESENTATION_SERVICE_GROUP_DEFINITIONS.find(
-    (candidate) => candidate.serviceGroupId === serviceGroupId,
-  );
-  if (!group) throw new PlatformError("POLICY_DENIED", "Shortcut target is not currently eligible");
-  const destinationMatch = group.services
-    .flatMap((service) => service.destinations.map((destination) => ({ destination, service })))
-    .find(({ destination }) => destination.destinationId === targetId);
-  const services =
-    targetId === `service_group.${serviceGroupId}.mission_control`
-      ? group.services
-      : destinationMatch
-        ? [destinationMatch.service]
-        : [];
-  if (services.length === 0) {
-    throw new PlatformError("POLICY_DENIED", "Shortcut target is not currently eligible");
-  }
-  const capabilityIds = [
+function presentationSurfaceActivationServiceKeys(surfaceId: ZenV1SurfaceId): readonly string[] {
+  return [
     ...new Set(
-      services.flatMap((service) => {
-        if (destinationMatch && service === destinationMatch.service) {
-          return destinationMatch.destination.anyCapabilityIds;
-        }
-        return [
-          ...service.destinations.flatMap(({ anyCapabilityIds }) => anyCapabilityIds),
-          ...("additionalVisibilityRules" in service
-            ? service.additionalVisibilityRules.flatMap(({ anyCapabilityIds }) => anyCapabilityIds)
-            : []),
-        ];
-      }),
+      getZenV1RegisteredSurfaceInstances(surfaceId).flatMap(
+        ({ widgetDefinitionId, widgetDefinitionVersion }) => {
+          const definition = getPresentationWidgetDefinition(
+            widgetDefinitionId,
+            widgetDefinitionVersion,
+          );
+          return definition.activationPolicy === "any_provider"
+            ? surfaceProviderEligibility(surfaceId, definition).map(
+                ({ activationServiceKey }) => activationServiceKey,
+              )
+            : [definition.activationServiceKey];
+        },
+      ),
     ),
   ].sort();
-  const active = new Set(
-    (transaction.lockedServiceActivations ?? [])
-      .filter(({ state }) => state === "active")
-      .map(({ serviceKey }) => serviceKey),
-  );
-  const authorized = new Set<string>();
-  for (const capabilityId of capabilityIds) {
-    const result = await transaction.client.query<{ capability_current: boolean }>(
-      `SELECT public.esbla_lock_membership_capability($1, $2, $3) AS capability_current`,
-      [transaction.context.tenantId, transaction.context.actorPrincipalId, capabilityId],
-    );
-    if (result.rows[0]?.capability_current === true) authorized.add(capabilityId);
-  }
-  const eligible = destinationMatch
-    ? active.has(destinationMatch.service.activationServiceKey) &&
-      legacyShortcutEligibilityRuleMatches(
-        destinationMatch.destination,
-        transaction.actor.roleKey,
-        authorized,
-      )
-    : services.some((service) =>
-        legacyShortcutServiceIsEligible(service, transaction.actor.roleKey, active, authorized),
-      );
-  if (!eligible) {
-    throw new PlatformError("POLICY_DENIED", "Shortcut target is not currently eligible");
-  }
+}
+
+function shortcutMutationActivationServiceKeys(): readonly string[] {
+  return [
+    ...new Set(
+      PRESENTATION_SEMANTIC_REGISTRY.surfaces.flatMap(({ surfaceId }) =>
+        presentationSurfaceActivationServiceKeys(surfaceId as ZenV1SurfaceId),
+      ),
+    ),
+  ].sort();
 }
 
 async function loadStoredShortcutPatch(
@@ -946,7 +794,13 @@ async function loadStoredShortcutPatch(
   } catch {
     throw invalidShortcutStorage();
   }
-  if (operations.length > PRESENTATION_SHORTCUT_MAXIMUM_ITEMS) {
+  const maximumOperations =
+    settingKey === "navigation.universal_shortcuts.v1" &&
+    contextKind === "global" &&
+    contextId === "global"
+      ? PRESENTATION_SHORTCUT_LEGACY_MAXIMUM_OPERATIONS
+      : PRESENTATION_SHORTCUT_MAXIMUM_ITEMS;
+  if (operations.length > maximumOperations) {
     throw invalidShortcutStorage();
   }
   return { operations, version: row.version };
@@ -958,6 +812,7 @@ function resolveShortcutSet(
   contextId: PresentationShortcutContextId,
   stored: StoredShortcutPatch | undefined,
   eligibleTargets: readonly PresentationShortcutTarget[],
+  editable: boolean,
 ): PresentationShortcutSet {
   const registeredTargets = registeredShortcutTargets(contextKind, contextId);
   let resolved: ReturnType<typeof resolvePresentationSetting>;
@@ -999,7 +854,7 @@ function resolveShortcutSet(
   return {
     contextId,
     contextKind,
-    editable: true,
+    editable,
     eligibleTargets,
     items,
     settingKey,
@@ -1010,10 +865,11 @@ function resolveShortcutSet(
 
 async function loadShortcutSet(
   transaction: TenantTransaction,
-  discovery: LegacyShortcutNavigationDiscovery,
+  discovery: PresentationNavigationDiscovery,
   settingKey: PresentationShortcutSettingKey,
   contextKind: PresentationShortcutContextKind,
   contextId: PresentationShortcutContextId,
+  editable: boolean,
   lock: "none" | "update" = "none",
 ): Promise<PresentationShortcutSet> {
   const stored = await loadStoredShortcutPatch(
@@ -1029,6 +885,7 @@ async function loadShortcutSet(
     contextId,
     stored,
     eligibleShortcutTargets(discovery, contextKind, contextId),
+    editable,
   );
 }
 
@@ -1047,37 +904,46 @@ export async function getOwnPresentationShortcuts(
         "platform.presentation.shortcuts.read_own",
         `principal:${transaction.context.actorPrincipalId}:shortcuts`,
       );
-      const discovery = await loadLegacyShortcutNavigationDiscovery(transaction);
+      await assertCurrentOwnPresentationCapability(
+        transaction,
+        "platform.presentation.shortcuts.read_own",
+        `principal:${transaction.context.actorPrincipalId}:shortcuts`,
+      );
+      const editable = await hasCurrentOwnPresentationCapability(
+        transaction,
+        "platform.presentation.shortcuts.write_own",
+      );
+      assertOwnPresentationPolicy(
+        transaction,
+        "platform.presentation.layouts.read_own",
+        `principal:${transaction.context.actorPrincipalId}:shortcut-targets`,
+      );
+      await assertCurrentOwnPresentationCapability(
+        transaction,
+        "platform.presentation.layouts.read_own",
+        `principal:${transaction.context.actorPrincipalId}:shortcut-targets`,
+      );
+      const discovery = await loadPresentationNavigationDiscovery(transaction);
       const universal = await loadShortcutSet(
         transaction,
         discovery,
         "navigation.universal_shortcuts.v1",
         "global",
         "global",
+        editable,
       );
-      const contextualGroup = query.contextServiceGroupId
-        ? discovery.serviceGroups.find(
-            ({ serviceGroupId }) => serviceGroupId === query.contextServiceGroupId,
-          )
-        : undefined;
       const contextual =
-        query.contextServiceGroupId && contextualGroup
+        query.contextSurfaceId &&
+        shortcutContextIsCurrentlyEligible(discovery, "surface", query.contextSurfaceId)
           ? await loadShortcutSet(
               transaction,
               discovery,
               "navigation.contextual_shortcuts.v1",
-              "service",
-              query.contextServiceGroupId,
+              "surface",
+              query.contextSurfaceId,
+              editable,
             )
-          : query.contextSurfaceId
-            ? await loadShortcutSet(
-                transaction,
-                discovery,
-                "navigation.contextual_shortcuts.v1",
-                "surface",
-                query.contextSurfaceId,
-              )
-            : null;
+          : null;
       return { contextual, universal };
     },
     { migrationBarrier: "shared" },
@@ -1224,9 +1090,10 @@ async function readShortcutReplay(
       input.contextId,
       refreshedStored,
       eligibleTargets,
+      true,
     );
   }
-  if (replaySet.version < state.version) {
+  if (replaySet.version !== state.version) {
     throw new PlatformError("IDEMPOTENCY_CONFLICT", "Shortcut retry state is unavailable");
   }
   return {
@@ -1243,8 +1110,7 @@ export async function updateOwnPresentationShortcut(
   untrustedInput: unknown,
 ): Promise<UpdatePresentationShortcutResponse> {
   const input = parsePresentationShortcutUpdateInput(untrustedInput);
-  const activationServiceKeys =
-    input.operation === "append" ? shortcutTargetActivationServiceKeys(input.targetId) : [];
+  const activationServiceKeys = shortcutMutationActivationServiceKeys();
   return await withTenantTransaction(
     pool,
     context,
@@ -1254,10 +1120,25 @@ export async function updateOwnPresentationShortcut(
         "platform.presentation.shortcuts.write_own",
         `principal:${transaction.context.actorPrincipalId}:shortcuts:${input.contextKind}:${input.contextId}`,
       );
-      if (input.operation === "append") {
-        await lockShortcutAppendTargetEligibility(transaction, input.targetId);
+      await assertCurrentOwnPresentationCapability(
+        transaction,
+        "platform.presentation.shortcuts.write_own",
+        `principal:${transaction.context.actorPrincipalId}:shortcuts:${input.contextKind}:${input.contextId}`,
+      );
+      assertOwnPresentationPolicy(
+        transaction,
+        "platform.presentation.layouts.read_own",
+        `principal:${transaction.context.actorPrincipalId}:shortcut-targets:${input.contextKind}:${input.contextId}`,
+      );
+      await assertCurrentOwnPresentationCapability(
+        transaction,
+        "platform.presentation.layouts.read_own",
+        `principal:${transaction.context.actorPrincipalId}:shortcut-targets:${input.contextKind}:${input.contextId}`,
+      );
+      const discovery = await loadPresentationNavigationDiscovery(transaction, "share");
+      if (!shortcutContextIsCurrentlyEligible(discovery, input.contextKind, input.contextId)) {
+        throw new PlatformError("POLICY_DENIED", "Shortcut context is not currently eligible");
       }
-      const discovery = await loadLegacyShortcutNavigationDiscovery(transaction);
       const eligibleTargets = eligibleShortcutTargets(
         discovery,
         input.contextKind,
@@ -1280,6 +1161,7 @@ export async function updateOwnPresentationShortcut(
         input.contextId,
         stored,
         eligibleTargets,
+        true,
       );
       const subjectId = shortcutSubjectId(context, input);
       const priorReplay = await readShortcutReplay(
@@ -1304,10 +1186,24 @@ export async function updateOwnPresentationShortcut(
       ) {
         throw new PlatformError("SETTING_INVALID", "Shortcut operation is not applicable");
       }
+      const registeredTargets = registeredShortcutTargets(input.contextKind, input.contextId);
+      const canonicalStoredOperations: readonly PresentationOrderedSetOperation[] = stored
+        ? resolveShortcutSet(
+            input.settingKey,
+            input.contextKind,
+            input.contextId,
+            stored,
+            registeredTargets,
+            true,
+          ).items.map(({ id }) => ({ id, operation: "append" as const }))
+        : [];
       const operations: readonly PresentationOrderedSetOperation[] = [
-        ...(stored?.operations.filter(({ id }) => id !== input.targetId) ?? []),
+        ...canonicalStoredOperations.filter(({ id }) => id !== input.targetId),
         { id: input.targetId, operation: input.operation },
       ];
+      if (operations.length > PRESENTATION_SHORTCUT_MAXIMUM_ITEMS) {
+        throw new PlatformError("SETTING_INVALID", "Shortcut operation limit is exceeded");
+      }
       const nextVersion = currentVersion + 1;
       const nextStored = { operations, version: nextVersion };
       const nextSet = resolveShortcutSet(
@@ -1316,6 +1212,7 @@ export async function updateOwnPresentationShortcut(
         input.contextId,
         nextStored,
         eligibleTargets,
+        true,
       );
       const nextIds = new Set(nextSet.items.map(({ id }) => id));
       if (
@@ -1369,6 +1266,7 @@ export async function updateOwnPresentationShortcut(
             input.settingKey,
             input.contextKind,
             input.contextId,
+            true,
             "update",
           );
           const concurrentReplay = await readShortcutReplay(
@@ -1409,9 +1307,7 @@ export async function updateOwnPresentationShortcut(
         set: nextSet,
       };
     },
-    activationServiceKeys.length > 0
-      ? { migrationBarrier: "shared", serviceActivationKeys: activationServiceKeys }
-      : { migrationBarrier: "shared" },
+    { migrationBarrier: "shared", serviceActivationKeys: activationServiceKeys },
   );
 }
 
@@ -2511,7 +2407,9 @@ function surfaceLayoutResponse(
 type CurrentOwnPresentationCapabilityAction =
   | "platform.presentation.layouts.read_own"
   | "platform.presentation.layouts.reset_own"
-  | "platform.presentation.layouts.write_own";
+  | "platform.presentation.layouts.write_own"
+  | "platform.presentation.shortcuts.read_own"
+  | "platform.presentation.shortcuts.write_own";
 
 async function hasCurrentOwnPresentationCapability(
   transaction: TenantTransaction,
@@ -2682,9 +2580,15 @@ export function presentationWidgetProviderRoleIsEligible(
 async function widgetAdditionalEligibilityIsCurrent(
   transaction: TenantTransaction,
   admission: PresentationWidgetAdmissionDefinition,
+  authorityLock: "none" | "share" = "none",
 ): Promise<boolean> {
   const rule = admission.settingEligibility;
   if (rule === null) return true;
+  if (authorityLock === "share") {
+    await transaction.client.query(`SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))`, [
+      `${rule.concurrencyLockNamespace}:${transaction.context.tenantId}`,
+    ]);
+  }
   const result = await transaction.client.query<{
     value: unknown;
     value_type: string;
@@ -2807,7 +2711,7 @@ async function loadEligibleWidgetDefinitionIds(
     );
     const actorRelevant =
       currentRoleIsEligible(admission.currentRoleEligibility, transaction.actor.roleKey) &&
-      (await widgetAdditionalEligibilityIsCurrent(transaction, admission));
+      (await widgetAdditionalEligibilityIsCurrent(transaction, admission, authorityLock));
     const exactServiceEligible =
       definition.activationPolicy === "exact_service" &&
       actorRelevant &&

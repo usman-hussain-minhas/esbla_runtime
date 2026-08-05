@@ -19,11 +19,7 @@ export default async function HrLayout({ children }: Readonly<{ children: ReactN
     .filter((_, index) => editorWorkspaces[index]?.editable)
     .map(getZenSurfaceEditDescriptor);
   return (
-    <WorkspaceShell
-      currentSurface="surface.hr.mission-control"
-      editSurfaces={editSurfaces}
-      shortcutContext={{ contextServiceGroupId: "hr" }}
-    >
+    <WorkspaceShell currentSurface="surface.hr.mission-control" editSurfaces={editSurfaces}>
       {children}
     </WorkspaceShell>
   );

@@ -129,14 +129,14 @@ try {
       expectedVersion: 0,
       operation: "append",
       settingKey: "navigation.contextual_shortcuts.v1",
-      targetId: "hr.leave.own",
+      targetId: "surface.hr.requests-and-claims",
     });
     assert.equal(shortcut.billingState, "non_billable");
     assert.equal(shortcut.replayed, false);
     assert.equal(shortcut.set.version, 1);
     assert.deepEqual(
       shortcut.set.items.map(({ id }) => id),
-      ["hr.leave.own"],
+      ["surface.hr.requests-and-claims"],
     );
   } else {
     assert.deepEqual(await getOwnPresentationPreferences(applicationPool, context()), {
@@ -208,7 +208,7 @@ try {
     assert.equal(shortcuts.contextual?.version, 1);
     assert.deepEqual(
       shortcuts.contextual?.items.map(({ id }) => id),
-      ["hr.leave.own"],
+      ["surface.hr.requests-and-claims"],
     );
     const client = await migrationPool.connect();
     try {

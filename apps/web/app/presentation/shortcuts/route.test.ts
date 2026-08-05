@@ -18,7 +18,7 @@ const validBody = {
   idempotencyKey,
   operation: "append",
   settingKey: "navigation.universal_shortcuts.v1",
-  targetId: "hr.leave.own",
+  targetId: "surface.hr.requests-and-claims",
 };
 
 function request(body: unknown, origin = "http://127.0.0.1:3000") {
@@ -69,7 +69,7 @@ describe("presentation shortcut web transport", () => {
         expectedVersion: 0,
         operation: "append",
         settingKey: "navigation.universal_shortcuts.v1",
-        targetId: "hr.leave.own",
+        targetId: "surface.hr.requests-and-claims",
       },
       idempotencyKey,
     );
