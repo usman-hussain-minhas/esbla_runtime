@@ -26,6 +26,7 @@ const testControlToken = randomBytes(32).toString("hex");
 const restoredReplay = process.env.ESBLA_T10_RESTORED_REPLAY === "1";
 const childRuntimeEnvironment = Object.fromEntries(
   [
+    "CI",
     "ESBLA_T10_BROWSER_MATRIX",
     "ESBLA_T10_ENGINE_RECEIPT_DIR",
     "ESBLA_T10_RESTORED_RECEIPT",
