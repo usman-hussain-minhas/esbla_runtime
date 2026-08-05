@@ -81,6 +81,7 @@ export default async function InterceptedTimesheetDetailPage({ params, searchPar
       browserBackMode={navigationKind ? "return-master" : "close-origin"}
       fallbackHref={origin.fallbackHref}
       label="Timesheet detail"
+      origin={origin}
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace

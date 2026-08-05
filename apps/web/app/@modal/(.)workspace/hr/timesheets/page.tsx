@@ -21,6 +21,7 @@ export default async function InterceptedTimesheetsPage({ searchParams }: Props)
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}
       label="My Timesheets"
+      origin={origin}
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace

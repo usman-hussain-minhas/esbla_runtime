@@ -17,6 +17,7 @@ export default async function InterceptedMyWorkPage({ searchParams }: Props) {
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}
       label="My Work"
+      origin={origin}
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace

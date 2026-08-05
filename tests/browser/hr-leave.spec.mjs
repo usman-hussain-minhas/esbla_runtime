@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 import { fixture } from "./hr-leave-fixture.mjs";
 
+function focusWorkspace(page, label) {
+  return page.locator(
+    `.zen-widget-overlay[data-widget-presentation="workspace"][aria-label="${label}"]`,
+  );
+}
+
 test.describe.configure({ mode: "serial" });
 const employmentActionWorkerProfileId = process.env.ESBLA_TEST_EMPLOYMENT_ACTION_WORKER_PROFILE_ID;
 const fixtureId = /^[0-9a-f-]{36}$/;
@@ -434,10 +440,13 @@ async function proveRepresentativeRouteBackedWidget(
   await launcher.press("Enter");
   await expect(actor.page).toHaveURL(`${actor.origin}${expectedHref}`);
 
-  const overlay = actor.page.getByRole(presentation === "workspace" ? "region" : "dialog", {
-    exact: true,
-    name: dialogName,
-  });
+  const overlay =
+    presentation === "workspace"
+      ? focusWorkspace(actor.page, dialogName)
+      : actor.page.getByRole("dialog", {
+          exact: true,
+          name: dialogName,
+        });
   await expect(overlay).toBeVisible();
   await expect(overlay).toBeFocused();
   await expect(
@@ -1162,6 +1171,7 @@ test("employee Employment and Shift widgets render as responsive route-backed pr
         expectedHref:
           "/workspace/hr/employment?originFocusId=hr-mission-control.current-employment.full-screen&returnSurface=surface.hr.mission-control&originWidgetDefinitionId=hr.employment.current-facts",
         launcherName: "Open Current Employment Facts workspace",
+        presentation: "workspace",
         screenshotStem: "representative-employment-facts",
         standaloneHeading: "Employment facts",
       },
@@ -1174,6 +1184,7 @@ test("employee Employment and Shift widgets render as responsive route-backed pr
         expectedHref:
           "/workspace/hr/shifts?originFocusId=hr-mission-control.my-published-shifts.full-screen&returnSurface=surface.hr.mission-control&originWidgetDefinitionId=hr.shift.my-published",
         launcherName: "Open My Published Shifts workspace",
+        presentation: "workspace",
         screenshotStem: "representative-published-shifts",
         standaloneHeading: "My shifts",
       },
@@ -1196,6 +1207,7 @@ test("manager My Work widget renders as a responsive route-backed product", asyn
         expectedHref:
           "/workspace/my-work?originFocusId=hr-mission-control.my-work.full-screen&returnSurface=surface.hr.mission-control&originWidgetDefinitionId=platform.my-work.queue",
         launcherName: "Open My Work workspace",
+        presentation: "workspace",
         screenshotStem: "representative-my-work",
         standaloneHeading: "Assigned work",
       },
@@ -3813,7 +3825,7 @@ test("employee submits, manager approves, and employee reloads durable rendered 
               activeId: active instanceof HTMLElement ? active.id : "",
               activeTagName: active instanceof HTMLElement ? active.tagName : "",
               documentReadyState: document.readyState,
-              launcherTabIndex: launcher?.getAttribute("tabindex") ?? null,
+              launcherTabIndex: launcher?.tabIndex ?? null,
               navigationType:
                 navigation instanceof PerformanceNavigationTiming ? navigation.type : "unknown",
               receiptPresent:
@@ -3825,7 +3837,7 @@ test("employee submits, manager approves, and employee reloads durable rendered 
         activeId: `mission-control.my-leave.${leaveRequestId}`,
         activeTagName: "A",
         documentReadyState: "complete",
-        launcherTabIndex: "0",
+        launcherTabIndex: 0,
         navigationType: "navigate",
         receiptPresent: false,
       });
@@ -4014,8 +4026,9 @@ test("configured rejection note fails accessibly, then rejection persists after 
     });
     await manager.page.goto(`${manager.origin}/workspace/hr`);
     await manager.page.getByRole("link", { exact: true, name: "Open My Work workspace" }).click();
-    const focusedMyWork = manager.page.getByRole("dialog", { exact: true, name: "My Work" });
+    const focusedMyWork = focusWorkspace(manager.page, "My Work");
     await expect(focusedMyWork).toBeVisible();
+    await expect(focusedMyWork).toHaveAttribute("data-widget-presentation", "workspace");
     const card = focusedMyWork.getByRole("listitem").filter({
       hasText: "Rendered rejection journey",
     });
@@ -5135,11 +5148,9 @@ test("Shift roster renders across operator, employee and manager authority", asy
     await employee.page
       .getByRole("link", { exact: true, name: "Open My Published Shifts workspace" })
       .press("Enter");
-    const shiftListOverlay = employee.page.getByRole("dialog", {
-      exact: true,
-      name: "My shifts",
-    });
+    const shiftListOverlay = focusWorkspace(employee.page, "My shifts");
     await expect(shiftListOverlay).toBeVisible();
+    await expect(shiftListOverlay).toHaveAttribute("data-widget-presentation", "workspace");
     await shiftListOverlay.getByLabel("From date").fill("2028-08-01");
     await shiftListOverlay.getByLabel("Through date").fill("2028-08-07");
     await shiftListOverlay.getByRole("button", { name: "Apply period" }).press("Enter");
@@ -5149,10 +5160,7 @@ test("Shift roster renders across operator, employee and manager authority", asy
     );
     await expect(shiftListOverlay.getByText("Asia/Karachi", { exact: true })).toBeVisible();
     await shiftListOverlay.getByRole("link", { name: "View persistent history" }).click();
-    const shiftDetailOverlay = employee.page.getByRole("dialog", {
-      exact: true,
-      name: "Shift assignment",
-    });
+    const shiftDetailOverlay = focusWorkspace(employee.page, "Shift assignment");
     const shiftWorkspace = shiftDetailOverlay.locator('[data-focus-workspace^="hr-shifts-"]');
     await expect(shiftDetailOverlay).toBeVisible();
     await expect(shiftWorkspace).toHaveAttribute("data-focus-layout", "master-detail");
@@ -5294,11 +5302,9 @@ test("Attendance renders manual facts and persistent correction history by curre
     await employee.page
       .getByRole("link", { exact: true, name: "Open My Attendance Observations workspace" })
       .press("Enter");
-    const attendanceListOverlay = employee.page.getByRole("dialog", {
-      exact: true,
-      name: "My attendance",
-    });
+    const attendanceListOverlay = focusWorkspace(employee.page, "My attendance");
     await expect(attendanceListOverlay).toBeVisible();
+    await expect(attendanceListOverlay).toHaveAttribute("data-widget-presentation", "workspace");
     await attendanceListOverlay.getByLabel("From date").fill("2028-08-01");
     await attendanceListOverlay.getByLabel("Through date").fill("2028-08-07");
     await attendanceListOverlay.getByRole("button", { name: "Apply period" }).press("Enter");
@@ -5311,10 +5317,7 @@ test("Attendance renders manual facts and persistent correction history by curre
     });
     await employeeHistory.focus();
     await employee.page.keyboard.press("Enter");
-    const attendanceDetailOverlay = employee.page.getByRole("dialog", {
-      exact: true,
-      name: "Attendance detail",
-    });
+    const attendanceDetailOverlay = focusWorkspace(employee.page, "Attendance detail");
     const attendanceWorkspace = attendanceDetailOverlay.locator(
       '[data-focus-workspace^="hr-attendance-"]',
     );
@@ -5448,20 +5451,15 @@ test("Shift and Attendance catalogue faces preserve exact routes and current aut
         name: "Open Attendance Correction Queue workspace",
       })
       .press("Enter");
-    const attendanceReportsOverlay = operator.page.getByRole("dialog", {
-      exact: true,
-      name: "Attendance reports",
-    });
+    const attendanceReportsOverlay = focusWorkspace(operator.page, "Attendance reports");
     await expect(attendanceReportsOverlay).toBeVisible();
+    await expect(attendanceReportsOverlay).toHaveAttribute("data-widget-presentation", "workspace");
     await attendanceReportsOverlay
       .getByLabel("Worker profile ID")
       .fill(shiftEmployeeWorkerProfileId);
     await attendanceReportsOverlay.getByLabel("Observed instant").fill("2026-08-02T09:00:00.000Z");
     await attendanceReportsOverlay.getByRole("button", { name: "Record attendance" }).click();
-    const attendanceDetailOverlay = operator.page.getByRole("dialog", {
-      exact: true,
-      name: "Attendance detail",
-    });
+    const attendanceDetailOverlay = focusWorkspace(operator.page, "Attendance detail");
     const attendanceFocusWorkspace = attendanceDetailOverlay.locator(
       '[data-focus-workspace="hr-attendance-reports"]',
     );
@@ -5484,10 +5482,7 @@ test("Shift and Attendance catalogue faces preserve exact routes and current aut
       .locator('[data-widget-definition="hr.shift.publish-queue"]')
       .getByRole("link", { exact: true, name: "Open Roster Publish Queue workspace" })
       .press("Enter");
-    const shiftReportsOverlay = operator.page.getByRole("dialog", {
-      exact: true,
-      name: "Report shifts",
-    });
+    const shiftReportsOverlay = focusWorkspace(operator.page, "Report shifts");
     await expect(shiftReportsOverlay).toBeVisible();
     await shiftReportsOverlay.getByText("Create an exact roster period", { exact: true }).click();
     await shiftReportsOverlay.getByLabel("Period start").fill("2029-01-01");
@@ -5552,11 +5547,9 @@ test("Employment and Workforce catalogue faces preserve focus workspace continui
         name: "Open Employment Administration Queue workspace",
       })
       .press("Enter");
-    const employmentAdmin = operator.page.getByRole("dialog", {
-      exact: true,
-      name: "Employment administration",
-    });
+    const employmentAdmin = focusWorkspace(operator.page, "Employment administration");
     await expect(employmentAdmin).toBeVisible();
+    await expect(employmentAdmin).toHaveAttribute("data-widget-presentation", "workspace");
     const employmentWorkspace = employmentAdmin.locator(
       '[data-focus-workspace="hr-employment-admin"]',
     );
@@ -5594,10 +5587,7 @@ test("Employment and Workforce catalogue faces preserve focus workspace continui
     );
     await expect(employmentHistoryLinks).toHaveCount(employmentRecordCount + 1);
     await employmentHistoryLinks.first().click();
-    const employmentDetail = operator.page.getByRole("dialog", {
-      exact: true,
-      name: "Employment detail",
-    });
+    const employmentDetail = focusWorkspace(operator.page, "Employment detail");
     await expect(employmentDetail).toBeVisible();
     await expect(
       employmentDetail.locator('[data-focus-workspace="hr-employment-admin-detail"]'),
@@ -5617,10 +5607,7 @@ test("Employment and Workforce catalogue faces preserve focus workspace continui
       .locator('[data-widget-definition="hr.employment.current-facts"]')
       .getByRole("link", { exact: true, name: "Open Current Employment Facts workspace" })
       .press("Enter");
-    const employmentFacts = operator.page.getByRole("dialog", {
-      exact: true,
-      name: "Employment facts",
-    });
+    const employmentFacts = focusWorkspace(operator.page, "Employment facts");
     await expect(employmentFacts).toBeVisible();
     await employmentFacts.getByRole("link", { name: "View facts and history" }).first().click();
     await expect(employmentDetail).toBeVisible();
@@ -5647,16 +5634,11 @@ test("Employment and Workforce catalogue faces preserve focus workspace continui
     await expect(operator.page).toHaveURL(
       /\/workspace\/hr\/profile\/admin\?(?=.*originFocusId=mission-control\..+\.full-screen)(?=.*returnSurface=surface\.mission-control)(?=.*originWidgetDefinitionId=hr\.workforce\.admin-queue)/,
     );
-    const workforceAdmin = operator.page.getByRole("dialog", {
-      exact: true,
-      name: "Workforce administration",
-    });
+    const workforceAdmin = focusWorkspace(operator.page, "Workforce administration");
     await expect(workforceAdmin).toBeVisible();
+    await expect(workforceAdmin).toHaveAttribute("data-widget-presentation", "workspace");
     await workforceAdmin.getByRole("link", { name: "View details" }).first().press("Enter");
-    const workforceDetail = operator.page.getByRole("dialog", {
-      exact: true,
-      name: "Workforce profile detail",
-    });
+    const workforceDetail = focusWorkspace(operator.page, "Workforce profile detail");
     const workforceWorkspace = workforceDetail.locator(
       '[data-focus-workspace="hr-workforce-admin"]',
     );

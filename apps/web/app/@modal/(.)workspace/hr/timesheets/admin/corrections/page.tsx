@@ -21,6 +21,7 @@ export default async function InterceptedTimesheetCorrectionsPage({ searchParams
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}
       label="Timesheet corrections"
+      origin={origin}
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace

@@ -76,6 +76,7 @@ export default async function InterceptedWorkforceDetailPage({ params, searchPar
       browserBackMode={masterKind ? "return-master" : "close-origin"}
       fallbackHref={origin.fallbackHref}
       label="Workforce profile detail"
+      origin={origin}
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace

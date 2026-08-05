@@ -17,6 +17,7 @@ export default async function InterceptedShiftsPage({ searchParams }: Props) {
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}
       label="My shifts"
+      origin={origin}
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace

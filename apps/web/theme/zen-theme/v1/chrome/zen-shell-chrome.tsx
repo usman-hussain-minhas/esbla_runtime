@@ -81,6 +81,12 @@ function publishVisualViewport(viewport: ZenVisualViewportResult): void {
   rootStyle.setProperty("--zen-visual-inline-start", `${viewport.inlineStart}px`);
 }
 
+function focusProgrammaticRouteHeading(heading: HTMLElement, options?: FocusOptions): void {
+  heading.dataset.zenProgrammaticRouteFocus = "true";
+  heading.tabIndex = -1;
+  heading.focus(options);
+}
+
 function initialResolution(
   model: ZenNavigationModel,
   appearanceAvailable: boolean,
@@ -282,8 +288,11 @@ export function ZenShellChrome({
               ? document.querySelector<HTMLElement>("main h1")
               : undefined;
         if (!target) return;
-        target.tabIndex = target instanceof HTMLHeadingElement ? -1 : target.tabIndex;
-        target.focus({ preventScroll: target === currentLauncher });
+        if (target instanceof HTMLHeadingElement) {
+          focusProgrammaticRouteHeading(target, { preventScroll: false });
+        } else {
+          target.focus({ preventScroll: true });
+        }
         if (document.activeElement !== target) {
           focusRetry = window.setTimeout(() => settleFocus(forceFallback), 50);
           return;
@@ -328,8 +337,7 @@ export function ZenShellChrome({
       focusFrame = requestAnimationFrame(() => {
         const heading = document.querySelector<HTMLElement>("main h1");
         if (!heading) return;
-        heading.tabIndex = -1;
-        heading.focus();
+        focusProgrammaticRouteHeading(heading);
       });
     };
     const restoreRouteHeadingFocus = (event: PageTransitionEvent) => {
@@ -420,11 +428,10 @@ export function ZenShellChrome({
           ) {
             return;
           }
-          currentHeading.tabIndex = -1;
           focusedHeading = currentHeading;
           queuedHeading = currentHeading;
           queuedHeadingText = currentHeading.textContent;
-          currentHeading.focus();
+          focusProgrammaticRouteHeading(currentHeading);
         });
       });
     };

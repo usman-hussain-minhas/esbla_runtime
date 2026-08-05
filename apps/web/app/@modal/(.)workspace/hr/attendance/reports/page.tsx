@@ -21,6 +21,7 @@ export default async function InterceptedAttendanceReportsPage({ searchParams }:
     <RouteBackedWidgetOverlay
       fallbackHref={origin.fallbackHref}
       label="Attendance reports"
+      origin={origin}
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace

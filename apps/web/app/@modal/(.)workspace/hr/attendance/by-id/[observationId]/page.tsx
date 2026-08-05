@@ -64,6 +64,7 @@ export default async function InterceptedAttendanceDetailPage({ params, searchPa
       browserBackMode={showMaster ? "return-master" : "close-origin"}
       fallbackHref={origin.fallbackHref}
       label="Attendance detail"
+      origin={origin}
       returnFocusId={origin.returnFocusId}
     >
       <RouteBackedWidgetFocusWorkspace
