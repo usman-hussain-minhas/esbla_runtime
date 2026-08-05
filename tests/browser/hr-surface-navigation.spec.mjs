@@ -2,6 +2,30 @@ import { expect, test } from "@playwright/test";
 import { fixture } from "./hr-leave-fixture.mjs";
 
 test.describe.configure({ mode: "serial" });
+const testControlOrigin = process.env.ESBLA_TEST_CONTROL_ORIGIN;
+const testControlToken = process.env.ESBLA_TEST_CONTROL_TOKEN;
+if (
+  testControlOrigin !== "http://127.0.0.1:41900" ||
+  !/^[0-9a-f]{64}$/.test(testControlToken ?? "")
+) {
+  throw new Error("Browser test control is missing");
+}
+
+async function setEmployeeLeaveCapabilities(capabilities) {
+  const response = await fetch(
+    new URL("/__esbla-test-control/leave-presentation-eligibility", testControlOrigin),
+    {
+      body: JSON.stringify({ active: true, capabilities }),
+      headers: {
+        "content-type": "application/json",
+        "x-esbla-test-control": testControlToken,
+      },
+      method: "POST",
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
+  expect(response.status, await response.text()).toBe(200);
+}
 
 const hrSurfaces = [
   {
@@ -178,7 +202,10 @@ test("grouped surfaces preserve exact launch identity and semantic expansion adm
 }) => {
   const employee = await openActor(browser, fixture.employeeOrigin, fixture.employeeLabel);
   const operator = await openActor(browser, fixture.operatorOrigin, fixture.operatorLabel);
+  let capabilitiesChanged = false;
   try {
+    await setEmployeeLeaveCapabilities(["hr.leave.list_own", "hr.leave.submit", "hr.leave.view"]);
+    capabilitiesChanged = true;
     await employee.page.goto(`${employee.origin}/workspace/hr/requests-and-claims`, {
       waitUntil: "networkidle",
     });
@@ -194,31 +221,99 @@ test("grouped surfaces preserve exact launch identity and semantic expansion adm
       "/workspace/hr/leave?originFocusId=hr-requests-and-claims.my-leave.full-screen&returnSurface=surface.hr.requests-and-claims&originWidgetDefinitionId=hr.leave.my-requests";
     await expect(leaveLauncher).toHaveAttribute("href", leaveHref);
     await leaveLauncher.click();
-    const leaveOverlay = employee.page.getByRole("dialog", {
+    const renderedLeaveOverlay = employee.page.locator(".zen-widget-overlay");
+    await expect(renderedLeaveOverlay).toBeVisible();
+    await expect(renderedLeaveOverlay).toHaveAttribute("data-widget-presentation", "workspace");
+    const leaveWorkspace = employee.page.getByRole("region", {
       exact: true,
       name: "My leave requests",
     });
-    await expect(leaveOverlay).toBeVisible();
-    await expect(employee.page).toHaveURL(`${employee.origin}${leaveHref}`);
-    await leaveOverlay.getByRole("link", { exact: true, name: "New request" }).click();
-    const newLeaveOverlay = employee.page.getByRole("dialog", {
-      exact: true,
-      name: "New leave request",
+    await expect(leaveWorkspace).toBeVisible();
+    await expect(
+      employee.page.getByRole("dialog", { exact: true, name: "My leave requests" }),
+    ).toHaveCount(0);
+    await expect(employee.page.locator(".esbla-shell")).not.toHaveAttribute("inert", "");
+    await expect(employee.page.locator(".esbla-shell")).not.toHaveAttribute("aria-hidden", "true");
+    await expect(
+      employee.page.getByRole("link", { exact: true, name: "Mission Control" }),
+    ).toBeVisible();
+    await expect(
+      employee.page.getByRole("button", { exact: true, name: "HR surfaces" }),
+    ).toBeVisible();
+    await expect(employee.page.locator(".surface-scroll")).toHaveAttribute("inert", "");
+    await expect(employee.page.locator(".surface-scroll")).toHaveAttribute("aria-hidden", "true");
+    const focusGeometry = await employee.page.evaluate(() => {
+      const frame = document.querySelector(".surface-frame");
+      const host = document.querySelector('[data-zen-surface-focus-host="true"]');
+      const workspace = document.querySelector(
+        '.zen-widget-overlay[data-widget-presentation="workspace"]',
+      );
+      if (!(frame instanceof HTMLElement)) throw new Error("surface frame missing");
+      if (!(host instanceof HTMLElement)) throw new Error("surface focus host missing");
+      if (!(workspace instanceof HTMLElement)) throw new Error("focus workspace missing");
+      const bounds = (element) => {
+        const rectangle = element.getBoundingClientRect();
+        return {
+          height: Math.round(rectangle.height),
+          width: Math.round(rectangle.width),
+          x: Math.round(rectangle.x),
+          y: Math.round(rectangle.y),
+        };
+      };
+      return {
+        frame: bounds(frame),
+        host: bounds(host),
+        workspace: bounds(workspace),
+      };
     });
-    await expect(newLeaveOverlay).toBeVisible();
+    expect(focusGeometry.host).toEqual(focusGeometry.frame);
+    expect(focusGeometry.workspace).toEqual(focusGeometry.frame);
+    await expect(leaveWorkspace).toHaveAttribute("data-zen-focus-scroll-owner", "true");
+    await expect(employee.page.locator('[data-zen-focus-scroll-owner="true"]')).toHaveCount(1);
+    await expect(employee.page).toHaveURL(`${employee.origin}${leaveHref}`);
+    await leaveWorkspace.getByRole("link", { exact: true, name: "New request" }).click();
+    const newLeaveWorkspace = employee.page.locator(
+      '.zen-widget-overlay[data-widget-presentation="workspace"][aria-label="New leave request"]',
+    );
+    await expect(newLeaveWorkspace).toBeVisible();
     await expect(employee.page).toHaveURL(
       `${employee.origin}/workspace/hr/leave/new?returnContext=hr-mission-control&originFocusId=hr-requests-and-claims.my-leave.full-screen&returnSurface=surface.hr.requests-and-claims&originWidgetDefinitionId=hr.leave.my-requests`,
     );
     await employee.page.goBack();
-    await expect(leaveOverlay).toBeVisible();
+    await expect(leaveWorkspace).toBeVisible();
     await expect(employee.page).toHaveURL(`${employee.origin}${leaveHref}`);
-    await leaveOverlay
+    await leaveWorkspace
       .getByRole("button", { exact: true, name: "Close My leave requests" })
       .click();
     await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/requests-and-claims`);
     await expect(employee.page.getByRole("dialog")).toHaveCount(0);
     await expect(
       employee.page.locator("#hr-requests-and-claims\\.my-leave\\.full-screen"),
+    ).toBeFocused();
+
+    const requestForm = employee.page.locator('[data-widget-definition="hr.leave.request-form"]');
+    const requestFormLauncher = requestForm.getByRole("link", {
+      exact: true,
+      name: "Start Leave request",
+    });
+    await expect(requestFormLauncher).toHaveAttribute(
+      "href",
+      "/workspace/hr/leave/new?returnContext=hr-mission-control&originFocusId=hr-requests-and-claims.leave-request-form.new-request&returnSurface=surface.hr.requests-and-claims&originWidgetDefinitionId=hr.leave.request-form",
+    );
+    await requestFormLauncher.click();
+    const requestFormQuickView = employee.page.getByRole("dialog", {
+      exact: true,
+      name: "New leave request",
+    });
+    await expect(requestFormQuickView).toBeVisible();
+    await expect(requestFormQuickView).toHaveAttribute("data-widget-presentation", "quick_view");
+    await expect(employee.page.locator(".esbla-shell")).toHaveAttribute("inert", "");
+    await requestFormQuickView
+      .getByRole("button", { exact: true, name: "Close new leave request" })
+      .click();
+    await expect(employee.page).toHaveURL(`${employee.origin}/workspace/hr/requests-and-claims`);
+    await expect(
+      employee.page.locator("#hr-requests-and-claims\\.leave-request-form\\.new-request"),
     ).toBeFocused();
 
     await employee.page.goto(`${employee.origin}/workspace/hr/workforce`, {
@@ -258,6 +353,9 @@ test("grouped surfaces preserve exact launch identity and semantic expansion adm
     await expect(statusReporting).toBeVisible();
     await expect(statusReporting.locator(".icon-command")).toHaveCount(0);
   } finally {
+    if (capabilitiesChanged) {
+      await setEmployeeLeaveCapabilities(["hr.leave.list_own", "hr.leave.view"]);
+    }
     await closeActor(employee);
     await closeActor(operator);
   }
