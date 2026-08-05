@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getPresentationServiceGroupDefinition,
+  PRESENTATION_DEEP_ROUTE_DEFINITIONS,
   PRESENTATION_SERVICE_GROUP_DEFINITIONS,
   parsePresentationNavigationDiscovery,
   parsePresentationServiceGroupDiscovery,
@@ -99,6 +100,36 @@ describe("presentation service-group contract", () => {
       },
     ]);
     expect(PRESENTATION_SERVICE_GROUP_DEFINITIONS).toHaveLength(1);
+    expect(PRESENTATION_DEEP_ROUTE_DEFINITIONS).toHaveLength(22);
+    expect(
+      PRESENTATION_DEEP_ROUTE_DEFINITIONS.filter(({ exposure }) => exposure === "action_only"),
+    ).toHaveLength(6);
+    expect(
+      PRESENTATION_DEEP_ROUTE_DEFINITIONS.filter(({ exposure }) => exposure === "widget_route"),
+    ).toHaveLength(16);
+    expect(
+      PRESENTATION_DEEP_ROUTE_DEFINITIONS.slice(-3).map(({ destinationId, exposure, href }) => ({
+        destinationId,
+        exposure,
+        href,
+      })),
+    ).toEqual([
+      {
+        destinationId: "hr.leave.create",
+        exposure: "widget_route",
+        href: "/workspace/hr/leave/new",
+      },
+      {
+        destinationId: "platform.my-work",
+        exposure: "widget_route",
+        href: "/workspace/my-work",
+      },
+      {
+        destinationId: "workspace.tasks",
+        exposure: "widget_route",
+        href: "/workspace/tasks",
+      },
+    ]);
     expect(parsePresentationServiceGroupDiscovery({ serviceGroupIds: ["hr"] })).toEqual({
       serviceGroupIds: ["hr"],
     });

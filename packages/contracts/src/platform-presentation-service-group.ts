@@ -38,10 +38,13 @@ export const presentationNavigationDestinationIds = [
 export type PresentationNavigationDestinationId =
   (typeof presentationNavigationDestinationIds)[number];
 
+export type PresentationDestinationExposure = "action_only" | "surface" | "widget_route";
+
 export interface PresentationNavigationDestinationDefinition {
   readonly allowedRoleKeys: readonly string[];
   readonly anyCapabilityIds: readonly string[];
   readonly destinationId: PresentationNavigationDestinationId;
+  readonly exposure: Exclude<PresentationDestinationExposure, "surface">;
   readonly href: string;
   readonly label: string;
   readonly semanticIcon: PresentationSemanticIconKey;
@@ -75,6 +78,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
         allowedRoleKeys: Object.freeze(["employee"]),
         anyCapabilityIds: Object.freeze(["hr.workforce.view_own"]),
         destinationId: "hr.workforce.own",
+        exposure: "widget_route",
         href: "/workspace/hr/profile",
         label: "My Workforce Profile",
         semanticIcon: "user-round",
@@ -83,6 +87,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
         allowedRoleKeys: Object.freeze(["manager"]),
         anyCapabilityIds: Object.freeze(["hr.workforce.list_authorized"]),
         destinationId: "hr.workforce.direct_reports",
+        exposure: "widget_route",
         href: "/workspace/hr/profile/direct-reports",
         label: "Direct Reports",
         semanticIcon: "users-round",
@@ -97,6 +102,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
           "hr.workforce.list_authorized",
         ]),
         destinationId: "hr.workforce.admin",
+        exposure: "widget_route",
         href: "/workspace/hr/profile/admin",
         label: "Workforce Administration",
         semanticIcon: "users-round",
@@ -105,6 +111,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
         allowedRoleKeys: Object.freeze(["tenant_admin"]),
         anyCapabilityIds: Object.freeze(["hr.workforce.view_service_control"]),
         destinationId: "hr.workforce.settings",
+        exposure: "action_only",
         href: "/workspace/hr/profile/settings",
         label: "Workforce Settings",
         semanticIcon: "settings",
@@ -119,6 +126,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
         allowedRoleKeys: Object.freeze(["employee", "hr_operator"]),
         anyCapabilityIds: Object.freeze(["hr.employment.list_authorized"]),
         destinationId: "hr.employment.records",
+        exposure: "widget_route",
         href: "/workspace/hr/employment",
         label: "Employment Records",
         semanticIcon: "briefcase-business",
@@ -131,6 +139,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
           "hr.employment.end_record",
         ]),
         destinationId: "hr.employment.admin",
+        exposure: "widget_route",
         href: "/workspace/hr/employment/admin",
         label: "Employment Administration",
         semanticIcon: "briefcase-business",
@@ -139,6 +148,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
         allowedRoleKeys: Object.freeze(["tenant_admin"]),
         anyCapabilityIds: Object.freeze(["hr.employment.view_service_control"]),
         destinationId: "hr.employment.settings",
+        exposure: "action_only",
         href: "/workspace/hr/employment/settings",
         label: "Employment Settings",
         semanticIcon: "settings",
@@ -153,6 +163,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
         allowedRoleKeys: Object.freeze(["employee"]),
         anyCapabilityIds: Object.freeze(["hr.shift.list_roster"]),
         destinationId: "hr.shift.own",
+        exposure: "widget_route",
         href: "/workspace/hr/shifts",
         label: "My Shifts",
         semanticIcon: "calendar-range",
@@ -161,6 +172,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
         allowedRoleKeys: Object.freeze(["hr_operator", "manager"]),
         anyCapabilityIds: Object.freeze(["hr.shift.list_roster"]),
         destinationId: "hr.shift.reports",
+        exposure: "widget_route",
         href: "/workspace/hr/shifts/reports",
         label: "Shift Rosters",
         semanticIcon: "calendar-range",
@@ -169,6 +181,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
         allowedRoleKeys: Object.freeze(["tenant_admin"]),
         anyCapabilityIds: Object.freeze(["hr.shift.view_service_control"]),
         destinationId: "hr.shift.settings",
+        exposure: "action_only",
         href: "/workspace/hr/shifts/settings",
         label: "Shift Settings",
         semanticIcon: "settings",
@@ -183,6 +196,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
         allowedRoleKeys: Object.freeze(["employee"]),
         anyCapabilityIds: Object.freeze(["hr.attendance.list_own"]),
         destinationId: "hr.attendance.own",
+        exposure: "widget_route",
         href: "/workspace/hr/attendance",
         label: "My Attendance",
         semanticIcon: "clock-3",
@@ -191,6 +205,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
         allowedRoleKeys: Object.freeze(["hr_operator", "manager"]),
         anyCapabilityIds: Object.freeze(["hr.attendance.list_reports"]),
         destinationId: "hr.attendance.reports",
+        exposure: "widget_route",
         href: "/workspace/hr/attendance/reports",
         label: "Attendance Reports",
         semanticIcon: "clock-3",
@@ -199,6 +214,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
         allowedRoleKeys: Object.freeze(["tenant_admin"]),
         anyCapabilityIds: Object.freeze(["hr.attendance.view_service_control"]),
         destinationId: "hr.attendance.settings",
+        exposure: "action_only",
         href: "/workspace/hr/attendance/settings",
         label: "Attendance Settings",
         semanticIcon: "settings",
@@ -219,6 +235,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
         allowedRoleKeys: Object.freeze(["employee"]),
         anyCapabilityIds: Object.freeze(["hr.leave.list_own"]),
         destinationId: "hr.leave.own",
+        exposure: "widget_route",
         href: "/workspace/hr/leave",
         label: "Leave Requests",
         semanticIcon: "calendar-check",
@@ -239,6 +256,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
         allowedRoleKeys: Object.freeze(["employee"]),
         anyCapabilityIds: Object.freeze(["hr.timesheet.list_own"]),
         destinationId: "hr.timesheet.own",
+        exposure: "widget_route",
         href: "/workspace/hr/timesheets",
         label: "My Timesheets",
         semanticIcon: "list-checks",
@@ -247,6 +265,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
         allowedRoleKeys: Object.freeze(["hr_operator"]),
         anyCapabilityIds: Object.freeze(["hr.timesheet.create_correction"]),
         destinationId: "hr.timesheet.corrections",
+        exposure: "widget_route",
         href: "/workspace/hr/timesheets/admin/corrections",
         label: "Timesheet Corrections",
         semanticIcon: "list-checks",
@@ -255,6 +274,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
         allowedRoleKeys: Object.freeze(["tenant_admin"]),
         anyCapabilityIds: Object.freeze(["hr.timesheet.view_service_control"]),
         destinationId: "hr.timesheet.settings",
+        exposure: "action_only",
         href: "/workspace/hr/timesheets/settings",
         label: "Timesheet Settings",
         semanticIcon: "settings",
@@ -275,6 +295,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
         allowedRoleKeys: Object.freeze(["employee"]),
         anyCapabilityIds: Object.freeze(["hr.expense.list_own"]),
         destinationId: "hr.expense.own",
+        exposure: "widget_route",
         href: "/workspace/hr/expenses",
         label: "My Expense Claims",
         semanticIcon: "receipt-text",
@@ -283,6 +304,7 @@ const HR_SERVICE_ELIGIBILITY = Object.freeze([
         allowedRoleKeys: Object.freeze(["tenant_admin"]),
         anyCapabilityIds: Object.freeze(["hr.expense.view_service_control"]),
         destinationId: "hr.expense.settings",
+        exposure: "action_only",
         href: "/workspace/hr/expenses/settings",
         label: "Expense Settings",
         semanticIcon: "settings",
@@ -301,6 +323,55 @@ export const PRESENTATION_SERVICE_GROUP_DEFINITIONS = Object.freeze([
     services: HR_SERVICE_ELIGIBILITY,
   }),
 ]) satisfies readonly PresentationServiceGroupDefinition[];
+
+export const presentationRouteOnlyDestinationIds = [
+  "hr.leave.create",
+  "platform.my-work",
+  "workspace.tasks",
+] as const;
+export type PresentationRouteOnlyDestinationId =
+  (typeof presentationRouteOnlyDestinationIds)[number];
+
+export interface PresentationRouteOnlyDestinationDefinition {
+  readonly destinationId: PresentationRouteOnlyDestinationId;
+  readonly exposure: "widget_route";
+  readonly href: string;
+}
+
+export const PRESENTATION_ROUTE_ONLY_DESTINATION_DEFINITIONS = Object.freeze([
+  Object.freeze({
+    destinationId: "hr.leave.create",
+    exposure: "widget_route",
+    href: "/workspace/hr/leave/new",
+  }),
+  Object.freeze({
+    destinationId: "platform.my-work",
+    exposure: "widget_route",
+    href: "/workspace/my-work",
+  }),
+  Object.freeze({
+    destinationId: "workspace.tasks",
+    exposure: "widget_route",
+    href: "/workspace/tasks",
+  }),
+] as const) satisfies readonly PresentationRouteOnlyDestinationDefinition[];
+
+export type PresentationDeepRouteDefinition =
+  | PresentationNavigationDestinationDefinition
+  | PresentationRouteOnlyDestinationDefinition;
+
+function serviceNavigationDestinations(): PresentationNavigationDestinationDefinition[] {
+  const destinations: PresentationNavigationDestinationDefinition[] = [];
+  for (const group of PRESENTATION_SERVICE_GROUP_DEFINITIONS) {
+    for (const service of group.services) destinations.push(...service.destinations);
+  }
+  return destinations;
+}
+
+export const PRESENTATION_DEEP_ROUTE_DEFINITIONS = Object.freeze([
+  ...serviceNavigationDestinations(),
+  ...PRESENTATION_ROUTE_ONLY_DESTINATION_DEFINITIONS,
+]) satisfies readonly PresentationDeepRouteDefinition[];
 
 export interface PresentationServiceGroupDiscovery {
   readonly serviceGroupIds: readonly PresentationServiceGroupId[];

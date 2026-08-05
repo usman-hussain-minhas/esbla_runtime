@@ -1,4 +1,5 @@
 import {
+  getPresentationWidgetAdmissionDefinition,
   getZenV1RegisteredSurfacePlacements,
   HR_LEAVE_MY_REQUESTS_WIDGET_DEFINITION,
   ZEN_V1_SURFACE_CONTRACTS,
@@ -9,6 +10,7 @@ import {
   assertPresentationCompositionRegistriesCurrent,
   assertPresentationSurfaceRegistryCurrent,
   parsePresentationPreferenceInput,
+  presentationWidgetProviderRoleIsEligible,
   reconcileRequiredPresentationSurfacePlacements,
   resolvePresentationPreferences,
   validatePersonalSurfacePlacements,
@@ -154,6 +156,31 @@ describe("presentation preference core", () => {
         ],
       }),
     ).toThrow("Presentation composition registry is invalid");
+  });
+
+  it("binds My Work provider eligibility to the current provider-specific role", () => {
+    const admission = getPresentationWidgetAdmissionDefinition("platform.my-work.queue", 1);
+    expect(
+      presentationWidgetProviderRoleIsEligible(admission, "hr.leave_request", "employee"),
+    ).toBe(false);
+    expect(presentationWidgetProviderRoleIsEligible(admission, "hr.leave_request", "manager")).toBe(
+      true,
+    );
+    expect(presentationWidgetProviderRoleIsEligible(admission, "timesheet", "employee")).toBe(
+      false,
+    );
+    expect(
+      presentationWidgetProviderRoleIsEligible(admission, "expense_claim_boundary", "hr_operator"),
+    ).toBe(false);
+    expect(presentationWidgetProviderRoleIsEligible(admission, "workspace.task", "employee")).toBe(
+      true,
+    );
+    expect(
+      presentationWidgetProviderRoleIsEligible(admission, "workspace.task", "hr_operator"),
+    ).toBe(true);
+    expect(presentationWidgetProviderRoleIsEligible(admission, "unknown.provider", "manager")).toBe(
+      false,
+    );
   });
 
   it("rejects coupled or unrecognized appearance values", () => {

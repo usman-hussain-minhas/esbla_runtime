@@ -7,6 +7,7 @@ import type {
   PresentationPersonalSurfaceEditorWorkspace,
   PresentationPreferences,
   PresentationReducedMotion,
+  PresentationSemanticRegistryInput,
   PresentationServiceGroupDiscovery,
   PresentationShortcutContextId,
   PresentationShortcutContextKind,
@@ -22,8 +23,10 @@ import type {
   PresentationSurfaceDefinition,
   PresentationSurfaceDraft,
   PresentationSurfaceLayout,
+  PresentationWidgetAdmissionDefinition,
   PresentationWidgetDefinition,
   PresentationWidgetPlacement,
+  PresentationWidgetProviderEligibility,
   PublishPresentationSurfaceDraftBody,
   ResetPresentationPreferencesBody,
   ResetPresentationSurfaceOverlayBody,
@@ -48,14 +51,18 @@ import {
   canonicalizePresentationSurfaceContract,
   canonicalizePresentationSurfaceDefinition,
   canonicalizePresentationWidgetDefinition,
+  getPresentationSemanticSurfaceDefinition,
   getPresentationShortcutSurfaceContextDefinition,
   getPresentationShortcutTargetDefinition,
   getPresentationShortcutTargetServiceGroupId,
+  getPresentationSurfaceAnyProviderActivationServiceKeys,
+  getPresentationWidgetAdmissionDefinition,
   getPresentationWidgetDefinition,
   getZenV1RegisteredSurfaceInstances,
   getZenV1RegisteredSurfacePlacements,
   getZenV1SurfaceContract,
   PRESENTATION_BILLING_STATE,
+  PRESENTATION_SEMANTIC_REGISTRY,
   PRESENTATION_SERVICE_GROUP_DEFINITIONS,
   PRESENTATION_SETTING_DEFINITIONS,
   PRESENTATION_SHORTCUT_MAXIMUM_ITEMS,
@@ -82,6 +89,7 @@ import {
   parseValidatePresentationSurfaceDraftBody,
   presentationSettingKeys,
   validatePresentationCompositionRegistries,
+  validatePresentationSemanticRegistry,
   ZEN_V1_SURFACE_CONTRACTS,
   zenV1SurfaceIds,
 } from "@esbla/contracts";
@@ -127,6 +135,7 @@ const SURFACE_BASE_SUBJECT_TYPE = "platform_presentation_surface_base";
 const SURFACE_PERSONALIZATION_LOCK_NAMESPACE = "platform.presentation.surface.personalization";
 
 interface PresentationCompositionRegistryInput {
+  readonly semanticRegistry?: PresentationSemanticRegistryInput;
   readonly surfaceContracts?: readonly ZenV1SurfaceContract[];
   readonly surfaceDefinitions?: readonly PresentationSurfaceDefinition[];
   readonly widgetDefinitions?: readonly PresentationWidgetDefinition[];
@@ -144,6 +153,7 @@ export function assertPresentationCompositionRegistriesCurrent(
       surfaceContracts,
       widgetDefinitions,
     );
+    validatePresentationSemanticRegistry(input.semanticRegistry ?? PRESENTATION_SEMANTIC_REGISTRY);
     for (const definition of surfaceDefinitions) {
       const { definitionHash, ...manifest } = definition;
       if (
@@ -2579,27 +2589,50 @@ async function assertSurfacePersonalizationEnabled(
   }
 }
 
-async function widgetIsActorRelevant(
-  transaction: TenantTransaction,
+function currentRoleIsEligible(
+  roleEligibility: PresentationWidgetAdmissionDefinition["currentRoleEligibility"],
+  roleKey: string,
+): boolean {
+  return roleEligibility.kind === "any_current_role" || roleEligibility.roleKeys.includes(roleKey);
+}
+
+function surfaceProviderEligibility(
+  surfaceId: ZenV1SurfaceId,
   definition: PresentationWidgetDefinition,
+): readonly PresentationWidgetProviderEligibility[] {
+  if (definition.activationPolicy !== "any_provider") return [];
+  const providerActivationServiceKeys = new Set(
+    getPresentationSurfaceAnyProviderActivationServiceKeys(
+      surfaceId,
+      definition.id,
+      definition.definitionVersion,
+    ),
+  );
+  return definition.providerEligibility.filter(({ activationServiceKey }) =>
+    providerActivationServiceKeys.has(activationServiceKey),
+  );
+}
+
+export function presentationWidgetProviderRoleIsEligible(
+  admission: PresentationWidgetAdmissionDefinition,
+  activationServiceKey: string,
+  roleKey: string,
+): boolean {
+  const providerRole = admission.providerCurrentRoleEligibility.find(
+    (candidate) => candidate.activationServiceKey === activationServiceKey,
+  );
+  return (
+    providerRole !== undefined &&
+    currentRoleIsEligible(providerRole.currentRoleEligibility, roleKey)
+  );
+}
+
+async function widgetAdditionalEligibilityIsCurrent(
+  transaction: TenantTransaction,
+  admission: PresentationWidgetAdmissionDefinition,
 ): Promise<boolean> {
-  const routeDestinations =
-    definition.fullScreenRoute === null
-      ? []
-      : PRESENTATION_SERVICE_GROUP_DEFINITIONS.flatMap(({ services }) =>
-          services.flatMap(({ destinations }) =>
-            destinations.filter(({ href }) => href === definition.fullScreenRoute),
-          ),
-        );
-  if (
-    routeDestinations.length > 0 &&
-    !routeDestinations.some(({ allowedRoleKeys }) =>
-      allowedRoleKeys.includes(transaction.actor.roleKey),
-    )
-  ) {
-    return false;
-  }
-  if (definition.id !== "hr.workforce.direct-reports") return true;
+  const rule = admission.settingEligibility;
+  if (rule === null) return true;
   const result = await transaction.client.query<{
     value: unknown;
     value_type: string;
@@ -2607,21 +2640,22 @@ async function widgetIsActorRelevant(
   }>(
     `SELECT value, value_type, version
      FROM tenant_settings
-     WHERE tenant_id = $1 AND setting_key = 'hr.workforce_profile.manager_visibility'`,
-    [transaction.context.tenantId],
+     WHERE tenant_id = $1 AND setting_key = $2`,
+    [transaction.context.tenantId, rule.settingKey],
   );
   const setting = result.rows[0];
-  if (!setting) return true;
+  if (!setting) return rule.absentIsEligible;
   if (
     result.rows.length !== 1 ||
-    setting.value_type !== "enum" ||
-    (setting.value !== "minimized" && setting.value !== "none") ||
+    setting.value_type !== rule.valueType ||
+    typeof setting.value !== "string" ||
+    !rule.recognizedValues.includes(setting.value) ||
     !Number.isSafeInteger(setting.version) ||
     setting.version < 1
   ) {
     throw new PlatformError("SETTING_INVALID", "Widget actor relevance setting is invalid");
   }
-  return setting.value === "minimized";
+  return rule.eligibleValues.includes(setting.value);
 }
 
 async function loadEligibleWidgetDefinitionIds(
@@ -2642,23 +2676,25 @@ async function loadEligibleWidgetDefinitionIds(
     .map(({ widgetDefinitionId, widgetDefinitionVersion }) =>
       getPresentationWidgetDefinition(widgetDefinitionId, widgetDefinitionVersion),
     )
-    .sort((left, right) => left.id.localeCompare(right.id));
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((definition) => ({
+      definition,
+      providerEligibility: surfaceProviderEligibility(surfaceId, definition),
+    }));
   const serviceKeys = [
     ...new Set(
-      definitions.flatMap((definition) =>
+      definitions.flatMap(({ definition, providerEligibility }) =>
         definition.activationPolicy === "any_provider"
-          ? definition.providerEligibility.map(({ activationServiceKey }) => activationServiceKey)
+          ? providerEligibility.map(({ activationServiceKey }) => activationServiceKey)
           : [definition.activationServiceKey],
       ),
     ),
   ].sort();
   const capabilityIds = [
     ...new Set(
-      definitions.flatMap((definition) =>
+      definitions.flatMap(({ definition, providerEligibility }) =>
         definition.activationPolicy === "any_provider"
-          ? definition.providerEligibility.flatMap(
-              ({ requiredCapabilityIds }) => requiredCapabilityIds,
-            )
+          ? providerEligibility.flatMap(({ requiredCapabilityIds }) => requiredCapabilityIds)
           : definition.requiredCapabilityIds,
       ),
     ),
@@ -2712,8 +2748,14 @@ async function loadEligibleWidgetDefinitionIds(
   }
 
   const eligible = new Set<string>();
-  for (const definition of definitions) {
-    const actorRelevant = await widgetIsActorRelevant(transaction, definition);
+  for (const { definition, providerEligibility } of definitions) {
+    const admission = getPresentationWidgetAdmissionDefinition(
+      definition.id,
+      definition.definitionVersion,
+    );
+    const actorRelevant =
+      currentRoleIsEligible(admission.currentRoleEligibility, transaction.actor.roleKey) &&
+      (await widgetAdditionalEligibilityIsCurrent(transaction, admission));
     const exactServiceEligible =
       definition.activationPolicy === "exact_service" &&
       actorRelevant &&
@@ -2724,13 +2766,19 @@ async function loadEligibleWidgetDefinitionIds(
     const providerEligible =
       definition.activationPolicy === "any_provider" &&
       actorRelevant &&
-      definition.providerEligibility.some(
-        (provider) =>
+      providerEligibility.some((provider) => {
+        return (
+          presentationWidgetProviderRoleIsEligible(
+            admission,
+            provider.activationServiceKey,
+            transaction.actor.roleKey,
+          ) &&
           activeServiceKeys.has(provider.activationServiceKey) &&
           provider.requiredCapabilityIds.every((capabilityId) =>
             currentCapabilityIds.has(capabilityId),
-          ),
-      );
+          )
+        );
+      });
     if (exactServiceEligible || providerEligible) {
       eligible.add(definition.id);
     }
@@ -2761,12 +2809,15 @@ async function loadTenantEligibleWidgetDefinitionIds(
         ],
       ),
     ).values(),
-  ];
+  ].map((definition) => ({
+    definition,
+    providerEligibility: surfaceProviderEligibility(surfaceId, definition),
+  }));
   const serviceKeys = [
     ...new Set(
-      definitions.flatMap((definition) =>
+      definitions.flatMap(({ definition, providerEligibility }) =>
         definition.activationPolicy === "any_provider"
-          ? definition.providerEligibility.map(({ activationServiceKey }) => activationServiceKey)
+          ? providerEligibility.map(({ activationServiceKey }) => activationServiceKey)
           : [definition.activationServiceKey],
       ),
     ),
@@ -2794,14 +2845,14 @@ async function loadTenantEligibleWidgetDefinitionIds(
   }
   return new Set(
     definitions
-      .filter((definition) =>
+      .filter(({ definition, providerEligibility }) =>
         definition.activationPolicy === "any_provider"
-          ? definition.providerEligibility.some(({ activationServiceKey }) =>
+          ? providerEligibility.some(({ activationServiceKey }) =>
               activeServiceKeys.has(activationServiceKey),
             )
           : activeServiceKeys.has(definition.activationServiceKey),
       )
-      .map(({ id }) => id),
+      .map(({ definition }) => definition.id),
   );
 }
 
@@ -2833,7 +2884,10 @@ async function loadOwnPresentationSurfaceState(
     await loadOwnSurfaceOverlay(transaction, surfaceId),
   );
   const eligibleWidgetDefinitionIds = await loadEligibleWidgetDefinitionIds(transaction, surfaceId);
-  if (surfaceId === "surface.hr.mission-control" && eligibleWidgetDefinitionIds.size === 0) {
+  if (
+    getPresentationSemanticSurfaceDefinition(surfaceId).zeroEligibleBehavior === "hide_surface" &&
+    eligibleWidgetDefinitionIds.size === 0
+  ) {
     throw new PlatformError("POLICY_DENIED", "Presentation surface is not currently eligible");
   }
   return {

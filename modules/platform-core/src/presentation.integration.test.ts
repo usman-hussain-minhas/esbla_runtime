@@ -29,11 +29,14 @@ const ids = {
   actorA: "91000000-0000-4000-8000-000000000001",
   actorAdminA: "91000000-0000-4000-8000-000000000003",
   actorB: "91000000-0000-4000-8000-000000000002",
+  actorC: "91000000-0000-4000-8000-000000000004",
   membershipA: "92000000-0000-4000-8000-000000000001",
   membershipAdminA: "92000000-0000-4000-8000-000000000003",
   membershipB: "92000000-0000-4000-8000-000000000002",
+  membershipC: "92000000-0000-4000-8000-000000000004",
   tenantA: "90000000-0000-4000-8000-000000000001",
   tenantB: "90000000-0000-4000-8000-000000000002",
+  tenantC: "90000000-0000-4000-8000-000000000003",
 } as const;
 
 let migrationPool: Pool;
@@ -814,17 +817,18 @@ beforeAll(async () => {
   await migrateDatabase(createDatabase(migrationPool));
   await migrationPool.query(
     `INSERT INTO tenants (tenant_id, name)
-     VALUES ($1, 'Presentation A'), ($2, 'Presentation B')`,
-    [ids.tenantA, ids.tenantB],
+     VALUES ($1, 'Presentation A'), ($2, 'Presentation B'), ($3, 'Presentation C')`,
+    [ids.tenantA, ids.tenantB, ids.tenantC],
   );
   await migrationPool.query(
     `INSERT INTO principals (principal_id, display_name)
-     VALUES ($1, 'Actor A'), ($2, 'Actor B'), ($3, 'Surface Admin A')`,
-    [ids.actorA, ids.actorB, ids.actorAdminA],
+     VALUES ($1, 'Actor A'), ($2, 'Actor B'), ($3, 'Surface Admin A'), ($4, 'Actor C')`,
+    [ids.actorA, ids.actorB, ids.actorAdminA, ids.actorC],
   );
   await insertMembership(ids.tenantA, ids.membershipA, ids.actorA);
   await insertMembership(ids.tenantA, ids.membershipAdminA, ids.actorAdminA);
   await insertMembership(ids.tenantB, ids.membershipB, ids.actorB);
+  await insertMembership(ids.tenantC, ids.membershipC, ids.actorC);
   await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
     active: true,
     capabilities: ["hr.leave.list_own", "hr.leave.view"],
@@ -846,6 +850,12 @@ beforeAll(async () => {
       await setPresentationCapability(tenantId, principalId, capabilityId, true);
     }
   }
+  await setPresentationCapability(
+    ids.tenantC,
+    ids.actorC,
+    "platform.presentation.layouts.read_own",
+    true,
+  );
   await migrationPool.query(`GRANT SELECT, INSERT ON evidence_events TO ${applicationRole}`);
   await migrationPool.query(
     `GRANT SELECT ON membership_capabilities TO ${applicationRole};
@@ -1374,6 +1384,30 @@ describe("presentation preference persistence", () => {
     ).toEqual(updated.effectivePlacements);
   });
 
+  it("projects any-provider eligibility by surface: Workspace-only admits root and denies HR", async () => {
+    await setExactServicePresentationEligibility(ids.tenantC, ids.actorC, "workspace.task", [
+      "workspace.task.list_assigned",
+      "workspace.task.view",
+    ]);
+
+    expect(
+      (
+        await getOwnPresentationSurfaceLayout(
+          pool,
+          context(ids.tenantC, ids.actorC),
+          "surface.mission-control",
+        )
+      ).basePlacements.map(({ widgetDefinitionId }) => widgetDefinitionId),
+    ).toEqual(["platform.my-work.queue"]);
+    await expect(
+      getOwnPresentationSurfaceLayout(
+        pool,
+        context(ids.tenantC, ids.actorC),
+        "surface.hr.mission-control",
+      ),
+    ).rejects.toMatchObject({ code: "POLICY_DENIED" } satisfies Partial<PlatformError>);
+  });
+
   it("filters discovery and blocks layout mutation after capability loss or deactivation", async () => {
     const eligible = await getOwnPresentationSurfaceLayout(
       pool,
@@ -1442,19 +1476,43 @@ describe("presentation preference persistence", () => {
       active: true,
       capabilities: ["hr.leave.list_assigned", "hr.leave.view"],
     });
-    expect(
-      (
-        await getOwnPresentationSurfaceLayout(
-          pool,
-          context(ids.tenantA, ids.actorA),
-          "surface.mission-control",
-        )
-      ).effectivePlacements.map(({ widgetDefinitionId }) => widgetDefinitionId),
-    ).toEqual([]);
-    await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
-      active: true,
-      capabilities: ["hr.leave.list_own", "hr.leave.view"],
-    });
+    try {
+      expect(
+        (
+          await getOwnPresentationSurfaceLayout(
+            pool,
+            context(ids.tenantA, ids.actorA),
+            "surface.mission-control",
+          )
+        ).basePlacements.map(({ widgetDefinitionId }) => widgetDefinitionId),
+      ).toEqual([]);
+      await setPresentationActorRole(ids.tenantA, ids.actorA, "manager");
+      expect(
+        (
+          await getOwnPresentationSurfaceLayout(
+            pool,
+            context(ids.tenantA, ids.actorA),
+            "surface.mission-control",
+          )
+        ).basePlacements.map(({ widgetDefinitionId }) => widgetDefinitionId),
+      ).toEqual(["platform.my-work.queue"]);
+      await setPresentationActorRole(ids.tenantA, ids.actorA, "employee");
+      expect(
+        (
+          await getOwnPresentationSurfaceLayout(
+            pool,
+            context(ids.tenantA, ids.actorA),
+            "surface.mission-control",
+          )
+        ).basePlacements.map(({ widgetDefinitionId }) => widgetDefinitionId),
+      ).toEqual([]);
+    } finally {
+      await setPresentationActorRole(ids.tenantA, ids.actorA, "employee");
+      await setLeavePresentationEligibility(ids.tenantA, ids.actorA, {
+        active: true,
+        capabilities: ["hr.leave.list_own", "hr.leave.view"],
+      });
+    }
   });
 
   it("filters the direct-reports widget by current manager role and exact capabilities", async () => {
