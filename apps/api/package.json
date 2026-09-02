@@ -27,7 +27,7 @@
     "@esbla/observability": "workspace:^",
     "@esbla/platform-core": "workspace:^",
     "@esbla/workspace": "workspace:^",
-    "fastify": "5.10.0",
+    "fastify": "5.12.1",
     "pg": "8.22.0"
   },
   "devDependencies": {
